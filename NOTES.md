@@ -1,7 +1,9 @@
 # try-omarchy-windows — working notes / session handoff
 
 **Read this first in a new session.** Keep this file updated as work progresses.
-Last updated: 2026-08-28 (second-account bootstrap on the laptop; autologin applied in VM).
+Last updated: 2026-08-28 (Windows side complete; clipboard + folder sharing landed
+and verified). **Next session is on the Linux box — start with [HANDOFF.md](HANDOFF.md),
+which is the image-rebuild brief.**
 
 ## Session 2026-08-28 (laptop, Tyler account)
 
@@ -120,7 +122,11 @@ Fork checkout with the guest builder: `~/Projects/try-omarchy-win` (win branch).
 Working scripts + built image shared into the VM at `~/Windows/tryomarchy/`.
 Machine-specific access details (VM ssh, ports) live outside this repo.
 
-**Windows laptop (needed for GPU work):** nothing set up yet. Bootstrap below.
+**Windows laptop (BTS-CSSI-LAPTOP):** fully set up under both accounts (Brandon:
+admin, original bootstrap; Tyler: non-admin, own guest image + git identity).
+WINQ-EMU at C:\WINQ-EMU, stock QEMU 11.1.0 machine-wide. The running VM (user
+tyler / pw omarchy) has everything from the image change list hand-installed —
+use `-Fresh` when validating a new image so the stale disk doesn't mask bugs.
 
 ## Windows laptop bootstrap (the GPU/Venus milestone)
 

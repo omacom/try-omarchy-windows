@@ -1,44 +1,78 @@
-# Handoff — start here
+# Handoff — next session: Linux box, image rebuild (track 2)
 
-**The original laptop handoff is complete**: bare-metal validation passed and the
-Venus GPU milestone was hit 2026-08-27, both on the Ryzen 5 5625U laptop. Current
-working state, traps, and the release plan live in [NOTES.md](NOTES.md); everything
-proven (and everything that bit us) is in [docs/FINDINGS.md](docs/FINDINGS.md).
+The Windows side is done and pushed (see "State of the world" below). What remains
+for v0.0.2-preview is the **guest image rebuild**, and that only happens on the
+Linux desktop (Docker + the guest builder). This file is the brief for that session.
 
-## Quick start on a fresh Windows machine
+## Where things are on the Linux box
 
-1. Elevated PowerShell (first time on a machine only — later runs don't need admin):
-   `powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1`
-   (enables WHP → reboot → rerun; installs QEMU 11 + zstd via winget; downloads the
-   guest image from the v0.0.1-preview release)
-2. Optional but recommended: install WINQ-EMU Alpha 10 to `C:\WINQ-EMU` for GPU
-   acceleration (https://github.com/cmspam/winq-emu/releases).
-3. `powershell -ExecutionPolicy Bypass -File scripts\launch-omarchy.ps1`
-   First boot shows Omarchy's setup form; after that, autologin straight to Hyprland.
-   The launcher supervises QEMU: retries the WHPX launch wedge, reaps the poweroff
-   wedge, relaunches on in-guest reboot, hides all consoles, keeps the window
-   titled "Try Omarchy", and scopes the Windows key to the VM window.
+- Fork checkout with the guest builder: `~/Projects/try-omarchy-win` (**win** branch)
+  — jorge-huxley's x86_64 retarget of the try-omarchy build system.
+- Builder: `guest/build-container.sh` (Docker, ~10 min). Output: `dist/guest/`
+  (vmlinuz-linux, initramfs-linux.img, build-spec.json, rootfs.ext4[.zst]).
+- The build enforces `packages.lock.json` against live Arch repos and refuses on
+  drift: `guest/build-container.sh --refresh-package-lock guest/packages.lock.json`,
+  review the diff, rebuild. Expect to need this.
+- Optional test bed: the dockur/windows Win11 VM (nested KVM → WHPX works; set
+  `VMX: "Y"` on the container). Working scripts land in `~/Windows/tryomarchy/`.
+  Final validation should happen on the laptop anyway.
 
-## The traps, if you touch the QEMU recipe
+## The image change list (all proven live in the laptop VM on 2026-08-28)
 
-- `-vga none` is mandatory with `virtio-gpu-pci` (invisible-second-display trap).
-  Not needed with WINQ-EMU's `virtio-vga-gl` — that IS the VGA device.
-- Stock QEMU + any AVX/XSAVE cpu flag = guest kernel panic at 0.25s. `-cpu host`
-  needs WINQ-EMU's patched WHPX.
-- Guest reboot/poweroff wedges stock WHPX QEMU — and a wedged poweroff can LOSE
-  recent guest writes (`sync` first). The launcher handles both.
-- QMP screendump doesn't work on the GL path ("no surface") — drive/verify via the
-  serial console (`cmd | sudo tee /dev/ttyS0` lands in the host-side serial log).
-- Windows sshd kills the process tree when an ssh session ends.
-- The guest image has no sshd; automation goes through QMP (`scripts/qmp.ps1`,
-  tools port 4445; 4446 is the winkey-forwarder's, 4447 the supervisor's).
+1. **Bump the Omarchy pin to 4.0.1** — image currently ships 4.0.0.alpha-1
+   (hyprland 0.56.2, kernel 7.1.9). This is the one place we trail the macOS app.
+2. **Add packages**: `ttfx`, `hypridle` (screensavers — required, ttfx is in the
+   image's own omarchy pacman repo), `vulkan-virtio` (Venus ICD), `wl-clipboard`
+   (clipboard bridge). `socat`, `foot`, `jq` are already in. Add `vulkan-tools`
+   only to a dev variant. Everything together is <20MB — the "98% native" rule:
+   image stays a ~1.2GB download, no 3GB bloat.
+3. **Cursor visible under SDL**: the builder writes `~/.config/hypr/monitors.lua`
+   with `cursor = { invisible = true }` (a VNC-era assumption). Must be `false`
+   for SDL. (Config is Hyprland Lua — edit the .lua, not hyprland.conf.)
+4. **SDDM autologin written by provisioning**: after the setup form creates the
+   user, provisioning must write `/etc/sddm.conf.d/autologin.conf` with
+   `[Autologin]\nUser=<user>\nSession=hyprland-uwsm`. Proven config. Rule from
+   hands-on feedback: Omarchy-branded screens are fine; the generic SDDM greeter
+   must never appear.
+5. **Bake the clipboard bridge**: install `scripts/guest/clipboard-bridge.sh`
+   (this repo) as an executable on PATH, plus
+   `scripts/guest/clipboard-bridge.service` as a systemd **user** unit enabled
+   for provisioned users (WantedBy=graphical-session.target; uwsm imports
+   WAYLAND_DISPLAY so it works). Host counterpart is already in the launcher.
+6. **9p automount**: mount tag `hostshare` → `/mnt/host`, systemd.mount with
+   `nofail` + `x-systemd.device-timeout` so boots without `-Share` are unaffected
+   (`mount -t 9p -o trans=virtio hostshare /mnt/host` is the manual form).
+7. Stretch: wire up plymouth (it ships in the image) or otherwise hide boot
+   console text on tty1.
 
-## State of the world
+Then: `zstd` the rootfs, publish vmlinuz/initramfs/build-spec/rootfs.ext4.zst as a
+**v0.0.2-preview** GitHub release on tsouth89/try-omarchy-windows, bump `$release`
+in `scripts/bootstrap.ps1`, and validate on the laptop with `-Fresh` (the laptop's
+current VM has all of the above hand-installed — a stale disk will mask image bugs).
 
-- Repo: https://github.com/tsouth89/try-omarchy-windows (public, tsouth89)
-- Release: v0.0.1-preview — guest image artifacts + scripts (script polish since)
-- Proven: WHPX boot, QMP provisioning, Hyprland on Venus/virgl (GPU) and llvmpipe
-  (CPU), 6.8s to graphical.target bare metal, SDDM autologin, focus-scoped Win key
-- Next: image rebuild with the fixes list in NOTES.md, then a v0.0.2 preview and
-  the native app shell. Collab offered publicly to Eduardo (themartiano) and
-  Jorge (jorge-huxley); competitive picture and credits in README.
+## Gotchas for guest-image work (details in docs/FINDINGS.md)
+
+- Writes shortly before guest poweroff can be lost under stock WHPX (the poweroff
+  wedge) — `sync` in any provisioning step that writes late.
+- QMP screendump doesn't work on the GL path — verify via serial
+  (`cmd | sudo tee /dev/ttyS0` lands in the host-side serial log).
+- The clipboard bridge protocol is LF-only base64 lines; never put a tr/sed stage
+  after socat (pipe buffering stalls small payloads).
+- Keep .ps1 files pure ASCII (PS 5.1 reads em-dashes as CP1252 curly quotes).
+
+## State of the world (2026-08-28, all pushed through 278b363)
+
+- Windows side COMPLETE and verified on hardware (Ryzen 5 5625U laptop):
+  supervised launcher (`scripts/launch-omarchy.ps1`: GPU auto-detect via WINQ-EMU
+  at C:\WINQ-EMU, llvmpipe fallback, launch-wedge watchdog, poweroff-wedge reap,
+  reboot auto-relaunch, windowless w-binary, no consoles), focus-scoped Win key +
+  "Try Omarchy" branding (winkey-forwarder), **two-way clipboard sharing**
+  (clipboard-bridge, survives reboots), **folder sharing** (`-Share`, 9p, GPU
+  mode), non-admin bootstrap, SDDM autologin (hand-applied in the laptop VM).
+- Feature scorecard vs try-omarchy macOS v0.2.0 (Eduardo, 2026-08-28): folder
+  sharing ✓, clipboard ✓ (ours is Wayland-native), screensavers ✓, package
+  installs ✓ (full x86_64 vs ARM subset), Vulkan ✓ (his is GL-only). Behind only
+  on Omarchy 4.0.1 → fixed by this rebuild.
+- Repo: https://github.com/tsouth89/try-omarchy-windows • release v0.0.1-preview
+  carries the current (old) image artifacts. NOTES.md has the running log;
+  docs/FINDINGS.md every trap. Laptop quick start lives in README ("Try it").
