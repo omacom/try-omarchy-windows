@@ -28,15 +28,21 @@ if (-not (Test-Path $qemu)) {
 }
 Write-Host "QEMU: $((& $qemu --version | Select-Object -First 1))"
 
-# 3. zstd for the image decompress
-$zstd = (Get-Command zstd -ErrorAction SilentlyContinue).Source
+# 3. zstd for the image decompress (winget id was Facebook.Zstandard, renamed Meta.Zstandard)
+function Find-Zstd {
+    $c = (Get-Command zstd -ErrorAction SilentlyContinue).Source
+    if ($c) { return $c }
+    $link = "$env:LOCALAPPDATA\Microsoft\WinGet\Links\zstd.exe"
+    if (Test-Path $link) { return $link }
+    Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter zstd.exe -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+$zstd = Find-Zstd
 if (-not $zstd) {
-    $cand = "$env:LOCALAPPDATA\Microsoft\WinGet\Links\zstd.exe"
-    if (-not (Test-Path $cand)) {
-        Write-Host 'Installing zstd via winget...'
-        winget install --id Facebook.Zstandard --accept-source-agreements --accept-package-agreements --disable-interactivity
-    }
-    if (Test-Path $cand) { $zstd = $cand } else { $zstd = (Get-Command zstd -ErrorAction Stop).Source }
+    Write-Host 'Installing zstd via winget...'
+    winget install --id Meta.Zstandard --accept-source-agreements --accept-package-agreements --disable-interactivity
+    $zstd = Find-Zstd
+    if (-not $zstd) { throw 'zstd not found after install; open a new shell or install zstd manually.' }
 }
 
 # 4. Guest image

@@ -1,7 +1,25 @@
 # try-omarchy-windows — working notes / session handoff
 
 **Read this first in a new session.** Keep this file updated as work progresses.
-Last updated: 2026-08-27 (late evening: CPU-feature findings + boot baseline in).
+Last updated: 2026-08-27 (bare-metal laptop bootstrap in progress).
+
+## Bare-metal validation (Windows laptop, 2026-08-27)
+
+Hardware: AMD Ryzen 5 5625U (Zen 3, 6C/12T, AVX2), Radeon integrated GPU (Vulkan-capable
+— Venus candidate), 16 GB RAM, Windows 11 Pro 26200.
+
+Bootstrap status:
+- [x] Repo cloned to `C:\cssi\try-omarchy-windows`
+- [x] WHP optional feature enabled — **reboot pending** (hypervisor was already running
+      via HvHost/vmcompute, but the HypervisorPlatform feature itself was off)
+- [x] QEMU 11.1.0 installed via winget (qemu-w64-setup-20260811)
+- [x] zstd 1.5.7 installed — **bootstrap.ps1 bug found+fixed:** winget id
+      `Facebook.Zstandard` no longer exists, renamed `Meta.Zstandard`; also the
+      `WinGet\Links\zstd.exe` shim didn't materialize in-session, so the script now
+      falls back to searching WinGet Packages
+- [x] v0.0.1-preview guest artifacts downloaded, rootfs decompressed (6 GiB)
+- [ ] Post-reboot: `launch-omarchy.ps1`, record WHPX init / boot timings / SDL behavior
+- [ ] llvmpipe feel + `systemd-analyze`, then declare preview validated (or not)
 
 ## Current state
 
