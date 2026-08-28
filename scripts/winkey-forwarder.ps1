@@ -54,6 +54,10 @@ public static class WinKeyForwarder
                     return (IntPtr)1;   // swallow on host, deliver to guest via QMP
                 }
                 if (winDown) { winDown = false; queue.Enqueue(false); kick.Set(); }  // focus left mid-press
+                // VM not focused: approve the key and SKIP the rest of the hook chain.
+                // QEMU installs its own LL hook on every grab which swallows Win even
+                // when unfocused; returning 0 without CallNextHookEx bypasses it.
+                return IntPtr.Zero;
             }
         }
         return CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
@@ -111,6 +115,11 @@ public static class WinKeyForwarder
         }
     }
 
+    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll")] static extern uint MsgWaitForMultipleObjects(uint n, IntPtr[] handles, bool all, uint ms, uint mask);
+    [DllImport("user32.dll")] static extern bool PeekMessage(out MSG m, IntPtr h, uint mi, uint ma, uint remove);
+    const uint QS_ALLINPUT = 0x04FF, PM_REMOVE = 1;
+
     public static void Run(int port)
     {
         qmpPort = port;
@@ -120,8 +129,17 @@ public static class WinKeyForwarder
         IntPtr h = SetWindowsHookEx(WH_KEYBOARD_LL, keep, GetModuleHandle(null), 0);
         if (h == IntPtr.Zero) throw new Exception("SetWindowsHookEx failed");
         Console.WriteLine("winkey-forwarder active: Super -> Omarchy when the VM window is focused");
+        // QEMU re-installs its own LL hook on every grab; LL hooks run newest-first.
+        // Re-hook periodically so this hook stays at the front of the chain.
         MSG m;
-        while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { }
+        while (true)
+        {
+            MsgWaitForMultipleObjects(0, null, false, 800, QS_ALLINPUT);
+            while (PeekMessage(out m, IntPtr.Zero, 0, 0, PM_REMOVE)) { }
+            UnhookWindowsHookEx(h);
+            h = SetWindowsHookEx(WH_KEYBOARD_LL, keep, GetModuleHandle(null), 0);
+            if (h == IntPtr.Zero) { Thread.Sleep(500); h = SetWindowsHookEx(WH_KEYBOARD_LL, keep, GetModuleHandle(null), 0); }
+        }
     }
 }
 "@
