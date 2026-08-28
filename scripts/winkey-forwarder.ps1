@@ -1,7 +1,9 @@
-# Focus-scoped Windows-key forwarder — app-shell prototype.
+# Focus-scoped Windows-key forwarder - app-shell prototype.
 # While the QEMU window is foreground: swallows the Windows key on the host (no Start
 # menu, no Win+combos) and forwards it to the guest as Super (meta_l) over QMP.
 # While any other window is foreground: the Windows key behaves normally.
+# Also keeps the SDL window retitled to "Try Omarchy" - users must never see QEMU
+# chrome (QEMU resets its title on every grab toggle, so this reasserts periodically).
 # Pair with SDL_GRAB_KEYBOARD=0 so SDL never installs its own (system-wide) hook.
 #   powershell -ExecutionPolicy Bypass -File winkey-forwarder.ps1 [-QmpPort 4446]
 param([int]$QmpPort = 4446)
@@ -14,6 +16,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 
 public static class WinKeyForwarder
@@ -69,6 +72,10 @@ public static class WinKeyForwarder
         return pid != 0 && pid == (uint)qemuPid;
     }
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool SetWindowText(IntPtr hWnd, string text);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, StringBuilder buf, int max);
+    const string AppTitle = "Try Omarchy";
+
     static void PidRefresher()
     {
         while (true)
@@ -77,6 +84,16 @@ public static class WinKeyForwarder
             {
                 Process[] ps = Process.GetProcessesByName("qemu-system-x86_64");
                 qemuPid = ps.Length > 0 ? ps[0].Id : -1;
+                if (ps.Length > 0)
+                {
+                    IntPtr hw = ps[0].MainWindowHandle;
+                    if (hw != IntPtr.Zero)
+                    {
+                        StringBuilder sb = new StringBuilder(256);
+                        GetWindowText(hw, sb, 256);
+                        if (sb.ToString() != AppTitle) SetWindowText(hw, AppTitle);
+                    }
+                }
                 foreach (Process p in ps) p.Dispose();
             }
             catch { }
