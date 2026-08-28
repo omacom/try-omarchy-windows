@@ -28,6 +28,19 @@ WHPX works on Windows Home and Pro (it's the same platform WSL2 rides on), so no
 
 Proven boot recipe: `-accel whpx -machine q35 -cpu qemu64`, direct kernel boot (vmlinuz + initramfs + raw ext4 rootfs on virtio-blk), all-virtio devices, DirectSound audio. See [docs/FINDINGS.md](docs/FINDINGS.md) for the details and the traps.
 
+## Try it (developer preview)
+
+For tinkerers comfortable with PowerShell — this is not the polished app yet. From an elevated PowerShell:
+
+```powershell
+git clone https://github.com/tsouth89/try-omarchy-windows
+cd try-omarchy-windows
+powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1   # WHP + QEMU + image; may ask for one reboot
+powershell -ExecutionPolicy Bypass -File scripts\launch-omarchy.ps1
+```
+
+First boot walks you through Omarchy's setup form, then you're in Hyprland. Rendering is CPU-only in this preview (llvmpipe with the fastest CPU flags stock WHPX survives); GPU acceleration is the next milestone.
+
 ## Repository layout
 
 - `scripts/` — PowerShell scripts that boot and drive the guest (QMP screendump, send-key typing, WHPX smoke test)
