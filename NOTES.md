@@ -30,7 +30,10 @@ Bootstrap status:
 - **New trap:** in-guest `systemctl reboot` wedges QEMU (WHPX can't do system reset).
   `-no-reboot` added to launch-omarchy.ps1; app shell must relaunch on exit. See
   FINDINGS.md "NEW TRAP".
-- llvmpipe subjective feel: pending Brandon's verdict after some hands-on time.
+- llvmpipe subjective feel (Brandon, bare metal): desktop is workable, but media is
+  not — YouTube video playback is poor and audio crackles (dsound + llvmpipe
+  starving the audio thread on 4 vCPUs). Confirms Venus GPU path as the priority.
+  To try at next relaunch: -smp 6, dsound latency= tuning or -audiodev sdl.
 - SDL UX (see FINDINGS.md "SDL desktop UX findings"): cursor was invisible because
   the image's monitors.lua sets cursor invisible=true (correct for VNC hosts, wrong
   for SDL) — flipped to false in this VM, **must be fixed in the image builder**;
