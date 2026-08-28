@@ -1,7 +1,7 @@
 # try-omarchy-windows — working notes / session handoff
 
 **Read this first in a new session.** Keep this file updated as work progresses.
-Last updated: 2026-08-27 (evening, after first Hyprland-under-WHPX boot).
+Last updated: 2026-08-27 (late evening: CPU-feature findings + boot baseline in).
 
 ## Current state
 
@@ -50,10 +50,13 @@ Goal: prove GPU-accelerated Omarchy via WINQ-EMU's Venus Vulkan path on real har
 
 ## Open work, in rough order
 
-- [ ] CPU-feature experiment (Linux box, in progress): WHPX rejects `-cpu host`; test
-      named models (Skylake-Client etc.) / `qemu64,+avx2,...` for llvmpipe speedup.
-      Matters as the universal fallback path. Record what WHPX accepts.
-- [ ] Boot-time profile (`systemd-analyze` in guest) and trim toward instant-on.
+- [x] CPU-feature experiment DONE 2026-08-27: XSAVE/AVX panics guests under upstream
+      WHPX; safe ceiling `qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes` (now default in
+      scripts/start-omarchy.ps1). AVX2 needs WINQ-EMU's patched WHPX. See FINDINGS.md.
+- [x] Boot profile baseline 2026-08-27: 9.03s to graphical.target in the nested dev
+      VM (5.1s kernel + 4.0s user). Trim + SDDM autologin still open.
+- [ ] Seamless/auto login: post-provisioning boots land on SDDM login; instant-try
+      UX needs autologin (or upstream omarchy seamless-login) wired into the image.
 - [ ] "Just try it" mode: auto-provision a default account over QMP (or pre-provisioned
       image variant) so first boot lands straight in Hyprland.
 - [ ] Dev-image variant with openssh + QEMU hostfwd for real in-guest automation

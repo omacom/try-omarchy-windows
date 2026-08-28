@@ -56,3 +56,33 @@ Caveat: all performance numbers measured in this nested environment carry KVM-ne
 ## GPU path (planned, needs real hardware)
 
 WINQ-EMU proves Venus Vulkan forwarding works on Windows QEMU (their benchmark: 410 fps SuperTuxKart vs 226 under WSL2), with virgl for GL and experimental DXVA video decode. Their caveat: BIOS boot, not EFI (EFI boot tanks Vulkan perf). The dev VM has no GPU to forward, so this work needs a physical Windows machine.
+
+## WHPX CPU features: the XSAVE cliff (2026-08-27 evening)
+
+Upstream QEMU WHPX accepts any `-cpu` model at launch, but **any XSAVE-state feature
+(AVX and above) panics the guest kernel at ~0.25s in `fpstate_reset`** — upstream WHPX
+does not virtualize XSAVE/XCR0 state correctly. Launch acceptance means nothing;
+Skylake-Client-v3, Haswell-v4, and `qemu64,+avx,...` all pass validation and then
+panic the guest.
+
+- Safe proven ceiling: `qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes` — boots the full
+  Omarchy image cleanly, flags visible in-guest. llvmpipe benefits from SSE4.1/4.2,
+  so ship this as the fallback-tier CPU model instead of bare qemu64.
+- AVX2-accelerated llvmpipe therefore REQUIRES WINQ-EMU's patched WHPX (their
+  "full -cpu host passthrough" claim is exactly this fix). WINQ-EMU matters for the
+  CPU-rendering fallback, not just Venus.
+- Methodology traps, learned the hard way: (1) a panicked guest leaves the QEMU
+  process running — check guest health, not process liveness; (2) Windows OpenSSH
+  kills the session's process tree on disconnect, so QEMU must not outlive the ssh
+  session that started it (hold the session or use a scheduled task); (3) Alpine's
+  `virt` kernel has no virtio-gpu driver — use `-device VGA` for Alpine-based text
+  harnesses; the Omarchy image has virtio-gpu and is fine.
+
+## Boot profile (nested dev VM, SSE4.2 pack)
+
+`systemd-analyze` in the Omarchy guest: **5.06s kernel + 3.97s userspace = 9.03s to
+graphical.target**, then SDDM. Top blame: dev-vda.device 1.66s,
+systemd-tmpfiles-setup-dev-early 1.14s, user-runtime-dir 1.10s, systemd-userdbd 1.06s.
+Bare metal will be faster (this carries KVM-nesting overhead). Note: after first-boot
+provisioning auto-login, subsequent boots land on SDDM login — a seamless-login or
+autologin config is needed for the "instant try" UX.

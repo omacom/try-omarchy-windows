@@ -11,7 +11,7 @@ $cmdline = ($spec.runtime.kernelCommandLine -replace 'console=hvc0', 'console=tt
 
 Get-Process qemu-system-x86_64 -ErrorAction SilentlyContinue | Stop-Process -Force
 $qemuArgs = @(
-    '-accel','whpx','-machine','q35','-cpu','qemu64','-smp','4','-m','4096',
+    '-accel','whpx','-machine','q35','-cpu','qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes','-smp','4','-m','4096',
     '-drive',"file=$disk,format=raw,if=virtio",
     '-kernel',(Join-Path $g 'vmlinuz-linux'),
     '-initrd',(Join-Path $g 'initramfs-linux.img'),
