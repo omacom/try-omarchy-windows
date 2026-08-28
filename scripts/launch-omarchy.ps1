@@ -18,7 +18,10 @@ param(
     [string]$WinqEmu = 'C:\WINQ-EMU',
     [switch]$Fullscreen,
     [switch]$Fresh,    # discard the writable disk and start over
-    [switch]$NoGpu     # force CPU rendering even if WINQ-EMU is installed
+    [switch]$NoGpu,    # force CPU rendering even if WINQ-EMU is installed
+    [string]$Share = ''  # host folder shared into the guest over virtio-9p (GPU mode
+                         # only - WINQ-EMU ships 9p, stock QEMU for Windows does not).
+                         # In-guest: sudo mount -t 9p -o trans=virtio hostshare /mnt/host
 )
 $ErrorActionPreference = 'Stop'
 $QmpToolsPort = 4445   # free for qmp.ps1 / provisioning tooling
@@ -92,6 +95,14 @@ if ($useGpu) {
         '-display', 'sdl,gl=off',
         '-serial', "file:$vm\serial.log"
     ) + $qemuArgs
+}
+if ($Share) {
+    if (-not (Test-Path $Share -PathType Container)) { throw "Share folder not found: $Share" }
+    if ($useGpu) {
+        $qemuArgs += @('-virtfs', "local,path=$Share,mount_tag=hostshare,security_model=none")
+    } else {
+        Write-Host 'Folder sharing needs the WINQ-EMU build (stock QEMU for Windows has no virtio-9p) - ignoring -Share.' -ForegroundColor Yellow
+    }
 }
 if ($Fullscreen) { $qemuArgs += '-full-screen' }
 $argStr = ($qemuArgs | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '

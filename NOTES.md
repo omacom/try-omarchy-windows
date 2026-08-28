@@ -147,6 +147,36 @@ Goal: prove GPU-accelerated Omarchy via WINQ-EMU's Venus Vulkan path on real har
    (not llvmpipe), and animations/blur feel smooth. Grab numbers + screenshots, update
    this file and FINDINGS.md.
 
+## Competitive: try-omarchy (macOS) v0.2.0 shipped 2026-08-28
+
+Eduardo's release (github.com/themartiano/try-omarchy/releases/tag/v0.2.0):
+Omarchy 4.0.1, folder sharing, clipboard sharing, package installs (ARM-compatible
+only), ASCII animations/screensaver, default Omarchy window behavior. Our position
+(direction: stay ahead; "98% native" with pragmatic trade-offs, image stays lean -
+no 3GB+ downloads; additions so far total <20MB):
+
+- Omarchy version: our image is 4.0.0.alpha-1 (hyprland 0.56.2, kernel 7.1.9) -
+  BEHIND. Bump the builder pin to 4.0.1 in the next image rebuild.
+- Package installs: x86_64 = the entire Arch/AUR ecosystem works, vs his
+  ARM-compatible subset. Structurally ahead, zero work needed.
+- Screensavers: DONE in the dev VM (ttfx+hypridle); bake into image.
+- Folder sharing: DONE 2026-08-28, launcher `-Share <folder>` via WINQ-EMU's
+  virtio-9p (GPU mode; stock QEMU for Windows ships no 9p). Verified both
+  directions on hardware (mount -t 9p -o trans=virtio hostshare /mnt/host).
+  Remaining: auto-mount in guest (systemd.mount with nofail, image rebuild) and
+  a default share folder in the UX.
+- Clipboard sharing: NOT yet. Findings: stock QEMU has the built-in qemu-vdagent
+  chardev but WINQ-EMU's build omits it (ask cmspam to enable CONFIG_VDAGENT?) -
+  and spice-vdagent's clipboard is X11-centric anyway, dubious under Wayland/
+  Hyprland. Better plan that beats the mac approach: OUR OWN bridge - tiny guest
+  daemon using wl-clipboard (wl-copy/wl-paste) talking to the host app-shell over
+  a hostfwd TCP port (guest outbound to 10.0.2.2 also works); host side watches
+  the Windows clipboard. Compositor-native, works on both QEMU builds. Top
+  app-shell work item.
+- Beyond parity (Windows-only wins already landed): Venus VULKAN (his stack is
+  VirGL GL-only), focus-scoped Windows-key-as-Super, supervised lifecycle
+  (launch-wedge retry, reboot relaunch, clean poweroff), zero QEMU chrome.
+
 ## Release plan — v0.0.2-preview
 
 Goal (2026-08-28 direction): package this cleanly for non-technical Windows users
@@ -155,13 +185,24 @@ who want to try Linux without committing. Two tracks:
 **Track 1 — script release (this repo, ready after end-to-end testing):**
 - [x] Unified supervised launcher, no consoles, branded window, Win-key scoping
 - [x] Non-admin-friendly bootstrap
-- [ ] End-to-end test of the new launcher on a fresh boot (watchdog, reboot
-      relaunch, poweroff reap, GPU + `-NoGpu` modes, `-Fresh` disk rebuild)
+- [x] End-to-end test DONE 2026-08-28 (on hardware): GPU boot + autologin;
+      in-guest reboot -> auto relaunch; GPU poweroff -> clean exit; -NoGpu boot
+      (visible cursor, autologin, screendump OK); stock poweroff wedge -> probed
+      and reaped; no console windows; window stays titled "Try Omarchy".
+      Two bugs found+fixed by testing: wedged QEMU never delivers its SHUTDOWN
+      event (supervisor now probes liveness), and the forwarder didn't match the
+      w-binary process name. Untested still: -Fresh, first-boot-form path,
+      launch-wedge retry (no wedge occurred post-fix; logic exercised in review
+      only).
+- [x] Folder sharing via `-Share` (see competitive section)
 - [ ] Tag v0.0.2-preview reusing the v0.0.1 guest artifacts
 
 **Track 2 — image rebuild (Linux box, guest builder), the "full Omarchy" image:**
+- [ ] Bump Omarchy pin to 4.0.1 (image currently 4.0.0.alpha-1)
 - [ ] Add packages: ttfx, hypridle (screensavers — required), vulkan-virtio
-      (Venus ICD; vulkan-tools in a dev variant)
+      (Venus ICD; vulkan-tools in a dev variant), wl-clipboard (for the clipboard
+      bridge)
+- [ ] 9p auto-mount unit for the `-Share` folder (systemd.mount, nofail)
 - [ ] Cursor visible under SDL (monitors.lua invisible=false)
 - [ ] Provisioning writes the SDDM autologin conf for the created user
       (acceptable to show Omarchy-branded screens; never the generic SDDM greeter)
