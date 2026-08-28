@@ -1,0 +1,24 @@
+From 79c39cccfe8fe3e60253664458c0673a81e05e30 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Fri, 28 Aug 2026 17:50:14 -0400
+Subject: [PATCH 3/3] clipboard-bridge: silence push-side socat when no host
+ listener
+
+---
+ guest/factory-overlay/usr/local/bin/clipboard-bridge | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/guest/factory-overlay/usr/local/bin/clipboard-bridge b/guest/factory-overlay/usr/local/bin/clipboard-bridge
+index 7dec5b8..a299b12 100755
+--- a/guest/factory-overlay/usr/local/bin/clipboard-bridge
++++ b/guest/factory-overlay/usr/local/bin/clipboard-bridge
+@@ -35,5 +35,5 @@ exec wl-paste --no-newline --watch sh -c '
+   [ "$sha" = "$(cat "$STATE/last_set" 2>/dev/null)" ] && exit 0
+   [ "$sha" = "$(cat "$STATE/last_sent" 2>/dev/null)" ] && exit 0
+   echo "$sha" > "$STATE/last_sent"
+-  { printf "%s" "$cur" | base64 -w0; echo; } | socat -u - TCP:10.0.2.2:4448,connect-timeout=3
++  { printf "%s" "$cur" | base64 -w0; echo; } | socat -u - TCP:10.0.2.2:4448,connect-timeout=3 2>/dev/null
+ '
+-- 
+2.55.0
+

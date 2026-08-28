@@ -1,78 +1,53 @@
-# Handoff — next session: Linux box, image rebuild (track 2)
+# Handoff — next session: Windows laptop, validate v0.0.2-preview
 
-The Windows side is done and pushed (see "State of the world" below). What remains
-for v0.0.2-preview is the **guest image rebuild**, and that only happens on the
-Linux desktop (Docker + the guest builder). This file is the brief for that session.
+The image rebuild is done and published (2026-08-28 evening, Linux box):
+**https://github.com/tsouth89/try-omarchy-windows/releases/tag/v0.0.2-preview**
+— Omarchy 4.0.1, all 22 themes, screensavers, permanent autologin, baked-in
+clipboard bridge, 9p automount, visible cursor. Validated end to end under KVM
+(form → desktop → reboot → desktop, no greeter). What's left is proving the same
+image on real Windows hardware with the real launcher.
 
-## Where things are on the Linux box
+## The validation pass (30–45 min)
 
-- Fork checkout with the guest builder: `~/Projects/try-omarchy-win` (**win** branch)
-  — jorge-huxley's x86_64 retarget of the try-omarchy build system.
-- Builder: `guest/build-container.sh` (Docker, ~10 min). Output: `dist/guest/`
-  (vmlinuz-linux, initramfs-linux.img, build-spec.json, rootfs.ext4[.zst]).
-- The build enforces `packages.lock.json` against live Arch repos and refuses on
-  drift: `guest/build-container.sh --refresh-package-lock guest/packages.lock.json`,
-  review the diff, rebuild. Expect to need this.
-- Optional test bed: the dockur/windows Win11 VM (nested KVM → WHPX works; set
-  `VMX: "Y"` on the container). Working scripts land in `~/Windows/tryomarchy/`.
-  Final validation should happen on the laptop anyway.
+1. `git pull` this repo (launcher + bootstrap changed too).
+2. Get the new image. Either delete `%LOCALAPPDATA%\TryOmarchy\guest` and rerun
+   `scripts\bootstrap.ps1` (it now points at v0.0.2-preview), or download the
+   four artifacts manually into `guest\`. **Then launch with `-Fresh`** — the
+   laptop's current disk has everything hand-installed and will mask image bugs.
+3. `powershell -ExecutionPolicy Bypass -File scripts\launch-omarchy.ps1 -Fresh`
+   Walk the setup form. Confirm, in order:
+   - boot is a black window until the branded splash (no console text, no
+     blinking cursor — the launcher now drops console=tty0/tty1 from the
+     cmdline; boot logs are in `vm\serial*.log` only)
+   - cursor visible in the SDL window without any in-guest fix
+   - `omarchy-version` says 4.0.1-1; theme picker shows 22 themes
+   - screensaver runs (idle or `omarchy-launch-screensaver`)
+   - clipboard both directions with zero setup (bridge is baked in + host side
+     auto-starts)
+   - `-Share <folder>` appears at `/mnt/host` with no manual mount (GPU mode)
+   - reboot from inside Omarchy → relaunches → straight back to the desktop
+     (permanent autologin; the generic SDDM greeter must never appear)
+4. Record results + timings in NOTES.md. If it all passes, v0.0.2-preview is
+   the validated preview and the old caveats in README can be tightened.
 
-## The image change list (all proven live in the laptop VM on 2026-08-28)
+## Known state / gotchas
 
-1. **Bump the Omarchy pin to 4.0.1** — image currently ships 4.0.0.alpha-1
-   (hyprland 0.56.2, kernel 7.1.9). This is the one place we trail the macOS app.
-2. **Add packages**: `ttfx`, `hypridle` (screensavers — required, ttfx is in the
-   image's own omarchy pacman repo), `vulkan-virtio` (Venus ICD), `wl-clipboard`
-   (clipboard bridge). `socat`, `foot`, `jq` are already in. Add `vulkan-tools`
-   only to a dev variant. Everything together is <20MB — the "98% native" rule:
-   image stays a ~1.2GB download, no 3GB bloat.
-3. **Cursor visible under SDL**: the builder writes `~/.config/hypr/monitors.lua`
-   with `cursor = { invisible = true }` (a VNC-era assumption). Must be `false`
-   for SDL. (Config is Hyprland Lua — edit the .lua, not hyprland.conf.)
-4. **SDDM autologin written by provisioning**: after the setup form creates the
-   user, provisioning must write `/etc/sddm.conf.d/autologin.conf` with
-   `[Autologin]\nUser=<user>\nSession=hyprland-uwsm`. Proven config. Rule from
-   hands-on feedback: Omarchy-branded screens are fine; the generic SDDM greeter
-   must never appear.
-5. **Bake the clipboard bridge**: install `scripts/guest/clipboard-bridge.sh`
-   (this repo) as an executable on PATH, plus
-   `scripts/guest/clipboard-bridge.service` as a systemd **user** unit enabled
-   for provisioned users (WantedBy=graphical-session.target; uwsm imports
-   WAYLAND_DISPLAY so it works). Host counterpart is already in the launcher.
-6. **9p automount**: mount tag `hostshare` → `/mnt/host`, systemd.mount with
-   `nofail` + `x-systemd.device-timeout` so boots without `-Share` are unaffected
-   (`mount -t 9p -o trans=virtio hostshare /mnt/host` is the manual form).
-7. Stretch: wire up plymouth (it ships in the image) or otherwise hide boot
-   console text on tty1.
+- The published image still has the noisy push-side socat in the clipboard
+  bridge (guest-build patch 0003 landed after the build). Harmless — the
+  launcher always runs the host listener. Rolls into the next image.
+- Stock-QEMU (CPU/llvmpipe) mode keeps its known wedges; the supervisor handles
+  them. GPU mode (WINQ-EMU at C:\WINQ-EMU) is the real product path.
+- All the deep traps live in docs/FINDINGS.md (XSAVE cliff, -vga none, sshd
+  process-tree kills, poweroff wedge, QMP-vs-GL screendump).
+- Image builds now happen on the Linux box with `guest-build/*.patch` on top of
+  jorge's builder (guest-build/README.md has the exact commands). The Linux box
+  can also KVM-validate an image without any Windows VM — see the 2026-08-28
+  evening session log in NOTES.md.
 
-Then: `zstd` the rootfs, publish vmlinuz/initramfs/build-spec/rootfs.ext4.zst as a
-**v0.0.2-preview** GitHub release on tsouth89/try-omarchy-windows, bump `$release`
-in `scripts/bootstrap.ps1`, and validate on the laptop with `-Fresh` (the laptop's
-current VM has all of the above hand-installed — a stale disk will mask image bugs).
+## After validation (rough order)
 
-## Gotchas for guest-image work (details in docs/FINDINGS.md)
-
-- Writes shortly before guest poweroff can be lost under stock WHPX (the poweroff
-  wedge) — `sync` in any provisioning step that writes late.
-- QMP screendump doesn't work on the GL path — verify via serial
-  (`cmd | sudo tee /dev/ttyS0` lands in the host-side serial log).
-- The clipboard bridge protocol is LF-only base64 lines; never put a tr/sed stage
-  after socat (pipe buffering stalls small payloads).
-- Keep .ps1 files pure ASCII (PS 5.1 reads em-dashes as CP1252 curly quotes).
-
-## State of the world (2026-08-28, all pushed through 278b363)
-
-- Windows side COMPLETE and verified on hardware (Ryzen 5 5625U laptop):
-  supervised launcher (`scripts/launch-omarchy.ps1`: GPU auto-detect via WINQ-EMU
-  at C:\WINQ-EMU, llvmpipe fallback, launch-wedge watchdog, poweroff-wedge reap,
-  reboot auto-relaunch, windowless w-binary, no consoles), focus-scoped Win key +
-  "Try Omarchy" branding (winkey-forwarder), **two-way clipboard sharing**
-  (clipboard-bridge, survives reboots), **folder sharing** (`-Share`, 9p, GPU
-  mode), non-admin bootstrap, SDDM autologin (hand-applied in the laptop VM).
-- Feature scorecard vs try-omarchy macOS v0.2.0 (Eduardo, 2026-08-28): folder
-  sharing ✓, clipboard ✓ (ours is Wayland-native), screensavers ✓, package
-  installs ✓ (full x86_64 vs ARM subset), Vulkan ✓ (his is GL-only). Behind only
-  on Omarchy 4.0.1 → fixed by this rebuild.
-- Repo: https://github.com/tsouth89/try-omarchy-windows • release v0.0.1-preview
-  carries the current (old) image artifacts. NOTES.md has the running log;
-  docs/FINDINGS.md every trap. Laptop quick start lives in README ("Try it").
+- Pre-provisioned "just try it" image variant (skip the form entirely)
+- Native app shell (window embedding, branded icon, WHP-enable installer flow)
+- Signed bootstrapper / packaging decision
+- Outreach to Eduardo (themartiano) and Jorge (jorge-huxley); consider
+  upstreaming the -vga none finding and the 4.0.1 pin bump to jorge's fork

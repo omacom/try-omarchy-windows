@@ -44,7 +44,9 @@ if (-not (Test-Path $qemu)) { throw "QEMU not found at $qemu - run bootstrap.ps1
 New-Item -ItemType Directory -Path $vm -Force | Out-Null
 
 $spec = Get-Content (Join-Path $g 'build-spec.json') | ConvertFrom-Json
-$cmdline = $spec.runtime.kernelCommandLine -replace 'console=hvc0', 'console=ttyS0 console=tty1'
+# Serial log only - no console= on the display, so no kernel text or blinking
+# cursor flashes in the window before SDDM (boot problems: read vm\serial*.log).
+$cmdline = ($spec.runtime.kernelCommandLine -replace 'console=tty0 ', '' -replace 'console=hvc0', 'console=ttyS0') + ' vt.global_cursor_default=0'
 $expandedMiB = $spec.runtime.storage.expandedSizeMiB
 
 $disk = Join-Path $vm 'disk.raw'

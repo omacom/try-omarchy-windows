@@ -35,5 +35,5 @@ exec wl-paste --no-newline --watch sh -c '
   [ "$sha" = "$(cat "$STATE/last_set" 2>/dev/null)" ] && exit 0
   [ "$sha" = "$(cat "$STATE/last_sent" 2>/dev/null)" ] && exit 0
   echo "$sha" > "$STATE/last_sent"
-  { printf "%s" "$cur" | base64 -w0; echo; } | socat -u - TCP:10.0.2.2:4448,connect-timeout=3
+  { printf "%s" "$cur" | base64 -w0; echo; } | socat -u - TCP:10.0.2.2:4448,connect-timeout=3 2>/dev/null
 '

@@ -50,10 +50,11 @@ For GPU acceleration, install [WINQ-EMU Alpha 10](https://github.com/cmspam/winq
 ## Repository layout
 
 - `scripts/` — PowerShell scripts that boot and drive the guest (QMP screendump, send-key typing, WHPX smoke test)
+- `guest-build/` — patches on jorge's guest builder that produce our image, plus build instructions
 - `docs/FINDINGS.md` — technical findings, gotchas, and their fixes
 - `NOTES.md` — live working notes / session handoff
 
-The guest image is built from [jorge-huxley/try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win)'s `win` branch guest builder (`guest/build-container.sh`, needs Docker on Linux) — an x86_64 retarget of the upstream try-omarchy build system. Images are not committed; build one or grab a release artifact once releases exist.
+The guest image (Omarchy 4.0.1, all upstream themes, screensavers, autologin, clipboard bridge) is built from [jorge-huxley/try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win)'s `win` branch guest builder (`guest/build-container.sh`, needs Docker on Linux) — an x86_64 retarget of the upstream try-omarchy build system — with the patches in `guest-build/` applied. Images are not committed; bootstrap downloads the latest release artifact (~1.4 GB), or build your own.
 
 ## Credit where due
 

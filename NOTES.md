@@ -1,9 +1,54 @@
 # try-omarchy-windows — working notes / session handoff
 
 **Read this first in a new session.** Keep this file updated as work progresses.
-Last updated: 2026-08-28 (Windows side complete; clipboard + folder sharing landed
-and verified). **Next session is on the Linux box — start with [HANDOFF.md](HANDOFF.md),
-which is the image-rebuild brief.**
+Last updated: 2026-08-28 evening (image rebuilt: v0.0.2-preview published).
+**Next session: laptop — start with [HANDOFF.md](HANDOFF.md), the v0.0.2
+validation brief.**
+
+## Session 2026-08-28 evening (Linux box): image rebuild, v0.0.2-preview shipped
+
+Everything on the Track 2 list landed in one rebuild, validated end to end, and
+published: https://github.com/tsouth89/try-omarchy-windows/releases/tag/v0.0.2-preview
+
+- Builder changes live as commits on branch `image-v0.0.2` of the local
+  try-omarchy-win checkout AND as `guest-build/*.patch` in this repo (apply with
+  `git am` onto jorge's win branch — see guest-build/README.md).
+- Omarchy pinned to the v4.0.1 release tag. Upstream's `version` FILE still says
+  4.0.0.alpha at that tag — the builder now records that as `versionFile` and
+  stamps the release version into the staged runtime, so `omarchy-version`
+  reports 4.0.1-1 in-guest (verified).
+- All 22 upstream themes ship (4.0.1 grew the set from 6). Cost: rootfs.ext4.zst
+  1.28G -> 1.34G. Total download ~1.41G — inside the "under 2GB, no 3GB bloat"
+  budget. Distribution model stays stub-style: bootstrap.ps1 is the tiny
+  download, the image comes down during setup.
+- Autologin: upstream 4.0.1 provisioning already writes /etc/sddm.conf.d/
+  autologin.conf itself, but arms omarchy-provision-autologin-once.service to
+  delete it on the second boot (unencrypted installs). Our image adds an
+  ExecStartPost drop-in (keep-autologin) that disarms that cleanup — autologin
+  is permanent, greeter never appears. Verified across a reboot.
+- Clipboard bridge baked in: /usr/local/bin/clipboard-bridge + user unit enabled
+  globally (WantedBy=graphical-session.target). Service active on first login.
+  Cosmetic finding: with NO host bridge listening, the push-side socat printed a
+  broken-pipe line into a terminal; silenced with 2>/dev/null (patch 0003, in
+  the overlay + this repo's copy — NOT in the published v0.0.2 image; harmless
+  because launch-omarchy.ps1 always runs the host side).
+- 9p automount: mnt-host.mount with ConditionPathExistsGlob on virtio mount_tag
+  — "inactive" (not failed) when booted without -Share. Verified.
+- Cursor visible under SDL fixed in the builder fragment (was the VNC-era
+  invisible=true).
+- Boot-text polish WITHOUT plymouth (plymouth is NOT in the image — earlier note
+  was wrong): launch-omarchy.ps1 now strips console=tty0/hvc0 from the cmdline
+  (serial log keeps everything via console=ttyS0) and adds
+  vt.global_cursor_default=0. Boot = black window -> branded splash/SDDM ->
+  desktop. Verified under KVM with the same cmdline.
+- Validation was done under KVM on the Linux host (new trick — no Windows VM
+  needed for image work): host qemu + KVM boots the image with the same virtio
+  device set; needed qemu-hw-display-virtio-gpu{,-pci} on Arch. Full first-boot
+  form driven over QMP; scratchpad hmp.py used HMP sendkey (QMP send-key
+  qcodes were flaky for Return in gum — HMP sendkey worked every time).
+- Numbers (KVM, Ryzen desktop): 996ms kernel + 2.45s user = 3.45s to
+  graphical.target on the provisioned second boot.
+- Fresh-image validation on the laptop still pending — that's HANDOFF.md.
 
 ## Session 2026-08-28 (laptop, Tyler account)
 
@@ -161,8 +206,8 @@ only), ASCII animations/screensaver, default Omarchy window behavior. Our positi
 (direction: stay ahead; "98% native" with pragmatic trade-offs, image stays lean -
 no 3GB+ downloads; additions so far total <20MB):
 
-- Omarchy version: our image is 4.0.0.alpha-1 (hyprland 0.56.2, kernel 7.1.9) -
-  BEHIND. Bump the builder pin to 4.0.1 in the next image rebuild.
+- Omarchy version: 4.0.1 as of v0.0.2-preview (was 4.0.0.alpha-1) - PARITY,
+  plus all 22 themes vs the 6 the old image carried.
 - Package installs: x86_64 = the entire Arch/AUR ecosystem works, vs his
   ARM-compatible subset. Structurally ahead, zero work needed.
 - Screensavers: DONE in the dev VM (ttfx+hypridle); bake into image.
@@ -208,22 +253,20 @@ who want to try Linux without committing. Two tracks:
 - [x] Folder sharing via `-Share` (see competitive section)
 - [ ] Tag v0.0.2-preview reusing the v0.0.1 guest artifacts
 
-**Track 2 — image rebuild (Linux box, guest builder), the "full Omarchy" image:**
-- [ ] Bump Omarchy pin to 4.0.1 (image currently 4.0.0.alpha-1)
-- [ ] Add packages: ttfx, hypridle (screensavers — required), vulkan-virtio
-      (Venus ICD; vulkan-tools in a dev variant), wl-clipboard (for the clipboard
-      bridge; socat is already in the image)
-- [ ] Bake in the clipboard bridge: scripts/guest/clipboard-bridge.sh to
-      /usr/local/bin (or a skel ~/.local/bin) + the systemd user service enabled
-      for provisioned users
-- [ ] 9p auto-mount unit for the `-Share` folder (systemd.mount, nofail)
-- [ ] Cursor visible under SDL (monitors.lua invisible=false)
-- [ ] Provisioning writes the SDDM autologin conf for the created user
-      (acceptable to show Omarchy-branded screens; never the generic SDDM greeter)
-- [ ] Wire up plymouth (or otherwise hide boot console text)
-- [ ] Refresh packages.lock.json, rebuild, publish artifacts, bump bootstrap URL
-- Stretch: pre-provisioned "just try it" variant (no setup form at all), dev
-  variant with sshd + hostfwd
+**Track 2 — image rebuild: DONE 2026-08-28 evening, shipped as v0.0.2-preview**
+(see the session log near the top of this file for the details):
+- [x] Omarchy pin bumped to 4.0.1 (+ all 22 themes; omarchy-version reports 4.0.1-1)
+- [x] ttfx, hypridle, vulkan-virtio added (wl-clipboard was already in)
+- [x] Clipboard bridge baked in (user unit enabled globally)
+- [x] 9p auto-mount (condition-guarded mnt-host.mount)
+- [x] Cursor visible under SDL
+- [x] Autologin permanent (upstream writes it; our drop-in disarms its one-boot
+      cleanup — the generic SDDM greeter never appears)
+- [x] Boot console text hidden — launcher-side cmdline change, no plymouth
+      (plymouth is NOT in the image; the old "it ships" note was wrong)
+- [x] Lock refreshed, image rebuilt, KVM-validated, published, bootstrap bumped
+- Stretch (still open): pre-provisioned "just try it" variant (no setup form),
+  dev variant with sshd + hostfwd
 
 ## Open work, in rough order
 

@@ -1,0 +1,399 @@
+From 62ab37755097410b5dc89bd20424c8e4fa4134fd Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Fri, 28 Aug 2026 17:33:49 -0400
+Subject: [PATCH 1/3] Image v0.0.2: Omarchy 4.0.1, all themes, screensavers,
+ permanent autologin, clipboard bridge, 9p automount, visible cursor
+
+---
+ .../etc/systemd/system/mnt-host.mount         | 15 +++++++
+ .../multi-user.target.wants/mnt-host.mount    |  1 +
+ .../20-try-omarchy.conf                       |  5 +++
+ .../etc/systemd/user/clipboard-bridge.service | 12 ++++++
+ .../clipboard-bridge.service                  |  1 +
+ .../usr/local/bin/clipboard-bridge            | 39 +++++++++++++++++++
+ .../usr/local/lib/try-omarchy/keep-autologin  | 11 ++++++
+ guest/fragments/hypr-monitors-qemu.append.lua |  6 +--
+ guest/packages.lock.json                      | 24 ++++++------
+ guest/packages.txt                            |  3 ++
+ guest/scripts/materialize-omarchy.sh          | 11 +++++-
+ guest/spec.json                               | 27 ++++++++++---
+ 12 files changed, 133 insertions(+), 22 deletions(-)
+ create mode 100644 guest/factory-overlay/etc/systemd/system/mnt-host.mount
+ create mode 120000 guest/factory-overlay/etc/systemd/system/multi-user.target.wants/mnt-host.mount
+ create mode 100644 guest/factory-overlay/etc/systemd/system/omarchy-provision-owner.service.d/20-try-omarchy.conf
+ create mode 100644 guest/factory-overlay/etc/systemd/user/clipboard-bridge.service
+ create mode 120000 guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service
+ create mode 100755 guest/factory-overlay/usr/local/bin/clipboard-bridge
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/keep-autologin
+
+diff --git a/guest/factory-overlay/etc/systemd/system/mnt-host.mount b/guest/factory-overlay/etc/systemd/system/mnt-host.mount
+new file mode 100644
+index 0000000..586b2df
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/mnt-host.mount
+@@ -0,0 +1,15 @@
++# Auto-mount the host folder the launcher attaches with -Share (virtio-9p,
++# mount tag "hostshare"). The condition keeps boots without -Share clean: no
++# 9p device, no mount attempt, no failed unit.
++[Unit]
++Description=Host shared folder (Try Omarchy -Share)
++ConditionPathExistsGlob=/sys/bus/virtio/devices/*/mount_tag
++
++[Mount]
++What=hostshare
++Where=/mnt/host
++Type=9p
++Options=trans=virtio
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/mnt-host.mount b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/mnt-host.mount
+new file mode 120000
+index 0000000..9191775
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/mnt-host.mount
+@@ -0,0 +1 @@
++../mnt-host.mount
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/system/omarchy-provision-owner.service.d/20-try-omarchy.conf b/guest/factory-overlay/etc/systemd/system/omarchy-provision-owner.service.d/20-try-omarchy.conf
+new file mode 100644
+index 0000000..6cd0cfa
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/omarchy-provision-owner.service.d/20-try-omarchy.conf
+@@ -0,0 +1,5 @@
++# In this guest the VM window is the auth boundary (like upstream's encrypted
++# installs), so keep the autologin provisioning writes instead of letting the
++# one-boot cleanup unit drop it — the generic SDDM greeter must never appear.
++[Service]
++ExecStartPost=/usr/local/lib/try-omarchy/keep-autologin
+diff --git a/guest/factory-overlay/etc/systemd/user/clipboard-bridge.service b/guest/factory-overlay/etc/systemd/user/clipboard-bridge.service
+new file mode 100644
+index 0000000..1e4a53d
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/clipboard-bridge.service
+@@ -0,0 +1,12 @@
++[Unit]
++Description=Clipboard bridge to the Windows host (Try Omarchy)
++After=graphical-session.target
++PartOf=graphical-session.target
++
++[Service]
++ExecStart=/usr/local/bin/clipboard-bridge
++Restart=on-failure
++RestartSec=3
++
++[Install]
++WantedBy=graphical-session.target
+diff --git a/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service
+new file mode 120000
+index 0000000..bc19cb1
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service
+@@ -0,0 +1 @@
++../clipboard-bridge.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/usr/local/bin/clipboard-bridge b/guest/factory-overlay/usr/local/bin/clipboard-bridge
+new file mode 100755
+index 0000000..7dec5b8
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/bin/clipboard-bridge
+@@ -0,0 +1,39 @@
++#!/bin/sh
++# Clipboard bridge (guest side) - syncs the Wayland clipboard with the Windows host.
++# Counterpart: scripts/clipboard-bridge.ps1, started by launch-omarchy.ps1 on the host.
++# Requires: wl-clipboard, socat (both tiny). Run inside the Hyprland session
++# (needs WAYLAND_DISPLAY), e.g. from an autostart/exec-once. Text only (v1).
++# 10.0.2.2 is the host as seen from QEMU user-mode networking.
++HOST=10.0.2.2
++PUSH_PORT=4448   # guest -> host: one base64 line per change, one connection each
++PULL_PORT=4449   # host -> guest: persistent, one base64 line per host change
++STATE=/tmp/.clipbridge
++mkdir -p "$STATE"
++
++# host -> guest
++(
++  while :; do
++    # NOTE: no tr/sed between socat and the loop - a pipe stage buffers ~4KB and
++    # stalls small clipboard payloads. The host writes LF-only lines (see
++    # clipboard-bridge.ps1 NewLine); read -r strips nothing else we care about.
++    socat -u TCP:$HOST:$PULL_PORT,connect-timeout=3 - 2>/dev/null | while IFS= read -r line; do
++      line=${line%"$(printf '\r')"}
++      printf '%s' "$line" | base64 -d > "$STATE/incoming" 2>/dev/null || continue
++      sha256sum < "$STATE/incoming" | cut -d' ' -f1 > "$STATE/last_set"
++      wl-copy < "$STATE/incoming"
++    done
++    sleep 2
++  done
++) &
++
++# guest -> host: wl-paste fires the handler on every new selection
++exec wl-paste --no-newline --watch sh -c '
++  STATE=/tmp/.clipbridge
++  cur=$(wl-paste --no-newline 2>/dev/null) || exit 0
++  [ -z "$cur" ] && exit 0
++  sha=$(printf "%s" "$cur" | sha256sum | cut -d" " -f1)
++  [ "$sha" = "$(cat "$STATE/last_set" 2>/dev/null)" ] && exit 0
++  [ "$sha" = "$(cat "$STATE/last_sent" 2>/dev/null)" ] && exit 0
++  echo "$sha" > "$STATE/last_sent"
++  { printf "%s" "$cur" | base64 -w0; echo; } | socat -u - TCP:10.0.2.2:4448,connect-timeout=3
++'
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/keep-autologin b/guest/factory-overlay/usr/local/lib/try-omarchy/keep-autologin
+new file mode 100755
+index 0000000..5c93448
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/keep-autologin
+@@ -0,0 +1,11 @@
++#!/bin/bash
++# Runs after omarchy-provision-owner succeeds. Upstream provisioning writes
++# /etc/sddm.conf.d/autologin.conf and, on unencrypted installs, arms
++# omarchy-provision-autologin-once.service to remove it on the next boot.
++# Disarm that cleanup so every boot logs straight into the desktop.
++set -u
++unit=omarchy-provision-autologin-once.service
++rm -f "/etc/systemd/system/graphical.target.wants/$unit" "/etc/systemd/system/$unit"
++# Stock WHPX can drop writes made shortly before poweroff; make these stick.
++sync
++exit 0
+diff --git a/guest/fragments/hypr-monitors-qemu.append.lua b/guest/fragments/hypr-monitors-qemu.append.lua
+index 88f0dc6..2230448 100644
+--- a/guest/fragments/hypr-monitors-qemu.append.lua
++++ b/guest/fragments/hypr-monitors-qemu.append.lua
+@@ -2,8 +2,8 @@
+ -- BEGIN OMARCHY QEMU PROFILE
+ -- QEMU publishes the live window's size and host refresh rate through Virtio
+ -- GPU EDID. Quattro's preceding automatic monitor rule stays authoritative;
+--- hide the guest cursor because the host composites it outside the guest
+--- scanout.
++-- keep the guest cursor visible because SDL displays the guest scanout
++-- directly (hiding it was a VNC-host assumption).
+ local function omarchy_kernel_option_enabled(expected_option)
+   if type(io) ~= "table" or type(io.open) ~= "function" then
+     return false
+@@ -29,7 +29,7 @@ local function omarchy_kernel_option_enabled(expected_option)
+ end
+ 
+ if omarchy_kernel_option_enabled("omarchy.qemu=1") then
+-  hl.config({ cursor = { invisible = true } })
++  hl.config({ cursor = { invisible = false } })
+   o.exec_on_start("/usr/local/bin/omarchy-native-display-sync")
+ end
+ -- END OMARCHY QEMU PROFILE
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index 3ba937b..0e21df7 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -27,10 +27,10 @@
+     "bluez-libs": "5.87-2",
+     "brotli": "1.2.0-1",
+     "btop": "1.4.7-1",
+-    "bubblewrap": "0.11.2-1",
++    "bubblewrap": "0.12.0-1",
+     "bzip2": "1.0.8-6",
+     "ca-certificates": "20240618-1",
+-    "ca-certificates-mozilla": "3.127-1",
++    "ca-certificates-mozilla": "3.128-1",
+     "ca-certificates-utils": "20240618-1",
+     "cairo": "1.18.4-1",
+     "chromium": "151.0.7922.173-1",
+@@ -61,7 +61,7 @@
+     "fastfetch": "2.67.1-1",
+     "fcft": "3.3.3-1",
+     "fd": "10.4.2-2",
+-    "ffmpeg": "2:9.0.1-1",
++    "ffmpeg": "2:9.0.1-4",
+     "fftw": "3.3.11-1",
+     "file": "5.48-1",
+     "filesystem": "2025.10.12-1",
+@@ -93,7 +93,7 @@
+     "glycin": "2.1.5-2",
+     "glycin-gtk4": "2.1.5-2",
+     "gmp": "6.3.0-3",
+-    "gnome-autoar": "0.4.5-1",
++    "gnome-autoar": "0.5.1-1",
+     "gnome-desktop-4": "1:44.5-1",
+     "gnome-desktop-common": "1:44.5-1",
+     "gnome-keyring": "1:50.0-1",
+@@ -124,7 +124,7 @@
+     "gupnp": "1:1.6.10-1",
+     "gupnp-dlna": "0.12.0-5",
+     "gupnp-igd": "1.6.0-2",
+-    "gvfs": "1.60.2-1",
++    "gvfs": "1.60.2-3",
+     "gzip": "1.14-2",
+     "harfbuzz": "14.3.1-1",
+     "hicolor-icon-theme": "0.18-1",
+@@ -189,13 +189,13 @@
+     "libblockdev-part": "3.5.0-2",
+     "libblockdev-smart": "3.5.0-2",
+     "libblockdev-swap": "3.5.0-2",
+-    "libbluray": "1.4.1-1",
++    "libbluray": "1.5.0-1",
+     "libbpf": "1.7.0-1",
+     "libbs2b": "3.1.0-10",
+     "libbsd": "0.12.2-2",
+     "libbytesize": "2.12-3",
+     "libcap": "2.78-1",
+-    "libcap-ng": "0.9.3-1",
++    "libcap-ng": "0.9.5-1",
+     "libcdio": "2.3.0-1",
+     "libcdio-paranoia": "10.2+2.0.2-2",
+     "libcloudproviders": "0.4.0-1",
+@@ -237,7 +237,7 @@
+     "libgsf": "1.14.58-1",
+     "libgudev": "238-3",
+     "libgxps": "0.3.2-5",
+-    "libheif": "1.23.1-4",
++    "libheif": "1.23.2-1",
+     "libhwasan": "16.2.1+r23+gd564253eb6c8-1",
+     "libice": "1.1.2-1",
+     "libidn2": "2.3.8-1",
+@@ -333,7 +333,7 @@
+     "libusbmuxd": "2.1.1-2",
+     "libutempter": "1.2.3-1",
+     "libutf8proc": "2.11.3-1",
+-    "libuv": "1.52.1-1",
++    "libuv": "1.52.1-2",
+     "libva": "2.24.1-1",
+     "libvdpau": "1.5-4",
+     "libverto": "0.3.2-6",
+@@ -403,7 +403,7 @@
+     "mpdecimal": "4.0.1-3",
+     "mpfr": "4.2.2-1",
+     "mpg123": "1.33.7-1",
+-    "mpv": "1:0.41.0-4",
++    "mpv": "1:0.41.0-5",
+     "msgpack-c": "7.0.1-1",
+     "mtdev": "1.1.7-1",
+     "mujs": "1.3.9-1",
+@@ -418,7 +418,7 @@
+     "noto-fonts-emoji": "1:2.051-1",
+     "npth": "1.8-1",
+     "nspr": "4.40-1",
+-    "nss": "3.127-1",
++    "nss": "3.128-1",
+     "ocl-icd": "2.3.5-1",
+     "omarchy-keyring": "20251027-1",
+     "onetbb": "2023.1.0-1",
+@@ -503,7 +503,7 @@
+     "spirv-tools": "1:1.4.357.0-1",
+     "sqlite": "3.53.4-1",
+     "sratom": "0.6.22-1",
+-    "srt": "1.5.6-1",
++    "srt": "1.5.7-1",
+     "starship": "1.26.0-1",
+     "sudo": "1.9.17.p2-6",
+     "svt-av1": "4.2.0-1",
+diff --git a/guest/packages.txt b/guest/packages.txt
+index fb73d28..8fda564 100644
+--- a/guest/packages.txt
++++ b/guest/packages.txt
+@@ -21,6 +21,7 @@ gnome-keyring
+ grim
+ gum
+ gvfs
++hypridle
+ hyprland
+ hyprpicker
+ hyprsunset
+@@ -61,10 +62,12 @@ systemd
+ systemd-resolvconf
+ tmux
+ ttf-jetbrains-mono-nerd
++ttfx
+ udiskie
+ unzip
+ uwsm
+ vulkan-swrast
++vulkan-virtio
+ wayland
+ wireplumber
+ wl-clipboard
+diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
+index ed0bc2b..1d886c0 100755
+--- a/guest/scripts/materialize-omarchy.sh
++++ b/guest/scripts/materialize-omarchy.sh
+@@ -73,9 +73,13 @@ source = pathlib.Path(sys.argv[2])
+ missing = [path for path in spec["authenticity"]["requiredPaths"] if not (source / path).exists()]
+ if missing:
+     raise SystemExit("missing required upstream paths: " + ", ".join(missing))
++# Upstream's version file lags its release tags (still "4.0.0.alpha" at the
++# v4.0.1 tag), so the spec records the file's literal content separately from
++# the release version the tag names.
+ version = (source / "version").read_text().strip()
+-if version != spec["upstream"]["version"]:
+-    raise SystemExit(f"upstream version mismatch: expected {spec['upstream']['version']}, got {version}")
++expected = spec["upstream"].get("versionFile", spec["upstream"]["version"])
++if version != expected:
++    raise SystemExit(f"upstream version mismatch: expected {expected}, got {version}")
+ PY
+ 
+ if (( skip_git_check == 0 )); then
+@@ -131,6 +135,9 @@ done < <(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]
+ for file in icon.png icon.txt logo.svg logo.txt version; do
+   install_file 0644 "$source_dir/$file" "$omarchy_root/$file"
+ done
++# Stamp the staged runtime with the release version the pinned tag names;
++# register-omarchy-runtime.sh verifies it against the spec.
++python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["upstream"]["version"])' "$spec" >"$omarchy_root/version"
+ install_file 0644 "$source_dir/LICENSE" "$root/usr/share/licenses/omarchy/LICENSE"
+ 
+ # Production Omarchy exposes commands in /usr/bin and keeps package-path
+diff --git a/guest/spec.json b/guest/spec.json
+index d96be09..5c515e2 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -6,7 +6,7 @@
+     "filesystemLabel": "omarchy-factory",
+     "filesystemUuid": "89054943-1f4e-4f14-b934-d6db3fba4254",
+     "sizeMiB": 6144,
+-    "sourceDateEpoch": 1786873661
++    "sourceDateEpoch": 1787652758
+   },
+   "guest": {
+     "profile": "factory",
+@@ -23,10 +23,11 @@
+   },
+   "upstream": {
+     "repository": "https://github.com/basecamp/omarchy",
+-    "commit": "7488eaded43de68ff9d2d7e4bf50cd48e112eb0f",
+-    "tree": "f61a6c80b167db07376535a34e4bdb8a7dc581af",
+-    "treeSha256": "2b8670686876008cfd1e675a107fddcc01edf3919b2566348308e0bc2857f692",
+-    "version": "4.0.0.alpha",
++    "commit": "13f18b2cb7286fb54f87daf571a031aa6af3d8f0",
++    "tree": "c458272b5d2b895185633255de88a3ce563c5028",
++    "treeSha256": "3613aca0bf1861d2beee24768d11d3e61e2c719af35c12145a23081f288a2abb",
++    "version": "4.0.1",
++    "versionFile": "4.0.0.alpha",
+     "channel": "quattro",
+     "license": "MIT"
+   },
+@@ -44,10 +45,26 @@
+   },
+   "themes": [
+     "catppuccin",
++    "catppuccin-latte",
++    "ethereal",
++    "everforest",
++    "flexoki-light",
+     "gruvbox",
++    "hackerman",
++    "kanagawa",
++    "last-horizon",
++    "lumon",
++    "lupine",
+     "matte-black",
++    "miasma",
++    "nord",
++    "osaka-jade",
++    "retro-82",
++    "ristretto",
+     "rose-pine",
++    "solitude",
+     "tokyo-night",
++    "vantablack",
+     "white"
+   ],
+   "inputs": {
+-- 
+2.55.0
+

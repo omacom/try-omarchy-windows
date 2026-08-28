@@ -6,7 +6,7 @@
 #   powershell -ExecutionPolicy Bypass -File bootstrap.ps1
 param([string]$Dir = "$env:LOCALAPPDATA\TryOmarchy")
 $ErrorActionPreference = 'Stop'
-$release = 'https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.1-preview'
+$release = 'https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.2-preview'
 
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
 $isAdmin = ([Security.Principal.WindowsPrincipal]$id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
