@@ -10,16 +10,27 @@ Hardware: AMD Ryzen 5 5625U (Zen 3, 6C/12T, AVX2), Radeon integrated GPU (Vulkan
 
 Bootstrap status:
 - [x] Repo cloned to `C:\cssi\try-omarchy-windows`
-- [x] WHP optional feature enabled — **reboot pending** (hypervisor was already running
-      via HvHost/vmcompute, but the HypervisorPlatform feature itself was off)
+- [x] WHP optional feature enabled (needed one host reboot; hypervisor was already
+      running via HvHost/vmcompute, but the HypervisorPlatform feature itself was off)
 - [x] QEMU 11.1.0 installed via winget (qemu-w64-setup-20260811)
 - [x] zstd 1.5.7 installed — **bootstrap.ps1 bug found+fixed:** winget id
       `Facebook.Zstandard` no longer exists, renamed `Meta.Zstandard`; also the
       `WinGet\Links\zstd.exe` shim didn't materialize in-session, so the script now
       falls back to searching WinGet Packages
 - [x] v0.0.1-preview guest artifacts downloaded, rootfs decompressed (6 GiB)
-- [ ] Post-reboot: `launch-omarchy.ps1`, record WHPX init / boot timings / SDL behavior
-- [ ] llvmpipe feel + `systemd-analyze`, then declare preview validated (or not)
+
+**VALIDATED 2026-08-27 evening.** Results (details in FINDINGS.md):
+- WHPX initialized first try; full boot → setup form → Hyprland desktop in the SDL
+  window. Setup form driven 100% over QMP from the host (user brandon / hostname
+  omarchy / America/Chicago).
+- Clean provisioned boot: **3.22s kernel + 3.54s user = 6.8s to graphical.target**
+  (vs 9.03s nested). ~40s launch→setup-splash on first boot incl. one-time disk copy.
+- Second boot lands on SDDM login as expected — autologin/seamless-login remains the
+  top UX gap for instant-try.
+- **New trap:** in-guest `systemctl reboot` wedges QEMU (WHPX can't do system reset).
+  `-no-reboot` added to launch-omarchy.ps1; app shell must relaunch on exit. See
+  FINDINGS.md "NEW TRAP".
+- llvmpipe subjective feel: pending Brandon's verdict after some hands-on time.
 
 ## Current state
 

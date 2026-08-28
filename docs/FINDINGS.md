@@ -78,6 +78,32 @@ panic the guest.
   `virt` kernel has no virtio-gpu driver — use `-device VGA` for Alpine-based text
   harnesses; the Omarchy image has virtio-gpu and is fine.
 
+## Bare-metal validation (2026-08-27, Ryzen 5 5625U laptop, Windows 11 Pro)
+
+The v0.0.1-preview flow works on real hardware. WHPX initialized first try (QEMU
+11.1.0 prints a benign `warning: Ignoring request for interrupt vector 0` at start).
+First boot: ~40s from launch to the setup splash (includes the one-time 6 GiB sparse
+disk copy); the entire gum form was driven over QMP from the host — the provisioning
+automation works on bare metal exactly as in the dev VM. Second (provisioned) boot:
+**3.22s kernel + 3.54s userspace = 6.8s to graphical.target** (vs 9.03s nested), then
+SDDM login → full desktop with wallpaper. SDL display worked throughout (screendumps
+via QMP match what the window shows; no SDL-specific issues observed).
+
+### NEW TRAP: in-guest reboot wedges QEMU under WHPX
+
+`systemctl reboot` inside the guest hangs the whole VM at the reset: the guest shuts
+down cleanly, issues the reset, and never comes back — SDL window freezes on black,
+serial stops, QMP stops answering, and the QEMU process sits alive at ~0% CPU.
+Upstream WHPX apparently cannot execute a system reset (same class of gap as the
+XSAVE cliff). Also observed: after force-killing the wedged process, the *next*
+launch froze at ~1.4s into kernel boot (possibly leaked WHPX partition state);
+killing that one and launching again booted clean in ~20s.
+
+Mitigation: launch with `-no-reboot` so a guest-initiated reset exits QEMU instead of
+wedging it (now in launch-omarchy.ps1). The app shell must treat guest reboot as
+"QEMU exits → relaunch", e.g. via `-action reboot=shutdown` + QMP RESET/SHUTDOWN
+events if it needs to distinguish reboot from poweroff.
+
 ## Boot profile (nested dev VM, SSE4.2 pack)
 
 `systemd-analyze` in the Omarchy guest: **5.06s kernel + 3.97s userspace = 9.03s to

@@ -44,6 +44,10 @@ $qemuArgs = @(
     '-device','intel-hda','-device','hda-duplex,audiodev=snd','-audiodev','dsound,id=snd',
     '-display',$display,
     '-serial',"file:$vm\serial.log",
+    '-qmp','tcp:127.0.0.1:4445,server=on,wait=off',
+    # In-guest reboot wedges upstream WHPX (vCPUs never return from system reset;
+    # QEMU main loop hangs). Exit instead and let the user relaunch.
+    '-no-reboot',
     '-name','Try Omarchy'
 )
 if ($Fullscreen) { $qemuArgs += '-full-screen' }
