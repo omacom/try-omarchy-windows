@@ -103,9 +103,12 @@ Goal: prove GPU-accelerated Omarchy via WINQ-EMU's Venus Vulkan path on real har
       (C:\WINQ-EMU), scripts/launch-omarchy-gpu.ps1 merges their stack with our
       direct-kernel boot. Hyprland renders via virgl on the Radeon iGPU; vulkaninfo
       shows Venus; -cpu host works. See FINDINGS.md "VENUS MILESTONE HIT".
+      Verdict (Brandon, hands-on): YouTube audio and video both look/sound great
+      on the GPU build — the llvmpipe-era crackle and stutter are gone
+      (virtio-sound + virgl/Venus on the Radeon iGPU).
       Follow-ups: add vulkan-virtio (+vulkan-tools) to the image package set;
-      subjective perf + YouTube/audio verdict (virtio-sound now); benchmarks and
-      screenshots; consider WINQ-EMU's virtio-9p for host file sharing.
+      benchmarks and screenshots for the announcement; consider WINQ-EMU's
+      virtio-9p for host file sharing.
 - [ ] Native app shell design: window embedding vs own display client (QMP/VNC/D3D
       surface), lifecycle, sparse-disk management, WHP-enable installer flow.
 - [ ] Reach out to Eduardo (themartiano) and Jorge (jorge-huxley) re: collab, and
