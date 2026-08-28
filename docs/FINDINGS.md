@@ -91,12 +91,19 @@ via QMP match what the window shows; no SDL-specific issues observed).
 
 ### SDL desktop UX findings (bare metal)
 
-- **Invisible mouse cursor:** Hyprland puts its cursor on the virtio-gpu hardware
-  cursor plane, which QEMU's Windows SDL display never renders. Fix in-guest:
-  `cursor:no_hardware_cursors = true` in `~/.config/hypr/hyprland.conf` (flat
-  `category:option` syntax — `hyprctl keyword` is rejected by current Hyprland's
-  parser, so append to the config and `hyprctl reload`). Hyprland then composites
-  the cursor into the frame. **Bake this into the guest image.**
+- **Invisible mouse cursor — an image config decision, not a QEMU bug:** the guest
+  image's `~/.config/hypr/monitors.lua` sets `hl.config({ cursor = { invisible =
+  true } })` ("hide the guest cursor because the host composites it outside the
+  guest"). True under VNC (the dev-VM setup: the viewer draws a local cursor), false
+  under SDL — nothing draws any cursor. Fix:
+  `sed -i 's/invisible = true/invisible = false/' ~/.config/hypr/monitors.lua` +
+  `hyprctl reload`; the cursor then renders in-frame and SDL shows it. **Fix in the
+  guest image builder: cursor must be visible whenever the display is SDL.**
+- **This image uses Hyprland's Lua config** (Hyprland 0.56.2, `~/.config/hypr/*.lua`
+  + base `/usr/share/hypr/hyprland.lua`). `hyprctl keyword` is rejected ("can't work
+  with non-legacy parsers") and a classic `hyprland.conf` is ignored entirely — edit
+  the Lua files and `hyprctl reload`. Input/mouse injection over QMP works fine
+  (`input-send-event` with abs coords, 0–32767 scale).
 - **Window resize works:** virtio-gpu propagates SDL window resizes; Hyprland adapts
   its resolution live. Transient cropping can appear until the next resize event.
 - **Windows key collision:** Super is Omarchy's main modifier, but the host swallows

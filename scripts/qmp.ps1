@@ -53,6 +53,19 @@ switch ($op) {
                     '<' { Send-Keys @('shift','comma') }
                     "'" { Send-Keys @('apostrophe') }
                     '"' { Send-Keys @('shift','apostrophe') }
+                    '{' { Send-Keys @('shift','bracket_left') }
+                    '}' { Send-Keys @('shift','bracket_right') }
+                    '[' { Send-Keys @('bracket_left') }
+                    ']' { Send-Keys @('bracket_right') }
+                    '!' { Send-Keys @('shift','1') }
+                    '#' { Send-Keys @('shift','3') }
+                    '%' { Send-Keys @('shift','5') }
+                    '^' { Send-Keys @('shift','6') }
+                    '&' { Send-Keys @('shift','7') }
+                    '+' { Send-Keys @('shift','equal') }
+                    '?' { Send-Keys @('shift','slash') }
+                    '`' { Send-Keys @('grave_accent') }
+                    '~' { Send-Keys @('shift','grave_accent') }
                     default { throw "unmapped char: $c" }
                 }
             }

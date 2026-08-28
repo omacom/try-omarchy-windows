@@ -31,9 +31,11 @@ Bootstrap status:
   `-no-reboot` added to launch-omarchy.ps1; app shell must relaunch on exit. See
   FINDINGS.md "NEW TRAP".
 - llvmpipe subjective feel: pending Brandon's verdict after some hands-on time.
-- SDL UX (see FINDINGS.md "SDL desktop UX findings"): cursor invisible until
-  `cursor:no_hardware_cursors = true` (now set in this VM's config; **must be baked
-  into the guest image**); window resize tracks fine; Windows key fights the host
+- SDL UX (see FINDINGS.md "SDL desktop UX findings"): cursor was invisible because
+  the image's monitors.lua sets cursor invisible=true (correct for VNC hosts, wrong
+  for SDL) — flipped to false in this VM, **must be fixed in the image builder**;
+  the image uses Hyprland 0.56 Lua configs (edit *.lua + hyprctl reload; `hyprctl
+  keyword` doesn't work); window resize tracks fine; Windows key fights the host
   Start menu unless input is grabbed (Ctrl+Alt+G) — app shell needs a keyboard hook.
 
 ## Current state
