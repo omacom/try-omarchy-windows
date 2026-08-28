@@ -164,6 +164,15 @@ like reboot does (QMP `system_powerdown` → guest shuts down → QEMU hangs at 
 final ACPI transition, ~0% CPU, must force-kill). The reboot trap section applies
 to every guest-initiated reset/poweroff on stock QEMU 11.1.0.
 
+**Corollary trap (2026-08-28): the poweroff wedge can LOSE recent guest writes.**
+A file written ~20s before `sudo poweroff` (autologin.conf, confirmed written via
+tee output) was gone on the next boot — its parent mkdir survived, the file didn't.
+The wedge evidently hits before the final filesystem flush completes, and the
+force-kill discards whatever the guest still had in flight. Rule: run `sync` after
+any write that matters, and don't treat a wedged-then-killed poweroff as a clean
+shutdown. (WINQ-EMU's build exits cleanly on guest reboot with `-no-reboot` —
+no wedge observed there.)
+
 ## Boot profile (nested dev VM, SSE4.2 pack)
 
 `systemd-analyze` in the Omarchy guest: **5.06s kernel + 3.97s userspace = 9.03s to

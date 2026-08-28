@@ -1,7 +1,68 @@
 # try-omarchy-windows — working notes / session handoff
 
 **Read this first in a new session.** Keep this file updated as work progresses.
-Last updated: 2026-08-27 (bare-metal laptop bootstrap in progress).
+Last updated: 2026-08-28 (second-account bootstrap on the laptop; autologin applied in VM).
+
+## Session 2026-08-28 (laptop, Tyler account)
+
+The laptop has two Windows accounts; earlier work ran as Brandon (admin), this
+session as **Tyler (non-admin)**. Notes:
+
+- Per-user pieces had to be redone for Tyler: guest image re-downloaded from the
+  v0.0.1-preview release into his `%LOCALAPPDATA%\TryOmarchy` (machine-wide QEMU /
+  WINQ-EMU / WHP were already in place). zstd via winget again showed the
+  missing-Links-shim issue — bootstrap's Packages-dir fallback path is correct.
+- **WHPX wedge repro, fresh machine boot, non-admin:** first TWO stock-QEMU launches
+  wedged at ~1.3s into kernel boot (QMP accepts the TCP connect but main loop never
+  answers; window Not Responding; one vCPU spinning). Third launch booted clean.
+  Same signature as the FINDINGS "leaked partition state" note but with no prior
+  force-kill this boot — so the first-launch wedge is not (only) leaked state.
+  Kill-and-relaunch remains the workaround; app shell needs a launch watchdog
+  (QMP handshake within N seconds or kill+retry).
+- Provisioned over QMP as user tyler / hostname omarchy / America/Chicago.
+  Cursor-visible fix applied in-guest (monitors.lua) — still needs the image-builder
+  fix. QMP typing note: don't race sudo's password prompt; also a successful sudo
+  caches the token, so a queued retype of the password lands in the shell.
+- **SDDM autologin applied in this VM** (`/etc/sddm.conf.d/autologin.conf`,
+  User=tyler Session=hyprland-uwsm) — same recipe as the 08-27 proof; still needs
+  provisioning to write it automatically. First attempt was LOST by the poweroff
+  wedge (see new FINDINGS corollary: the wedge can drop recent writes — `sync`
+  after anything that matters); rewritten + synced, then verified after reboot.
+- Guest-initiated poweroff wedge confirmed again on stock QEMU 11.1.0 (clean guest
+  shutdown, then QEMU hangs at ~0% CPU; force-killed). Guest reboot on the
+  WINQ-EMU build exits QEMU cleanly (`-no-reboot`) — no wedge.
+- GPU relaunch as Tyler: WINQ-EMU boots the same disk, winkey-forwarder auto-started
+  and connected on QMP 4446. **Forwarder VERIFIED hands-on 2026-08-28** ("keys are
+  working great"): Super reaches Omarchy when the VM is focused, Start menu and
+  Win+Shift+S work normally otherwise. **Autologin VERIFIED** the same session.
+- **Product feedback (2026-08-28, hands-on): "I see the QEMU screen — users should
+  never see that."** Clarified: Omarchy-branded screens (its own login/lock) are
+  fine; what must never appear is the generic SDDM greeter, QEMU chrome, or console
+  windows. Requirement: launch → branded window → desktop. DONE so far:
+  window retitled "Try Omarchy" (forwarder reasserts every 3s — QEMU rewrites its
+  title on every grab toggle), consoles eliminated (launcher uses
+  qemu-system-x86_64w.exe + hidden forwarder; QEMU messages go to vm\qemu.log).
+  Remaining: window icon, boot-time splash (image ships plymouth — wire it up, or
+  the shell covers the window until the desktop is up), console-flash before SDDM.
+- **Screensavers required for release** (feedback 2026-08-28: "screensavers are a
+  big part" of the full Omarchy experience). Installed live in this VM over QMP
+  and synced: ttfx 0.3.2, hypridle 0.1.8, plus vulkan-virtio 26.2.1 + vulkan-tools
+  for the full Venus path. All four are already on the image-builder must-add list.
+- **Launcher/bootstrap polish (2026-08-28), all parse-checked:**
+  - `launch-omarchy.ps1` unified + supervised: auto-detects WINQ-EMU (`-NoGpu` to
+    override), windowless qemu-system-x86_64w.exe, launch watchdog (QMP handshake
+    on new supervisor port 4447 within 30s or kill+retry, 4 attempts — covers the
+    twice-in-a-row launch wedge seen today), reaps the guest-poweroff wedge after
+    the SHUTDOWN event, relaunches on guest-reset, forwarder always on (both
+    modes), virtio-sound + -smp 6 in CPU mode too. `launch-omarchy-gpu.ps1` is now
+    a compat shim. Ports: 4445 tools / 4446 forwarder / 4447 supervisor.
+  - `bootstrap.ps1` runs without admin when WHP+QEMU are already machine-wide
+    (per-user image download + zstd fallback), and points at WINQ-EMU if absent.
+  - PS 5.1 trap: em-dashes in .ps1 files parse as curly quotes under CP1252 —
+    scripts are pure ASCII now; keep them that way.
+  - NOT yet runtime-tested end to end (the old launcher's VM was live all session);
+    test on next VM restart: watchdog path, reboot-relaunch, poweroff reap, both
+    display modes.
 
 ## Bare-metal validation (Windows laptop, 2026-08-27)
 
@@ -85,6 +146,29 @@ Goal: prove GPU-accelerated Omarchy via WINQ-EMU's Venus Vulkan path on real har
 6. Success criteria: Hyprland renders with `vulkaninfo`/`glxinfo` in-guest showing Venus
    (not llvmpipe), and animations/blur feel smooth. Grab numbers + screenshots, update
    this file and FINDINGS.md.
+
+## Release plan — v0.0.2-preview
+
+Goal (2026-08-28 direction): package this cleanly for non-technical Windows users
+who want to try Linux without committing. Two tracks:
+
+**Track 1 — script release (this repo, ready after end-to-end testing):**
+- [x] Unified supervised launcher, no consoles, branded window, Win-key scoping
+- [x] Non-admin-friendly bootstrap
+- [ ] End-to-end test of the new launcher on a fresh boot (watchdog, reboot
+      relaunch, poweroff reap, GPU + `-NoGpu` modes, `-Fresh` disk rebuild)
+- [ ] Tag v0.0.2-preview reusing the v0.0.1 guest artifacts
+
+**Track 2 — image rebuild (Linux box, guest builder), the "full Omarchy" image:**
+- [ ] Add packages: ttfx, hypridle (screensavers — required), vulkan-virtio
+      (Venus ICD; vulkan-tools in a dev variant)
+- [ ] Cursor visible under SDL (monitors.lua invisible=false)
+- [ ] Provisioning writes the SDDM autologin conf for the created user
+      (acceptable to show Omarchy-branded screens; never the generic SDDM greeter)
+- [ ] Wire up plymouth (or otherwise hide boot console text)
+- [ ] Refresh packages.lock.json, rebuild, publish artifacts, bump bootstrap URL
+- Stretch: pre-provisioned "just try it" variant (no setup form at all), dev
+  variant with sshd + hostfwd
 
 ## Open work, in rough order
 

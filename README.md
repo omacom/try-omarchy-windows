@@ -4,12 +4,15 @@ Run the full [Omarchy](https://omarchy.org) desktop as a native app on Windows. 
 
 Download, boot, Hyprland.
 
-**Status: working proof of concept.** The full Omarchy desktop boots and renders under WHPX-accelerated QEMU on Windows. Graphics currently render on CPU (llvmpipe); the Venus GPU path is the next major milestone.
+**Status: working developer preview, GPU-accelerated.** The full Omarchy desktop boots and renders under WHPX-accelerated QEMU on Windows — on the real GPU (virgl + Venus Vulkan via [WINQ-EMU](https://github.com/cmspam/winq-emu)) when it's installed, with CPU rendering (llvmpipe) as the automatic fallback.
 
 ## What works today
 
-- Omarchy (Hyprland, bar, notifications, the whole desktop) boots to a rendered session under `qemu-system-x86_64 -accel whpx` on Windows 11
-- First-boot account provisioning driven programmatically over QMP (basis for a "skip setup, just try it" mode)
+- Omarchy (Hyprland, bar, notifications, the whole desktop) boots to a rendered session under WHPX on Windows 11
+- **GPU acceleration**: Hyprland renders on the host GPU via virgl, `vulkaninfo` shows Venus, smooth video + audio (verified on a Radeon iGPU laptop); `-cpu host` (AVX2 and all) via WINQ-EMU's patched WHPX
+- One supervised launcher: auto-detects GPU vs CPU mode, retries the known WHPX launch wedge, cleans up the guest-poweroff wedge, relaunches on in-guest reboot, and never shows a console window
+- App-shell prototype: the Windows key acts as Super only while the VM window is focused (Start menu and Win+Shift+S work normally otherwise), and the window is branded "Try Omarchy", not "QEMU"
+- First-boot account provisioning driven programmatically over QMP (basis for a "skip setup, just try it" mode), SDDM autologin after setup
 - Reproducible x86_64 guest image build (containerized, package-locked, pinned Omarchy revision)
 - Headless control plane: QMP screendump/send-key scripting for automated testing
 
@@ -21,8 +24,8 @@ Same recipe as the excellent macOS [try-omarchy](https://github.com/themartiano/
 |---|---|---|
 | Hypervisor | Hypervisor.framework | Windows Hypervisor Platform (WHPX) |
 | Guest image | ARM64 Arch + Omarchy | x86_64 Arch + Omarchy |
-| Graphics | VirGL | llvmpipe today; virtio-gpu + Venus Vulkan planned |
-| App shell | Swift/AppKit | TBD (native Windows) |
+| Graphics | VirGL | virtio-gpu virgl + Venus Vulkan (WINQ-EMU); llvmpipe fallback |
+| App shell | Swift/AppKit | PowerShell prototype today (supervised launcher + focus-scoped Win-key forwarder); native shell planned |
 
 WHPX works on Windows Home and Pro (it's the same platform WSL2 rides on), so no Hyper-V role is required.
 
@@ -39,7 +42,9 @@ powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1   # WHP + QEMU + 
 powershell -ExecutionPolicy Bypass -File scripts\launch-omarchy.ps1
 ```
 
-First boot walks you through Omarchy's setup form, then you're in Hyprland. Rendering is CPU-only in this preview (llvmpipe with the fastest CPU flags stock WHPX survives); GPU acceleration is the next milestone.
+First boot walks you through Omarchy's setup form, then you're in Hyprland; later boots log you straight in.
+
+For GPU acceleration, install [WINQ-EMU Alpha 10](https://github.com/cmspam/winq-emu/releases) to `C:\WINQ-EMU` first — the launcher detects it and switches to the virgl/Venus stack automatically (pass `-NoGpu` to force CPU rendering). Without it you get llvmpipe with the fastest CPU flags stock WHPX survives.
 
 ## Repository layout
 
