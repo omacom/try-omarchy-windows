@@ -110,7 +110,7 @@ function Connect-Qmp([int]$port, [int]$readTimeoutMs) {
         if ($null -eq $r.ReadLine()) { $tcp.Close(); return $null }   # greeting
         $w.WriteLine('{"execute":"qmp_capabilities"}')
         if ($null -eq $r.ReadLine()) { $tcp.Close(); return $null }   # {"return":{}}
-        return @{ Tcp = $tcp; Reader = $r }
+        return @{ Tcp = $tcp; Reader = $r; Writer = $w }
     } catch { $tcp.Close(); return $null }
 }
 
@@ -145,14 +145,50 @@ try {
         if ($null -eq $qmp) { throw 'QEMU failed to come up healthy after 4 attempts.' }
 
         # --- supervise until the guest goes down ---
+        # A QEMU wedged at guest poweroff cannot even deliver its SHUTDOWN event (the
+        # main loop dies first), so liveness is probed actively: query-status every
+        # ~5s; any line back (event or response) proves the main loop is alive, and
+        # three consecutive silent windows (~40s) mean it is gone. Generous on
+        # purpose - never kill a healthy VM.
         $reason = ''
+        $silent = 0
         while (-not $proc.HasExited) {
-            try { $line = $qmp.Reader.ReadLine() } catch { $line = $null }   # read timeout: still running
-            if ($null -eq $line) { if ($proc.HasExited) { break }; Start-Sleep -Milliseconds 500; continue }
-            if ($line -match '"event":\s*"SHUTDOWN"') {
-                if ($line -match 'guest-reset') { $reason = 'reboot' } else { $reason = 'poweroff' }
-                break
+            Start-Sleep -Seconds 5
+            if ($proc.HasExited) { break }
+            try { $qmp.Writer.WriteLine('{"execute":"query-status"}') } catch { break }
+            $got = $false
+            try {
+                $line = $qmp.Reader.ReadLine()
+                while ($null -ne $line) {
+                    $got = $true
+                    if ($line -match '"event":\s*"SHUTDOWN"') {
+                        if ($line -match 'guest-reset') { $reason = 'reboot' } else { $reason = 'poweroff' }
+                        break
+                    }
+                    if (-not $qmp.Tcp.GetStream().DataAvailable) { break }
+                    $line = $qmp.Reader.ReadLine()
+                }
+            } catch { }
+            if ($reason) { break }
+            if ($got) { $silent = 0 } else {
+                $silent++
+                if ($silent -ge 3) { Write-Host 'QEMU main loop stopped answering - guest is down.' -ForegroundColor Yellow; break }
             }
+        }
+        if ((-not $reason) -and $proc.HasExited) {
+            # QEMU exited during the sleep window - drain buffered lines so a
+            # guest-reset (reboot) still triggers the relaunch.
+            try {
+                $line = $qmp.Reader.ReadLine()
+                while ($null -ne $line) {
+                    if ($line -match '"event":\s*"SHUTDOWN"') {
+                        if ($line -match 'guest-reset') { $reason = 'reboot' } else { $reason = 'poweroff' }
+                        break
+                    }
+                    if (-not $qmp.Tcp.GetStream().DataAvailable) { break }
+                    $line = $qmp.Reader.ReadLine()
+                }
+            } catch { }
         }
         if (-not $proc.HasExited) {
             # Guest is down. Stock WHPX QEMU wedges here instead of exiting - reap it.

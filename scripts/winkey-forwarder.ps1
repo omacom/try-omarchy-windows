@@ -82,7 +82,9 @@ public static class WinKeyForwarder
         {
             try
             {
-                Process[] ps = Process.GetProcessesByName("qemu-system-x86_64");
+                // The launcher uses the windowless qemu-system-x86_64w.exe; match both.
+                Process[] ps = Process.GetProcessesByName("qemu-system-x86_64w");
+                if (ps.Length == 0) ps = Process.GetProcessesByName("qemu-system-x86_64");
                 qemuPid = ps.Length > 0 ? ps[0].Id : -1;
                 if (ps.Length > 0)
                 {
