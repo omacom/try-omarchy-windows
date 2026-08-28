@@ -89,6 +89,22 @@ automation works on bare metal exactly as in the dev VM. Second (provisioned) bo
 SDDM login → full desktop with wallpaper. SDL display worked throughout (screendumps
 via QMP match what the window shows; no SDL-specific issues observed).
 
+### SDL desktop UX findings (bare metal)
+
+- **Invisible mouse cursor:** Hyprland puts its cursor on the virtio-gpu hardware
+  cursor plane, which QEMU's Windows SDL display never renders. Fix in-guest:
+  `cursor:no_hardware_cursors = true` in `~/.config/hypr/hyprland.conf` (flat
+  `category:option` syntax — `hyprctl keyword` is rejected by current Hyprland's
+  parser, so append to the config and `hyprctl reload`). Hyprland then composites
+  the cursor into the frame. **Bake this into the guest image.**
+- **Window resize works:** virtio-gpu propagates SDL window resizes; Hyprland adapts
+  its resolution live. Transient cropping can appear until the next resize event.
+- **Windows key collision:** Super is Omarchy's main modifier, but the host swallows
+  it (Start menu opens) unless QEMU has grabbed input. Ctrl+Alt+G (SDL grab) makes
+  SDL install the low-level keyboard hook that swallows Win-key on the host;
+  fullscreen also helps. The future app shell must do the same (keyboard grab /
+  low-level hook while the guest window is focused).
+
 ### NEW TRAP: in-guest reboot wedges QEMU under WHPX
 
 `systemctl reboot` inside the guest hangs the whole VM at the reset: the guest shuts
