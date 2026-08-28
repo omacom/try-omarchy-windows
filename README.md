@@ -12,6 +12,7 @@ Download, boot, Hyprland.
 - **GPU acceleration**: Hyprland renders on the host GPU via virgl, `vulkaninfo` shows Venus, smooth video + audio (verified on a Radeon iGPU laptop); `-cpu host` (AVX2 and all) via WINQ-EMU's patched WHPX
 - One supervised launcher: auto-detects GPU vs CPU mode, retries the known WHPX launch wedge, cleans up the guest-poweroff wedge, relaunches on in-guest reboot, and never shows a console window
 - App-shell prototype: the Windows key acts as Super only while the VM window is focused (Start menu and Win+Shift+S work normally otherwise), and the window is branded "Try Omarchy", not "QEMU"
+- **Two-way clipboard sharing** between Windows and Omarchy (own compositor-native bridge over wl-clipboard; no SPICE) and **folder sharing** (`-Share <folder>`, virtio-9p on the GPU stack)
 - First-boot account provisioning driven programmatically over QMP (basis for a "skip setup, just try it" mode), SDDM autologin after setup
 - Reproducible x86_64 guest image build (containerized, package-locked, pinned Omarchy revision)
 - Headless control plane: QMP screendump/send-key scripting for automated testing

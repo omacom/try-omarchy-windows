@@ -165,14 +165,19 @@ no 3GB+ downloads; additions so far total <20MB):
   directions on hardware (mount -t 9p -o trans=virtio hostshare /mnt/host).
   Remaining: auto-mount in guest (systemd.mount with nofail, image rebuild) and
   a default share folder in the UX.
-- Clipboard sharing: NOT yet. Findings: stock QEMU has the built-in qemu-vdagent
-  chardev but WINQ-EMU's build omits it (ask cmspam to enable CONFIG_VDAGENT?) -
-  and spice-vdagent's clipboard is X11-centric anyway, dubious under Wayland/
-  Hyprland. Better plan that beats the mac approach: OUR OWN bridge - tiny guest
-  daemon using wl-clipboard (wl-copy/wl-paste) talking to the host app-shell over
-  a hostfwd TCP port (guest outbound to 10.0.2.2 also works); host side watches
-  the Windows clipboard. Compositor-native, works on both QEMU builds. Top
-  app-shell work item.
+- Clipboard sharing: DONE 2026-08-28, two-way, verified on hardware including
+  across guest reboots. Own bridge, not vdagent (qemu-vdagent is absent from
+  WINQ-EMU's build and X11-centric anyway): scripts/clipboard-bridge.ps1 on the
+  host (started by the launcher; ports 4448 guest->host one-shot, 4449 host->guest
+  persistent; base64 lines) + scripts/guest/clipboard-bridge.sh in the guest
+  (wl-clipboard + socat to 10.0.2.2, systemd user service
+  scripts/guest/clipboard-bridge.service, WantedBy=graphical-session.target -
+  uwsm imports WAYLAND_DISPLAY so it Just Works). Compositor-native, works on
+  both QEMU builds. Text-only v1; images/files later.
+  Traps hit: (a) StreamWriter.WriteLine sends CRLF and base64 -d rejects the \r -
+  set NewLine to LF; (b) do NOT put tr/sed between socat and the read loop - the
+  extra pipe stage buffers ~4KB and small payloads never arrive; (c) see the
+  FINDINGS note on the SHUTDOWN-event RST race the same session uncovered.
 - Beyond parity (Windows-only wins already landed): Venus VULKAN (his stack is
   VirGL GL-only), focus-scoped Windows-key-as-Super, supervised lifecycle
   (launch-wedge retry, reboot relaunch, clean poweroff), zero QEMU chrome.
@@ -201,7 +206,10 @@ who want to try Linux without committing. Two tracks:
 - [ ] Bump Omarchy pin to 4.0.1 (image currently 4.0.0.alpha-1)
 - [ ] Add packages: ttfx, hypridle (screensavers — required), vulkan-virtio
       (Venus ICD; vulkan-tools in a dev variant), wl-clipboard (for the clipboard
-      bridge)
+      bridge; socat is already in the image)
+- [ ] Bake in the clipboard bridge: scripts/guest/clipboard-bridge.sh to
+      /usr/local/bin (or a skel ~/.local/bin) + the systemd user service enabled
+      for provisioned users
 - [ ] 9p auto-mount unit for the `-Share` folder (systemd.mount, nofail)
 - [ ] Cursor visible under SDL (monitors.lua invisible=false)
 - [ ] Provisioning writes the SDDM autologin conf for the created user

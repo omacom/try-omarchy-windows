@@ -164,6 +164,14 @@ like reboot does (QMP `system_powerdown` → guest shuts down → QEMU hangs at 
 final ACPI transition, ~0% CPU, must force-kill). The reboot trap section applies
 to every guest-initiated reset/poweroff on stock QEMU 11.1.0.
 
+**Corollary trap #2 (2026-08-28): a fast QEMU exit can DISCARD its SHUTDOWN event.**
+With `-no-reboot`, QEMU exits almost immediately after a guest reset; the abortive
+socket close (RST) throws away unread data in the peer's receive buffer, so a
+supervisor that sleeps-then-reads sometimes never sees the SHUTDOWN event and
+cannot tell reboot from poweroff. Fix in launch-omarchy.ps1: keep an async
+ReadLine permanently pending on the QMP socket - the event is consumed the moment
+it arrives, before the RST can eat it.
+
 **Corollary trap (2026-08-28): the poweroff wedge can LOSE recent guest writes.**
 A file written ~20s before `sudo poweroff` (autologin.conf, confirmed written via
 tee output) was gone on the next boot — its parent mkdir survived, the file didn't.

@@ -27,6 +27,8 @@ $ErrorActionPreference = 'Stop'
 $QmpToolsPort = 4445   # free for qmp.ps1 / provisioning tooling
 $QmpFwdPort   = 4446   # winkey-forwarder
 $QmpSupPort   = 4447   # this script's watchdog + lifecycle supervision
+$ClipPushPort = 4448   # clipboard bridge: guest -> host
+$ClipPullPort = 4449   # clipboard bridge: host -> guest
 
 $g = Join-Path $Dir 'guest'
 $vm = Join-Path $Dir 'vm'
@@ -132,6 +134,11 @@ $env:SDL_GRAB_KEYBOARD = '0'
 $fwd = Join-Path $PSScriptRoot 'winkey-forwarder.ps1'
 $fwdProc = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$fwd`" -QmpPort $QmpFwdPort" -WindowStyle Hidden -PassThru
 
+# Two-way text clipboard sync; the guest-side daemon (scripts/guest/clipboard-bridge.sh)
+# connects out to these ports over user-net. Harmless if the guest lacks the daemon.
+$clip = Join-Path $PSScriptRoot 'clipboard-bridge.ps1'
+$clipProc = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$clip`" -PushPort $ClipPushPort -PullPort $ClipPullPort" -WindowStyle Hidden -PassThru
+
 $proc = $null
 try {
     do {
@@ -156,50 +163,49 @@ try {
         if ($null -eq $qmp) { throw 'QEMU failed to come up healthy after 4 attempts.' }
 
         # --- supervise until the guest goes down ---
-        # A QEMU wedged at guest poweroff cannot even deliver its SHUTDOWN event (the
-        # main loop dies first), so liveness is probed actively: query-status every
-        # ~5s; any line back (event or response) proves the main loop is alive, and
-        # three consecutive silent windows (~40s) mean it is gone. Generous on
-        # purpose - never kill a healthy VM.
+        # Two hard-won subtleties here (see docs/FINDINGS.md):
+        # 1. A QEMU wedged at guest poweroff cannot deliver its SHUTDOWN event (the
+        #    main loop dies first), so liveness is probed: query-status every ~5s;
+        #    any line back proves the main loop is alive; ~45s of silence despite
+        #    pings means it is gone. Generous on purpose - never kill a healthy VM.
+        # 2. With -no-reboot, QEMU can exit so fast after a guest reset that an
+        #    abortive socket close DISCARDS an unread SHUTDOWN event. Keep an async
+        #    read permanently pending so the event is consumed the moment it
+        #    arrives - a sleep-then-read loop loses that race.
         $reason = ''
         $silent = 0
+        $tick = 0
+        $pending = $qmp.Reader.ReadLineAsync()
         while (-not $proc.HasExited) {
-            Start-Sleep -Seconds 5
-            if ($proc.HasExited) { break }
-            try { $qmp.Writer.WriteLine('{"execute":"query-status"}') } catch { break }
-            $got = $false
-            try {
-                $line = $qmp.Reader.ReadLine()
-                while ($null -ne $line) {
-                    $got = $true
-                    if ($line -match '"event":\s*"SHUTDOWN"') {
-                        if ($line -match 'guest-reset') { $reason = 'reboot' } else { $reason = 'poweroff' }
-                        break
-                    }
-                    if (-not $qmp.Tcp.GetStream().DataAvailable) { break }
-                    $line = $qmp.Reader.ReadLine()
+            Start-Sleep -Milliseconds 1000
+            $tick++
+            while ($pending -and $pending.IsCompleted) {
+                $line = $null
+                try { $line = $pending.Result } catch { }
+                if ($null -eq $line) { $pending = $null; break }   # stream ended
+                $silent = 0
+                if ($line -match '"event":\s*"SHUTDOWN"') {
+                    if ($line -match 'guest-reset') { $reason = 'reboot' } else { $reason = 'poweroff' }
                 }
-            } catch { }
+                $pending = $qmp.Reader.ReadLineAsync()
+            }
             if ($reason) { break }
-            if ($got) { $silent = 0 } else {
+            if ($null -eq $pending) { break }   # connection gone; QEMU is exiting
+            if ($tick % 5 -eq 0) {
+                try { $qmp.Writer.WriteLine('{"execute":"query-status"}') } catch { break }
                 $silent++
-                if ($silent -ge 3) { Write-Host 'QEMU main loop stopped answering - guest is down.' -ForegroundColor Yellow; break }
+                if ($silent -ge 9) { Write-Host 'QEMU main loop stopped answering - guest is down.' -ForegroundColor Yellow; break }
             }
         }
-        if ((-not $reason) -and $proc.HasExited) {
-            # QEMU exited during the sleep window - drain buffered lines so a
-            # guest-reset (reboot) still triggers the relaunch.
-            try {
-                $line = $qmp.Reader.ReadLine()
-                while ($null -ne $line) {
-                    if ($line -match '"event":\s*"SHUTDOWN"') {
-                        if ($line -match 'guest-reset') { $reason = 'reboot' } else { $reason = 'poweroff' }
-                        break
-                    }
-                    if (-not $qmp.Tcp.GetStream().DataAvailable) { break }
-                    $line = $qmp.Reader.ReadLine()
-                }
-            } catch { }
+        # Collect anything the pending read completed with after the loop ended.
+        while ((-not $reason) -and $pending -and $pending.IsCompleted) {
+            $line = $null
+            try { $line = $pending.Result } catch { }
+            if ($null -eq $line) { break }
+            if ($line -match '"event":\s*"SHUTDOWN"') {
+                if ($line -match 'guest-reset') { $reason = 'reboot' } else { $reason = 'poweroff' }
+            }
+            $pending = $qmp.Reader.ReadLineAsync()
         }
         if (-not $proc.HasExited) {
             # Guest is down. Stock WHPX QEMU wedges here instead of exiting - reap it.
@@ -213,4 +219,5 @@ try {
     } while ($relaunch)
 } finally {
     if ($fwdProc -and -not $fwdProc.HasExited) { Stop-Process -Id $fwdProc.Id -Force }
+    if ($clipProc -and -not $clipProc.HasExited) { Stop-Process -Id $clipProc.Id -Force }
 }
