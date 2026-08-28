@@ -127,6 +127,39 @@ wedging it (now in launch-omarchy.ps1). The app shell must treat guest reboot as
 "QEMU exits → relaunch", e.g. via `-action reboot=shutdown` + QMP RESET/SHUTDOWN
 events if it needs to distinguish reboot from poweroff.
 
+## VENUS MILESTONE HIT (2026-08-27, bare-metal laptop, WINQ-EMU Alpha 10)
+
+`scripts/launch-omarchy-gpu.ps1` = our direct-kernel-boot recipe + WINQ-EMU's
+graphics stack (binary at `C:\WINQ-EMU\bin\qemu-system-x86_64.exe`, QEMU 11.0 +
+their patch series, virglrenderer 1.3.0). Verified on the Ryzen 5 5625U / Radeon
+iGPU:
+
+- **`-cpu host` boots clean** under their patched WHPX (the XSAVE cliff is fixed
+  there) — ~19s to login prompt, full host feature set including AVX2.
+- **Hyprland renders on the real GPU via virgl**: Aquamarine logs
+  `Renderer: virgl (AMD Radeon (TM) Graphics)`, OpenGL ES 3.2 Mesa 26.2.1.
+- **Venus Vulkan confirmed**: `vulkaninfo` reports
+  `Virtio-GPU Venus (AMD Radeon (TM) Graphics)`, `driverName = venus`.
+  BUT the guest image ships no Venus ICD — had to `pacman -S vulkan-virtio
+  vulkan-tools` in the running guest (network works). **Add `vulkan-virtio` to the
+  image package set** (and consider `vulkan-tools` for the dev variant).
+- Device recipe: `-device virtio-vga-gl,blob=on,hostmem=4G,venus=on -display
+  sdl,gl=on` (per WINQ-EMU's launcher; virtio-vga-gl IS the VGA device — no `-vga
+  none`, and no two-display trap observed). Direct kernel boot sidesteps their
+  BIOS-vs-EFI warning entirely.
+- Audio switched to `-device virtio-sound-pci` (their recipe; dsound/intel-hda
+  crackled badly under llvmpipe load).
+- **QMP `screendump` does not work on the GL path** — returns `"no surface"`
+  (scanout lives in a GPU texture with blob=on). Headless monitoring must use the
+  serial console instead; trick: run `<cmd> | sudo tee /dev/ttyS0` in-guest and the
+  output lands in the host-side serial log file. A future dev image should add
+  sshd + hostfwd (or use WINQ-EMU's virtio-9p sharing).
+
+Also learned: guest-initiated **poweroff** wedges upstream/stock WHPX QEMU exactly
+like reboot does (QMP `system_powerdown` → guest shuts down → QEMU hangs at the
+final ACPI transition, ~0% CPU, must force-kill). The reboot trap section applies
+to every guest-initiated reset/poweroff on stock QEMU 11.1.0.
+
 ## Boot profile (nested dev VM, SSE4.2 pack)
 
 `systemd-analyze` in the Omarchy guest: **5.06s kernel + 3.97s userspace = 9.03s to

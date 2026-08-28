@@ -99,7 +99,13 @@ Goal: prove GPU-accelerated Omarchy via WINQ-EMU's Venus Vulkan path on real har
       image variant) so first boot lands straight in Hyprland.
 - [ ] Dev-image variant with openssh + QEMU hostfwd for real in-guest automation
       (current image is 79 packages, no sshd; everything goes through QMP send-key).
-- [ ] Venus/WINQ-EMU on the laptop (see bootstrap above) — the differentiator.
+- [x] Venus/WINQ-EMU on the laptop DONE 2026-08-27: WINQ-EMU Alpha 10 installed
+      (C:\WINQ-EMU), scripts/launch-omarchy-gpu.ps1 merges their stack with our
+      direct-kernel boot. Hyprland renders via virgl on the Radeon iGPU; vulkaninfo
+      shows Venus; -cpu host works. See FINDINGS.md "VENUS MILESTONE HIT".
+      Follow-ups: add vulkan-virtio (+vulkan-tools) to the image package set;
+      subjective perf + YouTube/audio verdict (virtio-sound now); benchmarks and
+      screenshots; consider WINQ-EMU's virtio-9p for host file sharing.
 - [ ] Native app shell design: window embedding vs own display client (QMP/VNC/D3D
       surface), lifecycle, sparse-disk management, WHP-enable installer flow.
 - [ ] Reach out to Eduardo (themartiano) and Jorge (jorge-huxley) re: collab, and
