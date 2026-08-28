@@ -93,8 +93,11 @@ Goal: prove GPU-accelerated Omarchy via WINQ-EMU's Venus Vulkan path on real har
       scripts/start-omarchy.ps1). AVX2 needs WINQ-EMU's patched WHPX. See FINDINGS.md.
 - [x] Boot profile baseline 2026-08-27: 9.03s to graphical.target in the nested dev
       VM (5.1s kernel + 4.0s user). Trim + SDDM autologin still open.
-- [ ] Seamless/auto login: post-provisioning boots land on SDDM login; instant-try
-      UX needs autologin (or upstream omarchy seamless-login) wired into the image.
+- [~] Seamless/auto login: PROVEN 2026-08-27 on the laptop VM — `/etc/sddm.conf.d/
+      autologin.conf` with `[Autologin] User=brandon Session=hyprland-uwsm` boots
+      straight into Hyprland (Brandon: user should never see the SDDM screen).
+      Remaining: make provisioning write this conf for the created user, and bake
+      it into the pre-provisioned "just try it" image variant.
 - [ ] "Just try it" mode: auto-provision a default account over QMP (or pre-provisioned
       image variant) so first boot lands straight in Hyprland.
 - [ ] Dev-image variant with openssh + QEMU hostfwd for real in-guest automation
@@ -117,8 +120,14 @@ Goal: prove GPU-accelerated Omarchy via WINQ-EMU's Venus Vulkan path on real har
   required, not optional. (foot/socat/jq were already present.)
 - SDL grab trap: with Ctrl+Alt+G grab active, WINQ-EMU's bundled SDL suppresses
   the Windows key system-wide even when the QEMU window is unfocused (Start menu
-  and Win+Shift+S dead until released). App shell must scope its keyboard hook to
-  window focus. See FINDINGS.md.
+  and Win+Shift+S dead until released); auto-grab re-engages on mouse-over (stock
+  QEMU absolute-pointer behavior), so releasing doesn't stick. FIXED with the
+  first app-shell component: scripts/winkey-forwarder.ps1 — SDL keyboard grab
+  disabled (SDL_GRAB_KEYBOARD=0), and a focus-scoped WH_KEYBOARD_LL hook swallows
+  Win only while the QEMU window is foreground, forwarding it to the guest as
+  meta_l over a second QMP socket (4446). launch-omarchy-gpu.ps1 starts/stops it
+  automatically. (SDL2 2.32.10 in both QEMU builds, so this wasn't a stale-SDL
+  bug — grab-scoping is on us.)
 - [ ] Native app shell design: window embedding vs own display client (QMP/VNC/D3D
       surface), lifecycle, sparse-disk management, WHP-enable installer flow.
 - [ ] Reach out to Eduardo (themartiano) and Jorge (jorge-huxley) re: collab, and

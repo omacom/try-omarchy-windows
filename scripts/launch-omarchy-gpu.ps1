@@ -45,10 +45,22 @@ $qemuArgs = @(
     '-device','virtio-sound-pci',
     '-serial',"file:$vm\serial-gpu.log",
     '-qmp','tcp:127.0.0.1:4445,server=on,wait=off',
+    '-qmp','tcp:127.0.0.1:4446,server=on,wait=off',
     '-no-reboot',
     '-name','Try Omarchy (GPU)'
 )
 if ($Fullscreen) { $qemuArgs += '-full-screen' }
 
-Write-Host 'Booting Omarchy with Venus GPU acceleration (Ctrl+Alt+G grabs/releases input)...'
-& $qemu @qemuArgs
+# SDL's keyboard grab installs a system-wide Win-key hook that leaks past window
+# focus (see FINDINGS.md). Disable it; winkey-forwarder.ps1 does it right instead:
+# Super reaches Omarchy only while the VM window is focused (over QMP port 4446).
+$env:SDL_GRAB_KEYBOARD = '0'
+$fwd = Join-Path $PSScriptRoot 'winkey-forwarder.ps1'
+$fwdProc = Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$fwd -PassThru
+
+Write-Host 'Booting Omarchy with Venus GPU acceleration (Ctrl+Alt+G grabs/releases the mouse)...'
+try {
+    & $qemu @qemuArgs
+} finally {
+    if ($fwdProc -and -not $fwdProc.HasExited) { Stop-Process -Id $fwdProc.Id -Force }
+}
