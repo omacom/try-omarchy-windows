@@ -1,0 +1,8 @@
+dist/
+*.ppm
+*.png
+*.log
+*.iso
+*.raw
+*.ext4
+*.zst

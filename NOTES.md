@@ -1,0 +1,71 @@
+# try-omarchy-windows — working notes / session handoff
+
+**Read this first in a new session.** Keep this file updated as work progresses.
+Last updated: 2026-08-27 (evening, after first Hyprland-under-WHPX boot).
+
+## Current state
+
+- Milestone reached 2026-08-27: full Omarchy desktop (Hyprland on llvmpipe) boots and
+  renders under WHPX QEMU inside the dev VM. Parity with jorge-huxley's fork.
+- Announced on X (quote-tweet of DHH, 2026-08-27), offering to collab. The stated
+  differentiator vs jorge's fork: GPU acceleration via virtio-gpu Venus Vulkan
+  (their spec self-declares llvmpipe-only), plus a slicker zero-setup UX.
+- Read `docs/FINDINGS.md` for everything proven so far and the traps (especially
+  the `-vga none` display trap and the WHPX CPU-model constraint).
+
+## Environments
+
+**Linux desktop (primary dev, this machine):** guest image builds (Docker), and a
+dockur/windows Win11 VM used as the Windows test bed (nested KVM → WHPX works).
+Fork checkout with the guest builder: `~/Projects/try-omarchy-win` (win branch).
+Working scripts + built image shared into the VM at `~/Windows/tryomarchy/`.
+Machine-specific access details (VM ssh, ports) live outside this repo.
+
+**Windows laptop (needed for GPU work):** nothing set up yet. Bootstrap below.
+
+## Windows laptop bootstrap (the GPU/Venus milestone)
+
+Goal: prove GPU-accelerated Omarchy via WINQ-EMU's Venus Vulkan path on real hardware.
+
+1. Clone this repo. Read `docs/FINDINGS.md`.
+2. Enable Windows Hypervisor Platform: elevated PowerShell,
+   `Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All`, reboot.
+   (Windows Home or Pro both fine.)
+3. Install [WINQ-EMU Alpha 10](https://github.com/cmspam/winq-emu/releases) — exactly
+   Alpha 10 if following Chainfire's recipe; check his repo
+   (Chainfire/omarchy-windows-hyperv-gpu) for the interrupt patch and whether it
+   applies (it targets Windows-on-Hyper-V hosts; a bare-metal laptop may not need it).
+   Note WINQ-EMU wants BIOS boot, not EFI — our direct-kernel-boot image sidesteps that.
+4. Get a guest image: build on the Linux box (`try-omarchy-win/guest/build-container.sh`,
+   refresh the package lock first if Arch moved) and transfer `dist/guest/`
+   (use rootfs.ext4.zst, ~1.2G, plus vmlinuz/initramfs/build-spec.json), or rebuild
+   fresh if Docker is available.
+5. Adapt `scripts/start-omarchy.ps1`: swap the QEMU path for WINQ-EMU's binary, replace
+   `-vga none -device virtio-gpu-pci,id=gpu0` + VNC display with WINQ-EMU's
+   virtio-gpu-gl/Venus device + SDL display config (see their launcher/docs), keep the
+   rest of the recipe. First run headless smoke (`whpx-boot-test.ps1` pattern), then SDL.
+6. Success criteria: Hyprland renders with `vulkaninfo`/`glxinfo` in-guest showing Venus
+   (not llvmpipe), and animations/blur feel smooth. Grab numbers + screenshots, update
+   this file and FINDINGS.md.
+
+## Open work, in rough order
+
+- [ ] CPU-feature experiment (Linux box, in progress): WHPX rejects `-cpu host`; test
+      named models (Skylake-Client etc.) / `qemu64,+avx2,...` for llvmpipe speedup.
+      Matters as the universal fallback path. Record what WHPX accepts.
+- [ ] Boot-time profile (`systemd-analyze` in guest) and trim toward instant-on.
+- [ ] "Just try it" mode: auto-provision a default account over QMP (or pre-provisioned
+      image variant) so first boot lands straight in Hyprland.
+- [ ] Dev-image variant with openssh + QEMU hostfwd for real in-guest automation
+      (current image is 79 packages, no sshd; everything goes through QMP send-key).
+- [ ] Venus/WINQ-EMU on the laptop (see bootstrap above) — the differentiator.
+- [ ] Native app shell design: window embedding vs own display client (QMP/VNC/D3D
+      surface), lifecycle, sparse-disk management, WHP-enable installer flow.
+- [ ] Reach out to Eduardo (themartiano) and Jorge (jorge-huxley) re: collab, and
+      consider upstreaming the `-vga none` finding to jorge's fork.
+
+## Done
+
+- 2026-08-27: WHPX proven in dev VM (Alpine boot), Omarchy x86_64 image built (lock
+  refresh needed), full provisioning driven over QMP, Hyprland rendering confirmed.
+  Repo created, scripts and findings captured.
