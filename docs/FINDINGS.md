@@ -109,8 +109,12 @@ via QMP match what the window shows; no SDL-specific issues observed).
 - **Windows key collision:** Super is Omarchy's main modifier, but the host swallows
   it (Start menu opens) unless QEMU has grabbed input. Ctrl+Alt+G (SDL grab) makes
   SDL install the low-level keyboard hook that swallows Win-key on the host;
-  fullscreen also helps. The future app shell must do the same (keyboard grab /
-  low-level hook while the guest window is focused).
+  fullscreen also helps. **And the reverse trap:** with the grab active, the bundled
+  SDL (observed with WINQ-EMU Alpha 10's SDL2.dll) keeps suppressing the Windows key
+  even when the QEMU window is NOT focused — Start menu and Win+Shift+S (Snipping
+  Tool) die system-wide until the grab is released with Ctrl+Alt+G. App-shell
+  requirement: the keyboard hook must be strictly scoped to window focus — swallow
+  Super only while the guest window is foreground, pass it through otherwise.
 
 ### NEW TRAP: in-guest reboot wedges QEMU under WHPX
 

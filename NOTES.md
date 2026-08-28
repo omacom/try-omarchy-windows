@@ -109,6 +109,16 @@ Goal: prove GPU-accelerated Omarchy via WINQ-EMU's Venus Vulkan path on real har
       Follow-ups: add vulkan-virtio (+vulkan-tools) to the image package set;
       benchmarks and screenshots for the announcement; consider WINQ-EMU's
       virtio-9p for host file sharing.
+- Screensaver broken in the trimmed image: omarchy screensaver scripts ship but
+  their deps don't — **ttfx** (in the image's own omarchy pacman repo!) and
+  **hypridle** (extra). Installed in the running guest, works (Brandon-verified;
+  its exit also restores the cursor). **Image package set must add: ttfx,
+  hypridle** — Brandon: screensavers are a big part of Omarchy's appeal, treat as
+  required, not optional. (foot/socat/jq were already present.)
+- SDL grab trap: with Ctrl+Alt+G grab active, WINQ-EMU's bundled SDL suppresses
+  the Windows key system-wide even when the QEMU window is unfocused (Start menu
+  and Win+Shift+S dead until released). App shell must scope its keyboard hook to
+  window focus. See FINDINGS.md.
 - [ ] Native app shell design: window embedding vs own display client (QMP/VNC/D3D
       surface), lifecycle, sparse-disk management, WHP-enable installer flow.
 - [ ] Reach out to Eduardo (themartiano) and Jorge (jorge-huxley) re: collab, and
