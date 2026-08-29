@@ -162,6 +162,7 @@ func enforceTitle(pid uint32, maximize *bool, appIcon uintptr) {
 			*maximize = false
 			const swMaximize = 3
 			procShowWindow.Call(hwnd, swMaximize)
+			setTaskbarIdentity(hwnd) // once per window: our taskbar icon + name
 		}
 		if appIcon != 0 {
 			const wmSeticonMsg = 0x80
