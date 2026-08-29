@@ -134,16 +134,17 @@ via QMP match what the window shows; no SDL-specific issues observed).
   Tool) die system-wide until the grab is released with Ctrl+Alt+G. App-shell
   requirement: the keyboard hook must be strictly scoped to window focus — swallow
   Super only while the guest window is foreground, pass it through otherwise.
-  Remote sessions (RDP/VNC into the host) are an untested corner of that scoping:
-  injected input does reach LL hooks, but foreground detection and focus timing
-  may behave differently. Field report from launch week (X, 2026-08-29): a user
-  driving the VM over VNC lost an hour to keybindings. Likely mix: no visible
+  Remote sessions expose a second problem: SDL automatically confines the host
+  cursor whenever its window gains focus. Over RDP this made the Windows taskbar
+  unreachable until Ctrl+Alt+G or the secure desktop broke the grab. The app now
+  releases SDL's cursor confinement while QEMU is foreground; the absolute
+  virtio tablet does not need it. Field report from launch week (X, 2026-08-29):
+  a user driving the VM over VNC lost an hour to keybindings. Likely mix: no visible
   hints, unfamiliar Super scoping, and no obvious minimize (a tiling WM parks
   windows in a hidden scratchpad instead). Mitigations landed for the next
   release: starter-key hints on the splash; README "Essential keys" section.
-  TODO: verify the hook end-to-end over RDP and VNC (does foregroundPid()
-  track the session's foreground window?) and confirm the documented
-  Ctrl+Alt+G fallback works.
+  Ctrl+Alt+G remains the manual fallback. The focus-scoped Super hook still
+  needs an end-to-end VNC check.
 
 ### NEW TRAP: in-guest reboot wedges QEMU under WHPX
 

@@ -26,7 +26,7 @@ var (
 
 func hookCallback(nCode, wParam, lParam uintptr) uintptr {
 	if int32(nCode) >= 0 {
-		vk := *(*uint32)(unsafe.Pointer(lParam)) // KBDLLHOOKSTRUCT.vkCode
+		vk := *(*uint32)(unsafe.Pointer(lParam))  // KBDLLHOOKSTRUCT.vkCode
 		if vk == vkF4 && wParam == wmSyskeydown { // Alt+F4 on the VM window
 			if pid := qemuPid.Load(); pid != 0 && foregroundPid() == pid {
 				requestQuitConfirm()
@@ -162,5 +162,16 @@ func runTitleEnforcer(fullscreen bool) {
 			qemuHwnd.Store(0)
 		}
 		time.Sleep(time.Second)
+	}
+}
+
+// runCursorReleaseGuard keeps the SDL frontend from confining the Windows
+// cursor to the VM. SDL re-applies its grab whenever the window gains focus,
+// so this must watch the full lifetime rather than run only at launch.
+func runCursorReleaseGuard() {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		releaseQemuCursor()
 	}
 }

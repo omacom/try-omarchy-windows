@@ -20,6 +20,7 @@ var (
 	procCallNextHookEx           = user32.NewProc("CallNextHookEx")
 	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
 	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
+	procClipCursor               = user32.NewProc("ClipCursor")
 	procMsgWaitForMultipleObj    = user32.NewProc("MsgWaitForMultipleObjects")
 	procPeekMessageW             = user32.NewProc("PeekMessageW")
 	procEnumWindows              = user32.NewProc("EnumWindows")
@@ -162,6 +163,17 @@ func foregroundPid() uint32 {
 	var pid uint32
 	procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
 	return pid
+}
+
+// releaseQemuCursor defeats SDL's automatic window confinement. QEMU has an
+// absolute virtio tablet, so it never needs to trap the host pointer. This is
+// especially important over RDP, where clicking the VM can otherwise make the
+// Windows taskbar unreachable until Ctrl+Alt+G or the secure desktop breaks
+// SDL's grab.
+func releaseQemuCursor() {
+	if pid := qemuPid.Load(); pid != 0 && foregroundPid() == pid {
+		procClipCursor.Call(0)
+	}
 }
 
 // enforceTitle finds the QEMU process's visible top-level window, keeps it

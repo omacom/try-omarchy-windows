@@ -265,6 +265,7 @@ func main() {
 	go runWinKeyHook()
 	go runWinKeyQmp()
 	go runTitleEnforcer(cfg.fullscreen)
+	go runCursorReleaseGuard()
 	go runCloseGuard()
 	runClipboardBridge()
 
