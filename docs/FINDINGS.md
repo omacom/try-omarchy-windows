@@ -139,10 +139,11 @@ via QMP match what the window shows; no SDL-specific issues observed).
   may behave differently. Field report from launch week (X, 2026-08-29): a user
   driving the VM over VNC lost an hour to keybindings. Likely mix: no visible
   hints, unfamiliar Super scoping, and no obvious minimize (a tiling WM parks
-  windows in a hidden scratchpad instead). Mitigations shipped: starter-key
-  hints on the splash; README "Essential keys" section. TODO: verify the hook
-  end-to-end over RDP and VNC (does foregroundPid() track the session's
-  foreground window?), document Ctrl+Alt+G as the remote-session fallback.
+  windows in a hidden scratchpad instead). Mitigations landed for the next
+  release: starter-key hints on the splash; README "Essential keys" section.
+  TODO: verify the hook end-to-end over RDP and VNC (does foregroundPid()
+  track the session's foreground window?) and confirm the documented
+  Ctrl+Alt+G fallback works.
 
 ### NEW TRAP: in-guest reboot wedges QEMU under WHPX
 

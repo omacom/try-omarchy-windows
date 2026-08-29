@@ -78,7 +78,7 @@ A live USB means rebooting away from your machine and forgetting everything on s
 
 ### I have the full Hyper-V feature set installed. Will it conflict?
 
-No. WHPX and Hyper-V share the same hypervisor, so they coexist. If you hit anything odd with Hyper-V enabled, please open an issue so we can document it.
+WHPX and Hyper-V share the same Windows hypervisor and are designed to coexist. We have not yet validated every Try Omarchy feature on a machine with the full Hyper-V feature set enabled, so please open an issue if you hit anything odd.
 
 ## Repository layout
 
