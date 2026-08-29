@@ -1,7 +1,7 @@
 From 62ab37755097410b5dc89bd20424c8e4fa4134fd Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Fri, 28 Aug 2026 17:33:49 -0400
-Subject: [PATCH 1/3] Image v0.0.2: Omarchy 4.0.1, all themes, screensavers,
+Subject: [PATCH 1/4] Image v0.0.2: Omarchy 4.0.1, all themes, screensavers,
  permanent autologin, clipboard bridge, 9p automount, visible cursor
 
 ---

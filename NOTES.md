@@ -1,9 +1,44 @@
 # try-omarchy-windows — working notes / session handoff
 
 **Read this first in a new session.** Keep this file updated as work progresses.
-Last updated: 2026-08-28 evening (image rebuilt: v0.0.2-preview published).
-**Next session: laptop — start with [HANDOFF.md](HANDOFF.md), the v0.0.2
-validation brief.**
+Last updated: 2026-08-29 night (native app shell built and VM-validated).
+**Next session: laptop — start with [HANDOFF.md](HANDOFF.md); validate v0.0.2
+AND the new TryOmarchy.exe on hardware.**
+
+## Session 2026-08-28 night (Linux box): the native app shell (app/)
+
+`app/` is now a real Go app shell — ONE console-less TryOmarchy.exe (~7 MB,
+zero cgo, cross-compiled from Linux with `GOOS=windows go build`) that replaces
+launch-omarchy.ps1 + winkey-forwarder.ps1 + clipboard-bridge.ps1 AND
+bootstrap's image download. What it does, all VM-validated tonight:
+
+- First run: downloads the guest image from the GitHub release (progress
+  window, SHA256-verified, zstd-unpacked sparse, .zst deleted after), then
+  boots. Verified against the live v0.0.2-preview release end to end.
+- Launch: GPU auto-detect (WINQ-EMU) / stock CPU fallback, sparse disk prep,
+  silent-boot cmdline, supervisor with launch watchdog, reboot relaunch,
+  poweroff-wedge reap, single-instance port check, qemu stderr captured to
+  vm\qemu-stderr.log, shell log in vm\shell.log.
+- In-process winkey forwarder (focus-scoped LL hook, front-of-chain rehook),
+  "Try Omarchy" title enforcement, host clipboard bridge (verified: the baked
+  guest service connected on its own), audio fallback dsound -> none.
+- MAJOR find: the WHPX "launch wedge" is CAUSED by early QMP connections —
+  probe at t=1.5s wedged 8/8 nested launches; wait 10s and it's healthy on
+  attempt 1 every time. Plus: virtio-sound without -audiodev hangs the guest
+  session (both writeups in FINDINGS.md).
+- Reboot-vs-poweroff on a wedged stock QEMU is now solved via the image:
+  guest-build patch 0004 adds try-omarchy-reboot-notify (lifecycle port 4450).
+  NOT in the published v0.0.2 image yet — needs a v0.0.3 image build; until
+  then in-guest reboot exits the app on the stock/CPU path (WINQ path fine).
+- Testing trick worth keeping: the dockur VM console can be driven without ssh
+  via the container's QEMU monitor socket (docker exec + nc to
+  /run/shm/monitor.sock: sendkey/screendump), and apps land on the interactive
+  desktop via `schtasks /run`. Used tonight to fix the VM's sshd (a Windows
+  update silently removed the OpenSSH.Server capability — remove + re-add the
+  capability restores it) and to validate the SDL window + title.
+- Still laptop-only: GPU mode, real audio (the dsound path), SDL window
+  foreground behavior from a normal double-click, -share end to end (the
+  automount is in the v0.0.2 image), winkey feel, -fullscreen.
 
 ## Session 2026-08-28 evening (Linux box): image rebuild, v0.0.2-preview shipped
 

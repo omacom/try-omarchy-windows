@@ -189,3 +189,36 @@ systemd-tmpfiles-setup-dev-early 1.14s, user-runtime-dir 1.10s, systemd-userdbd 
 Bare metal will be faster (this carries KVM-nesting overhead). Note: after first-boot
 provisioning auto-login, subsequent boots land on SDDM login — a seamless-login or
 autologin config is needed for the "instant try" UX.
+
+## THE LAUNCH WEDGE, SOLVED: early QMP connections deadlock WHPX QEMU (2026-08-28 night)
+
+The "launch wedge" (QEMU alive, QMP accepts TCP but the main loop never answers,
+window Not Responding) is not random: **connecting to a QMP socket during the
+guest's first seconds of boot is what triggers it.** Reproduced in the nested dev
+VM at effectively 100% - eight shell launches in a row wedged with a supervisor
+probing QMP from t=1.5s, while the identical QEMU invocation left untouched for
+30s answered the handshake instantly, every time. On bare metal the same race
+exists but the window is smaller (faster boot), which is why the laptop saw it
+"sometimes, twice in a row" instead of always.
+
+Rule: never touch any QMP socket before the guest is past early boot. The app
+shell (app/main.go) waits 10s before the supervisor's first probe, and the
+winkey forwarder + tooling only connect after that handshake succeeds. With the
+delay in place, nested launches come up healthy on attempt 1 in ~11s.
+
+Two more shell-era findings the same night:
+
+- **virtio-sound-pci without an explicit -audiodev hangs the whole guest
+  session.** The device answers nothing; PipeWire blocks on virtio-snd control
+  messages (`control message (0x00000102) timeout` on serial) and the desktop
+  freezes black. Always pass `-audiodev dsound,id=snd` +
+  `virtio-sound-pci,audiodev=snd`. On machines with no DirectSound device at
+  all (VMs, some remote sessions) QEMU then exits at startup - the shell
+  detects that and relaunches with `-audiodev none` so the app still works,
+  just silent. (The unified launch-omarchy.ps1 shipped this bug; real laptops
+  masked it because QEMU's default backend happened to work there.)
+- **A reboot-wedged QEMU also loses the serial file's final flush**, so the
+  kernel's "reboot: Restarting system" line cannot be sniffed to tell reboot
+  from poweroff after the fact. The image now closes this properly: a shutdown
+  unit (try-omarchy-reboot-notify, guest-build patch 0004) reports reboot
+  intent to the shell on lifecycle port 4450 while the network is still up.

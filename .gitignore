@@ -6,3 +6,4 @@ dist/
 *.raw
 *.ext4
 *.zst
+.wrangler/

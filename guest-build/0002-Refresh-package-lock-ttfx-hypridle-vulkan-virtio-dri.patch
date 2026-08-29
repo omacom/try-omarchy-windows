@@ -1,7 +1,7 @@
 From 66267eb16e64633aa86f5f8f1c97f165f266207a Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Fri, 28 Aug 2026 17:34:23 -0400
-Subject: [PATCH 2/3] Refresh package lock: ttfx, hypridle, vulkan-virtio +
+Subject: [PATCH 2/4] Refresh package lock: ttfx, hypridle, vulkan-virtio +
  drift (kernel 7.1.11)
 
 ---

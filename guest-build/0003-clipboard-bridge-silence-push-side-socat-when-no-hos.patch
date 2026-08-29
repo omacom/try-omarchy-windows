@@ -1,7 +1,7 @@
 From 79c39cccfe8fe3e60253664458c0673a81e05e30 Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Fri, 28 Aug 2026 17:50:14 -0400
-Subject: [PATCH 3/3] clipboard-bridge: silence push-side socat when no host
+Subject: [PATCH 3/4] clipboard-bridge: silence push-side socat when no host
  listener
 
 ---

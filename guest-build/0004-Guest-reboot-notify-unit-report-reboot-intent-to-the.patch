@@ -1,0 +1,62 @@
+From a10fcaf8556520d542fb57fa76af1385927b68c6 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Fri, 28 Aug 2026 20:36:34 -0400
+Subject: [PATCH 4/4] Guest reboot-notify unit: report reboot intent to the
+ shell (port 4450)
+
+---
+ .../try-omarchy-reboot-notify.service            |  1 +
+ .../system/try-omarchy-reboot-notify.service     | 16 ++++++++++++++++
+ .../usr/local/lib/try-omarchy/reboot-notify      |  8 ++++++++
+ 3 files changed, 25 insertions(+)
+ create mode 120000 guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-reboot-notify.service
+ create mode 100644 guest/factory-overlay/etc/systemd/system/try-omarchy-reboot-notify.service
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/reboot-notify
+
+diff --git a/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-reboot-notify.service b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-reboot-notify.service
+new file mode 120000
+index 0000000..2bd8950
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-reboot-notify.service
+@@ -0,0 +1 @@
++../try-omarchy-reboot-notify.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/system/try-omarchy-reboot-notify.service b/guest/factory-overlay/etc/systemd/system/try-omarchy-reboot-notify.service
+new file mode 100644
+index 0000000..1e0b84b
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/try-omarchy-reboot-notify.service
+@@ -0,0 +1,16 @@
++# Reports reboot intent to the Try Omarchy shell at shutdown. Started (as a
++# no-op) with the network up; its ExecStop therefore runs BEFORE the network
++# is torn down during shutdown, while 10.0.2.2 is still reachable.
++[Unit]
++Description=Tell the Try Omarchy shell when a reboot (not poweroff) starts
++After=network.target NetworkManager.service
++
++[Service]
++Type=oneshot
++RemainAfterExit=yes
++ExecStart=/bin/true
++ExecStop=/usr/local/lib/try-omarchy/reboot-notify
++TimeoutStopSec=5
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/reboot-notify b/guest/factory-overlay/usr/local/lib/try-omarchy/reboot-notify
+new file mode 100755
+index 0000000..3a206e9
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/reboot-notify
+@@ -0,0 +1,8 @@
++#!/bin/bash
++# Runs at shutdown (ExecStop of try-omarchy-reboot-notify.service). When the
++# guest is REBOOTING (not powering off), tell the host shell on the lifecycle
++# port so it relaunches QEMU - a QEMU wedged during guest reset under stock
++# WHPX delivers no SHUTDOWN event, so QMP alone cannot tell the two apart.
++systemctl list-jobs 2>/dev/null | grep -q 'reboot.target.*start' || exit 0
++printf 'reboot\n' | socat -u - TCP:10.0.2.2:4450,connect-timeout=2 2>/dev/null || true
++exit 0
+-- 
+2.55.0
+

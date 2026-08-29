@@ -1,13 +1,44 @@
-# Handoff — next session: Windows laptop, validate v0.0.2-preview
+# Handoff — next session: Windows laptop, validate v0.0.2-preview + the app shell
 
-The image rebuild is done and published (2026-08-28 evening, Linux box):
-**https://github.com/tsouth89/try-omarchy-windows/releases/tag/v0.0.2-preview**
-— Omarchy 4.0.1, all 22 themes, screensavers, permanent autologin, baked-in
-clipboard bridge, 9p automount, visible cursor. Validated end to end under KVM
-(form → desktop → reboot → desktop, no greeter). What's left is proving the same
-image on real Windows hardware with the real launcher.
+Two things shipped since the laptop last looked (both from the Linux box):
 
-## The validation pass (30–45 min)
+1. **v0.0.2-preview image** —
+   https://github.com/tsouth89/try-omarchy-windows/releases/tag/v0.0.2-preview
+   — Omarchy 4.0.1, all 22 themes, screensavers, permanent autologin, baked-in
+   clipboard bridge, 9p automount, visible cursor. KVM-validated end to end.
+2. **The native app shell** — `app/` builds ONE console-less TryOmarchy.exe
+   that replaces every PowerShell script including bootstrap's download: first
+   run shows a progress window, pulls the image from the release
+   (SHA256-verified), unpacks, boots, supervises. Fully validated in the dev
+   VM (CPU mode) including the whole first-run download flow. Build from this
+   repo on any machine with Go: `cd app && GOOS=windows GOARCH=amd64 go build
+   -trimpath -ldflags "-H windowsgui -s -w" -o TryOmarchy.exe .` (on the
+   laptop plain `go build` works too).
+
+**Read the new FINDINGS.md section "THE LAUNCH WEDGE, SOLVED" before touching
+anything** — early QMP connections CAUSE the wedge; the shell already handles
+it, but any hand-rolled QMP tooling must wait ~10s after launch.
+
+## Shell validation on hardware (the new part, ~30 min)
+
+Run TryOmarchy.exe (no args; `%LOCALAPPDATA%\TryOmarchy` is its home) on the
+laptop and check the things the VM cannot:
+
+- first-run download UX (window visible, progress sane, ends in the setup form)
+- GPU mode auto-detect (C:\WINQ-EMU present -> virgl/Venus; log says which)
+- audio actually plays (dsound path — the VM only proved the silent fallback)
+- window comes to the foreground on double-click, title stays "Try Omarchy",
+  Win key scoped to the window, Ctrl+Alt+F fullscreen, -fullscreen flag
+- clipboard both ways, -share <folder> shows up at /mnt/host
+- in-guest reboot relaunches (WINQ path delivers the event; on -nogpu stock
+  QEMU it will EXIT instead — known, fixed by the v0.0.3 image's reboot-notify
+  unit, patch 0004, not yet in a published image)
+- poweroff from Omarchy exits the app cleanly
+
+Log lives at %LOCALAPPDATA%\TryOmarchy\vm\shell.log; QEMU's own errors at
+vm\qemu-stderr.log.
+
+## The image validation pass (same as before, 30–45 min)
 
 1. `git pull` this repo (launcher + bootstrap changed too).
 2. Get the new image. Either delete `%LOCALAPPDATA%\TryOmarchy\guest` and rerun
