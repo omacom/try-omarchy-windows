@@ -76,7 +76,14 @@ func main() {
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed")
 	release := flag.String("release", "https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.3-preview",
 		"base URL the guest image is downloaded from on first run")
+	enableWhp := flag.Bool("enable-whp", false, "internal: elevated helper that enables the Windows Hypervisor Platform")
 	flag.Parse()
+
+	// The elevated relaunch does exactly one thing and reports back via exit
+	// code (see setup.go); it must not touch the single-instance port.
+	if *enableWhp {
+		os.Exit(runDismEnable())
+	}
 
 	cfg.guestDir = filepath.Join(cfg.dir, "guest")
 	cfg.vmDir = filepath.Join(cfg.dir, "vm")
@@ -90,24 +97,44 @@ func main() {
 	// into the same files twice (it happened).
 	runLifecycleListener()
 
+	// Machine setup the old bootstrap.ps1 handled: hypervisor on (may walk the
+	// user through one restart and exit), then a QEMU to run. Existing setups
+	// win - C:\WINQ-EMU, then a previously downloaded runtime, then stock QEMU
+	// from the bootstrap; a bare machine downloads the portable WINQ-EMU tree.
+	ensureWHP(cfg)
+
+	const qemuExe = "qemu-system-x86_64w.exe"
+	stockQemu := `C:\Program Files\qemu\` + qemuExe
+	_, stockErr := os.Stat(stockQemu)
+	haveStock := stockErr == nil
+	gpuRoot := ""
+	for _, root := range []string{cfg.winqEmu, filepath.Join(cfg.dir, "runtime")} {
+		if _, err := os.Stat(filepath.Join(root, "bin", qemuExe)); err == nil {
+			gpuRoot = root
+			break
+		}
+	}
+	if gpuRoot == "" && !(cfg.noGpu && haveStock) {
+		root, err := ensureRuntime(cfg, *release)
+		if err != nil {
+			logf("runtime download failed: %v", err)
+			if !haveStock {
+				fatal("Downloading the graphics engine failed: %v\n\nCheck your connection and start Try Omarchy again.", err)
+			}
+		} else {
+			gpuRoot = root
+		}
+	}
+	if gpuRoot != "" {
+		cfg.qemu = filepath.Join(gpuRoot, "bin", qemuExe)
+		cfg.useGpu = !cfg.noGpu
+	} else {
+		cfg.qemu = stockQemu
+	}
+
 	// First run: the exe is the stub - fetch the guest image itself.
 	if err := ensureGuest(cfg, *release); err != nil {
 		fatal("Setting up the Omarchy image failed: %v\n\nCheck your connection and start Try Omarchy again.", err)
-	}
-
-	gpuQemu := filepath.Join(cfg.winqEmu, "bin", "qemu-system-x86_64w.exe")
-	if !cfg.noGpu {
-		if _, err := os.Stat(gpuQemu); err == nil {
-			cfg.useGpu = true
-		}
-	}
-	if cfg.useGpu {
-		cfg.qemu = gpuQemu
-	} else {
-		cfg.qemu = `C:\Program Files\qemu\qemu-system-x86_64w.exe`
-	}
-	if _, err := os.Stat(cfg.qemu); err != nil {
-		fatal("QEMU not found at %s.\n\nRun the bootstrap first (see the README).", cfg.qemu)
 	}
 	if cfg.share != "" {
 		if st, err := os.Stat(cfg.share); err != nil || !st.IsDir() {
@@ -151,13 +178,9 @@ func main() {
 	runClipboardBridge()
 
 	cfg.audio = "dsound"
-	mode := "CPU rendering (llvmpipe)"
-	if cfg.useGpu {
-		mode = "GPU accelerated (virgl + Venus Vulkan)"
-	}
 
 	for relaunch := true; relaunch; {
-		relaunch = supervise(cfg, cmdline, mode)
+		relaunch = supervise(cfg, cmdline)
 	}
 	logf("---- exiting ----")
 }
@@ -169,10 +192,14 @@ func main() {
 // liveness is probed (a QEMU wedged at guest poweroff cannot deliver its
 // SHUTDOWN event), and a read stays permanently pending so a fast exit after
 // guest-reset cannot discard the event (see docs/FINDINGS.md).
-func supervise(cfg *config, cmdline string, mode string) bool {
+func supervise(cfg *config, cmdline string) bool {
 	var proc *exec.Cmd
 	var qmp *qmpConn
 	for attempt := 1; attempt <= 4; attempt++ {
+		mode := "CPU rendering (llvmpipe)"
+		if cfg.useGpu {
+			mode = "GPU accelerated (virgl + Venus Vulkan)"
+		}
 		logf("booting - %s (attempt %d)", mode, attempt)
 		pendingReboot.Store(false)
 		proc = exec.Command(cfg.qemu, buildQemuArgs(cfg, cmdline)...)
@@ -208,6 +235,13 @@ func supervise(cfg *config, cmdline string, mode string) bool {
 				if cfg.audio == "dsound" {
 					logf("QEMU exited at startup - retrying without audio")
 					cfg.audio = "none"
+					break probe
+				}
+				// Broken host GL (remote sessions, ancient drivers) kills the
+				// gl=on display the same way; same binary, CPU args, still up.
+				if cfg.useGpu {
+					logf("QEMU exited at startup - falling back to CPU rendering")
+					cfg.useGpu = false
 					break probe
 				}
 				fatal("QEMU exited at startup - see %s\\qemu-stderr.log.", cfg.vmDir)
