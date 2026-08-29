@@ -8,7 +8,7 @@ Download, boot, Hyprland.
 
 ![Live capture on the Ryzen 5 test laptop: fastfetch, the Omarchy menu, and a screensaver inside the Try Omarchy window](docs/images/demo.gif)
 
-**Status: hardware-validated developer preview.** The whole flow is working end to end on a real laptop: one app downloads the image, boots, and supervises; the desktop renders on the GPU when [WINQ-EMU](https://github.com/cmspam/winq-emu) is installed and falls back to CPU rendering automatically. Landing page: [tryomarchy.com](https://tryomarchy.com).
+**Status: working end to end on real hardware.** One app switches on Windows' virtualization, downloads the GPU runtime and the image, boots, and supervises; the desktop renders on the GPU and falls back to CPU rendering automatically. Landing page: [tryomarchy.com](https://tryomarchy.com).
 
 ## What works today
 
@@ -39,7 +39,7 @@ WHPX works on Windows Home and Pro (it's the same platform WSL2 rides on), so no
 
 Proven boot recipe: `-accel whpx -machine q35 -cpu qemu64`, direct kernel boot (vmlinuz + initramfs + raw ext4 rootfs on virtio-blk), all-virtio devices, DirectSound audio. See [docs/FINDINGS.md](docs/FINDINGS.md) for the details and the traps.
 
-## Try it (developer preview)
+## Try it
 
 Download [TryOmarchy.exe](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (~8 MB, [SHA256](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and open it. First run sets the machine up by itself: Windows asks permission to switch on the Hypervisor Platform and restarts once, then the app pulls the GPU runtime (a portable [WINQ-EMU](https://github.com/cmspam/winq-emu) tree, ~46 MB) and the Omarchy image (~1.4 GB) from the [v0.0.3-preview release](https://github.com/tsouth89/try-omarchy-windows/releases/tag/v0.0.3-preview), everything SHA256-verified. It walks you through Omarchy's setup form and lands you in Hyprland; every launch after goes straight to the desktop.
 
