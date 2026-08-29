@@ -85,6 +85,11 @@ func main() {
 	logFile, _ = os.OpenFile(filepath.Join(cfg.vmDir, "shell.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	logf("---- %s starting ----", appTitle)
 
+	// Single-instance guard FIRST: binding the lifecycle port before the image
+	// fetch stops a double-click double-launch from downloading the same 1.4 GB
+	// into the same files twice (it happened).
+	runLifecycleListener()
+
 	// First run: the exe is the stub - fetch the guest image itself.
 	if err := ensureGuest(cfg, *release); err != nil {
 		fatal("Setting up the Omarchy image failed: %v\n\nCheck your connection and start Try Omarchy again.", err)
@@ -144,7 +149,6 @@ func main() {
 	go runWinKeyQmp()
 	go runTitleEnforcer(cfg.fullscreen)
 	runClipboardBridge()
-	runLifecycleListener()
 
 	cfg.audio = "dsound"
 	mode := "CPU rendering (llvmpipe)"

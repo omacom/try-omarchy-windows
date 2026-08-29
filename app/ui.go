@@ -30,6 +30,7 @@ var (
 	procPostQuitMessage      = user32.NewProc("PostQuitMessage")
 	procDestroyWindow        = user32.NewProc("DestroyWindow")
 	procGetSystemMetrics     = user32.NewProc("GetSystemMetrics")
+	procSetForegroundWindow  = user32.NewProc("SetForegroundWindow")
 	procCreateFontW          = syscall.NewLazyDLL("gdi32.dll").NewProc("CreateFontW")
 	procGetModuleHandleW     = kernel32.NewProc("GetModuleHandleW")
 )
@@ -111,25 +112,41 @@ func (ui *progressUI) run() {
 		return r
 	})
 
+	// Field types must mirror WNDCLASSEXW exactly: cbClsExtra/cbWndExtra are C
+	// ints (4 bytes), NOT pointer-sized. Getting this wrong inflates cbSize and
+	// RegisterClassExW rejects the struct - silently, if nobody checks (it
+	// shipped that way once: no progress window, no error, download running
+	// blind. Check every return value here).
 	type wndclassex struct {
-		size, style                        uint32
-		wndProc, clsExtra, wndExtra, inst  uintptr
-		icon, cursor, brush                uintptr
-		menuName,className                *uint16
-		iconSm                             uintptr
+		size, style         uint32
+		wndProc             uintptr
+		clsExtra, wndExtra  int32
+		inst                uintptr
+		icon, cursor, brush uintptr
+		menuName, className *uint16
+		iconSm              uintptr
 	}
 	wc := wndclassex{
 		size: uint32(unsafe.Sizeof(wndclassex{})), wndProc: wndProc, inst: hInst,
 		brush: 16, className: className, // 15+1 = COLOR_3DFACE+1
 	}
-	procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
+	if atom, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); atom == 0 {
+		logf("progress UI: RegisterClassExW failed: %v", err)
+		close(ui.ready)
+		return
+	}
 
 	const w, h = 420, 130
 	sx, _, _ := procGetSystemMetrics.Call(smCxscreen)
 	sy, _, _ := procGetSystemMetrics.Call(smCyscreen)
 	title, _ := syscall.UTF16PtrFromString(appTitle)
-	hwnd, _, _ := procCreateWindowExW.Call(0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(title)),
+	hwnd, _, err := procCreateWindowExW.Call(0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(title)),
 		wsOverlapped|wsVisible, (sx-w)/2, (sy-h)/2, w, h, 0, 0, hInst, 0)
+	if hwnd == 0 {
+		logf("progress UI: CreateWindowExW failed: %v", err)
+		close(ui.ready)
+		return
+	}
 
 	staticClass, _ := syscall.UTF16PtrFromString("STATIC")
 	empty, _ := syscall.UTF16PtrFromString("")
@@ -145,6 +162,9 @@ func (ui *progressUI) run() {
 
 	procSetTimer.Call(hwnd, 1, 100, 0)
 	procShowWindow.Call(hwnd, swShow)
+	// Launched without foreground rights (shortcut helpers, background shells)
+	// the window opens buried; ask for the front anyway - best effort.
+	procSetForegroundWindow.Call(hwnd)
 	close(ui.ready)
 
 	var m msgStruct
