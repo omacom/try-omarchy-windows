@@ -1,84 +1,102 @@
-# Handoff — next session: Windows laptop, validate v0.0.2-preview + the app shell
+# Handoff — laptop session: sign TryOmarchy.exe, ship v0.0.3 clean
 
-Two things shipped since the laptop last looked (both from the Linux box):
+Goal: the announcement goes out with a signed exe and nothing major pending.
+Everything else is already live: tryomarchy.com (with /download and
+/bootstrap.ps1 redirects), README, release notes, repo About. The only thing
+between here and a clean release is signing, and signing only runs on Windows.
 
-1. **v0.0.2-preview image** —
-   https://github.com/tsouth89/try-omarchy-windows/releases/tag/v0.0.2-preview
-   — Omarchy 4.0.1, all 22 themes, screensavers, permanent autologin, baked-in
-   clipboard bridge, 9p automount, visible cursor. KVM-validated end to end.
-2. **The native app shell** — `app/` builds ONE console-less TryOmarchy.exe
-   that replaces every PowerShell script including bootstrap's download: first
-   run shows a progress window, pulls the image from the release
-   (SHA256-verified), unpacks, boots, supervises. Fully validated in the dev
-   VM (CPU mode) including the whole first-run download flow. Build from this
-   repo on any machine with Go: `cd app && GOOS=windows GOARCH=amd64 go build
-   -trimpath -ldflags "-H windowsgui -s -w" -o TryOmarchy.exe .` (on the
-   laptop plain `go build` works too).
+## State right now
 
-**Read the new FINDINGS.md section "THE LAUNCH WEDGE, SOLVED" before touching
-anything** — early QMP connections CAUSE the wedge; the shell already handles
-it, but any hand-rolled QMP tooling must wait ~10s after launch.
+- **Unsigned TryOmarchy.exe** (7.6 MB, built on the Linux box from master
+  `88085a3`, Go 1.27, flags from the README) is attached to
+  [v0.0.3-preview](https://github.com/tsouth89/try-omarchy-windows/releases/tag/v0.0.3-preview)
+  together with `TryOmarchy.exe.sha256`. SHA256:
+  `17b1e276090b8d2c22ad54c560a1d9a6a04fe4b0a9a9acf2b836b8315f853f28`
+- `https://tryomarchy.com/download` 302s to
+  `releases/latest/download/TryOmarchy.exe` — replacing the release asset is
+  all it takes to swap in the signed build; the site needs no change for that.
+- **The cert is ready.** Trusted Signing account `southforgesigning`, profile
+  `conduit` (PublicTrust, **Active**), publisher shown: Brandon South. Details
+  and prereqs in docs/SIGNING.md. `scripts/sign.ps1` already defaults to the
+  live endpoint/account/profile. Ignore any older note saying the profile
+  doesn't exist — SIGNING.md is current.
+- **Caveat to test around:** the exe includes the splash/icon and
+  first-run-progress-window fixes that landed AFTER the hardware-validated
+  commit (81c19fa). Same code NOTES said to ship, but smoke test the signed
+  exe before announcing.
 
-## Shell validation on hardware (the new part, ~30 min)
+## Steps (~20 min)
 
-Run TryOmarchy.exe (no args; `%LOCALAPPDATA%\TryOmarchy` is its home) on the
-laptop and check the things the VM cannot:
+1. `git pull` this repo. `gh auth status` should say tsouth89.
 
-- first-run download UX (window visible, progress sane, ends in the setup form)
-- GPU mode auto-detect (C:\WINQ-EMU present -> virgl/Venus; log says which)
-- audio actually plays (dsound path — the VM only proved the silent fallback)
-- window comes to the foreground on double-click, title stays "Try Omarchy",
-  Win key scoped to the window, Ctrl+Alt+F fullscreen, -fullscreen flag
-- clipboard both ways, -share <folder> shows up at /mnt/host
-- in-guest reboot relaunches (WINQ path delivers the event; on -nogpu stock
-  QEMU it will EXIT instead — known, fixed by the v0.0.3 image's reboot-notify
-  unit, patch 0004, not yet in a published image)
-- poweroff from Omarchy exits the app cleanly
+2. One-time signing prereqs (skip what's already installed):
 
-Log lives at %LOCALAPPDATA%\TryOmarchy\vm\shell.log; QEMU's own errors at
-vm\qemu-stderr.log.
+   ```powershell
+   winget install Microsoft.Azure.TrustedSigningClientTools
+   winget install Microsoft.WindowsSDK.SignTool
+   az login --tenant b87fd204-c1aa-47fb-a84c-2e89f6ec5073   # tsouth2@gmail.com
+   ```
 
-## The image validation pass (same as before, 30–45 min)
+3. Get the exe. Downloading the release asset is simplest (a laptop `go build`
+   with a different Go version won't reproduce the hash):
 
-1. `git pull` this repo (launcher + bootstrap changed too).
-2. Get the new image. Either delete `%LOCALAPPDATA%\TryOmarchy\guest` and rerun
-   `scripts\bootstrap.ps1` (it now points at v0.0.2-preview), or download the
-   four artifacts manually into `guest\`. **Then launch with `-Fresh`** — the
-   laptop's current disk has everything hand-installed and will mask image bugs.
-3. `powershell -ExecutionPolicy Bypass -File scripts\launch-omarchy.ps1 -Fresh`
-   Walk the setup form. Confirm, in order:
-   - boot is a black window until the branded splash (no console text, no
-     blinking cursor — the launcher now drops console=tty0/tty1 from the
-     cmdline; boot logs are in `vm\serial*.log` only)
-   - cursor visible in the SDL window without any in-guest fix
-   - `omarchy-version` says 4.0.1-1; theme picker shows 22 themes
-   - screensaver runs (idle or `omarchy-launch-screensaver`)
-   - clipboard both directions with zero setup (bridge is baked in + host side
-     auto-starts)
-   - `-Share <folder>` appears at `/mnt/host` with no manual mount (GPU mode)
-   - reboot from inside Omarchy → relaunches → straight back to the desktop
-     (permanent autologin; the generic SDDM greeter must never appear)
-4. Record results + timings in NOTES.md. If it all passes, v0.0.2-preview is
-   the validated preview and the old caveats in README can be tightened.
+   ```powershell
+   irm https://tryomarchy.com/download -OutFile TryOmarchy.exe
+   Get-FileHash .\TryOmarchy.exe   # must be 17B1E276...F853F28
+   ```
 
-## Known state / gotchas
+4. Sign (the script signs SHA256 + ACS timestamp, then verifies):
 
-- The published image still has the noisy push-side socat in the clipboard
-  bridge (guest-build patch 0003 landed after the build). Harmless — the
-  launcher always runs the host listener. Rolls into the next image.
-- Stock-QEMU (CPU/llvmpipe) mode keeps its known wedges; the supervisor handles
-  them. GPU mode (WINQ-EMU at C:\WINQ-EMU) is the real product path.
-- All the deep traps live in docs/FINDINGS.md (XSAVE cliff, -vga none, sshd
-  process-tree kills, poweroff wedge, QMP-vs-GL screendump).
-- Image builds now happen on the Linux box with `guest-build/*.patch` on top of
-  jorge's builder (guest-build/README.md has the exact commands). The Linux box
-  can also KVM-validate an image without any Windows VM — see the 2026-08-28
-  evening session log in NOTES.md.
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\sign.ps1 -Path .\TryOmarchy.exe
+   ```
 
-## After validation (rough order)
+5. Smoke test the SIGNED exe. For the full first-run flow, move
+   `%LOCALAPPDATA%\TryOmarchy\guest` aside first (or run with `-fresh` for a
+   clean disk only). Check: progress window actually visible, ends in the
+   setup form (or straight to desktop on the existing disk), title stays
+   "Try Omarchy", splash + taskbar icon look right, poweroff from Omarchy
+   exits the app. `%LOCALAPPDATA%\TryOmarchy\vm\shell.log` on weirdness.
+   Properties → Digital Signatures should show Brandon South.
 
-- Pre-provisioned "just try it" image variant (skip the form entirely)
-- Native app shell (window embedding, branded icon, WHP-enable installer flow)
-- Signed bootstrapper / packaging decision
-- Outreach to Eduardo (themartiano) and Jorge (jorge-huxley); consider
-  upstreaming the -vga none finding and the 4.0.1 pin bump to jorge's fork
+6. Replace the release assets — signing changed the file, so the checksum
+   must be regenerated (keep the two-space sha256sum format):
+
+   ```powershell
+   "$((Get-FileHash .\TryOmarchy.exe).Hash.ToLower())  TryOmarchy.exe" |
+       Set-Content TryOmarchy.exe.sha256 -Encoding ascii
+   gh release upload v0.0.3-preview TryOmarchy.exe TryOmarchy.exe.sha256 --clobber
+   ```
+
+7. Verify the public path end to end:
+
+   ```powershell
+   irm https://tryomarchy.com/download -OutFile check.exe
+   Get-FileHash .\check.exe        # matches the new sha256
+   # Properties → Digital Signatures → Brandon South, timestamped
+   ```
+
+8. Flip the copy — three places still say the exe is unsigned. Do this only
+   after the signed asset is up (any machine):
+
+   - **tryomarchy-site/index.html**: delete the whole paragraph
+     `<p class="note">The app isn't signed yet, so SmartScreen may warn you. ...</p>`
+     (keep the download note above it). Commit + push = deploys.
+   - **README.md**, Try it section: drop the sentence
+     `The exe isn't signed yet, so SmartScreen may warn: "More info", then "Run anyway".`
+   - **Release notes**: `gh release edit v0.0.3-preview` and drop
+     `It is not signed yet, so SmartScreen may warn: "More info", then "Run anyway".`
+   - **NOTES.md**: tick the "Sign the exe" road item.
+
+## Genuinely post-release (nothing here blocks announcing)
+
+- Image v3 papercuts: narrow-screen screensaver font (91 cols at 1366x768
+  renders the compact logo), mask spare tty2-6 gettys, fold guest-build patch
+  0003 into the shipped image.
+- CI signing via azure/trusted-signing-action once the app builds in CI
+  (the service principal already holds the signer role).
+- Announcement numbers, all verified in NOTES/FINDINGS: 6.08s to
+  graphical.target on the Ryzen 5 5625U laptop, 66 s first-run image
+  download, virgl + Venus Vulkan, Omarchy 4.0.1, 22 themes + screensavers,
+  two-way clipboard, folder sharing, 7.6 MB app, ~1.4 GB image, Windows 11
+  Home & Pro, MIT, disk untouched.
