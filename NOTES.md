@@ -432,18 +432,22 @@ who want to try Linux without committing. Two tracks:
 ## Open work, in rough order
 
 **Road to the announcement (as of 2026-08-28 late night):**
-- [ ] Rebuild TryOmarchy.exe from current master on the Linux box (it now
-      carries the splash, icon, single-instance-first and window-class fixes)
-      and attach it to the release as the headline download; decide whether
-      bootstrap.ps1 stays or becomes "power users only".
+- [x] 2026-08-28: TryOmarchy.exe rebuilt from master (Go 1.27, 7.6 MB, PE32+
+      GUI) and attached to v0.0.3-preview with TryOmarchy.exe.sha256;
+      tryomarchy.com/download and /TryOmarchy.exe redirect to the latest
+      release asset (Cloudflare _redirects). Decision: bootstrap.ps1 stays as
+      the required one-time setup (WHP enable + QEMU install need admin; the
+      exe checks and refuses with a pointer if they're missing) - site and
+      README now serve it clone-free via tryomarchy.com/bootstrap.ps1.
 - [ ] Sign the exe (docs/SIGNING.md + scripts/sign.ps1 are wired to the Azure
       Trusted Signing account) so SmartScreen doesn't scare non-tech users.
 - [ ] Image v3 papercuts: screensaver terminal font on narrow screens (91 cols
       at 1366x768 renders the compact logo, not the full wordmark), mask the
       spare tty2-6 gettys, fold guest-build patch 0003 (clipboard socat
       silence) into the shipped image.
-- [ ] tryomarchy.com landing page (parallel session; HANDOFF-LANDING.md) with
-      the demo video + theme stills from C:\cssi\media-v002.
+- [x] 2026-08-28: tryomarchy.com live (Cloudflare Pages, git-connected repo
+      tsouth89/tryomarchy-site): real capture loop in the hero, exe download
+      flow, honest SmartScreen note, credits and unofficial disclosure.
 - [ ] Announcement post: numbers to quote - 6.08s boot, 66s setup download,
       Venus Vulkan, 22 themes, clipboard + folder sharing, 7 MB app.
 

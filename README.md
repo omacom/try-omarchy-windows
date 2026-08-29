@@ -41,9 +41,16 @@ Proven boot recipe: `-accel whpx -machine q35 -cpu qemu64`, direct kernel boot (
 
 ## Try it (developer preview)
 
-The packaged single-exe download isn't ready yet (signing is in progress), so today you either build the app yourself or use the PowerShell path. Both pull the current image from the [v0.0.3-preview release](https://github.com/tsouth89/try-omarchy-windows/releases/tag/v0.0.3-preview) (~1.4 GB during setup).
+Two steps. First get the machine ready: this enables the Windows Hypervisor Platform, installs QEMU, and pulls the ~1.4 GB image from the [v0.0.3-preview release](https://github.com/tsouth89/try-omarchy-windows/releases/tag/v0.0.3-preview). It may ask for one restart; run it again after. From a PowerShell run as Administrator:
 
-Build the app (any machine with Go, then run the exe on Windows):
+```powershell
+irm https://tryomarchy.com/bootstrap.ps1 -OutFile bootstrap.ps1
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
+```
+
+Then download [TryOmarchy.exe](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (7.6 MB, [SHA256](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and double-click it. It walks you through Omarchy's setup form and lands you in Hyprland; every launch after goes straight to the desktop. The exe isn't signed yet, so SmartScreen may warn: "More info", then "Run anyway".
+
+Prefer to build the app yourself? Any machine with Go, then run the exe on Windows:
 
 ```
 git clone https://github.com/tsouth89/try-omarchy-windows
@@ -51,16 +58,7 @@ cd try-omarchy-windows/app
 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-H windowsgui -s -w" -o TryOmarchy.exe .
 ```
 
-Double-click `TryOmarchy.exe`: first run downloads the image, shows progress, walks you through Omarchy's setup form, and lands you in Hyprland. Later launches go straight to the desktop.
-
-Or the PowerShell path (no Go needed), from an elevated PowerShell:
-
-```powershell
-git clone https://github.com/tsouth89/try-omarchy-windows
-cd try-omarchy-windows
-powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1   # WHP + QEMU + image; may ask for one reboot
-powershell -ExecutionPolicy Bypass -File scripts\launch-omarchy.ps1
-```
+Or skip the app and drive QEMU from PowerShell with `scripts\launch-omarchy.ps1` (elevated, after the bootstrap).
 
 For GPU acceleration, install [WINQ-EMU Alpha 10](https://github.com/cmspam/winq-emu/releases) to `C:\WINQ-EMU` first: the app and the launcher both detect it and switch to the virgl/Venus stack automatically. Without it you get CPU rendering with the fastest CPU flags stock WHPX survives.
 
