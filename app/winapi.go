@@ -85,7 +85,7 @@ func setSparse(f *os.File) error {
 // sparseCopy skips all-zero 1 MiB blocks (the file is already marked sparse,
 // so seeking past them leaves holes and the factory image lands at its real
 // data size instead of a full 6 GiB).
-func sparseCopy(dst *os.File, src *os.File) error {
+func sparseCopy(dst *os.File, src *os.File, total int64, ui *progressUI) error {
 	buf := make([]byte, 1<<20)
 	zero := make([]byte, 1<<20)
 	var off int64
@@ -99,6 +99,9 @@ func sparseCopy(dst *os.File, src *os.File) error {
 					return werr
 				}
 				off += int64(n)
+			}
+			if ui != nil {
+				ui.setProgress(off, total)
 			}
 		}
 		if err == io.EOF || err == io.ErrUnexpectedEOF {

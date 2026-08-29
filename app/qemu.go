@@ -70,7 +70,9 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 
 // prepareDisk gives the guest its writable disk: a sparse copy of the factory
 // rootfs, extended to the spec's expanded size (the NTFS sparse-file trick from
-// jorge's fork - the file reads as 24 GiB without occupying it).
+// jorge's fork - the file reads as 24 GiB without occupying it). The copy takes
+// a minute or two, so it gets the same progress window the download uses -
+// launch must never look hung.
 func prepareDisk(cfg *config, expandedMiB int64) error {
 	if cfg.fresh {
 		os.Remove(cfg.disk)
@@ -91,7 +93,11 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 	if err := setSparse(dst); err != nil {
 		return fmt.Errorf("marking disk sparse: %w", err)
 	}
-	if err := sparseCopy(dst, src); err != nil {
+	ui := newProgressUI()
+	defer ui.finish()
+	ui.setStatus("Preparing your Omarchy disk...")
+	st, _ := src.Stat()
+	if err := sparseCopy(dst, src, st.Size(), ui); err != nil {
 		os.Remove(cfg.disk)
 		return err
 	}

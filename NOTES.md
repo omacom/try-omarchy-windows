@@ -26,10 +26,11 @@ bootstrap's image download. What it does, all VM-validated tonight:
   probe at t=1.5s wedged 8/8 nested launches; wait 10s and it's healthy on
   attempt 1 every time. Plus: virtio-sound without -audiodev hangs the guest
   session (both writeups in FINDINGS.md).
-- Reboot-vs-poweroff on a wedged stock QEMU is now solved via the image:
+- Reboot-vs-poweroff on a wedged stock QEMU is solved via the image:
   guest-build patch 0004 adds try-omarchy-reboot-notify (lifecycle port 4450).
-  NOT in the published v0.0.2 image yet — needs a v0.0.3 image build; until
-  then in-guest reboot exits the app on the stock/CPU path (WINQ path fine).
+  SHIPPED as **v0.0.3-preview** (same 4.0.1 image + patches 0003/0004),
+  KVM-validated end to end including the reboot notification landing on the
+  host listener. bootstrap.ps1 and the exe's default -release now point at it.
 - Testing trick worth keeping: the dockur VM console can be driven without ssh
   via the container's QEMU monitor socket (docker exec + nc to
   /run/shm/monitor.sock: sendkey/screendump), and apps land on the interactive

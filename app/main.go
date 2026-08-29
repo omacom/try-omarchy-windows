@@ -74,7 +74,7 @@ func main() {
 	flag.BoolVar(&cfg.fresh, "fresh", false, "discard the writable disk and start over")
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen")
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed")
-	release := flag.String("release", "https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.2-preview",
+	release := flag.String("release", "https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.3-preview",
 		"base URL the guest image is downloaded from on first run")
 	flag.Parse()
 
