@@ -20,10 +20,11 @@ story becomes: download TryOmarchy.exe, open it, done.
   `C:\Program Files\qemu` (CPU mode). Existing setups behave exactly as before.
 - New fallback: a startup-dead QEMU in GPU mode retries with CPU args on the
   same binary (after the existing no-audio retry).
-- The live site still shows the old bootstrap flow ON PURPOSE - it stays true
-  until the signed exe is up. The new copy is pre-staged on `one-click`
-  branches (this repo: README; tryomarchy-site: index.html). Merge them at the
-  end, don't retype.
+- The one-click copy is already LIVE (Brandon's call): tryomarchy.com and the
+  README both describe download-and-open, with a real-time hero video (replay
+  + click-to-zoom) and no developer-preview framing. The site says nothing
+  about SmartScreen, so getting the exe signed is the one thing keeping the
+  public story smooth.
 - Cert ready: Trusted Signing `southforgesigning` / profile `conduit`
   (PublicTrust, Active). docs/SIGNING.md has the details; sign.ps1 defaults
   are correct.
@@ -89,20 +90,11 @@ story becomes: download TryOmarchy.exe, open it, done.
    Verify: `irm https://tryomarchy.com/download -OutFile check.exe` → hash
    matches, signature shows.
 
-## Flip the copy (only after the signed asset is up)
+## After the signed asset is up
 
-Everything is pre-written on `one-click` branches:
-
-```powershell
-# this repo
-git checkout master; git merge one-click; git push
-# site repo (push = deploy)
-cd ..\tryomarchy-site
-git checkout main; git merge one-click; git push
-```
-
-Then the release notes: `gh release edit v0.0.3-preview` and replace the
-first paragraph with:
+The site and README are already current; only the release notes still say
+unsigned. `gh release edit v0.0.3-preview` and replace the first paragraph
+with:
 
 > **Download: [TryOmarchy.exe](https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.3-preview/TryOmarchy.exe)** (8 MB, signed). Open it - first run switches on Windows' virtualization (one permission prompt, one restart), downloads the GPU runtime and the Omarchy image, and boots you into setup. Checksum in TryOmarchy.exe.sha256.
 
