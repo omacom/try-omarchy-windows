@@ -233,6 +233,38 @@ Goal: prove GPU-accelerated Omarchy via WINQ-EMU's Venus Vulkan path on real har
    (not llvmpipe), and animations/blur feel smooth. Grab numbers + screenshots, update
    this file and FINDINGS.md.
 
+## v0.0.2-preview VALIDATED on real hardware (laptop, 2026-08-28 night)
+
+Full HANDOFF checklist passed on the Ryzen 5 5625U with the real launcher
+(fresh image + `-Fresh` disk, GPU/WINQ-EMU mode, user walked the form by hand):
+
+- Silent boot: black window -> splash, zero console text ✓
+- Cursor visible everywhere (see launch-UX contract: host cursor always on) ✓
+- omarchy-version 4.0.1-1 ✓ · 22 themes ✓ · live theme switching
+  (`omarchy theme set '<Name>'` — NOTE: 4.0.x replaced the omarchy-* scripts
+  with the unified `omarchy` CLI; `omarchy-theme-next` etc. no longer exist) ✓
+- Screensaver ✓ (auto-engaged on idle AND `omarchy screensaver`; the bare
+  command runs inside the invoking terminal and closes it on exit)
+- Clipboard both directions with ZERO setup ✓ (bridge auto-connects at login;
+  it also makes a great sudo-free debug channel: `cmd | wl-copy` -> host
+  Get-Clipboard — the serial tee needs sudo whose token expires every 5 min)
+- `-Share` automounted at /mnt/host, no manual mount ✓
+- Reboot -> supervisor relaunch -> straight to desktop, no greeter ✓
+- **Clean second boot: 2.975s kernel + 3.104s user = 6.08s to graphical.target**
+  (first boot's 2m33s userspace number is human-paced: the provisioning form
+  blocks graphical.target while the user types)
+
+Papercuts logged for image v3:
+- Screensaver renders the compact logo instead of the spelled-out OMARCHY on
+  small screens: the screensaver terminal has only 91 cols at 1366x768 —
+  shrink its font on narrow screens so the full banner fits.
+- Spare gettys on tty2-6 (raw `login:` via Ctrl+Alt+F2..6) — mask them.
+
+Media: demo video (theme switching + screensaver) and theme/screensaver stills
+in `C:\cssi\media-v002` on the laptop (captured host-side via
+scripts/capture-window.ps1 + ffmpeg gdigrab; QMP screendump can't see the GL
+path). Repo carries docs/media/launch-ux-reference.png.
+
 ## Launch-UX contract (settled 2026-08-28 on hands-on feedback — do NOT regress)
 
 Enforced by `scripts/verify-launch-ux.ps1` (run it against a live VM; all PASS
