@@ -14,7 +14,7 @@ Download, boot, Hyprland.
 
 - **The full Omarchy 4.0.1 desktop**: Hyprland, the bar, notifications, all 22 themes, the screensavers. On our mid-range Ryzen 5 test laptop the desktop is up about 6 seconds after launch, and every launch after setup goes straight there. No Linux login screens, no console text, branded window.
 - **GPU acceleration**: Hyprland renders on the host GPU via virgl, `vulkaninfo` shows Venus, smooth video and audio (verified on a Radeon iGPU laptop); `-cpu host` (AVX2 and all) via WINQ-EMU's patched WHPX.
-- **One app**: `TryOmarchy.exe` (7 MB, no console window). First run shows a splash, downloads the image SHA256-verified (about 66 s), and boots into Omarchy's setup form. After that it supervises everything: GPU/CPU auto-detect, the known WHPX launch wedge, in-guest reboot relaunch, poweroff cleanup.
+- **One app, zero prerequisites**: `TryOmarchy.exe` (~8 MB, no console window). First run sets the machine up itself: switches on Windows' Hypervisor Platform (one permission prompt, one restart), then downloads the GPU runtime and the image SHA256-verified and boots into Omarchy's setup form. After that it supervises everything: GPU/CPU auto-detect, the known WHPX launch wedge, in-guest reboot relaunch, poweroff cleanup.
 - **Feels like an app, not a VM**: the window is branded "Try Omarchy", the Windows key acts as Super only while the window is focused (Start menu and Win+Shift+S keep working everywhere else), Ctrl+Alt+F goes fullscreen.
 - **Two-way clipboard sharing** between Windows and Omarchy (own compositor-native bridge over wl-clipboard, no SPICE) and **folder sharing** (`-Share <folder>`, virtio-9p on the GPU stack).
 - First-boot account provisioning driven programmatically over QMP (basis for a "skip setup, just try it" mode), SDDM autologin after setup.
@@ -41,14 +41,9 @@ Proven boot recipe: `-accel whpx -machine q35 -cpu qemu64`, direct kernel boot (
 
 ## Try it (developer preview)
 
-Two steps. First get the machine ready: this enables the Windows Hypervisor Platform, installs QEMU, and pulls the ~1.4 GB image from the [v0.0.3-preview release](https://github.com/tsouth89/try-omarchy-windows/releases/tag/v0.0.3-preview). It may ask for one restart; run it again after. From a PowerShell run as Administrator:
+Download [TryOmarchy.exe](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (~8 MB, [SHA256](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and open it. First run sets the machine up by itself: Windows asks permission to switch on the Hypervisor Platform and restarts once, then the app pulls the GPU runtime (a portable [WINQ-EMU](https://github.com/cmspam/winq-emu) tree, ~46 MB) and the Omarchy image (~1.4 GB) from the [v0.0.3-preview release](https://github.com/tsouth89/try-omarchy-windows/releases/tag/v0.0.3-preview), everything SHA256-verified. It walks you through Omarchy's setup form and lands you in Hyprland; every launch after goes straight to the desktop.
 
-```powershell
-irm https://tryomarchy.com/bootstrap.ps1 -OutFile bootstrap.ps1
-powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
-```
-
-Then download [TryOmarchy.exe](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (7.6 MB, [SHA256](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and double-click it. It walks you through Omarchy's setup form and lands you in Hyprland; every launch after goes straight to the desktop. The exe isn't signed yet, so SmartScreen may warn: "More info", then "Run anyway".
+Already have WINQ-EMU at `C:\WINQ-EMU`, or stock QEMU from the old bootstrap? The app prefers what's installed and downloads nothing extra.
 
 Prefer to build the app yourself? Any machine with Go, then run the exe on Windows:
 
@@ -58,9 +53,7 @@ cd try-omarchy-windows/app
 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-H windowsgui -s -w" -o TryOmarchy.exe .
 ```
 
-Or skip the app and drive QEMU from PowerShell with `scripts\launch-omarchy.ps1` (elevated, after the bootstrap).
-
-For GPU acceleration, install [WINQ-EMU Alpha 10](https://github.com/cmspam/winq-emu/releases) to `C:\WINQ-EMU` first: the app and the launcher both detect it and switch to the virgl/Venus stack automatically. Without it you get CPU rendering with the fastest CPU flags stock WHPX survives.
+Or skip the app and drive QEMU from PowerShell: `scripts\bootstrap.ps1` then `scripts\launch-omarchy.ps1` (elevated).
 
 ## Repository layout
 
