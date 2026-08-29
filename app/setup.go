@@ -61,7 +61,7 @@ const (
 func msgBox(text string, flags uintptr) int {
 	t, _ := syscall.UTF16PtrFromString(text)
 	c, _ := syscall.UTF16PtrFromString(appTitle)
-	r, _, _ := procMessageBoxW.Call(0, uintptr(unsafe.Pointer(t)), uintptr(unsafe.Pointer(c)), flags)
+	r, _, _ := procMessageBoxW.Call(0, uintptr(unsafe.Pointer(t)), uintptr(unsafe.Pointer(c)), flags|mbFront)
 	return int(r)
 }
 
@@ -185,10 +185,9 @@ func ensureWHP(cfg *config) {
 	}
 	logf("enabling WHP (elevated dism)")
 	// dism can take a minute or two; without a window the app looks hung.
-	ui := newProgressUI()
+	ui := getUI()
 	ui.setStatus("Switching on Windows' virtualization...")
 	code, err := runElevated("-enable-whp")
-	ui.finish()
 	if err != nil {
 		fatal("Couldn't switch on Windows' virtualization: %v", err)
 	}
@@ -216,8 +215,7 @@ func ensureRuntime(cfg *config, release string) (string, error) {
 	if _, err := os.Stat(filepath.Join(root, "bin", "qemu-system-x86_64w.exe")); err == nil {
 		return root, nil
 	}
-	ui := newProgressUI()
-	defer ui.finish()
+	ui := getUI()
 	client := &http.Client{Timeout: 0}
 	sums, err := fetchSums(client, release)
 	if err != nil {

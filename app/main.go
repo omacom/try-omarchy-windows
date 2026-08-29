@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"bufio"
 	"encoding/json"
 	"flag"
@@ -40,6 +41,38 @@ type config struct {
 	qemu                      string
 	useGpu                    bool
 	audio                     string
+	memMiB                    int
+}
+
+// pickGuestMem sizes the guest to the machine instead of demanding a fixed
+// 4-6 GB (which dies with "cannot set up guest memory" on a busy 8 GB PC):
+// the mode's ideal, minus a ~2 GB cushion for Windows, floored at 1 GB.
+// Omarchy runs lean (zram in the image), so a small guest beats no guest;
+// truly starved machines get the clean message from the memory ladder.
+func pickGuestMem(gpu bool) int {
+	want := 4096
+	if gpu {
+		want = 6144
+	}
+	_, avail := availMemMiB()
+	if avail == 0 {
+		return want
+	}
+	m := avail - 2048
+	if m > want {
+		m = want
+	}
+	if m < 1024 {
+		m = 1024
+	}
+	return m
+}
+
+// memoryStarved reports whether the current attempt's QEMU died because the
+// guest RAM couldn't be allocated (stderr is truncated per attempt).
+func memoryStarved(cfg *config) bool {
+	data, err := os.ReadFile(filepath.Join(cfg.vmDir, "qemu-stderr.log"))
+	return err == nil && bytes.Contains(data, []byte("cannot set up guest memory"))
 }
 
 type buildSpec struct {
@@ -103,6 +136,14 @@ func main() {
 	// fetch stops a double-click double-launch from downloading the same 1.4 GB
 	// into the same files twice (it happened).
 	runLifecycleListener()
+
+	// The splash IS the launch experience: it appears here and stays on screen
+	// through every phase until the Omarchy window itself is visible (the
+	// title enforcer closes it). Setup must never look like nothing happened.
+	getUI().setStatus("Starting Try Omarchy...")
+	// Per-run stderr: the memory ladder sniffs this file, stale errors from a
+	// previous run must not be mistaken for this one's.
+	os.Remove(filepath.Join(cfg.vmDir, "qemu-stderr.log"))
 
 	// Machine setup the old bootstrap.ps1 handled: hypervisor on (may walk the
 	// user through one restart and exit), then a QEMU to run. Existing setups
@@ -170,6 +211,8 @@ func main() {
 	if err := prepareDisk(cfg, spec.Runtime.Storage.ExpandedSizeMiB); err != nil {
 		fatal("Preparing the writable disk failed: %v", err)
 	}
+	cfg.memMiB = pickGuestMem(cfg.useGpu)
+	getUI().setStatus("Starting Omarchy...")
 
 	// SDL's keyboard grab installs a system-wide Win-key hook that leaks past
 	// window focus; our hook does it right (focus-scoped).
@@ -203,7 +246,9 @@ func main() {
 func supervise(cfg *config, cmdline string) bool {
 	var proc *exec.Cmd
 	var qmp *qmpConn
-	for attempt := 1; attempt <= 4; attempt++ {
+	// 6 attempts: the fallback ladder (audio, GPU, then memory halvings) can
+	// legitimately consume several before a healthy launch.
+	for attempt := 1; attempt <= 6; attempt++ {
 		mode := "CPU rendering (llvmpipe)"
 		if cfg.useGpu {
 			mode = "GPU accelerated (virgl + Venus Vulkan)"
@@ -214,7 +259,7 @@ func supervise(cfg *config, cmdline string) bool {
 		// The w-binary's startup errors (bad args, SDL init) only ever reach
 		// stderr; without this they vanish and a dead QEMU is undebuggable.
 		if ef, err := os.OpenFile(filepath.Join(cfg.vmDir, "qemu-stderr.log"),
-			os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644); err == nil { // per-attempt: the memory ladder sniffs it
 			proc.Stdout = ef
 			proc.Stderr = ef
 			defer ef.Close()
@@ -244,6 +289,19 @@ func supervise(cfg *config, cmdline string) bool {
 					logf("QEMU exited at startup - retrying without audio")
 					cfg.audio = "none"
 					break probe
+				}
+				// Not enough free memory: step the guest down before giving
+				// up - it should launch with whatever the machine can spare.
+				if memoryStarved(cfg) {
+					if cfg.memMiB > 1024 {
+						cfg.memMiB = cfg.memMiB / 2
+						if cfg.memMiB < 1024 {
+							cfg.memMiB = 1024
+						}
+						logf("QEMU exited at startup - low memory, retrying with %d MiB", cfg.memMiB)
+						break probe
+					}
+					fatal("There isn't enough free memory to start Omarchy right now.\n\nClose some apps and open Try Omarchy again.")
 				}
 				// Broken host GL (remote sessions, ancient drivers) kills the
 				// gl=on display the same way; same binary, CPU args, still up.

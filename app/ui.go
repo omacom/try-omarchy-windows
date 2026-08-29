@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
@@ -85,6 +86,31 @@ type progressUI struct {
 	total  atomic.Int64
 	done   atomic.Bool
 	ready  chan struct{}
+}
+
+// THE app has ONE splash (launch-UX requirement: it appears at launch and
+// stays visible until the Omarchy window itself is on screen - setup must
+// never look like nothing is happening). The singleton is also what makes the
+// Win32 side correct: the window class registers once with one wndproc; with
+// per-phase windows, every window after the first ran the FIRST window's
+// wndproc closure, saw its done flag already set, and destroyed itself
+// invisibly - exactly the "splash vanished, nothing on screen" failure.
+var (
+	uiOnce      sync.Once
+	uiSingleton *progressUI
+)
+
+func getUI() *progressUI {
+	uiOnce.Do(func() { uiSingleton = newProgressUI() })
+	return uiSingleton
+}
+
+// uiDone closes the splash if one exists; safe to call repeatedly and from
+// any goroutine (the title enforcer fires it when the VM window appears).
+func uiDone() {
+	if uiSingleton != nil {
+		uiSingleton.finish()
+	}
 }
 
 func newProgressUI() *progressUI {

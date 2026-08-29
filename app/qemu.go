@@ -14,10 +14,19 @@ import (
 func buildQemuArgs(cfg *config, cmdline string) []string {
 	vm := cfg.vmDir
 	args := []string{}
+	// Guest RAM is sized to the machine (pickGuestMem + the memory ladder);
+	// hostmem for GPU blob resources scales with it.
+	mem := fmt.Sprintf("%dM", cfg.memMiB)
+	hostmem := "4G"
+	if cfg.memMiB < 3072 {
+		hostmem = "1G"
+	} else if cfg.memMiB < 4096 {
+		hostmem = "2G"
+	}
 	if cfg.useGpu {
 		args = append(args,
-			"-machine", "q35,accel=whpx", "-cpu", "host", "-smp", "6", "-m", "6G",
-			"-device", "virtio-vga-gl,blob=on,hostmem=4G,venus=on",
+			"-machine", "q35,accel=whpx", "-cpu", "host", "-smp", "6", "-m", mem,
+			"-device", "virtio-vga-gl,blob=on,hostmem="+hostmem+",venus=on",
 			// show-cursor=on: during console phases the guest draws no cursor
 			// and a vanishing host pointer reads as broken (launch-UX contract).
 			// window-close=off: the X must not hard-kill a running OS; the
@@ -29,7 +38,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 	} else {
 		args = append(args,
 			"-machine", "q35,accel=whpx", "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes",
-			"-smp", "6", "-m", "4096",
+			"-smp", "6", "-m", mem,
 			"-vga", "none", "-device", "virtio-gpu-pci,id=gpu0",
 			"-display", "sdl,gl=off,show-cursor=on,window-close=off",
 			"-serial", "file:"+filepath.Join(vm, "serial.log"),
@@ -96,8 +105,7 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 	if err := setSparse(dst); err != nil {
 		return fmt.Errorf("marking disk sparse: %w", err)
 	}
-	ui := newProgressUI()
-	defer ui.finish()
+	ui := getUI()
 	ui.setStatus("Preparing your Omarchy disk...")
 	st, _ := src.Stat()
 	if err := sparseCopy(dst, src, st.Size(), ui); err != nil {

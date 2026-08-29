@@ -66,10 +66,30 @@ type msgStruct struct {
 	ptY     int32
 }
 
+// mbFront forces a dialog above everything and steals focus - errors from a
+// background phase were invisible behind other windows, which reads as "the
+// app silently died" (it happened, pre-announcement).
+const mbFront = 0x50000 // MB_TOPMOST | MB_SETFOREGROUND
+
 func errorBox(text string) {
 	t, _ := syscall.UTF16PtrFromString(text)
 	c, _ := syscall.UTF16PtrFromString(appTitle)
-	procMessageBoxW.Call(0, uintptr(unsafe.Pointer(t)), uintptr(unsafe.Pointer(c)), mbIconError)
+	procMessageBoxW.Call(0, uintptr(unsafe.Pointer(t)), uintptr(unsafe.Pointer(c)), mbIconError|mbFront)
+}
+
+// availMemMiB returns total and available physical memory in MiB (0,0 if the
+// query fails).
+func availMemMiB() (int, int) {
+	var ms struct {
+		length, memoryLoad                                                     uint32
+		totalPhys, availPhys, totalPage, availPage, totalVirt, availVirt, ext uint64
+	}
+	ms.length = uint32(unsafe.Sizeof(ms))
+	proc := kernel32.NewProc("GlobalMemoryStatusEx")
+	if r, _, _ := proc.Call(uintptr(unsafe.Pointer(&ms))); r == 0 {
+		return 0, 0
+	}
+	return int(ms.totalPhys >> 20), int(ms.availPhys >> 20)
 }
 
 func setSparse(f *os.File) error {
@@ -159,6 +179,7 @@ func enforceTitle(pid uint32, maximize *bool, appIcon uintptr) {
 			return 1
 		}
 		qemuHwnd.Store(hwnd) // the close guard needs the live window handle
+		uiDone()             // the VM window is on screen: the splash's job is over
 		if *maximize {
 			*maximize = false
 			const swMaximize = 3

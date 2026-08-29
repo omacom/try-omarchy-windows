@@ -46,8 +46,7 @@ func ensureGuest(cfg *config, release string) error {
 		return err
 	}
 
-	ui := newProgressUI()
-	defer ui.finish()
+	ui := getUI()
 	client := &http.Client{Timeout: 0}
 
 	sums, err := fetchSums(client, release)
