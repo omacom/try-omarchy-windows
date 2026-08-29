@@ -6,6 +6,8 @@ Download, boot, Hyprland.
 
 ![The Omarchy desktop running in the Try Omarchy window on Windows 11](docs/images/hero.jpg)
 
+![Live capture on the Ryzen 5 test laptop: fastfetch, the Omarchy menu, and a screensaver inside the Try Omarchy window](docs/images/demo.gif)
+
 **Status: hardware-validated developer preview.** The whole flow is working end to end on a real laptop: one app downloads the image, boots, and supervises; the desktop renders on the GPU when [WINQ-EMU](https://github.com/cmspam/winq-emu) is installed and falls back to CPU rendering automatically. Landing page: [tryomarchy.com](https://tryomarchy.com).
 
 ## What works today
