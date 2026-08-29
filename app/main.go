@@ -90,6 +90,13 @@ func main() {
 	cfg.disk = filepath.Join(cfg.vmDir, "disk.raw")
 	os.MkdirAll(cfg.vmDir, 0o755)
 	logFile, _ = os.OpenFile(filepath.Join(cfg.vmDir, "shell.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if logFile != nil {
+		// A windowsgui process has no console: an unhandled panic (any
+		// goroutine) writes its trace to stderr and vanishes. It happened - the
+		// shell died silently mid-session leaving QEMU orphaned. Route stderr
+		// into the log so the next death has a trace.
+		os.Stderr = logFile
+	}
 	logf("---- %s starting ----", appTitle)
 
 	// Single-instance guard FIRST: binding the lifecycle port before the image
