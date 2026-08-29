@@ -217,16 +217,14 @@ func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 	}
 	ui := getUI()
 	client := &http.Client{Timeout: 0}
-	sums, err := fetchSums(client, release, sumsSHA256)
+	sums, err := releaseSums(client, release, sumsSHA256)
 	if err != nil {
-		return "", fmt.Errorf("downloading SHA256SUMS: %w", err)
+		return "", fmt.Errorf("authenticating SHA256SUMS: %w", err)
 	}
 	zipPath := filepath.Join(cfg.dir, runtimeZip)
-	if _, err := os.Stat(zipPath); err != nil {
-		ui.setStatus("Downloading the graphics engine...")
-		if err := download(client, release+"/"+runtimeZip, zipPath, sums[runtimeZip], ui); err != nil {
-			return "", fmt.Errorf("downloading %s: %w", runtimeZip, err)
-		}
+	if err := ensureVerifiedDownload(client, normalizedRelease(release)+"/"+runtimeZip, zipPath,
+		sums[runtimeZip], "Downloading the graphics engine...", ui); err != nil {
+		return "", fmt.Errorf("preparing %s: %w", runtimeZip, err)
 	}
 	ui.setStatus("Unpacking the graphics engine...")
 	tmp := root + ".part"

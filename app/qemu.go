@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // buildQemuArgs is the argument recipe from scripts/launch-omarchy.ps1,
@@ -56,7 +57,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		// stalls on virtio-snd control messages and the whole session hangs.
 		// cfg.audio is dsound normally; "none" on machines where DirectSound
 		// has no device (QEMU exits at startup otherwise).
-		"-audiodev", cfg.audio + ",id=snd",
+		"-audiodev", cfg.audio+",id=snd",
 		"-device", "virtio-sound-pci,audiodev=snd",
 		"-qmp", fmt.Sprintf("tcp:127.0.0.1:%d,server=on,wait=off", qmpToolsPort),
 		"-qmp", fmt.Sprintf("tcp:127.0.0.1:%d,server=on,wait=off", qmpFwdPort),
@@ -86,31 +87,76 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 // a minute or two, so it gets the same progress window the download uses -
 // launch must never look hung.
 func prepareDisk(cfg *config, expandedMiB int64) error {
-	if cfg.fresh {
-		os.Remove(cfg.disk)
+	if expandedMiB <= 0 || expandedMiB > (1<<63-1)/(1024*1024) {
+		return fmt.Errorf("invalid expanded disk size: %d MiB", expandedMiB)
 	}
-	if _, err := os.Stat(cfg.disk); err == nil {
-		return nil
+	expandedBytes := expandedMiB * 1024 * 1024
+	if cfg.fresh {
+		if err := os.Remove(cfg.disk); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("discarding the existing disk: %w", err)
+		}
+	}
+	if info, err := os.Stat(cfg.disk); err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("disk path is not a regular file: %s", cfg.disk)
+		}
+		if info.Size() >= expandedBytes {
+			return nil
+		}
+		// Older launchers wrote directly to disk.raw, so an interrupted first
+		// copy can exist under the final name. Preserve it for inspection while
+		// rebuilding a complete disk atomically.
+		quarantine := fmt.Sprintf("%s.incomplete-%d", cfg.disk, time.Now().UnixNano())
+		if err := os.Rename(cfg.disk, quarantine); err != nil {
+			return fmt.Errorf("quarantining incomplete disk: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	tmp := cfg.disk + ".part"
+	if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing stale disk staging file: %w", err)
 	}
 	src, err := os.Open(filepath.Join(cfg.guestDir, "rootfs.ext4"))
 	if err != nil {
 		return err
 	}
 	defer src.Close()
-	dst, err := os.Create(cfg.disk)
+	dst, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
-	defer dst.Close()
+	complete := false
+	defer func() {
+		if !complete {
+			dst.Close()
+			os.Remove(tmp)
+		}
+	}()
 	if err := setSparse(dst); err != nil {
 		return fmt.Errorf("marking disk sparse: %w", err)
 	}
 	ui := getUI()
 	ui.setStatus("Preparing your Omarchy disk...")
-	st, _ := src.Stat()
-	if err := sparseCopy(dst, src, st.Size(), ui); err != nil {
-		os.Remove(cfg.disk)
+	st, err := src.Stat()
+	if err != nil {
 		return err
 	}
-	return dst.Truncate(expandedMiB * 1024 * 1024)
+	if err := sparseCopy(dst, src, st.Size(), ui); err != nil {
+		return err
+	}
+	if err := dst.Truncate(expandedBytes); err != nil {
+		return err
+	}
+	if err := dst.Sync(); err != nil {
+		return err
+	}
+	if err := dst.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, cfg.disk); err != nil {
+		return err
+	}
+	complete = true
+	return nil
 }

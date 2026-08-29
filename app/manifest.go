@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -17,10 +18,27 @@ const (
 	maxSumsBytes      = 1 << 20
 )
 
+//go:embed testdata/SHA256SUMS.v0.0.3-preview
+var defaultSums []byte
+
+// releaseSums returns the embedded, authenticated manifest for the default
+// release. Custom release URLs still fetch a manifest and authenticate it
+// against the digest supplied by the caller.
+func releaseSums(client *http.Client, release, expectedSHA256 string) (map[string]string, error) {
+	if normalizedRelease(release) == defaultReleaseURL &&
+		normalizedSHA256(expectedSHA256) == defaultSumsSHA256 {
+		return parseVerifiedSums(defaultSums, defaultSumsSHA256)
+	}
+	return fetchSums(client, normalizedRelease(release), expectedSHA256)
+}
+
 // fetchSums authenticates the release manifest against a digest embedded in
 // the launcher. Fetching checksums beside the payload without an independent
 // trust root would allow both to be replaced together.
 func fetchSums(client *http.Client, release, expectedSHA256 string) (map[string]string, error) {
+	if !validSHA256(normalizedSHA256(expectedSHA256)) {
+		return nil, fmt.Errorf("trusted SHA256SUMS digest is not a valid SHA256")
+	}
 	resp, err := client.Get(release + "/SHA256SUMS")
 	if err != nil {
 		return nil, err
@@ -40,7 +58,7 @@ func fetchSums(client *http.Client, release, expectedSHA256 string) (map[string]
 }
 
 func parseVerifiedSums(data []byte, expectedSHA256 string) (map[string]string, error) {
-	expectedSHA256 = strings.ToLower(strings.TrimSpace(expectedSHA256))
+	expectedSHA256 = normalizedSHA256(expectedSHA256)
 	if !validSHA256(expectedSHA256) {
 		return nil, fmt.Errorf("trusted SHA256SUMS digest is not a valid SHA256")
 	}

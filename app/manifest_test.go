@@ -3,6 +3,8 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -20,6 +22,7 @@ func TestDefaultReleaseManifestPin(t *testing.T) {
 	for _, name := range []string{
 		"build-spec.json",
 		"initramfs-linux.img",
+		"rootfs.ext4",
 		"rootfs.ext4.zst",
 		"vmlinuz-linux",
 		"winq-emu-alpha10-portable.zip",
@@ -27,6 +30,25 @@ func TestDefaultReleaseManifestPin(t *testing.T) {
 		if !validSHA256(sums[name]) {
 			t.Errorf("missing valid checksum for %s", name)
 		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestDefaultReleaseUsesEmbeddedManifest(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("unexpected network request")
+	})}
+	sums, err := releaseSums(client, defaultReleaseURL, defaultSumsSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validSHA256(sums["rootfs.ext4"]) {
+		t.Fatal("embedded manifest is missing rootfs.ext4")
 	}
 }
 
