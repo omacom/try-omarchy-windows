@@ -234,6 +234,32 @@ Goal: prove GPU-accelerated Omarchy via WINQ-EMU's Venus Vulkan path on real har
    (not llvmpipe), and animations/blur feel smooth. Grab numbers + screenshots, update
    this file and FINDINGS.md.
 
+## TryOmarchy.exe + v0.0.3 image VALIDATED on real hardware (laptop, 2026-08-28 night)
+
+Built app/ on the laptop (Go 1.27.0 zip toolchain, no admin, `go build -trimpath
+-ldflags '-s -w -H windowsgui'` -> 7 MB exe) and ran the true first-run flow
+against the live v0.0.3-preview release on a wiped data dir:
+
+- First-run fetch: download + SHA256 + streaming zstd unpack of the 1.4 GB image
+  in **66 seconds**, straight into GPU boot on attempt 1.
+- The 10s-QMP-grace wedge fix held: attempt 1 healthy on every launch tonight
+  (the PS launcher era regularly burned retries).
+- **Lifecycle reboot-notify works on hardware**: `sudo reboot` -> shell.log
+  "guest announced reboot" (port 4450) -> relaunch -> autologin desktop.
+  Deterministic reboot-vs-poweroff, no RST race.
+- v0.0.3 in-guest: 4.0.1-1, try-omarchy-reboot-notify.service enabled, 9p
+  automount live, baked clipboard bridge connected on its own.
+- verify-launch-ux.ps1: **all 9 checks PASS against the exe stack** (maximized,
+  show-cursor, video=WxH, title, forwarder/supervisor/clipboard ports).
+- Shell papercut found: launched from a background context, BOTH the download
+  progress window and the SDL window open buried (no foreground rights) - the
+  user saw nothing until raised by hand. A real double-click grants foreground,
+  but the shell should SetForegroundWindow its progress window and the SDL
+  window on first appearance anyway (AttachThreadInput trick if needed).
+  Real-double-click first-run still to be confirmed by hand.
+- Still user-verified pending: audio quality (dsound on hardware), winkey feel
+  under the exe's in-process hook.
+
 ## v0.0.2-preview VALIDATED on real hardware (laptop, 2026-08-28 night)
 
 Full HANDOFF checklist passed on the Ryzen 5 5625U with the real launcher
