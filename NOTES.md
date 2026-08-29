@@ -20,9 +20,17 @@
   (and thus WHPX) alive with the feature disabled AND hypervisorlaunchtype
   off. Product story upgrade: VBS-on machines (Win11 default) need ZERO setup.
   The enable flow stays VM-validated (dockur); hardware skip accepted by user.
-- The release binary for signing = local build of master (166d2642...), which
-  superseded the uploaded dd1c64 asset (close guard, icons, panic logging,
-  rename retry all landed during the pass). Step 5 signing in progress.
+- Step 5 ✓ SIGNED AND SHIPPED: the pass binary (local build of master,
+  superseding dd1c64 with close guard/icons/panic logging/rename retry) signed
+  via Azure Trusted Signing (publisher Brandon South, timestamped), smoke-
+  tested signed, uploaded to v0.0.3-preview with fresh sha256
+  (f9d7fe4b...49a8), verified end to end from tryomarchy.com/download
+  (hash match + signature Valid), release notes flipped to the one-click copy.
+  sign.ps1 learned the new per-user MSI dlib location. Signing prereq notes:
+  az login must run as the SIGNING user (not the elevated admin); winget's
+  elevated installs land tools in the admin profile.
+  **The release is LIVE and no longer held.** Remaining post-release: image v3
+  papercuts, CI signing, announcement.
 Last updated: 2026-08-28 late night (laptop: everything hardware-validated —
 v0.0.2 image, v0.0.3 image, TryOmarchy.exe incl. real double-click first run;
 shell splash restyled + icon). **State: preview-release quality end to end.

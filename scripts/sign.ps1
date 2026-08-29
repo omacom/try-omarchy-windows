@@ -15,6 +15,11 @@ $ErrorActionPreference = 'Stop'
 
 $dlib = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter 'Azure.CodeSigning.Dlib.dll' -ErrorAction SilentlyContinue |
     Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1 -ExpandProperty FullName
+if (-not $dlib) {
+    # Newer TrustedSigningClientTools ship as a per-user MSI with a flat layout.
+    $cand = "$env:LOCALAPPDATA\Microsoft\MicrosoftTrustedSigningClientTools\Azure.CodeSigning.Dlib.dll"
+    if (Test-Path $cand) { $dlib = $cand }
+}
 if (-not $dlib) { throw 'Trusted Signing client tools not found - winget install Microsoft.Azure.TrustedSigningClientTools' }
 
 $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
