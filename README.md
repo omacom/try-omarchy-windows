@@ -1,6 +1,6 @@
 # Try Omarchy for Windows
 
-Run the full [Omarchy](https://omarchy.org) desktop in a window on Windows 11. No VMware, no VirtualBox, no dual boot: QEMU on the Windows Hypervisor Platform (WHPX), a prebuilt Arch image with Omarchy baked in, and the desktop rendered on your actual GPU (virgl + Venus Vulkan via [WINQ-EMU](https://github.com/cmspam/winq-emu)) with CPU rendering as the automatic fallback. Nothing touches your disk.
+Run the full [Omarchy](https://omarchy.org) desktop in a window on Windows 11. No VMware, no VirtualBox, no dual boot: QEMU on the Windows Hypervisor Platform (WHPX), a prebuilt Arch image with Omarchy baked in, and the desktop rendered on your actual GPU (virgl + Venus Vulkan via [WINQ-EMU](https://github.com/cmspam/winq-emu)) with CPU rendering as the automatic fallback. No partitions, no bootloader, no changes to your Windows install — everything lives in one folder, and deleting it is the uninstall.
 
 Download, boot, Hyprland.
 
@@ -61,7 +61,6 @@ Or skip the app and drive QEMU from PowerShell: `scripts\bootstrap.ps1` then `sc
 - `scripts/` — PowerShell path plus QMP tooling (screendump, send-key, WHPX smoke test)
 - `guest-build/` — patches on jorge's guest builder that produce our image, plus build instructions
 - `docs/FINDINGS.md` — technical findings, gotchas, and their fixes
-- `NOTES.md` — live working notes / session handoff
 
 The guest image (Omarchy 4.0.1, all upstream themes, screensavers, autologin, clipboard bridge) is built from [jorge-huxley/try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win)'s `win` branch guest builder (`guest/build-container.sh`, needs Docker on Linux) — an x86_64 retarget of the upstream try-omarchy build system — with the patches in `guest-build/` applied. Images are not committed; setup downloads the latest release artifact, or build your own.
 

@@ -11,7 +11,7 @@ git am ../try-omarchy-windows/guest-build/*.patch
 sudo bash guest/build-container.sh    # ~10 min; artifacts land in dist/guest/
 ```
 
-What the patches change (all proven live on hardware 2026-08-28, see NOTES.md):
+What the patches change (all proven live on hardware 2026-08-28):
 
 - Omarchy pin bumped to the v4.0.1 release tag, staged runtime stamped 4.0.1
   (upstream's `version` file lags its tags)
