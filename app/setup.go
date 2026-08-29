@@ -210,23 +210,21 @@ func ensureWHP(cfg *config) {
 
 // ensureRuntime downloads and unpacks the portable WINQ-EMU tree on first run.
 // Same trust chain as the image: fetched from the release, SHA256-verified.
-func ensureRuntime(cfg *config, release string) (string, error) {
+func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 	root := filepath.Join(cfg.dir, "runtime")
 	if _, err := os.Stat(filepath.Join(root, "bin", "qemu-system-x86_64w.exe")); err == nil {
 		return root, nil
 	}
 	ui := getUI()
 	client := &http.Client{Timeout: 0}
-	sums, err := fetchSums(client, release)
+	sums, err := releaseSums(client, release, sumsSHA256)
 	if err != nil {
-		return "", fmt.Errorf("downloading SHA256SUMS: %w", err)
+		return "", fmt.Errorf("authenticating SHA256SUMS: %w", err)
 	}
 	zipPath := filepath.Join(cfg.dir, runtimeZip)
-	if _, err := os.Stat(zipPath); err != nil {
-		ui.setStatus("Downloading the graphics engine...")
-		if err := download(client, release+"/"+runtimeZip, zipPath, sums[runtimeZip], ui); err != nil {
-			return "", fmt.Errorf("downloading %s: %w", runtimeZip, err)
-		}
+	if err := ensureVerifiedDownload(client, normalizedRelease(release)+"/"+runtimeZip, zipPath,
+		sums[runtimeZip], "Downloading the graphics engine...", ui); err != nil {
+		return "", fmt.Errorf("preparing %s: %w", runtimeZip, err)
 	}
 	ui.setStatus("Unpacking the graphics engine...")
 	tmp := root + ".part"
