@@ -128,9 +128,13 @@ func runWinKeyQmp() {
 }
 
 // runTitleEnforcer keeps the VM window branded (QEMU resets its title on every
-// grab toggle, so this reasserts every second) and maximizes it once per
-// launch when the window first appears.
+// grab toggle, so this reasserts every second), maximizes it once per launch
+// when the window first appears, and stamps our icon over QEMU's on the
+// window + taskbar (the SDL window belongs to qemu-system-*.exe, so without
+// this the taskbar shows the QEMU logo - the last piece of QEMU chrome).
 func runTitleEnforcer(fullscreen bool) {
+	hInst, _, _ := procGetModuleHandleW.Call(0)
+	appIcon, _, _ := procLoadIconW.Call(hInst, 1) // the embedded pixel-O .ico
 	lastPid := uint32(0)
 	maximize := false
 	for {
@@ -139,7 +143,7 @@ func runTitleEnforcer(fullscreen bool) {
 				lastPid = pid
 				maximize = !fullscreen
 			}
-			enforceTitle(pid, &maximize)
+			enforceTitle(pid, &maximize, appIcon)
 		} else {
 			lastPid = 0
 		}

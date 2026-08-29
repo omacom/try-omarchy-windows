@@ -143,10 +143,12 @@ func foregroundPid() uint32 {
 
 // enforceTitle finds the QEMU process's visible top-level window, keeps it
 // titled appTitle (QEMU rewrites its own title on every grab toggle, so the
-// caller reasserts this periodically) and maximizes it the first time it
-// appears (launch-UX contract: maximized by default, never fullscreen, never
-// a small floating window). Users must never see QEMU chrome.
-func enforceTitle(pid uint32, maximize *bool) {
+// caller reasserts this periodically), maximizes it the first time it appears
+// (launch-UX contract: maximized by default, never fullscreen, never a small
+// floating window) and keeps our icon on it (HICONs are USER handles, valid
+// across processes in a session, so WM_SETICON onto QEMU's window works).
+// Users must never see QEMU chrome.
+func enforceTitle(pid uint32, maximize *bool, appIcon uintptr) {
 	cb := syscall.NewCallback(func(hwnd, _ uintptr) uintptr {
 		var wpid uint32
 		procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&wpid)))
@@ -160,6 +162,11 @@ func enforceTitle(pid uint32, maximize *bool) {
 			*maximize = false
 			const swMaximize = 3
 			procShowWindow.Call(hwnd, swMaximize)
+		}
+		if appIcon != 0 {
+			const wmSeticonMsg = 0x80
+			procSendMessageW.Call(hwnd, wmSeticonMsg, 1, appIcon) // ICON_BIG
+			procSendMessageW.Call(hwnd, wmSeticonMsg, 0, appIcon) // ICON_SMALL
 		}
 		buf := make([]uint16, maxTitle)
 		procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), maxTitle)
