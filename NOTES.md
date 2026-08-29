@@ -198,6 +198,29 @@ Goal: prove GPU-accelerated Omarchy via WINQ-EMU's Venus Vulkan path on real har
    (not llvmpipe), and animations/blur feel smooth. Grab numbers + screenshots, update
    this file and FINDINGS.md.
 
+## Launch-UX contract (settled 2026-08-28 on hands-on feedback — do NOT regress)
+
+Enforced by `scripts/verify-launch-ux.ps1` (run it against a live VM; all PASS
+required). Reference visual: docs/media/launch-ux-reference.png.
+
+- Window opens **MAXIMIZED** — taskbar visible. Never fullscreen by default
+  (user got trapped in fullscreen and hated it; `-Fullscreen` stays opt-in),
+  never a small floating window.
+- Guest console resolution = the maximized client area (`video=WxH` computed by
+  the launcher from the work area), so the picture fills the window from the
+  first frame; Hyprland re-adapts to live resizes after login.
+- Host mouse cursor is **always visible** over the window (`show-cursor=on`) —
+  during console phases the guest draws no cursor and a vanishing pointer reads
+  as broken. Image-v3 consideration: with the host cursor always on, the guest
+  cursor could go back to invisible (one cursor, host-drawn, VNC-era style) to
+  avoid doubling on the desktop.
+- Windowless QEMU binary, window titled "Try Omarchy", no console windows,
+  forwarder + clipboard bridge + supervisor all connected.
+- Setup form remains keyboard-only (inherent to the console form; same on
+  macOS). Real fix on the roadmap: pre-provisioned "just try it" image.
+- Spare guest gettys (tty2-6) reachable via Ctrl+Alt+F2..F6 show a raw
+  `login:` prompt — image v3 should mask them (users must never see a console).
+
 ## Competitive: try-omarchy (macOS) v0.2.0 shipped 2026-08-28
 
 Eduardo's release (github.com/themartiano/try-omarchy/releases/tag/v0.2.0):

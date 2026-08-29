@@ -47,6 +47,24 @@ $spec = Get-Content (Join-Path $g 'build-spec.json') | ConvertFrom-Json
 # Serial log only - no console= on the display, so no kernel text or blinking
 # cursor flashes in the window before SDDM (boot problems: read vm\serial*.log).
 $cmdline = ($spec.runtime.kernelCommandLine -replace 'console=tty0 ', '' -replace 'console=hvc0', 'console=ttyS0') + ' vt.global_cursor_default=0'
+# Size the guest console to the host: SDL sizes its window to the guest
+# resolution, so the fixed default (1280x800) neither fits the screen nor
+# survives a maximize. Windowed (default): fit the desktop work area minus
+# window chrome, so the window opens as large as possible WITHOUT covering the
+# taskbar or going fullscreen. -Fullscreen: exact screen size, pixel-perfect.
+# Hyprland re-adapts to live window resizes after login either way.
+Add-Type -AssemblyName System.Windows.Forms
+if ($Fullscreen) {
+    $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $conW = $b.Width; $conH = $b.Height
+} else {
+    # Default: a MAXIMIZED window (taskbar stays visible; not fullscreen).
+    # Console resolution = the maximized client area: work area minus caption.
+    $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $conW = $wa.Width
+    $conH = $wa.Height - 31    # title bar
+}
+$cmdline += " video=$($conW)x$($conH)"
 $expandedMiB = $spec.runtime.storage.expandedSizeMiB
 
 $disk = Join-Path $vm 'disk.raw'
@@ -84,7 +102,10 @@ if ($useGpu) {
     $qemuArgs = @(
         '-machine', 'q35,accel=whpx', '-cpu', 'host', '-smp', '6', '-m', '6G',
         '-device', 'virtio-vga-gl,blob=on,hostmem=4G,venus=on',
-        '-display', 'sdl,gl=on',
+        # show-cursor=on: never hide the host pointer over the window - during the
+        # console phases (setup form, splash) the guest draws no cursor, and a
+        # vanishing pointer reads as broken to users.
+        '-display', 'sdl,gl=on,show-cursor=on',
         '-serial', "file:$vm\serial-gpu.log"
     ) + $qemuArgs
 } else {
@@ -96,7 +117,7 @@ if ($useGpu) {
         '-machine', 'q35,accel=whpx', '-cpu', 'qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes',
         '-smp', '6', '-m', '4096',
         '-vga', 'none', '-device', 'virtio-gpu-pci,id=gpu0',
-        '-display', 'sdl,gl=off',
+        '-display', 'sdl,gl=off,show-cursor=on',
         '-serial', "file:$vm\serial.log"
     ) + $qemuArgs
 }
@@ -110,6 +131,8 @@ if ($Share) {
 }
 if ($Fullscreen) { $qemuArgs += '-full-screen' }
 $argStr = ($qemuArgs | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
+
+Add-Type -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);' -Name Native -Namespace TryOmarchy
 
 function Connect-Qmp([int]$port, [int]$readTimeoutMs) {
     # Full handshake (greeting + qmp_capabilities). Returns $null unless QEMU's main
@@ -163,6 +186,18 @@ try {
             Start-Sleep -Seconds 2
         }
         if ($null -eq $qmp) { throw 'QEMU failed to come up healthy after 4 attempts.' }
+
+        # Open maximized (the default experience: fills the desktop, taskbar visible).
+        if (-not $Fullscreen) {
+            for ($i = 0; $i -lt 10; $i++) {
+                $proc.Refresh()
+                if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
+                    [TryOmarchy.Native]::ShowWindow($proc.MainWindowHandle, 3) | Out-Null   # SW_MAXIMIZE
+                    break
+                }
+                Start-Sleep -Milliseconds 500
+            }
+        }
 
         # --- supervise until the guest goes down ---
         # Two hard-won subtleties here (see docs/FINDINGS.md):
