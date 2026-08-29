@@ -1,9 +1,53 @@
 # try-omarchy-windows — working notes / session handoff
 
 **Read this first in a new session.** Keep this file updated as work progresses.
-Last updated: 2026-08-29 night (native app shell built and VM-validated).
-**Next session: laptop — start with [HANDOFF.md](HANDOFF.md); validate v0.0.2
-AND the new TryOmarchy.exe on hardware.**
+Last updated: 2026-08-28 late night (laptop: everything hardware-validated —
+v0.0.2 image, v0.0.3 image, TryOmarchy.exe incl. real double-click first run;
+shell splash restyled + icon). **State: preview-release quality end to end.
+Remaining before announcing: Linux box rebuilds the exe from current master
+(splash + fixes) and decides packaging/signing; see "Open work".**
+
+## Session 2026-08-28 late night (laptop): double-click reality check + splash
+
+The real-user double-click test of TryOmarchy.exe found two shipping bugs the
+VM validation missed, then the setup UI got the Omarchy look. All fixed,
+verified on hardware, pushed (through 80d533e):
+
+- **The first-run progress window never existed.** ui.go's WNDCLASSEXW mirror
+  declared cbClsExtra/cbWndExtra pointer-sized; they are 4-byte C ints, so
+  cbSize came out 88 (not 80) and RegisterClassExW rejected the class -
+  silently, since no return was checked. A real double-click showed NOTHING
+  while the 1.4 GB download ran blind. Lesson: every Win32 struct mirror is
+  guilty until its Sizeof matches the C headers, and every .Call() return gets
+  checked and logged.
+- **Double-click twice = two blind downloads into the same files.** The
+  single-instance guard (lifecycle port 4450) bound only after ensureGuest;
+  it now binds first, and a second instance dies in <1s with the
+  already-running dialog (verified).
+- **Setup splash restyled** (user: "clean and modern like omarchy" - the grey
+  stock dialog "looks bad and in development"): borderless dark panel, Tokyo
+  Night palette, pixel-art O + green OMARCHY wordmark + tagline, live status,
+  slim SELF-DRAWN progress bar (the classic themed bar paints a light border
+  on dark - draw it in WM_PAINT instead), Win11 rounded corners
+  (DWMWA_WINDOW_CORNER_PREFERENCE), drag-anywhere (WM_NCHITTEST->HTCAPTION),
+  Esc cancels, SS_NOPREFIX so "&" renders. RegisterClassExW tolerates
+  ERROR_CLASS_ALREADY_EXISTS (the class registers twice per run: download UI,
+  then disk-prep UI).
+- **App icon**: app/icon.ico (chunky pixel O on dark rounded square, generated
+  by a throwaway System.Drawing script + ffmpeg png->ico) embedded via
+  app/rsrc_windows_amd64.syso (github.com/akavel/rsrc) - Explorer/taskbar
+  icon + splash window icon. Committed so the Linux cross-build picks it up.
+- Laptop build recipe: Go 1.27.0 official zip (no admin) ->
+  %LOCALAPPDATA%\go-toolchain; `go build -trimpath -ldflags '-s -w
+  -H windowsgui' -o TryOmarchy.exe .` in app/.
+- Hardware validation recap for the exe (earlier tonight, plus this round):
+  66s first-run image fetch, attempt-1 boots every time (10s QMP grace),
+  lifecycle reboot-notify verified, all 9 launch-UX checks pass, **audio good,
+  winkey good (user-confirmed)**, real double-click first run now shows the
+  splash front and center (user-confirmed working).
+- UI iteration trick: a scratch harness copying ui.go+winapi.go with a fake
+  driver main() lets the splash render with simulated progress without
+  touching a running instance (single-instance port) or downloading anything.
 
 ## Session 2026-08-28 night (Linux box): the native app shell (app/)
 
@@ -386,6 +430,22 @@ who want to try Linux without committing. Two tracks:
   dev variant with sshd + hostfwd
 
 ## Open work, in rough order
+
+**Road to the announcement (as of 2026-08-28 late night):**
+- [ ] Rebuild TryOmarchy.exe from current master on the Linux box (it now
+      carries the splash, icon, single-instance-first and window-class fixes)
+      and attach it to the release as the headline download; decide whether
+      bootstrap.ps1 stays or becomes "power users only".
+- [ ] Sign the exe (docs/SIGNING.md + scripts/sign.ps1 are wired to the Azure
+      Trusted Signing account) so SmartScreen doesn't scare non-tech users.
+- [ ] Image v3 papercuts: screensaver terminal font on narrow screens (91 cols
+      at 1366x768 renders the compact logo, not the full wordmark), mask the
+      spare tty2-6 gettys, fold guest-build patch 0003 (clipboard socat
+      silence) into the shipped image.
+- [ ] tryomarchy.com landing page (parallel session; HANDOFF-LANDING.md) with
+      the demo video + theme stills from C:\cssi\media-v002.
+- [ ] Announcement post: numbers to quote - 6.08s boot, 66s setup download,
+      Venus Vulkan, 22 themes, clipboard + folder sharing, 7 MB app.
 
 - [x] CPU-feature experiment DONE 2026-08-27: XSAVE/AVX panics guests under upstream
       WHPX; safe ceiling `qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes` (now default in
