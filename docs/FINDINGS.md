@@ -78,6 +78,25 @@ panic the guest.
   `virt` kernel has no virtio-gpu driver — use `-device VGA` for Alpine-based text
   harnesses; the Omarchy image has virtio-gpu and is fine.
 
+## WHPX needs the hypervisor, not the feature (2026-08-28, empirical)
+
+Proven on the laptop while trying to fake a factory-fresh machine: with the
+HypervisorPlatform optional feature **Disabled** (dism-confirmed) AND
+`hypervisorlaunchtype off`, WHPX still fully works — `WHvGetCapability`
+reports the hypervisor present and QEMU boots the guest normally — because
+**VBS/HVCI (Memory Integrity) relaunches the hypervisor regardless**, and
+WinHvPlatform.dll ships with the OS. Consequences:
+
+- On machines with Memory Integrity on — the DEFAULT on new Windows 11
+  machines — Try Omarchy needs **no setup at all**: no feature enable, no UAC,
+  no restart. Download, open, desktop. The WHP-enable flow is a fallback for
+  machines with VBS off and no WSL2/Hyper-V.
+- The app's functional probe (WHvGetCapability, not feature state) is the
+  right check: feature state and WHPX availability genuinely diverge.
+- A dev machine with VBS or WSL2 cannot simulate a bare machine by disabling
+  the feature or even `hypervisorlaunchtype` — Memory Integrity must be off
+  too. Test the enable flow in a VM instead.
+
 ## Bare-metal validation (2026-08-27, Ryzen 5 5625U laptop, Windows 11 Pro)
 
 The v0.0.1-preview flow works on real hardware. WHPX initialized first try (QEMU

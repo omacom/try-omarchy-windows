@@ -1,6 +1,28 @@
 # try-omarchy-windows — working notes / session handoff
 
 **Read this first in a new session.** Keep this file updated as work progresses.
+
+## Session 2026-08-28/29 (laptop): one-click validation pass (HANDOFF steps)
+
+- Step 1 ✓ release exe hash-verified from tryomarchy.com/download.
+- Step 2 regression ✓ (C:\WINQ-EMU wins, no downloads, GPU; provisioning driven
+  blind over QMP). Step 3 runtime download ✓ after fixing a real bug: Defender
+  holds handles on freshly unpacked binaries and the runtime.part->runtime
+  rename got access-denied (retry loop shipped; fell back to CPU mode cleanly
+  when it failed — fallback path also proven).
+- Landed mid-pass on user feedback: close guard (X/Alt+F4 -> owned confirm ->
+  graceful QMP shutdown; window-close=off), taskbar identity (Win11 taskbar
+  ignores WM_SETICON; window property store AUMID + RelaunchIconResource),
+  multi-size icon.ico, panic traces to shell.log (the shell once died silently
+  mid-session leaving QEMU orphaned - windowsgui panics went nowhere).
+- Step 4 bare-machine: laptop CANNOT go bare — see the new FINDINGS entry
+  "WHPX needs the hypervisor, not the feature": VBS/HVCI keeps the hypervisor
+  (and thus WHPX) alive with the feature disabled AND hypervisorlaunchtype
+  off. Product story upgrade: VBS-on machines (Win11 default) need ZERO setup.
+  The enable flow stays VM-validated (dockur); hardware skip accepted by user.
+- The release binary for signing = local build of master (166d2642...), which
+  superseded the uploaded dd1c64 asset (close guard, icons, panic logging,
+  rename retry all landed during the pass). Step 5 signing in progress.
 Last updated: 2026-08-28 late night (laptop: everything hardware-validated —
 v0.0.2 image, v0.0.3 image, TryOmarchy.exe incl. real double-click first run;
 shell splash restyled + icon). **State: preview-release quality end to end.
