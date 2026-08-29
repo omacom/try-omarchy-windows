@@ -1,6 +1,6 @@
 # Try Omarchy for Windows
 
-Run the full [Omarchy](https://omarchy.org) desktop in a window on Windows 11. No VMware, no VirtualBox, no dual boot: QEMU on the Windows Hypervisor Platform (WHPX), a prebuilt Arch image with Omarchy baked in, and the desktop rendered on your actual GPU (virgl + Venus Vulkan via [WINQ-EMU](https://github.com/cmspam/winq-emu)) with CPU rendering as the automatic fallback. No partitions, no bootloader, no changes to your Windows install — everything lives in one folder, and deleting it is the uninstall.
+Run the full [Omarchy](https://omarchy.org) desktop in a window on Windows 11. No VMware, no VirtualBox, no dual boot: QEMU on the Windows Hypervisor Platform (WHPX), a prebuilt Arch image with Omarchy baked in, and the desktop rendered on your actual GPU (virgl + Venus Vulkan via [WINQ-EMU](https://github.com/cmspam/winq-emu)) with CPU rendering as the automatic fallback. No partitions, no bootloader, no changes to your Windows install: everything lives in one folder, `%LOCALAPPDATA%\TryOmarchy`, and deleting that folder is the uninstall.
 
 Download, boot, Hyprland.
 
@@ -23,6 +23,13 @@ Download, boot, Hyprland.
 | First run | Screensaver |
 |---|---|
 | ![Omarchy first-run setup inside the Try Omarchy window](docs/images/first-run.jpg) | ![Omarchy pixel-logo screensaver](docs/images/screensaver.jpg) |
+
+## Essential keys
+
+- **Windows key** acts as Super, but only while the Try Omarchy window is focused. Everywhere else it stays your normal Windows key, so the Start menu and Win+Shift+S keep working.
+- **Ctrl+Alt+F** fullscreens the VM window itself on your Windows desktop (SUPER+F, below, is the in-Omarchy one).
+- **Ctrl+Alt+G** grabs or releases raw keyboard input. If the host steals a shortcut you meant for Omarchy, grab first. Same trick if you're driving the VM over VNC or RDP and focus gets weird.
+- Hyprland is keyboard-first by design and the first hour is the adjustment period. Learn two keys and the rest follows: **SUPER+SPACE** opens the Omarchy menu, **SUPER+K** opens the keybinding viewer with every binding and its description. The everyday starters: SUPER+RETURN opens a terminal, SUPER+W closes the focused window, SUPER+F fullscreens it.
 
 ## Architecture
 
@@ -54,6 +61,24 @@ GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-H windowsgui -s -w" -o T
 ```
 
 Or skip the app and drive QEMU from PowerShell: `scripts\bootstrap.ps1` then `scripts\launch-omarchy.ps1` (elevated).
+
+## FAQ
+
+### Isn't this just QEMU in disguise?
+
+Yes, and that's the point. QEMU on WHPX is the best virtualization stack Windows has, but wiring it up yourself (machine type, virtio devices, GPU forwarding, input handling, the known launch wedges) is a weekend project on its own. The app does that wiring for you, supervises the VM, and keeps everything in one folder you can delete.
+
+### Why is the download only ~8 MB?
+
+TryOmarchy.exe is just the launcher. On first run it fetches the GPU runtime (~46 MB) and the Omarchy image (~1.4 GB), SHA256-verifies both, and caches them in the same folder. After that, launches work offline.
+
+### Why not just use a live USB?
+
+A live USB means rebooting away from your machine and forgetting everything on shutdown. This runs in a window next to your actual work, keeps your state between sessions, and renders on your real GPU.
+
+### I have the full Hyper-V feature set installed. Will it conflict?
+
+No. WHPX and Hyper-V share the same hypervisor, so they coexist. If you hit anything odd with Hyper-V enabled, please open an issue so we can document it.
 
 ## Repository layout
 

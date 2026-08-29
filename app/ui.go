@@ -153,7 +153,7 @@ func (ui *progressUI) run() {
 	barBgBrush, _, _ := procCreateSolidBrush.Call(colBgBar)
 
 	className, _ := syscall.UTF16PtrFromString("TryOmarchySetup")
-	var hHead, hTag, hText uintptr
+	var hHead, hTag, hText, hHint1, hHint2 uintptr
 	lastStatus := ""
 
 	// Pixel O geometry: cell 8px at (40, 64).
@@ -254,7 +254,7 @@ func (ui *progressUI) run() {
 		}
 	}
 
-	const w, h = 480, 244
+	const w, h = 480, 276
 	sx, _, _ := procGetSystemMetrics.Call(smCxscreen)
 	sy, _, _ := procGetSystemMetrics.Call(smCyscreen)
 	title, _ := syscall.UTF16PtrFromString(appTitle)
@@ -285,6 +285,11 @@ func (ui *progressUI) run() {
 	hHead = mk("OMARCHY", 144, 66, 300, 52)
 	hTag = mk("Beautiful, Modern & Opinionated Linux", 146, 118, 300, 22)
 	hText = mk("Preparing...", 40, 174, w-80, 22)
+	// Starter keybindings on screen during the boot wait (the #1 field
+	// complaint: an hour lost guessing tiling WM keys once the VM appears and
+	// this window closes). Binds verified against Omarchy v4.0.1 defaults.
+	hHint1 = mk("Super+Space menu, Super+K keybindings, Super+Return terminal", 40, 222, w-80, 20)
+	hHint2 = mk("Super+W close, Super+F fullscreen", 40, 242, w-80, 20)
 
 	font := func(height, weight int, name string) uintptr {
 		n, _ := syscall.UTF16PtrFromString(name)
@@ -295,6 +300,8 @@ func (ui *progressUI) run() {
 	procSendMessageW.Call(hHead, wmSetfont, font(40, 800, "Segoe UI"), 1)
 	procSendMessageW.Call(hTag, wmSetfont, font(15, 400, "Segoe UI"), 1)
 	procSendMessageW.Call(hText, wmSetfont, font(16, 400, "Segoe UI"), 1)
+	procSendMessageW.Call(hHint1, wmSetfont, font(14, 400, "Segoe UI"), 1)
+	procSendMessageW.Call(hHint2, wmSetfont, font(14, 400, "Segoe UI"), 1)
 
 	procSetTimer.Call(hwnd, 1, 100, 0)
 	procShowWindow.Call(hwnd, swShow)
