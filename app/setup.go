@@ -239,8 +239,18 @@ func ensureRuntime(cfg *config, release string) (string, error) {
 		return "", fmt.Errorf("unpacking %s: %w", runtimeZip, err)
 	}
 	os.RemoveAll(root)
-	if err := os.Rename(tmp, root); err != nil {
-		return "", err
+	// Defender (and indexers) briefly hold handles on freshly unpacked
+	// binaries, failing the directory rename with access-denied - it happened
+	// on hardware on the first try. Retry over a few seconds.
+	var renameErr error
+	for attempt := 0; attempt < 15; attempt++ {
+		if renameErr = os.Rename(tmp, root); renameErr == nil {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if renameErr != nil {
+		return "", renameErr
 	}
 	os.Remove(zipPath)
 	return root, nil
