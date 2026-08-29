@@ -60,6 +60,11 @@ cd try-omarchy-windows/app
 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-H windowsgui -s -w" -o TryOmarchy.exe .
 ```
 
+The launcher pins the SHA256 digest of the default release's `SHA256SUMS` file.
+When publishing a new image release, update `defaultReleaseURL`,
+`defaultSumsSHA256`, and the matching fixture in `app/testdata`. Custom release
+URLs must be paired with the trusted manifest digest via `-sums-sha256`.
+
 Or skip the app and drive QEMU from PowerShell: `scripts\bootstrap.ps1` then `scripts\launch-omarchy.ps1` (elevated).
 
 ## FAQ

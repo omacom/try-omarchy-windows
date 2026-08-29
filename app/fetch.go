@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -26,7 +24,7 @@ import (
 
 var artifacts = []string{"build-spec.json", "vmlinuz-linux", "initramfs-linux.img", "rootfs.ext4.zst"}
 
-func ensureGuest(cfg *config, release string) error {
+func ensureGuest(cfg *config, release, sumsSHA256 string) error {
 	missing := false
 	if _, err := os.Stat(filepath.Join(cfg.guestDir, "rootfs.ext4")); err != nil {
 		for _, f := range artifacts {
@@ -49,7 +47,7 @@ func ensureGuest(cfg *config, release string) error {
 	ui := getUI()
 	client := &http.Client{Timeout: 0}
 
-	sums, err := fetchSums(client, release)
+	sums, err := fetchSums(client, release, sumsSHA256)
 	if err != nil {
 		return fmt.Errorf("downloading SHA256SUMS: %w", err)
 	}
@@ -87,27 +85,10 @@ func ensureGuest(cfg *config, release string) error {
 	return nil
 }
 
-func fetchSums(client *http.Client, release string) (map[string]string, error) {
-	resp, err := client.Get(release + "/SHA256SUMS")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	sums := map[string]string{}
-	sc := bufio.NewScanner(resp.Body)
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		if len(fields) == 2 {
-			sums[fields[1]] = fields[0]
-		}
-	}
-	return sums, sc.Err()
-}
-
 func download(client *http.Client, url, dest, wantSum string, ui *progressUI) error {
+	if !validSHA256(wantSum) {
+		return fmt.Errorf("release manifest has no valid SHA256 for %s", filepath.Base(dest))
+	}
 	resp, err := client.Get(url)
 	if err != nil {
 		return err
@@ -146,7 +127,7 @@ func download(client *http.Client, url, dest, wantSum string, ui *progressUI) er
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if wantSum != "" && hex.EncodeToString(h.Sum(nil)) != wantSum {
+	if hex.EncodeToString(h.Sum(nil)) != wantSum {
 		os.Remove(tmp)
 		return fmt.Errorf("checksum mismatch - the download is corrupt, try again")
 	}
@@ -217,4 +198,3 @@ func sparseCopyStream(dst *os.File, src io.Reader, srcTotal int64, counted *coun
 		}
 	}
 }
-

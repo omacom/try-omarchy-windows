@@ -107,8 +107,10 @@ func main() {
 	flag.BoolVar(&cfg.fresh, "fresh", false, "discard the writable disk and start over")
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen")
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed")
-	release := flag.String("release", "https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.3-preview",
+	release := flag.String("release", defaultReleaseURL,
 		"base URL the guest image is downloaded from on first run")
+	sumsSHA256 := flag.String("sums-sha256", defaultSumsSHA256,
+		"trusted SHA256 digest of the release's SHA256SUMS file")
 	enableWhp := flag.Bool("enable-whp", false, "internal: elevated helper that enables the Windows Hypervisor Platform")
 	flag.Parse()
 
@@ -163,7 +165,7 @@ func main() {
 		}
 	}
 	if gpuRoot == "" && !(cfg.noGpu && haveStock) {
-		root, err := ensureRuntime(cfg, *release)
+		root, err := ensureRuntime(cfg, *release, *sumsSHA256)
 		if err != nil {
 			logf("runtime download failed: %v", err)
 			if !haveStock {
@@ -181,7 +183,7 @@ func main() {
 	}
 
 	// First run: the exe is the stub - fetch the guest image itself.
-	if err := ensureGuest(cfg, *release); err != nil {
+	if err := ensureGuest(cfg, *release, *sumsSHA256); err != nil {
 		fatal("Setting up the Omarchy image failed: %v\n\nCheck your connection and start Try Omarchy again.", err)
 	}
 	if cfg.share != "" {

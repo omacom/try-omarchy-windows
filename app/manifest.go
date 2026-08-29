@@ -1,0 +1,87 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+const (
+	defaultReleaseURL = "https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.3-preview"
+	defaultSumsSHA256 = "4cc3023d9837744cca1fcaa52a62b9d5c19e4430781e753d2b0a5c0639a6be17"
+	maxSumsBytes      = 1 << 20
+)
+
+// fetchSums authenticates the release manifest against a digest embedded in
+// the launcher. Fetching checksums beside the payload without an independent
+// trust root would allow both to be replaced together.
+func fetchSums(client *http.Client, release, expectedSHA256 string) (map[string]string, error) {
+	resp, err := client.Get(release + "/SHA256SUMS")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSumsBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxSumsBytes {
+		return nil, fmt.Errorf("SHA256SUMS exceeds %d bytes", maxSumsBytes)
+	}
+	return parseVerifiedSums(data, expectedSHA256)
+}
+
+func parseVerifiedSums(data []byte, expectedSHA256 string) (map[string]string, error) {
+	expectedSHA256 = strings.ToLower(strings.TrimSpace(expectedSHA256))
+	if !validSHA256(expectedSHA256) {
+		return nil, fmt.Errorf("trusted SHA256SUMS digest is not a valid SHA256")
+	}
+	actual := sha256.Sum256(data)
+	if hex.EncodeToString(actual[:]) != expectedSHA256 {
+		return nil, fmt.Errorf("SHA256SUMS authentication failed")
+	}
+
+	sums := map[string]string{}
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	for line := 1; sc.Scan(); line++ {
+		fields := strings.Fields(sc.Text())
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("invalid SHA256SUMS line %d", line)
+		}
+		digest := strings.ToLower(fields[0])
+		name := strings.TrimPrefix(fields[1], "*")
+		if !validSHA256(digest) || name == "" {
+			return nil, fmt.Errorf("invalid SHA256SUMS line %d", line)
+		}
+		if _, exists := sums[name]; exists {
+			return nil, fmt.Errorf("duplicate SHA256SUMS entry for %s", name)
+		}
+		sums[name] = digest
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	if len(sums) == 0 {
+		return nil, fmt.Errorf("SHA256SUMS contains no entries")
+	}
+	return sums, nil
+}
+
+func validSHA256(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
