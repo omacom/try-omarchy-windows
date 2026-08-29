@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -72,5 +74,33 @@ func TestReleaseManifestRejectsMalformedEntry(t *testing.T) {
 	digest := sha256.Sum256(data)
 	if _, err := parseVerifiedSums(data, hex.EncodeToString(digest[:])); err == nil {
 		t.Fatal("malformed manifest entry was accepted")
+	}
+}
+
+func TestReleaseManifestRejectsDuplicateEntry(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	data := []byte(digest + "  payload.zip\n" + digest + "  payload.zip\n")
+	manifestDigest := sha256.Sum256(data)
+	if _, err := parseVerifiedSums(data, hex.EncodeToString(manifestDigest[:])); err == nil {
+		t.Fatal("duplicate manifest entry was accepted")
+	}
+}
+
+func TestReleaseManifestRejectsEmptyManifest(t *testing.T) {
+	data := []byte("\n")
+	digest := sha256.Sum256(data)
+	if _, err := parseVerifiedSums(data, hex.EncodeToString(digest[:])); err == nil {
+		t.Fatal("empty manifest was accepted")
+	}
+}
+
+func TestReleaseManifestRejectsOversizedManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte("x"), maxSumsBytes+1))
+	}))
+	defer server.Close()
+
+	if _, err := fetchSums(server.Client(), server.URL, strings.Repeat("a", 64)); err == nil {
+		t.Fatal("oversized manifest was accepted")
 	}
 }
