@@ -87,6 +87,9 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 // a minute or two, so it gets the same progress window the download uses -
 // launch must never look hung.
 func prepareDisk(cfg *config, expandedMiB int64) error {
+	if err := checkSetupCancelled(); err != nil {
+		return err
+	}
 	if expandedMiB <= 0 || expandedMiB > (1<<63-1)/(1024*1024) {
 		return fmt.Errorf("invalid expanded disk size: %d MiB", expandedMiB)
 	}

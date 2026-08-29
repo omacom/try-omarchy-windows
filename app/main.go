@@ -3,9 +3,10 @@
 package main
 
 import (
-	"bytes"
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -35,13 +36,13 @@ const (
 )
 
 type config struct {
-	dir, winqEmu, share       string
-	fresh, fullscreen, noGpu  bool
-	guestDir, vmDir, disk     string
-	qemu                      string
-	useGpu                    bool
-	audio                     string
-	memMiB                    int
+	dir, winqEmu, share      string
+	fresh, fullscreen, noGpu bool
+	guestDir, vmDir, disk    string
+	qemu                     string
+	useGpu                   bool
+	audio                    string
+	memMiB                   int
 }
 
 // pickGuestMem sizes the guest to the machine instead of demanding a fixed
@@ -99,6 +100,24 @@ func fatal(format string, a ...any) {
 	os.Exit(1)
 }
 
+func finishSetupCancellation(cfg *config, err error) bool {
+	if !setupCancelled() && !errors.Is(err, errSetupCancelled) {
+		return false
+	}
+	getUI().setStatus("Cancelling and cleaning up...")
+	logf("setup cancelled by user")
+	if logFile != nil {
+		logFile.Close()
+		logFile = nil
+	}
+	executable, _ := os.Executable()
+	if cleanupErr := cleanupCancelledSetup(cfg.dir, executable, cancelRemovesAll.Load()); cleanupErr != nil {
+		errorBox(fmt.Sprintf("Setup was cancelled, but some temporary files could not be removed:\n\n%v\n\nYou can safely delete %s manually.", cleanupErr, cfg.dir))
+	}
+	uiDone()
+	return true
+}
+
 func main() {
 	cfg := &config{}
 	flag.StringVar(&cfg.dir, "dir", filepath.Join(os.Getenv("LOCALAPPDATA"), "TryOmarchy"), "data directory")
@@ -123,6 +142,7 @@ func main() {
 	cfg.guestDir = filepath.Join(cfg.dir, "guest")
 	cfg.vmDir = filepath.Join(cfg.dir, "vm")
 	cfg.disk = filepath.Join(cfg.vmDir, "disk.raw")
+	configureSetupCancellation(!completeInstallExists(cfg.dir))
 	os.MkdirAll(cfg.vmDir, 0o755)
 	logFile, _ = os.OpenFile(filepath.Join(cfg.vmDir, "shell.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if logFile != nil {
@@ -152,6 +172,9 @@ func main() {
 	// win - C:\WINQ-EMU, then a previously downloaded runtime, then stock QEMU
 	// from the bootstrap; a bare machine downloads the portable WINQ-EMU tree.
 	ensureWHP(cfg)
+	if finishSetupCancellation(cfg, checkSetupCancelled()) {
+		return
+	}
 
 	const qemuExe = "qemu-system-x86_64w.exe"
 	stockQemu := `C:\Program Files\qemu\` + qemuExe
@@ -167,6 +190,9 @@ func main() {
 	if gpuRoot == "" && !(cfg.noGpu && haveStock) {
 		root, err := ensureRuntime(cfg, *release, *sumsSHA256)
 		if err != nil {
+			if finishSetupCancellation(cfg, err) {
+				return
+			}
 			logf("runtime download failed: %v", err)
 			if !haveStock {
 				fatal("Downloading the graphics engine failed: %v\n\nCheck your connection and start Try Omarchy again.", err)
@@ -184,6 +210,9 @@ func main() {
 
 	// First run: the exe is the stub - fetch the guest image itself.
 	if err := ensureGuest(cfg, *release, *sumsSHA256); err != nil {
+		if finishSetupCancellation(cfg, err) {
+			return
+		}
 		fatal("Setting up the Omarchy image failed: %v\n\nCheck your connection and start Try Omarchy again.", err)
 	}
 	if cfg.share != "" {
@@ -211,7 +240,16 @@ func main() {
 	cmdline += " vt.global_cursor_default=0"
 
 	if err := prepareDisk(cfg, spec.Runtime.Storage.ExpandedSizeMiB); err != nil {
+		if finishSetupCancellation(cfg, err) {
+			return
+		}
 		fatal("Preparing the writable disk failed: %v", err)
+	}
+	// From here onward the installation is complete. A last-second cancel may
+	// stop this launch, but must not remove the working VM it just finished.
+	cancelRemovesAll.Store(false)
+	if finishSetupCancellation(cfg, checkSetupCancelled()) {
+		return
 	}
 	cfg.memMiB = pickGuestMem(cfg.useGpu)
 	getUI().setStatus("Starting Omarchy...")
@@ -235,6 +273,9 @@ func main() {
 	for relaunch := true; relaunch; {
 		relaunch = supervise(cfg, cmdline)
 	}
+	if finishSetupCancellation(cfg, checkSetupCancelled()) {
+		return
+	}
 	logf("---- exiting ----")
 }
 
@@ -251,6 +292,9 @@ func supervise(cfg *config, cmdline string) bool {
 	// 6 attempts: the fallback ladder (audio, GPU, then memory halvings) can
 	// legitimately consume several before a healthy launch.
 	for attempt := 1; attempt <= 6; attempt++ {
+		if setupCancelled() {
+			return false
+		}
 		mode := "CPU rendering (llvmpipe)"
 		if cfg.useGpu {
 			mode = "GPU accelerated (virgl + Venus Vulkan)"
@@ -283,6 +327,11 @@ func supervise(cfg *config, cmdline string) bool {
 	probe:
 		for qmp == nil && time.Now().Before(deadline) {
 			select {
+			case <-setupCancelWake:
+				proc.Process.Kill()
+				<-exited
+				qemuPid.Store(0)
+				return false
 			case <-exited:
 				startupDead = true
 				// No DirectSound device (VMs, some remote sessions) kills
@@ -329,7 +378,12 @@ func supervise(cfg *config, cmdline string) bool {
 			proc.Process.Kill()
 			<-exited
 		}
-		time.Sleep(2 * time.Second)
+		if sleepDuringSetup(2*time.Second) != nil {
+			return false
+		}
+	}
+	if setupCancelled() {
+		return false
 	}
 	fatal("QEMU failed to come up healthy after 4 attempts.")
 	return false

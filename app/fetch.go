@@ -26,6 +26,9 @@ var (
 )
 
 func ensureGuest(cfg *config, release, sumsSHA256 string) error {
+	if err := checkSetupCancelled(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(cfg.guestDir, 0o755); err != nil {
 		return err
 	}
@@ -57,6 +60,9 @@ func ensureGuest(cfg *config, release, sumsSHA256 string) error {
 	}
 
 	for i, name := range downloadedGuestArtifacts {
+		if err := checkSetupCancelled(); err != nil {
+			return err
+		}
 		dest := filepath.Join(cfg.guestDir, name)
 		if err := ensureVerifiedDownload(client, normalizedRelease(release)+"/"+name, dest, sums[name],
 			fmt.Sprintf("Downloading Omarchy (%d of %d)...", i+1, len(downloadedGuestArtifacts)+1), ui); err != nil {
@@ -93,8 +99,7 @@ func ensureGuest(cfg *config, release, sumsSHA256 string) error {
 	os.Remove(zst) // 1.4 GB nobody needs twice
 	ui.setStatus("Ready - starting Omarchy...")
 	ui.setProgress(1, 1)
-	time.Sleep(700 * time.Millisecond)
-	return nil
+	return sleepDuringSetup(700 * time.Millisecond)
 }
 
 func ensureVerifiedDownload(client *http.Client, url, dest, wantSum, status string, ui *progressUI) error {
@@ -129,7 +134,11 @@ func download(client *http.Client, url, dest, wantSum string, ui *progressUI) er
 	if !validSHA256(wantSum) {
 		return fmt.Errorf("release manifest has no valid SHA256 for %s", filepath.Base(dest))
 	}
-	resp, err := client.Get(url)
+	req, err := http.NewRequestWithContext(setupContext(), http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -146,6 +155,11 @@ func download(client *http.Client, url, dest, wantSum string, ui *progressUI) er
 	buf := make([]byte, 1<<20)
 	var done int64
 	for {
+		if err := checkSetupCancelled(); err != nil {
+			f.Close()
+			os.Remove(tmp)
+			return err
+		}
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, werr := f.Write(buf[:n]); werr != nil {
@@ -214,7 +228,7 @@ func decompress(src, dest, wantSum string, ui *progressUI) error {
 		if err := sparseCopyStream(out, dec, st.Size(), counted, ui); err != nil {
 			return err
 		}
-	} else if _, err := io.Copy(out, dec); err != nil {
+	} else if _, err := io.Copy(out, setupReader{r: dec}); err != nil {
 		return err
 	}
 	if err := out.Sync(); err != nil {
@@ -254,6 +268,9 @@ func sparseCopyStream(dst *os.File, src io.Reader, srcTotal int64, counted *coun
 	zero := make([]byte, 1<<20)
 	var off int64
 	for {
+		if err := checkSetupCancelled(); err != nil {
+			return err
+		}
 		n, err := io.ReadFull(src, buf)
 		if n > 0 {
 			if !bytes.Equal(buf[:n], zero[:n]) {

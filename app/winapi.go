@@ -42,18 +42,18 @@ var (
 )
 
 const (
-	mbIconError     = 0x10
-	whKeyboardLL    = 13
-	wmKeydown       = 0x100
-	wmSyskeydown    = 0x104
-	vkLwin          = 0x5B
-	vkRwin          = 0x5C
-	qsAllinput      = 0x04FF
-	pmRemove        = 1
-	cfUnicodetext   = 13
-	gmemMoveable    = 2
-	fsctlSetSparse  = 0x900C4
-	maxTitle        = 256
+	mbIconError    = 0x10
+	whKeyboardLL   = 13
+	wmKeydown      = 0x100
+	wmSyskeydown   = 0x104
+	vkLwin         = 0x5B
+	vkRwin         = 0x5C
+	qsAllinput     = 0x04FF
+	pmRemove       = 1
+	cfUnicodetext  = 13
+	gmemMoveable   = 2
+	fsctlSetSparse = 0x900C4
+	maxTitle       = 256
 )
 
 type msgStruct struct {
@@ -81,7 +81,7 @@ func errorBox(text string) {
 // query fails).
 func availMemMiB() (int, int) {
 	var ms struct {
-		length, memoryLoad                                                     uint32
+		length, memoryLoad                                                    uint32
 		totalPhys, availPhys, totalPage, availPage, totalVirt, availVirt, ext uint64
 	}
 	ms.length = uint32(unsafe.Sizeof(ms))
@@ -110,6 +110,9 @@ func sparseCopy(dst *os.File, src *os.File, total int64, ui *progressUI) error {
 	zero := make([]byte, 1<<20)
 	var off int64
 	for {
+		if err := checkSetupCancelled(); err != nil {
+			return err
+		}
 		n, err := io.ReadFull(src, buf)
 		if n > 0 {
 			if bytes.Equal(buf[:n], zero[:n]) {

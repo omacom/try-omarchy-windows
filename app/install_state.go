@@ -185,6 +185,9 @@ func verifyFileSHA256(path, want string, progress func(done, total int64)) (bool
 	buf := make([]byte, 1<<20)
 	var done int64
 	for {
+		if err := checkSetupCancelled(); err != nil {
+			return false, err
+		}
 		n, readErr := f.Read(buf)
 		if n > 0 {
 			if _, err := h.Write(buf[:n]); err != nil {

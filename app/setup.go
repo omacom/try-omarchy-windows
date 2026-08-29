@@ -211,6 +211,9 @@ func ensureWHP(cfg *config) {
 // ensureRuntime downloads and unpacks the portable WINQ-EMU tree on first run.
 // Same trust chain as the image: fetched from the release, SHA256-verified.
 func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
+	if err := checkSetupCancelled(); err != nil {
+		return "", err
+	}
 	root := filepath.Join(cfg.dir, "runtime")
 	if _, err := os.Stat(filepath.Join(root, "bin", "qemu-system-x86_64w.exe")); err == nil {
 		return root, nil
@@ -240,6 +243,10 @@ func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 	// on hardware on the first try. Retry over a few seconds.
 	var renameErr error
 	for attempt := 0; attempt < 15; attempt++ {
+		if err := checkSetupCancelled(); err != nil {
+			os.RemoveAll(tmp)
+			return "", err
+		}
 		if renameErr = os.Rename(tmp, root); renameErr == nil {
 			break
 		}
@@ -260,6 +267,9 @@ func unzipTree(src, dest string, ui *progressUI) error {
 	defer r.Close()
 	var total, done int64
 	for _, f := range r.File {
+		if err := checkSetupCancelled(); err != nil {
+			return err
+		}
 		total += int64(f.UncompressedSize64)
 	}
 	for _, f := range r.File {
@@ -286,7 +296,7 @@ func unzipTree(src, dest string, ui *progressUI) error {
 			in.Close()
 			return err
 		}
-		n, err := io.Copy(out, in)
+		n, err := io.Copy(out, setupReader{r: in})
 		in.Close()
 		if cerr := out.Close(); err == nil {
 			err = cerr

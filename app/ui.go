@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -53,6 +52,7 @@ const (
 	wsChild           = 0x40000000
 	wmDestroy         = 0x0002
 	wmClose           = 0x0010
+	wmCommand         = 0x0111
 	wmKeydownMsg      = 0x0100
 	wmTimer           = 0x0113
 	wmSetfont         = 0x0030
@@ -62,6 +62,7 @@ const (
 	wmNchittest       = 0x0084
 	wmCtlcolorstatic  = 0x0138
 	ssNoprefix        = 0x80
+	ssNotify          = 0x100
 	htClient          = 1
 	htCaption         = 2
 	vkEscape          = 0x1B
@@ -70,22 +71,24 @@ const (
 	smCyscreen        = 1
 	iccProgress       = 0x20
 	transparentBkMode = 1
+	cancelControlID   = 1001
 
 	// The Omarchy look (Tokyo Night-ish, matching the boot splash). COLORREF
 	// is 0x00BBGGRR.
-	colBg     = 0x00261B1A // RGB(26,27,38)
-	colBgBar  = 0x003C2A28 // RGB(40,42,60)
-	colGreen  = 0x006ACE9E // RGB(158,206,106)
-	colText   = 0x00F5CAC0 // RGB(192,202,245)
-	colDim    = 0x00A27A73 // RGB(115,122,162)
+	colBg    = 0x00261B1A // RGB(26,27,38)
+	colBgBar = 0x003C2A28 // RGB(40,42,60)
+	colGreen = 0x006ACE9E // RGB(158,206,106)
+	colText  = 0x00F5CAC0 // RGB(192,202,245)
+	colDim   = 0x00A27A73 // RGB(115,122,162)
 )
 
 type progressUI struct {
-	status atomic.Value // string
-	cur    atomic.Int64
-	total  atomic.Int64
-	done   atomic.Bool
-	ready  chan struct{}
+	status    atomic.Value // string
+	cur       atomic.Int64
+	total     atomic.Int64
+	done      atomic.Bool
+	canceling atomic.Bool
+	ready     chan struct{}
 }
 
 // THE app has ONE splash (launch-UX requirement: it appears at launch and
@@ -125,6 +128,23 @@ func (ui *progressUI) setStatus(format string, a ...any) { ui.status.Store(fmt.S
 func (ui *progressUI) setProgress(cur, total int64)      { ui.cur.Store(cur); ui.total.Store(total) }
 func (ui *progressUI) finish()                           { ui.done.Store(true) }
 
+func (ui *progressUI) confirmCancel(hCancel uintptr) {
+	if ui.canceling.Load() {
+		return
+	}
+	if msgBox("Cancel Try Omarchy setup?\n\nUnfinished setup files will be removed. An existing working installation will be kept.", mbYesNo|mbIconQuestion|mbDefbutton2) != idYes {
+		return
+	}
+	if !ui.canceling.CompareAndSwap(false, true) {
+		return
+	}
+	requestSetupCancel()
+	ui.setStatus("Cancelling and cleaning up...")
+	ui.setProgress(0, 0)
+	t, _ := syscall.UTF16PtrFromString("CANCELLING...")
+	procSendMessageW.Call(hCancel, wmSettext, 0, uintptr(unsafe.Pointer(t)))
+}
+
 // pixelO returns the cells of the chunky logo-style O: a 10x12 ring, sides 3
 // cells thick, top/bottom 2, notched corners (same design as the app icon).
 func pixelO() [][2]int32 {
@@ -153,13 +173,22 @@ func (ui *progressUI) run() {
 	barBgBrush, _, _ := procCreateSolidBrush.Call(colBgBar)
 
 	className, _ := syscall.UTF16PtrFromString("TryOmarchySetup")
-	var hHead, hTag, hText, hHint1, hHint2 uintptr
+	var hHead, hTag, hText, hSuperInfo uintptr
+	var hKeySpace, hKeyK, hKeyReturn, hKeyW uintptr
+	var hLabelMenu, hLabelKeys, hLabelTerminal, hLabelClose, hCancel uintptr
 	lastStatus := ""
 
 	// Pixel O geometry: cell 8px at (40, 64).
-	const oCell, oX, oY = 8, 40, 64
+	const (
+		oCell      = 8
+		oX         = 40
+		oY         = 64
+		windowW    = 520
+		windowH    = 346
+		sideMargin = 40
+	)
 	oCells := pixelO()
-	barRect := [4]int32{40, 204, 480 - 40, 210}
+	barRect := [4]int32{sideMargin, 204, windowW - sideMargin, 210}
 
 	wndProc := syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 		switch msg {
@@ -194,11 +223,11 @@ func (ui *progressUI) run() {
 		case wmCtlcolorstatic:
 			procSetBkMode.Call(wParam, transparentBkMode)
 			switch lParam {
-			case hHead:
+			case hHead, hKeySpace, hKeyK, hKeyReturn, hKeyW, hCancel:
 				procSetTextColor.Call(wParam, colGreen)
 			case hTag, uintptr(0):
 				procSetTextColor.Call(wParam, colDim)
-			case hText:
+			case hText, hSuperInfo:
 				procSetTextColor.Call(wParam, colText)
 			default:
 				procSetTextColor.Call(wParam, colDim)
@@ -213,12 +242,17 @@ func (ui *progressUI) run() {
 			return r
 		case wmKeydownMsg:
 			if wParam == vkEscape {
-				os.Exit(1)
+				ui.confirmCancel(hCancel)
+			}
+			return 0
+		case wmCommand:
+			if wParam&0xffff == cancelControlID {
+				ui.confirmCancel(hCancel)
 			}
 			return 0
 		case wmClose:
-			// Cancel: setup is the only thing running when this window exists.
-			os.Exit(1)
+			ui.confirmCancel(hCancel)
+			return 0
 		case wmDestroy:
 			procPostQuitMessage.Call(0)
 			return 0
@@ -254,12 +288,11 @@ func (ui *progressUI) run() {
 		}
 	}
 
-	const w, h = 480, 276
 	sx, _, _ := procGetSystemMetrics.Call(smCxscreen)
 	sy, _, _ := procGetSystemMetrics.Call(smCyscreen)
 	title, _ := syscall.UTF16PtrFromString(appTitle)
 	hwnd, _, err := procCreateWindowExW.Call(0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(title)),
-		wsPopup|wsVisible, (sx-w)/2, (sy-h)/2, w, h, 0, 0, hInst, 0)
+		wsPopup|wsVisible, (sx-windowW)/2, (sy-windowH)/2, windowW, windowH, 0, 0, hInst, 0)
 	if hwnd == 0 {
 		logf("progress UI: CreateWindowExW failed: %v", err)
 		close(ui.ready)
@@ -275,21 +308,29 @@ func (ui *progressUI) run() {
 	}
 
 	staticClass, _ := syscall.UTF16PtrFromString("STATIC")
-	mk := func(text string, x, y, cx, cy int32) uintptr {
+	mk := func(text string, x, y, cx, cy int32, extraStyle, id uintptr) uintptr {
 		t, _ := syscall.UTF16PtrFromString(text)
 		// SS_NOPREFIX: without it a & in the text renders as an underline.
 		hw, _, _ := procCreateWindowExW.Call(0, uintptr(unsafe.Pointer(staticClass)), uintptr(unsafe.Pointer(t)),
-			wsChild|wsVisible|ssNoprefix, uintptr(x), uintptr(y), uintptr(cx), uintptr(cy), hwnd, 0, hInst, 0)
+			wsChild|wsVisible|ssNoprefix|extraStyle, uintptr(x), uintptr(y), uintptr(cx), uintptr(cy), hwnd, id, hInst, 0)
 		return hw
 	}
-	hHead = mk("OMARCHY", 144, 66, 300, 52)
-	hTag = mk("Beautiful, Modern & Opinionated Linux", 146, 118, 300, 22)
-	hText = mk("Preparing...", 40, 174, w-80, 22)
+	hHead = mk("OMARCHY", 144, 66, 300, 52, 0, 0)
+	hTag = mk("Beautiful, Modern & Opinionated Linux", 146, 118, 320, 22, 0, 0)
+	hText = mk("Preparing...", 40, 174, windowW-80, 22, 0, 0)
 	// Starter keybindings on screen during the boot wait (the #1 field
 	// complaint: an hour lost guessing tiling WM keys once the VM appears and
 	// this window closes). Binds verified against Omarchy v4.0.1 defaults.
-	hHint1 = mk("Super+Space menu, Super+K keybindings, Super+Return terminal", 40, 222, w-80, 20)
-	hHint2 = mk("Super+W close, Super+F fullscreen", 40, 242, w-80, 20)
+	hSuperInfo = mk("On Linux, the Windows key is called SUPER", 40, 232, windowW-80, 22, 0, 0)
+	hKeySpace = mk("SUPER+SPACE", 40, 264, 108, 20, 0, 0)
+	hLabelMenu = mk("Menu", 150, 264, 90, 20, 0, 0)
+	hKeyK = mk("SUPER+K", 280, 264, 86, 20, 0, 0)
+	hLabelKeys = mk("All keybindings", 368, 264, 112, 20, 0, 0)
+	hKeyReturn = mk("SUPER+RETURN", 40, 288, 108, 20, 0, 0)
+	hLabelTerminal = mk("Terminal", 150, 288, 90, 20, 0, 0)
+	hKeyW = mk("SUPER+W", 280, 288, 86, 20, 0, 0)
+	hLabelClose = mk("Close window", 368, 288, 100, 20, 0, 0)
+	hCancel = mk("CANCEL SETUP", 380, 318, 100, 20, ssNotify, cancelControlID)
 
 	font := func(height, weight int, name string) uintptr {
 		n, _ := syscall.UTF16PtrFromString(name)
@@ -300,8 +341,14 @@ func (ui *progressUI) run() {
 	procSendMessageW.Call(hHead, wmSetfont, font(40, 800, "Segoe UI"), 1)
 	procSendMessageW.Call(hTag, wmSetfont, font(15, 400, "Segoe UI"), 1)
 	procSendMessageW.Call(hText, wmSetfont, font(16, 400, "Segoe UI"), 1)
-	procSendMessageW.Call(hHint1, wmSetfont, font(14, 400, "Segoe UI"), 1)
-	procSendMessageW.Call(hHint2, wmSetfont, font(14, 400, "Segoe UI"), 1)
+	procSendMessageW.Call(hSuperInfo, wmSetfont, font(15, 600, "Segoe UI"), 1)
+	for _, h := range []uintptr{hKeySpace, hKeyK, hKeyReturn, hKeyW} {
+		procSendMessageW.Call(h, wmSetfont, font(13, 700, "Segoe UI"), 1)
+	}
+	for _, h := range []uintptr{hLabelMenu, hLabelKeys, hLabelTerminal, hLabelClose} {
+		procSendMessageW.Call(h, wmSetfont, font(13, 400, "Segoe UI"), 1)
+	}
+	procSendMessageW.Call(hCancel, wmSetfont, font(13, 600, "Segoe UI"), 1)
 
 	procSetTimer.Call(hwnd, 1, 100, 0)
 	procShowWindow.Call(hwnd, swShow)
