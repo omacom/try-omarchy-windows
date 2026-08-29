@@ -135,9 +135,14 @@ func main() {
 	// SDL's keyboard grab installs a system-wide Win-key hook that leaks past
 	// window focus; our hook does it right (focus-scoped).
 	os.Setenv("SDL_GRAB_KEYBOARD", "0")
+	// Launch-UX contract (NOTES.md): guest console sized to the window it will
+	// actually get, so the picture fills it from the first frame.
+	conW, conH := screenSize(cfg.fullscreen)
+	cmdline += fmt.Sprintf(" video=%dx%d", conW, conH)
+
 	go runWinKeyHook()
 	go runWinKeyQmp()
-	go runTitleEnforcer()
+	go runTitleEnforcer(cfg.fullscreen)
 	runClipboardBridge()
 	runLifecycleListener()
 

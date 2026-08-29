@@ -33,6 +33,7 @@ var (
 	procSetClipboardData         = user32.NewProc("SetClipboardData")
 	procIsClipboardFormatAvail   = user32.NewProc("IsClipboardFormatAvailable")
 	procGetClipboardSeqNum       = user32.NewProc("GetClipboardSequenceNumber")
+	procSystemParametersInfoW    = user32.NewProc("SystemParametersInfoW")
 	procGlobalAlloc              = kernel32.NewProc("GlobalAlloc")
 	procGlobalLock               = kernel32.NewProc("GlobalLock")
 	procGlobalUnlock             = kernel32.NewProc("GlobalUnlock")
@@ -109,6 +110,24 @@ func sparseCopy(dst *os.File, src *os.File) error {
 	}
 }
 
+// screenSize returns the primary screen bounds (fullscreen) or the desktop
+// work area minus window chrome (windowed) - the guest console is sized to
+// match so the picture fills the window from the first frame (launch-UX
+// contract in NOTES.md).
+func screenSize(fullscreen bool) (int, int) {
+	if fullscreen {
+		w, _, _ := procGetSystemMetrics.Call(smCxscreen)
+		h, _, _ := procGetSystemMetrics.Call(smCyscreen)
+		return int(w), int(h)
+	}
+	var r struct{ left, top, right, bottom int32 }
+	const spiGetworkarea = 0x30
+	if ret, _, _ := procSystemParametersInfoW.Call(spiGetworkarea, 0, uintptr(unsafe.Pointer(&r)), 0); ret == 0 {
+		return 1280, 800
+	}
+	return int(r.right - r.left), int(r.bottom-r.top) - 31 // minus title bar
+}
+
 func foregroundPid() uint32 {
 	hwnd, _, _ := procGetForegroundWindow.Call()
 	if hwnd == 0 {
@@ -119,10 +138,12 @@ func foregroundPid() uint32 {
 	return pid
 }
 
-// enforceTitle finds the QEMU process's visible top-level window and keeps it
-// titled appTitle - QEMU rewrites its own title on every grab toggle, so the
-// caller reasserts this periodically. Users must never see QEMU chrome.
-func enforceTitle(pid uint32) {
+// enforceTitle finds the QEMU process's visible top-level window, keeps it
+// titled appTitle (QEMU rewrites its own title on every grab toggle, so the
+// caller reasserts this periodically) and maximizes it the first time it
+// appears (launch-UX contract: maximized by default, never fullscreen, never
+// a small floating window). Users must never see QEMU chrome.
+func enforceTitle(pid uint32, maximize *bool) {
 	cb := syscall.NewCallback(func(hwnd, _ uintptr) uintptr {
 		var wpid uint32
 		procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&wpid)))
@@ -131,6 +152,11 @@ func enforceTitle(pid uint32) {
 		}
 		if v, _, _ := procIsWindowVisible.Call(hwnd); v == 0 {
 			return 1
+		}
+		if *maximize {
+			*maximize = false
+			const swMaximize = 3
+			procShowWindow.Call(hwnd, swMaximize)
 		}
 		buf := make([]uint16, maxTitle)
 		procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), maxTitle)

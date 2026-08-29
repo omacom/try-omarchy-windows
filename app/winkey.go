@@ -128,12 +128,21 @@ func runWinKeyQmp() {
 }
 
 // runTitleEnforcer keeps the VM window branded (QEMU resets its title on every
-// grab toggle, so this reasserts every 3s).
-func runTitleEnforcer() {
+// grab toggle, so this reasserts every second) and maximizes it once per
+// launch when the window first appears.
+func runTitleEnforcer(fullscreen bool) {
+	lastPid := uint32(0)
+	maximize := false
 	for {
 		if pid := qemuPid.Load(); pid != 0 {
-			enforceTitle(pid)
+			if pid != lastPid {
+				lastPid = pid
+				maximize = !fullscreen
+			}
+			enforceTitle(pid, &maximize)
+		} else {
+			lastPid = 0
 		}
-		time.Sleep(3 * time.Second)
+		time.Sleep(time.Second)
 	}
 }

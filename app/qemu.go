@@ -18,7 +18,9 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		args = append(args,
 			"-machine", "q35,accel=whpx", "-cpu", "host", "-smp", "6", "-m", "6G",
 			"-device", "virtio-vga-gl,blob=on,hostmem=4G,venus=on",
-			"-display", "sdl,gl=on",
+			// show-cursor=on: during console phases the guest draws no cursor
+			// and a vanishing host pointer reads as broken (launch-UX contract).
+			"-display", "sdl,gl=on,show-cursor=on",
 			"-serial", "file:"+filepath.Join(vm, "serial-gpu.log"),
 		)
 	} else {
@@ -26,7 +28,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 			"-machine", "q35,accel=whpx", "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes",
 			"-smp", "6", "-m", "4096",
 			"-vga", "none", "-device", "virtio-gpu-pci,id=gpu0",
-			"-display", "sdl,gl=off",
+			"-display", "sdl,gl=off,show-cursor=on",
 			"-serial", "file:"+filepath.Join(vm, "serial.log"),
 		)
 	}
