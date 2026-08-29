@@ -182,6 +182,7 @@ func main() {
 	go runWinKeyHook()
 	go runWinKeyQmp()
 	go runTitleEnforcer(cfg.fullscreen)
+	go runCloseGuard()
 	runClipboardBridge()
 
 	cfg.audio = "dsound"

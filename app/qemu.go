@@ -20,7 +20,10 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 			"-device", "virtio-vga-gl,blob=on,hostmem=4G,venus=on",
 			// show-cursor=on: during console phases the guest draws no cursor
 			// and a vanishing host pointer reads as broken (launch-UX contract).
-			"-display", "sdl,gl=on,show-cursor=on",
+			// window-close=off: the X must not hard-kill a running OS; the
+			// close guard intercepts the click and confirms + shuts down
+			// gracefully instead (closeguard.go).
+			"-display", "sdl,gl=on,show-cursor=on,window-close=off",
 			"-serial", "file:"+filepath.Join(vm, "serial-gpu.log"),
 		)
 	} else {
@@ -28,7 +31,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 			"-machine", "q35,accel=whpx", "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes",
 			"-smp", "6", "-m", "4096",
 			"-vga", "none", "-device", "virtio-gpu-pci,id=gpu0",
-			"-display", "sdl,gl=off,show-cursor=on",
+			"-display", "sdl,gl=off,show-cursor=on,window-close=off",
 			"-serial", "file:"+filepath.Join(vm, "serial.log"),
 		)
 	}

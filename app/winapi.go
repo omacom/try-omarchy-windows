@@ -158,6 +158,7 @@ func enforceTitle(pid uint32, maximize *bool, appIcon uintptr) {
 		if v, _, _ := procIsWindowVisible.Call(hwnd); v == 0 {
 			return 1
 		}
+		qemuHwnd.Store(hwnd) // the close guard needs the live window handle
 		if *maximize {
 			*maximize = false
 			const swMaximize = 3

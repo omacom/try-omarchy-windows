@@ -27,6 +27,12 @@ var (
 func hookCallback(nCode, wParam, lParam uintptr) uintptr {
 	if int32(nCode) >= 0 {
 		vk := *(*uint32)(unsafe.Pointer(lParam)) // KBDLLHOOKSTRUCT.vkCode
+		if vk == vkF4 && wParam == wmSyskeydown { // Alt+F4 on the VM window
+			if pid := qemuPid.Load(); pid != 0 && foregroundPid() == pid {
+				requestQuitConfirm()
+				return 1 // swallow; the close guard takes it from here
+			}
+		}
 		if vk == vkLwin || vk == vkRwin {
 			down := wParam == wmKeydown || wParam == wmSyskeydown
 			pid := qemuPid.Load()
@@ -64,6 +70,7 @@ func hookCallback(nCode, wParam, lParam uintptr) uintptr {
 func runWinKeyHook() {
 	runtime.LockOSThread()
 	cb := syscall.NewCallback(hookCallback)
+	mcb := syscall.NewCallback(mouseHookCallback)
 	install := func() uintptr {
 		h, _, _ := procSetWindowsHookExW.Call(whKeyboardLL, cb, 0, 0)
 		return h
@@ -72,6 +79,12 @@ func runWinKeyHook() {
 	if h == 0 {
 		logf("winkey: SetWindowsHookEx failed - Super forwarding disabled")
 		return
+	}
+	// The close guard's mouse hook shares this thread's pump. Installed once;
+	// only the keyboard hook needs the front-of-chain rehook dance (QEMU's
+	// competing hook is keyboard-only).
+	if mh, _, _ := procSetWindowsHookExW.Call(whMouseLL, mcb, 0, 0); mh == 0 {
+		logf("closeguard: mouse hook failed - X clicks will be ignored (window-close=off)")
 	}
 	var m msgStruct
 	for {
@@ -146,6 +159,7 @@ func runTitleEnforcer(fullscreen bool) {
 			enforceTitle(pid, &maximize, appIcon)
 		} else {
 			lastPid = 0
+			qemuHwnd.Store(0)
 		}
 		time.Sleep(time.Second)
 	}
