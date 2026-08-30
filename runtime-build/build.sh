@@ -142,12 +142,24 @@ compgen -G "$runtime/LICENSES/qemu/*" >/dev/null
 compgen -G "$runtime/LICENSES/virglrenderer/*" >/dev/null
 
 used_packages="$runtime/provenance/msys2-packages.txt"
+: >"$used_packages"
 while IFS= read -r source_path; do
     [[ -n "$source_path" ]] || continue
-    owner=$(pacman -Qoq "$source_path")
-    pacman -Q "$owner"
-done <"$runtime/provenance/dll-sources.txt" | sort -u >"$used_packages"
+    owner=$(pacman -Qoq "$source_path" 2>/dev/null || true)
+    if [[ -z "$owner" || "$owner" == *$'\n'* ]]; then
+        echo "Could not resolve one package owner for $source_path" >&2
+        exit 1
+    fi
+    package_line=$(pacman -Q "$owner" 2>/dev/null || true)
+    if [[ -z "$package_line" ]]; then
+        echo "Could not read the package version for $owner" >&2
+        exit 1
+    fi
+    printf '%s\n' "$package_line" >>"$used_packages"
+done <"$runtime/provenance/dll-sources.txt"
+sort -u -o "$used_packages" "$used_packages"
 
+echo "Collecting dependency licenses"
 while read -r package _version; do
     license_root="$runtime/LICENSES/msys2/$package"
     while IFS= read -r license_path; do
@@ -157,6 +169,7 @@ while read -r package _version; do
         cp "$license_path" "$license_root/$relative"
     done < <(pacman -Qql "$package" | grep '/share/licenses/' || true)
 done <"$used_packages"
+echo "Collected licenses for $(wc -l <"$used_packages") runtime packages"
 
 cp "$lock" "$runtime/provenance/sources.lock.json"
 pacman -Q | sort >"$runtime/provenance/build-environment-packages.txt"
