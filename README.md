@@ -72,6 +72,8 @@ manifest-bound install receipt for fast offline launches, and only promotes
 fully written rootfs and writable-disk staging files into place. When publishing
 a new image release, update `defaultReleaseURL`, `defaultSumsSHA256`, and the
 matching fixture in `app/testdata`, plus `currentVersion` in `app/update.go`.
+Interrupted payload transfers resume from their `.part` files when the server
+supports byte ranges, then the complete file is SHA256-verified before use.
 Custom release URLs must be paired with the
 trusted manifest digest via `-sums-sha256`.
 
