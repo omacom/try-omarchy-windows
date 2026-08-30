@@ -85,8 +85,7 @@ mkdir -p "$qemu_build"
         --enable-virglrenderer \
         --enable-slirp \
         --disable-docs \
-        --disable-plugins \
-        --disable-tests
+        --disable-plugins
 )
 meson compile -C "$qemu_build"
 
