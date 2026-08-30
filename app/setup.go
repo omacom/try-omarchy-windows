@@ -6,7 +6,6 @@ import (
 	"archive/zip"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -222,7 +221,7 @@ func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 	}
 	root := filepath.Join(cfg.dir, "runtime")
 	ui := getUI()
-	client := &http.Client{Timeout: 0}
+	client := newDownloadClient()
 	sums, err := releaseSums(client, release, sumsSHA256)
 	if err != nil {
 		return "", fmt.Errorf("authenticating SHA256SUMS: %w", err)

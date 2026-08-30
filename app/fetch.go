@@ -4,8 +4,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -86,7 +84,7 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 	}
 
 	ui := getUI()
-	client := &http.Client{Timeout: 0}
+	client := newDownloadClient()
 
 	sums, err := releaseSums(client, release, sumsSHA256)
 	if err != nil {
@@ -182,61 +180,18 @@ func removeCachedFile(path string) error {
 }
 
 func download(client *http.Client, url, dest, wantSum string, ui *progressUI) error {
-	if !validSHA256(wantSum) {
-		return fmt.Errorf("release manifest has no valid SHA256 for %s", filepath.Base(dest))
-	}
-	resp, err := getWithSetupRetry(client, url, 5)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	tmp := dest + ".part"
-	f, err := os.Create(tmp)
-	if err != nil {
-		return err
-	}
-	h := sha256.New()
-	buf := make([]byte, 1<<20)
-	var done int64
-	for {
-		if err := checkSetupCancelled(); err != nil {
-			f.Close()
-			os.Remove(tmp)
-			return err
-		}
-		n, rerr := resp.Body.Read(buf)
-		if n > 0 {
-			if _, werr := f.Write(buf[:n]); werr != nil {
-				f.Close()
-				return werr
+	phase := ""
+	return downloadVerified(client, url, dest, wantSum, func(next string, done, total int64) {
+		if next != phase {
+			if next == downloadPhaseVerify {
+				ui.setStatus("Checking downloaded %s...", filepath.Base(dest))
+			} else if phase == downloadPhaseVerify {
+				ui.setStatus("Resuming %s...", filepath.Base(dest))
 			}
-			h.Write(buf[:n])
-			done += int64(n)
-			ui.setProgress(done, resp.ContentLength)
 		}
-		if rerr == io.EOF {
-			break
-		}
-		if rerr != nil {
-			f.Close()
-			return rerr
-		}
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if hex.EncodeToString(h.Sum(nil)) != wantSum {
-		os.Remove(tmp)
-		return fmt.Errorf("checksum mismatch - the download is corrupt, try again")
-	}
-	return os.Rename(tmp, dest)
+		phase = next
+		ui.setProgress(done, total)
+	})
 }
 
 func decompress(src, dest, wantSum string, ui *progressUI) error {
