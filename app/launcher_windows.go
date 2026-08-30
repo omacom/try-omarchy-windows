@@ -51,7 +51,7 @@ func stableLauncherPath(dir string) (string, error) {
 }
 
 func shortcutArguments(dir string) string {
-	defaultDir := filepath.Join(os.Getenv("LOCALAPPDATA"), "TryOmarchy")
+	defaultDir := filepath.Join(os.Getenv("LOCALAPPDATA"), defaultDataDirectoryName)
 	if pathsEqual(dir, defaultDir) {
 		return ""
 	}

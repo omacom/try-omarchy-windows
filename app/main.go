@@ -88,6 +88,10 @@ type buildSpec struct {
 
 var logFile *os.File
 
+// Kept as a variable so isolated signed test builds can use their own data
+// directory without changing production behavior.
+var defaultDataDirectoryName = "TryOmarchy"
+
 func logf(format string, a ...any) {
 	if logFile != nil {
 		fmt.Fprintf(logFile, "%s %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, a...))
@@ -121,7 +125,7 @@ func finishSetupCancellation(cfg *config, err error) bool {
 
 func main() {
 	cfg := &config{}
-	flag.StringVar(&cfg.dir, "dir", filepath.Join(os.Getenv("LOCALAPPDATA"), "TryOmarchy"), "data directory")
+	flag.StringVar(&cfg.dir, "dir", filepath.Join(os.Getenv("LOCALAPPDATA"), defaultDataDirectoryName), "data directory")
 	flag.StringVar(&cfg.winqEmu, "winq", `C:\WINQ-EMU`, "WINQ-EMU install path (GPU mode)")
 	flag.StringVar(&cfg.share, "share", "", "host folder shared into the guest at /mnt/host (GPU mode)")
 	flag.BoolVar(&cfg.fresh, "fresh", false, "discard the writable disk and start over")
