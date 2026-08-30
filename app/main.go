@@ -139,12 +139,22 @@ func main() {
 		"base URL the guest image is downloaded from on first run")
 	sumsSHA256 := flag.String("sums-sha256", defaultSumsSHA256,
 		"trusted SHA256 digest of the release's SHA256SUMS file")
+	runtimeRelease := flag.String("runtime-release", defaultRuntimeReleaseURL,
+		"base URL the graphics runtime is downloaded from")
+	runtimeSumsSHA256 := flag.String("runtime-sums-sha256", defaultRuntimeSumsSHA256,
+		"trusted SHA256 digest of the runtime release's SHA256SUMS file")
 	enableWhp := flag.Bool("enable-whp", false, "internal: elevated helper that enables the Windows Hypervisor Platform")
 	applyLauncherUpdateFlag := flag.Bool("apply-launcher-update", false, "internal: apply a staged launcher update")
 	applyLauncherRollbackFlag := flag.Bool("apply-launcher-rollback", false, "internal: restore the previous launcher")
 	updateWaitPID := flag.Int("update-wait-pid", 0, "internal: process to wait for before replacing the launcher")
 	updateRestartArgs := flag.String("update-restart-args", "", "internal: encoded launcher restart arguments")
 	flag.Parse()
+	if strings.TrimSpace(*runtimeRelease) == "" {
+		*runtimeRelease = *release
+	}
+	if strings.TrimSpace(*runtimeSumsSHA256) == "" {
+		*runtimeSumsSHA256 = *sumsSHA256
+	}
 
 	// The elevated relaunch does exactly one thing and reports back via exit
 	// code (see setup.go); it must not touch the single-instance port.
@@ -240,7 +250,7 @@ func main() {
 		gpuRoot = cfg.winqEmu
 	}
 	if gpuRoot == "" && !(cfg.noGpu && haveStock) {
-		root, err := ensureRuntime(cfg, *release, *sumsSHA256)
+		root, err := ensureRuntime(cfg, *runtimeRelease, *runtimeSumsSHA256)
 		if err != nil {
 			if finishSetupCancellation(cfg, err) {
 				return

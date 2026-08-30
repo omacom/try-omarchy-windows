@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_url:
-        description: Exact GitHub release download base for the isolated test release
+        description: Exact GitHub release download base containing the test runtime
         required: true
         type: string
       sums_sha256:
@@ -58,7 +58,7 @@ jobs:
           TEST_RELEASE_URL: ${{ inputs.release_url }}
           TEST_SUMS_SHA256: ${{ inputs.sums_sha256 }}
         run: |
-          go build -trimpath -ldflags "-H windowsgui -s -w -X main.defaultReleaseURL=$env:TEST_RELEASE_URL -X main.defaultSumsSHA256=$env:TEST_SUMS_SHA256 -X main.defaultDataDirectoryName=TryOmarchyRuntimeTest" -o TryOmarchy-runtime-test.exe .
+          go build -trimpath -ldflags "-H windowsgui -s -w -X main.defaultRuntimeReleaseURL=$env:TEST_RELEASE_URL -X main.defaultRuntimeSumsSHA256=$env:TEST_SUMS_SHA256 -X main.defaultDataDirectoryName=TryOmarchyRuntimeTest" -o TryOmarchy-runtime-test.exe .
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3
