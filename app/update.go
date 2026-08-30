@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	currentVersion        = "v0.0.6-preview"
+	currentVersion        = "v0.0.7-preview"
 	defaultUpdateURL      = "https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/update.json"
 	maxUpdateManifestLen  = 64 << 10
 	maxUpdateSignatureLen = 4 << 10

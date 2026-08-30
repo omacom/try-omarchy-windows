@@ -2,12 +2,16 @@
 
 ## Unreleased
 
+## v0.0.7-preview - 2026-08-30
+
 - Added CI for launcher builds, release-pin validation, and guest patch contracts.
 - Added a two-phase release workflow that rebuilds and smoke-tests the guest, signs the optimized launcher through Azure OIDC, and verifies public downloads before marking a release Latest.
 - Added authenticated automatic updates for the launcher, bundled runtime, and factory guest image, with staged installs and automatic rollback after a failed first boot.
 - Added bounded retries for temporary DNS, connection, rate-limit, and server failures during setup downloads.
 - Made instant-mode credentials explicit in the account choice, setup splash, and a one-time first-desktop notification.
 - Removed the duplicate Windows pointer over the guest-rendered cursor, with `-host-cursor` retained as a diagnostic fallback.
+
+Thanks to everyone testing Try Omarchy on real hardware and over remote sessions.
 
 ## v0.0.6-preview - 2026-08-29
 

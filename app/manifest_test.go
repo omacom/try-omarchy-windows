@@ -13,7 +13,7 @@ import (
 )
 
 func TestDefaultReleaseManifestPin(t *testing.T) {
-	data, err := os.ReadFile("testdata/SHA256SUMS.v0.0.6-preview")
+	data, err := os.ReadFile("testdata/SHA256SUMS.v0.0.7-preview")
 	if err != nil {
 		t.Fatal(err)
 	}
