@@ -28,12 +28,13 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		args = append(args,
 			"-machine", "q35,accel=whpx", "-cpu", "host", "-smp", "6", "-m", mem,
 			"-device", "virtio-vga-gl,blob=on,hostmem="+hostmem+",venus=on",
-			// show-cursor=on: during console phases the guest draws no cursor
-			// and a vanishing host pointer reads as broken (launch-UX contract).
+			// The guest cursor is visible in the QEMU profile. Forcing SDL's host
+			// cursor as well produces two pointers that separate during motion.
+			// Keep only the guest cursor unless the diagnostic fallback is set.
 			// window-close=off: the X must not hard-kill a running OS; the
 			// close guard intercepts the click and confirms + shuts down
 			// gracefully instead (closeguard.go).
-			"-display", "sdl,gl=on,show-cursor=on,window-close=off",
+			"-display", sdlDisplay(true, cfg.hostCursor),
 			"-serial", "file:"+filepath.Join(vm, "serial-gpu.log"),
 		)
 	} else {
@@ -41,7 +42,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 			"-machine", "q35,accel=whpx", "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes",
 			"-smp", "6", "-m", mem,
 			"-vga", "none", "-device", "virtio-gpu-pci,id=gpu0",
-			"-display", "sdl,gl=off,show-cursor=on,window-close=off",
+			"-display", sdlDisplay(false, cfg.hostCursor),
 			"-serial", "file:"+filepath.Join(vm, "serial.log"),
 		)
 	}
@@ -79,6 +80,18 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		args = append(args, "-full-screen")
 	}
 	return args
+}
+
+func sdlDisplay(gpu, hostCursor bool) string {
+	gl := "off"
+	if gpu {
+		gl = "on"
+	}
+	cursor := "off"
+	if hostCursor {
+		cursor = "on"
+	}
+	return "sdl,gl=" + gl + ",show-cursor=" + cursor + ",window-close=off"
 }
 
 // prepareDisk gives the guest its writable disk: a sparse copy of the factory

@@ -2,7 +2,7 @@
 # The contract (settled 2026-08-28 after hands-on feedback - do not regress):
 #   - windowless QEMU binary (no console window), window titled "Try Omarchy"
 #   - window opens MAXIMIZED (taskbar visible; never fullscreen by default)
-#   - host mouse cursor always visible over the window (show-cursor=on)
+#   - one guest-rendered mouse cursor, without SDL forcing a second host cursor
 #   - guest console sized to the maximized client area (video=WxH on the cmdline)
 #   - winkey-forwarder and clipboard bridge up (QMP 4446 + clip 4448/4449)
 #   powershell -ExecutionPolicy Bypass -File verify-launch-ux.ps1
@@ -21,7 +21,7 @@ Check 'window titled "Try Omarchy"' ($p.MainWindowTitle -eq 'Try Omarchy')
 Check 'window is maximized (not fullscreen, not floating)' ([UxCheck.Native]::IsZoomed($p.MainWindowHandle))
 
 $cl = (Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)").CommandLine
-Check 'host cursor visible (show-cursor=on)' ($cl -match 'show-cursor=on')
+Check 'single guest cursor selected (show-cursor=off)' ($cl -match 'show-cursor=off')
 Check 'guest console sized to host (video=WxH)' ($cl -match 'video=\d+x\d+')
 Check 'no legacy console binary in use' ($cl -notmatch 'qemu-system-x86_64\.exe')
 

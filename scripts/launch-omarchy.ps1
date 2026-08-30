@@ -12,13 +12,14 @@
 # QEMU's own messages go to vm\qemu.log. The winkey-forwarder (hidden) scopes the
 # Windows key to the VM window and keeps the window titled "Try Omarchy".
 #
-#   powershell -ExecutionPolicy Bypass -File launch-omarchy.ps1 [-Fullscreen] [-Fresh] [-NoGpu]
+#   powershell -ExecutionPolicy Bypass -File launch-omarchy.ps1 [-Fullscreen] [-Fresh] [-NoGpu] [-HostCursor]
 param(
     [string]$Dir = "$env:LOCALAPPDATA\TryOmarchy",
     [string]$WinqEmu = 'C:\WINQ-EMU',
     [switch]$Fullscreen,
     [switch]$Fresh,    # discard the writable disk and start over
     [switch]$NoGpu,    # force CPU rendering even if WINQ-EMU is installed
+    [switch]$HostCursor, # diagnostic fallback: force the legacy Windows cursor
     [string]$Share = ''  # host folder shared into the guest over virtio-9p (GPU mode
                          # only - WINQ-EMU ships 9p, stock QEMU for Windows does not).
                          # In-guest: sudo mount -t 9p -o trans=virtio hostshare /mnt/host
@@ -37,6 +38,7 @@ foreach ($f in 'build-spec.json', 'vmlinuz-linux', 'initramfs-linux.img', 'rootf
 }
 
 $useGpu = $false
+$cursor = if ($HostCursor) { 'on' } else { 'off' }
 $gpuQemu = Join-Path $WinqEmu 'bin\qemu-system-x86_64w.exe'
 if ((-not $NoGpu) -and (Test-Path $gpuQemu)) { $useGpu = $true }
 if ($useGpu) { $qemu = $gpuQemu } else { $qemu = 'C:\Program Files\qemu\qemu-system-x86_64w.exe' }
@@ -102,10 +104,9 @@ if ($useGpu) {
     $qemuArgs = @(
         '-machine', 'q35,accel=whpx', '-cpu', 'host', '-smp', '6', '-m', '6G',
         '-device', 'virtio-vga-gl,blob=on,hostmem=4G,venus=on',
-        # show-cursor=on: never hide the host pointer over the window - during the
-        # console phases (setup form, splash) the guest draws no cursor, and a
-        # vanishing pointer reads as broken to users.
-        '-display', 'sdl,gl=on,show-cursor=on',
+        # The QEMU guest profile supplies the cursor. Forcing SDL's host cursor
+        # too makes two pointers visible during fast motion.
+        '-display', "sdl,gl=on,show-cursor=$cursor",
         '-serial', "file:$vm\serial-gpu.log"
     ) + $qemuArgs
 } else {
@@ -117,7 +118,7 @@ if ($useGpu) {
         '-machine', 'q35,accel=whpx', '-cpu', 'qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes',
         '-smp', '6', '-m', '4096',
         '-vga', 'none', '-device', 'virtio-gpu-pci,id=gpu0',
-        '-display', 'sdl,gl=off,show-cursor=on',
+        '-display', "sdl,gl=off,show-cursor=$cursor",
         '-serial', "file:$vm\serial.log"
     ) + $qemuArgs
 }

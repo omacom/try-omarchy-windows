@@ -17,14 +17,14 @@ const (
 )
 
 type config struct {
-	dir, winqEmu, share      string
-	fresh, fullscreen, noGpu bool
-	instant                  bool
-	guestDir, vmDir, disk    string
-	qemu                     string
-	useGpu                   bool
-	audio                    string
-	memMiB                   int
+	dir, winqEmu, share                  string
+	fresh, fullscreen, noGpu, hostCursor bool
+	instant                              bool
+	guestDir, vmDir, disk                string
+	qemu                                 string
+	useGpu                               bool
+	audio                                string
+	memMiB                               int
 }
 
 type progressUI struct{}
@@ -65,6 +65,18 @@ func TestPrepareDiskPublishesCompleteFile(t *testing.T) {
 	}
 	if _, err := os.Stat(cfg.disk + ".part"); !os.IsNotExist(err) {
 		t.Fatalf("staging file remains after commit: %v", err)
+	}
+}
+
+func TestSDLDisplayUsesOnlyGuestCursorByDefault(t *testing.T) {
+	if got := sdlDisplay(true, false); got != "sdl,gl=on,show-cursor=off,window-close=off" {
+		t.Fatalf("GPU display = %q", got)
+	}
+	if got := sdlDisplay(false, false); got != "sdl,gl=off,show-cursor=off,window-close=off" {
+		t.Fatalf("CPU display = %q", got)
+	}
+	if got := sdlDisplay(true, true); got != "sdl,gl=on,show-cursor=on,window-close=off" {
+		t.Fatalf("host cursor fallback = %q", got)
 	}
 }
 

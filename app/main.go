@@ -36,14 +36,14 @@ const (
 )
 
 type config struct {
-	dir, winqEmu, share      string
-	fresh, fullscreen, noGpu bool
-	instant                  bool
-	guestDir, vmDir, disk    string
-	qemu                     string
-	useGpu                   bool
-	audio                    string
-	memMiB                   int
+	dir, winqEmu, share                  string
+	fresh, fullscreen, noGpu, hostCursor bool
+	instant                              bool
+	guestDir, vmDir, disk                string
+	qemu                                 string
+	useGpu                               bool
+	audio                                string
+	memMiB                               int
 }
 
 // pickGuestMem sizes the guest to the machine instead of demanding a fixed
@@ -127,6 +127,7 @@ func main() {
 	flag.BoolVar(&cfg.fresh, "fresh", false, "discard the writable disk and start over")
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen")
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed")
+	flag.BoolVar(&cfg.hostCursor, "host-cursor", false, "force the legacy Windows cursor over the guest")
 	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the trial account")
 	noUpdate := flag.Bool("no-update", false, "do not check for launcher or guest updates")
 	updateURL := flag.String("update-url", defaultUpdateURL, "authenticated update manifest URL")

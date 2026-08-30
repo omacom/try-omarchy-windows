@@ -118,6 +118,12 @@ via QMP match what the window shows; no SDL-specific issues observed).
   `sed -i 's/invisible = true/invisible = false/' ~/.config/hypr/monitors.lua` +
   `hyprctl reload`; the cursor then renders in-frame and SDL shows it. **Fix in the
   guest image builder: cursor must be visible whenever the display is SDL.**
+- **Do not force SDL's host cursor once the guest cursor is visible:**
+  `show-cursor=on` prevents QEMU from replacing the Windows pointer with the
+  guest cursor sprite. Both pointers are then visible and separate during fast
+  motion. The launcher now uses `show-cursor=off`, which enables QEMU's normal
+  guest-cursor path. `-host-cursor` restores the old behavior for diagnostics if
+  a machine ever regresses to having no pointer.
 - **This image uses Hyprland's Lua config** (Hyprland 0.56.2, `~/.config/hypr/*.lua`
   + base `/usr/share/hypr/hyprland.lua`). `hyprctl keyword` is rejected ("can't work
   with non-legacy parsers") and a classic `hyprland.conf` is ignored entirely — edit
