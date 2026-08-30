@@ -138,7 +138,7 @@ via QMP match what the window shows; no SDL-specific issues observed).
   cursor whenever its window gains focus. Over RDP this made the Windows taskbar
   unreachable until Ctrl+Alt+G or the secure desktop broke the grab. The app now
   releases SDL's cursor confinement while QEMU is foreground; the absolute
-  virtio tablet does not need it. Field report from launch week (X, 2026-08-29):
+  virtio tablet does not need it. Field report from launch day (X, 2026-08-29):
   a user driving the VM over VNC lost an hour to keybindings. Likely mix: no visible
   hints, unfamiliar Super scoping, and no obvious minimize (a tiling WM parks
   windows in a hidden scratchpad instead). Mitigations landed for the next
