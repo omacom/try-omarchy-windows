@@ -7,17 +7,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 )
 
 func TestDefaultReleaseManifestPin(t *testing.T) {
-	data, err := os.ReadFile("testdata/SHA256SUMS.v0.0.7-preview")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sums, err := parseVerifiedSums(data, defaultSumsSHA256)
+	// Read the embedded manifest rather than a hardcoded fixture path, so a
+	// release pin does not have to remember to retag this test too.
+	sums, err := parseVerifiedSums(defaultSums, defaultSumsSHA256)
 	if err != nil {
 		t.Fatal(err)
 	}
