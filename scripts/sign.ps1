@@ -27,7 +27,25 @@ $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurs
 if (-not $signtool) { throw 'signtool.exe not found - install a Windows SDK' }
 
 $meta = Join-Path $env:TEMP 'trusted-signing-metadata.json'
-@{ Endpoint = $Endpoint; CodeSigningAccountName = $Account; CertificateProfileName = $Profile } |
+# This script documents az login as its authentication path. Force that
+# credential so an expired Visual Studio or shared-token cache cannot win.
+$exclude = @(
+    'EnvironmentCredential',
+    'WorkloadIdentityCredential',
+    'ManagedIdentityCredential',
+    'SharedTokenCacheCredential',
+    'VisualStudioCredential',
+    'VisualStudioCodeCredential',
+    'AzurePowerShellCredential',
+    'AzureDeveloperCliCredential',
+    'InteractiveBrowserCredential'
+)
+@{
+    Endpoint = $Endpoint
+    CodeSigningAccountName = $Account
+    CertificateProfileName = $Profile
+    ExcludeCredentials = $exclude
+} |
     ConvertTo-Json | Set-Content $meta -Encoding ascii
 
 & $signtool sign /v /fd SHA256 /tr 'http://timestamp.acs.microsoft.com' /td SHA256 /dlib $dlib /dmdf $meta @Path
