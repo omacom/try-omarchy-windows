@@ -22,10 +22,9 @@ import (
 // CRLF corrupts the guest's base64 -d.
 
 type clipBridge struct {
-	mu            sync.Mutex
-	lastSeen      string // last host clipboard content processed
-	lastFromGuest string // last content received from the guest
-	pullConn      net.Conn
+	mu       sync.Mutex
+	state    clipboardSyncState
+	pullConn net.Conn
 }
 
 func runClipboardBridge() {
@@ -68,14 +67,16 @@ func (b *clipBridge) acceptPush(l net.Listener) {
 			}
 			text := string(data)
 			b.mu.Lock()
-			fresh := text != b.lastSeen
-			if fresh {
-				b.lastFromGuest = text
-				b.lastSeen = text
-			}
+			fresh := b.state.shouldAcceptGuest(text)
 			b.mu.Unlock()
 			if fresh {
-				clipboardSetText(text)
+				if clipboardSetText(text) {
+					b.mu.Lock()
+					b.state.markGuestAccepted(text)
+					b.mu.Unlock()
+				} else {
+					logf("clipboard: could not open the Windows clipboard")
+				}
 			}
 		}(c)
 	}
@@ -94,42 +95,41 @@ func (b *clipBridge) acceptPull(l net.Listener) {
 		b.pullConn = c
 		b.mu.Unlock()
 		logf("clipboard: guest connected")
+		b.sendCurrentHost(c)
 	}
 }
 
 func (b *clipBridge) pollHost() {
-	var lastSeq uint32
 	for {
 		time.Sleep(400 * time.Millisecond)
-		seq := clipboardSeq()
-		if seq == lastSeq {
-			continue
-		}
-		lastSeq = seq
-		cur, ok := clipboardGetText()
-		if !ok || cur == "" {
-			continue
-		}
 		b.mu.Lock()
-		if cur == b.lastSeen {
-			b.mu.Unlock()
-			continue
-		}
-		b.lastSeen = cur
-		send := cur != b.lastFromGuest && b.pullConn != nil
 		conn := b.pullConn
 		b.mu.Unlock()
-		if !send {
-			continue
-		}
-		line := base64.StdEncoding.EncodeToString([]byte(cur)) + "\n"
-		if _, err := conn.Write([]byte(line)); err != nil {
-			b.mu.Lock()
-			if b.pullConn == conn {
-				conn.Close()
-				b.pullConn = nil
-			}
-			b.mu.Unlock()
+		if conn != nil {
+			b.sendCurrentHost(conn)
 		}
 	}
+}
+
+func (b *clipBridge) sendCurrentHost(conn net.Conn) {
+	cur, ok := clipboardGetText()
+	if !ok || cur == "" {
+		return
+	}
+	line := base64.StdEncoding.EncodeToString([]byte(cur)) + "\n"
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.pullConn != conn || !b.state.shouldSendHost(cur) {
+		return
+	}
+	conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	if _, err := conn.Write([]byte(line)); err != nil {
+		if b.pullConn == conn {
+			conn.Close()
+			b.pullConn = nil
+		}
+		return
+	}
+	b.state.markHostSent(cur)
 }

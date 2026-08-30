@@ -5,6 +5,7 @@
 - Added a source-locked CI build for the patched Windows QEMU runtime, including matching source, licenses, package inventory, provenance, and per-file hashes.
 - Added isolated signed test launchers so runtime candidates can be exercised without changing the production payload.
 - Hardened runtime packaging and validated clean setup, CPU fallback, scoped Windows-key handling, clipboard sharing, shutdown, relaunch, and persistent guest data in a nested Windows VM.
+- Made text clipboard sharing survive late guest startup, Wayland reconnects, early Windows copies, and temporary Windows clipboard contention.
 
 ## v0.0.7-preview - 2026-08-30
 

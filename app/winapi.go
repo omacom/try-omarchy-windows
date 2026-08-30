@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -226,7 +227,7 @@ func clipboardGetText() (string, bool) {
 	if r, _, _ := procIsClipboardFormatAvail.Call(cfUnicodetext); r == 0 {
 		return "", false
 	}
-	if r, _, _ := procOpenClipboard.Call(0); r == 0 {
+	if !openClipboard() {
 		return "", false
 	}
 	defer procCloseClipboard.Call()
@@ -268,7 +269,7 @@ func clipboardSetText(s string) bool {
 	dst := unsafe.Slice((*uint16)(unsafe.Pointer(p)), len(u))
 	copy(dst, u)
 	procGlobalUnlock.Call(h)
-	if r, _, _ := procOpenClipboard.Call(0); r == 0 {
+	if !openClipboard() {
 		procGlobalFree.Call(h)
 		return false
 	}
@@ -279,4 +280,14 @@ func clipboardSetText(s string) bool {
 		return false
 	}
 	return true // the system owns the handle after SetClipboardData succeeds
+}
+
+func openClipboard() bool {
+	for attempt := 0; attempt < 20; attempt++ {
+		if r, _, _ := procOpenClipboard.Call(0); r != 0 {
+			return true
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return false
 }
