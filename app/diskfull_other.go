@@ -7,8 +7,9 @@ import (
 	"syscall"
 )
 
-// Only the Windows build ships; this keeps setupFailureHelp testable on the
-// Linux runners CI actually uses.
+// Classifies an error that already happened, unlike the up-front free-space
+// check. Only the Windows build ships; matching ENOSPC here keeps
+// setupFailureHelp testable on the Linux runners CI actually uses.
 const diskFullErrno = syscall.ENOSPC
 
 func isDiskFull(err error) bool {

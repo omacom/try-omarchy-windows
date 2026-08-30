@@ -7,6 +7,9 @@ import (
 	"syscall"
 )
 
+// Classifies an error that already happened. Free space is checked up front in
+// disk_space*.go; this is the backstop for a volume that fills mid-run.
+//
 // A full volume surfaces as ERROR_DISK_FULL, or as ERROR_HANDLE_DISK_FULL when
 // the handle's volume filled mid-write. Go maps neither onto ENOSPC, so the
 // codes have to be matched directly.
