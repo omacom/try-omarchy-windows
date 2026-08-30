@@ -97,10 +97,17 @@ def main() -> None:
 
     sums = {}
     for line in (args.output / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
-        match = re.fullmatch(r"([0-9a-f]{64})  ([^/]+)", line)
+        # GNU coreutils uses a space followed by either another space for text
+        # mode or an asterisk for binary mode. MSYS2 emits the latter for ZIPs.
+        match = re.fullmatch(r"([0-9a-f]{64}) [ *]([^/]+)", line)
         if not match:
             raise SystemExit("SHA256SUMS has an invalid line")
+        if match.group(2) in sums:
+            raise SystemExit(f"SHA256SUMS has a duplicate entry for {match.group(2)}")
         sums[match.group(2)] = match.group(1)
+    expected_sum_names = {runtime_path.name, source_path.name}
+    if set(sums) != expected_sum_names:
+        raise SystemExit("SHA256SUMS does not describe exactly the runtime and source archives")
     for path in (runtime_path, source_path):
         if sums.get(path.name) != sha256(path):
             raise SystemExit(f"SHA256 mismatch for {path.name}")
