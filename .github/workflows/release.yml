@@ -130,6 +130,9 @@ jobs:
       id-token: write
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
+      # Keep the redirected legacy URL for the first release after transfer so
+      # v0.0.7 can authenticate and install its bridge update.
+      UPDATE_RELEASE_REPOSITORY: tsouth89/try-omarchy-windows
       TRYOMARCHY_UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
     steps:
       - name: Check out source
@@ -178,7 +181,7 @@ jobs:
           $manifestHash = (Get-FileHash "app/testdata/SHA256SUMS.$env:RELEASE_TAG" -Algorithm SHA256).Hash.ToLowerInvariant()
           go -C app run ./cmd/sign-update `
             -version $env:RELEASE_TAG `
-            -release "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG" `
+            -release "https://github.com/$env:UPDATE_RELEASE_REPOSITORY/releases/download/$env:RELEASE_TAG" `
             -manifest-sha256 $manifestHash `
             -launcher TryOmarchy.exe `
             -output "$env:RUNNER_TEMP/update.json"
@@ -215,6 +218,8 @@ jobs:
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      # Change this to omacom/omarchy-win after the bridge release is public.
+      UPDATE_RELEASE_REPOSITORY: tsouth89/try-omarchy-windows
       TRYOMARCHY_UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
     steps:
       - name: Check out source
@@ -289,7 +294,7 @@ jobs:
           $manifestHash = (Get-FileHash "app/testdata/SHA256SUMS.$env:RELEASE_TAG" -Algorithm SHA256).Hash.ToLowerInvariant()
           go -C app run ./cmd/sign-update `
             -version $env:RELEASE_TAG `
-            -release "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG" `
+            -release "https://github.com/$env:UPDATE_RELEASE_REPOSITORY/releases/download/$env:RELEASE_TAG" `
             -manifest-sha256 $manifestHash `
             -launcher ../release/TryOmarchy.exe `
             -output ../release/update.json

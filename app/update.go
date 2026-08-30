@@ -18,6 +18,8 @@ import (
 const (
 	currentVersion        = "v0.0.7-preview"
 	defaultUpdateURL      = "https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/update.json"
+	legacyReleaseBase     = "https://github.com/tsouth89/try-omarchy-windows/releases/download/"
+	officialReleaseBase   = "https://github.com/omacom/omarchy-win/releases/download/"
 	maxUpdateManifestLen  = 64 << 10
 	maxUpdateSignatureLen = 4 << 10
 	// Rotating the private half requires shipping a launcher that trusts both
@@ -97,8 +99,8 @@ func validateUpdateManifest(manifest *updateManifest) error {
 	if _, ok := parsePreviewVersion(manifest.Version); !ok {
 		return fmt.Errorf("invalid update version %q", manifest.Version)
 	}
-	wantRelease := "https://github.com/tsouth89/try-omarchy-windows/releases/download/" + manifest.Version
-	if normalizedRelease(manifest.Release) != wantRelease {
+	release := normalizedRelease(manifest.Release)
+	if release != legacyReleaseBase+manifest.Version && release != officialReleaseBase+manifest.Version {
 		return fmt.Errorf("update release URL does not match version")
 	}
 	if !validSHA256(manifest.ManifestSHA256) || !validSHA256(manifest.Launcher.SHA256) {

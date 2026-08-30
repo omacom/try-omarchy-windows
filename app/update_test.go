@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -67,6 +68,17 @@ func TestFetchUpdateManifestRejectsUnexpectedRelease(t *testing.T) {
 	defer server.Close()
 	if _, err := fetchUpdateManifest(server.Client(), server.URL+"/update.json", key); err == nil {
 		t.Fatal("unexpected release URL was accepted")
+	}
+}
+
+func TestValidateUpdateManifestAcceptsOfficialRepository(t *testing.T) {
+	var manifest updateManifest
+	if err := json.Unmarshal(validUpdateJSON("v0.0.8-preview"), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Release = officialReleaseBase + manifest.Version
+	if err := validateUpdateManifest(&manifest); err != nil {
+		t.Fatal(err)
 	}
 }
 
