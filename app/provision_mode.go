@@ -11,7 +11,16 @@ const (
 	provisionModeFilename = "provision-mode"
 	provisionModePersonal = "personal"
 	provisionModeInstant  = "instant"
+	trialUsername         = "omarchy"
+	trialPassword         = "omarchy"
 )
+
+func provisionAccountHint(instant bool) string {
+	if instant {
+		return "Trial account: " + trialUsername + "    Password: " + trialPassword
+	}
+	return "Use the username and password you choose inside Omarchy"
+}
 
 func readProvisionMode(dir string) (string, bool) {
 	data, err := os.ReadFile(filepath.Join(dir, provisionModeFilename))

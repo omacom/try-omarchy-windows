@@ -37,3 +37,14 @@ func TestProvisionModeRejectsUnknownValues(t *testing.T) {
 		t.Fatal("corrupt mode was accepted")
 	}
 }
+
+func TestProvisionAccountHints(t *testing.T) {
+	instant := provisionAccountHint(true)
+	if instant != "Trial account: omarchy    Password: omarchy" {
+		t.Fatalf("instant hint = %q", instant)
+	}
+	personal := provisionAccountHint(false)
+	if personal == "" || personal == instant {
+		t.Fatalf("personal hint = %q", personal)
+	}
+}

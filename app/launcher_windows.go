@@ -105,6 +105,7 @@ func boolInt(value bool) int {
 
 func chooseProvisionMode(cfg *config, newInstall bool) {
 	if cfg.instant {
+		getUI().setInstantMode(true)
 		if err := writeProvisionMode(cfg.dir, provisionModeInstant); err != nil {
 			fatal("Could not save the instant trial choice: %v", err)
 		}
@@ -114,6 +115,7 @@ func chooseProvisionMode(cfg *config, newInstall bool) {
 	// of silently inheriting the previous guest's first-boot mode.
 	if mode, ok := readProvisionMode(cfg.dir); ok && !cfg.fresh {
 		cfg.instant = mode == provisionModeInstant
+		getUI().setInstantMode(cfg.instant)
 		return
 	}
 	if !newInstall {
@@ -124,6 +126,7 @@ func chooseProvisionMode(cfg *config, newInstall bool) {
 		mode = provisionModeInstant
 		cfg.instant = true
 	}
+	getUI().setInstantMode(cfg.instant)
 	if err := writeProvisionMode(cfg.dir, mode); err != nil {
 		fatal("Could not save the first-boot choice: %v", err)
 	}

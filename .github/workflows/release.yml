@@ -183,6 +183,22 @@ jobs:
             -launcher TryOmarchy.exe `
             -output "$env:RUNNER_TEMP/update.json"
 
+      - name: Package signed test launcher
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash app/TryOmarchy.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  TryOmarchy.exe" | Set-Content app/TryOmarchy.exe.sha256 -Encoding ascii
+
+      - name: Upload signed test launcher
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: TryOmarchy-signing-check-${{ github.sha }}
+          path: |
+            app/TryOmarchy.exe
+            app/TryOmarchy.exe.sha256
+          retention-days: 3
+          if-no-files-found: error
+
   publish:
     name: Sign and publish
     if: inputs.phase == 'publish'

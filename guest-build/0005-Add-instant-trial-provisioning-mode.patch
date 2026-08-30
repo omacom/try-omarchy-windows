@@ -5,12 +5,18 @@ Subject: [PATCH] Add instant trial provisioning mode
 
 ---
  .../20-try-omarchy.conf                       |  2 +
+ .../try-omarchy-welcome.service               |  1 +
+ .../user/try-omarchy-welcome.service          | 12 +++
  .../lib/try-omarchy/provision-instant-trial   | 74 +++++++++++++++++++
  .../usr/local/lib/try-omarchy/provision-owner |  8 ++
- guest/tests/verify.py                         | 31 ++++++++
- 4 files changed, 115 insertions(+)
+ .../usr/local/lib/try-omarchy/show-welcome    | 26 +++++++
+ guest/tests/verify.py                         | 48 ++++++++++++
+ 7 files changed, 171 insertions(+)
+ create mode 120000 guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/try-omarchy-welcome.service
+ create mode 100644 guest/factory-overlay/etc/systemd/user/try-omarchy-welcome.service
  create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial
  create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/provision-owner
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/show-welcome
 
 diff --git a/guest/factory-overlay/etc/systemd/system/omarchy-provision-owner.service.d/20-try-omarchy.conf b/guest/factory-overlay/etc/systemd/system/omarchy-provision-owner.service.d/20-try-omarchy.conf
 index 6cd0cfa..9b4e2dd 100644
@@ -117,11 +123,69 @@ index 0000000..4f4ddb3
 +fi
 +
 +exec /usr/bin/omarchy-provision-owner
+diff --git a/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/try-omarchy-welcome.service b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/try-omarchy-welcome.service
+new file mode 120000
+index 0000000..925ba12
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/try-omarchy-welcome.service
+@@ -0,0 +1 @@
++../try-omarchy-welcome.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/user/try-omarchy-welcome.service b/guest/factory-overlay/etc/systemd/user/try-omarchy-welcome.service
+new file mode 100644
+index 0000000..2a9feca
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/try-omarchy-welcome.service
+@@ -0,0 +1,12 @@
++[Unit]
++Description=Show the Try Omarchy instant-account welcome
++After=graphical-session.target
++PartOf=graphical-session.target
++ConditionPathExists=/var/lib/try-omarchy/provision-mode
++
++[Service]
++Type=oneshot
++ExecStart=/usr/local/lib/try-omarchy/show-welcome
++
++[Install]
++WantedBy=graphical-session.target
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/show-welcome b/guest/factory-overlay/usr/local/lib/try-omarchy/show-welcome
+new file mode 100755
+index 0000000..0bb39fc
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/show-welcome
+@@ -0,0 +1,26 @@
++#!/bin/bash
++set -u
++
++[[ $(cat /var/lib/try-omarchy/provision-mode 2>/dev/null) == instant-trial ]] || exit 0
++
++state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/try-omarchy
++marker=$state_dir/welcome-shown
++[[ ! -e $marker ]] || exit 0
++
++body=$'Trial login: omarchy    Password: omarchy\nSudo does not require a password.\n\nSUPER+SPACE opens the menu.  SUPER+K shows all keybindings.'
++for attempt in {1..30}; do
++  if notify-send \
++    --app-name='Try Omarchy' \
++    --urgency=normal \
++    --expire-time=30000 \
++    'Welcome to Try Omarchy' \
++    "$body"; then
++    mkdir -p "$state_dir"
++    touch "$marker"
++    exit 0
++  fi
++  sleep 1
++done
++
++# Try again next login if the notification service never became ready.
++exit 0
 diff --git a/guest/tests/verify.py b/guest/tests/verify.py
 index ce3eba4..f553e99 100755
 --- a/guest/tests/verify.py
 +++ b/guest/tests/verify.py
-@@ -80,6 +80,37 @@ def main() -> None:
+@@ -80,6 +80,54 @@ def main() -> None:
      )
      check("cmp -s" not in configure, "rootfs configuration uses only declared build tools")
  
@@ -134,6 +198,12 @@ index ce3eba4..f553e99 100755
 +    provision_override = read(
 +        GUEST
 +        / "factory-overlay/etc/systemd/system/omarchy-provision-owner.service.d/20-try-omarchy.conf"
++    )
++    welcome = read(
++        GUEST / "factory-overlay/usr/local/lib/try-omarchy/show-welcome"
++    )
++    welcome_service = read(
++        GUEST / "factory-overlay/etc/systemd/user/try-omarchy-welcome.service"
 +    )
 +    check(
 +        "tryomarchy.instant=1" in provision_dispatch
@@ -155,10 +225,20 @@ index ce3eba4..f553e99 100755
 +        "root:" not in instant_trial and "sshd" not in instant_trial,
 +        "instant mode does not enable root or remote login",
 +    )
++    check(
++        "notify-send" in welcome
++        and "Trial login: omarchy" in welcome
++        and "Password: omarchy" in welcome
++        and "welcome-shown" in welcome,
++        "instant mode shows the trial credentials once on the first desktop",
++    )
++    check(
++        "ConditionPathExists=/var/lib/try-omarchy/provision-mode" in welcome_service,
++        "the welcome service is limited to explicit instant-mode guests",
++    )
 +
      finalizer = read(GUEST / "scripts/finalize-rootfs.sh")
      check("factory" in finalizer and "x86_64" in finalizer, "finalizer enforces the native factory contract")
      check("systemd-growfs-root.service" in finalizer, "factory disk grows on first boot")
 -- 
 2.55.0
-

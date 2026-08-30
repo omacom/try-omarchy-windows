@@ -111,6 +111,7 @@ type setupPromptResult struct {
 
 type progressUI struct {
 	status    atomic.Value // string
+	account   atomic.Value // string
 	cur       atomic.Int64
 	total     atomic.Int64
 	done      atomic.Bool
@@ -148,6 +149,7 @@ func uiDone() {
 func newProgressUI() *progressUI {
 	ui := &progressUI{ready: make(chan struct{}), prompts: make(chan setupPromptRequest)}
 	ui.status.Store("Preparing...")
+	ui.account.Store("")
 	go ui.run()
 	<-ui.ready
 	return ui
@@ -156,6 +158,7 @@ func newProgressUI() *progressUI {
 func (ui *progressUI) setStatus(format string, a ...any) { ui.status.Store(fmt.Sprintf(format, a...)) }
 func (ui *progressUI) setProgress(cur, total int64)      { ui.cur.Store(cur); ui.total.Store(total) }
 func (ui *progressUI) finish()                           { ui.done.Store(true) }
+func (ui *progressUI) setInstantMode(instant bool)       { ui.account.Store(provisionAccountHint(instant)) }
 
 func (ui *progressUI) chooseInstantMode() bool {
 	if !ui.available.Load() {
@@ -163,7 +166,9 @@ func (ui *progressUI) chooseInstantMode() bool {
 	}
 	reply := make(chan setupPromptResult, 1)
 	ui.prompts <- setupPromptRequest{kind: setupPromptProvision, reply: reply}
-	return (<-reply).primary
+	result := <-reply
+	ui.setInstantMode(result.primary)
+	return result.primary
 }
 
 func (ui *progressUI) chooseShortcuts() (bool, bool) {
@@ -221,11 +226,12 @@ func (ui *progressUI) run() {
 	barBgBrush, _, _ := procCreateSolidBrush.Call(colBgBar)
 
 	className, _ := syscall.UTF16PtrFromString("TryOmarchySetup")
-	var hHead, hTag, hText, hSuperInfo uintptr
+	var hHead, hTag, hText, hAccountInfo, hSuperInfo uintptr
 	var hKeySpace, hKeyK, hKeyReturn, hKeyW uintptr
 	var hLabelMenu, hLabelKeys, hLabelTerminal, hLabelClose, hCancel uintptr
 	var hPromptTitle, hPromptBody, hPromptOption1, hPromptOption2, hPromptContinue uintptr
 	lastStatus := ""
+	lastAccount := ""
 	promptKind := setupPromptNone
 	var promptReply chan setupPromptResult
 	primary, secondary := true, false
@@ -249,7 +255,7 @@ func (ui *progressUI) run() {
 			return "○"
 		}
 		if promptKind == setupPromptProvision {
-			setText(hPromptOption1, mark(primary)+"  GO STRAIGHT TO THE DESKTOP")
+			setText(hPromptOption1, mark(primary)+"  INSTANT TRIAL  (omarchy / omarchy)")
 			setText(hPromptOption2, mark(!primary)+"  CHOOSE MY USERNAME AND PASSWORD")
 		} else {
 			setText(hPromptOption1, mark(primary)+"  START MENU")
@@ -261,6 +267,7 @@ func (ui *progressUI) run() {
 			hLabelMenu, hLabelKeys, hLabelTerminal, hLabelClose, hCancel} {
 			show(h, !visible)
 		}
+		show(hAccountInfo, !visible && ui.account.Load().(string) != "")
 		for _, h := range []uintptr{hPromptTitle, hPromptBody, hPromptOption1, hPromptOption2, hPromptContinue} {
 			show(h, visible)
 		}
@@ -268,6 +275,9 @@ func (ui *progressUI) run() {
 	finishPrompt := func(hwnd uintptr) {
 		if promptKind == setupPromptNone || promptReply == nil {
 			return
+		}
+		if promptKind == setupPromptProvision {
+			ui.setInstantMode(primary)
 		}
 		promptReply <- setupPromptResult{primary: primary, secondary: secondary}
 		promptReply = nil
@@ -282,7 +292,7 @@ func (ui *progressUI) run() {
 		oX         = 40
 		oY         = 64
 		windowW    = 520
-		windowH    = 346
+		windowH    = 374
 		sideMargin = 40
 	)
 	oCells := pixelO()
@@ -299,6 +309,11 @@ func (ui *progressUI) run() {
 				lastStatus = s
 				t, _ := syscall.UTF16PtrFromString(s)
 				procSendMessageW.Call(hText, wmSettext, 0, uintptr(unsafe.Pointer(t)))
+			}
+			if account := ui.account.Load().(string); account != lastAccount {
+				lastAccount = account
+				setText(hAccountInfo, account)
+				show(hAccountInfo, promptKind == setupPromptNone && account != "")
 			}
 			select {
 			case request := <-ui.prompts:
@@ -347,7 +362,7 @@ func (ui *progressUI) run() {
 				procSetTextColor.Call(wParam, colGreen)
 			case hTag, uintptr(0):
 				procSetTextColor.Call(wParam, colDim)
-			case hText, hSuperInfo:
+			case hText, hAccountInfo, hSuperInfo:
 				procSetTextColor.Call(wParam, colText)
 			default:
 				procSetTextColor.Call(wParam, colDim)
@@ -464,21 +479,22 @@ func (ui *progressUI) run() {
 	// Starter keybindings on screen during the boot wait (the #1 field
 	// complaint: an hour lost guessing tiling WM keys once the VM appears and
 	// this window closes). Binds verified against Omarchy v4.0.1 defaults.
-	hSuperInfo = mk("On Linux, the Windows key is called SUPER", 40, 232, windowW-80, 22, 0, 0)
-	hKeySpace = mk("SUPER+SPACE", 40, 264, 108, 20, 0, 0)
-	hLabelMenu = mk("Menu", 150, 264, 90, 20, 0, 0)
-	hKeyK = mk("SUPER+K", 280, 264, 86, 20, 0, 0)
-	hLabelKeys = mk("All keybindings", 368, 264, 112, 20, 0, 0)
-	hKeyReturn = mk("SUPER+RETURN", 40, 288, 108, 20, 0, 0)
-	hLabelTerminal = mk("Terminal", 150, 288, 90, 20, 0, 0)
-	hKeyW = mk("SUPER+W", 280, 288, 86, 20, 0, 0)
-	hLabelClose = mk("Close window", 368, 288, 100, 20, 0, 0)
-	hCancel = mk("CANCEL SETUP", 380, 318, 100, 20, ssNotify, cancelControlID)
+	hAccountInfo = mk("", 40, 230, windowW-80, 22, 0, 0)
+	hSuperInfo = mk("On Linux, the Windows key is called SUPER", 40, 256, windowW-80, 22, 0, 0)
+	hKeySpace = mk("SUPER+SPACE", 40, 286, 108, 20, 0, 0)
+	hLabelMenu = mk("Menu", 150, 286, 90, 20, 0, 0)
+	hKeyK = mk("SUPER+K", 280, 286, 86, 20, 0, 0)
+	hLabelKeys = mk("All keybindings", 368, 286, 112, 20, 0, 0)
+	hKeyReturn = mk("SUPER+RETURN", 40, 310, 108, 20, 0, 0)
+	hLabelTerminal = mk("Terminal", 150, 310, 90, 20, 0, 0)
+	hKeyW = mk("SUPER+W", 280, 310, 86, 20, 0, 0)
+	hLabelClose = mk("Close window", 368, 310, 100, 20, 0, 0)
+	hCancel = mk("CANCEL SETUP", 380, 342, 100, 20, ssNotify, cancelControlID)
 	hPromptTitle = mk("", 40, 168, windowW-80, 24, 0, 0)
 	hPromptBody = mk("", 40, 200, windowW-80, 22, 0, 0)
 	hPromptOption1 = mk("", 40, 238, windowW-80, 24, ssNotify, promptOption1ID)
 	hPromptOption2 = mk("", 40, 270, windowW-80, 24, ssNotify, promptOption2ID)
-	hPromptContinue = mk("CONTINUE", 380, 316, 100, 22, ssNotify, promptContinueID)
+	hPromptContinue = mk("CONTINUE", 380, 342, 100, 22, ssNotify, promptContinueID)
 	setPromptVisible(false)
 
 	font := func(height, weight int, name string) uintptr {
@@ -490,6 +506,7 @@ func (ui *progressUI) run() {
 	procSendMessageW.Call(hHead, wmSetfont, font(40, 800, "Segoe UI"), 1)
 	procSendMessageW.Call(hTag, wmSetfont, font(15, 400, "Segoe UI"), 1)
 	procSendMessageW.Call(hText, wmSetfont, font(16, 400, "Segoe UI"), 1)
+	procSendMessageW.Call(hAccountInfo, wmSetfont, font(14, 600, "Segoe UI"), 1)
 	procSendMessageW.Call(hSuperInfo, wmSetfont, font(15, 600, "Segoe UI"), 1)
 	for _, h := range []uintptr{hKeySpace, hKeyK, hKeyReturn, hKeyW} {
 		procSendMessageW.Call(h, wmSetfont, font(13, 700, "Segoe UI"), 1)
