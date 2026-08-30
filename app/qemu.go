@@ -219,7 +219,7 @@ func preparePortableDisk(cfg *config, expandedBytes int64) error {
 	if err := checkSetupCancelled(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, cfg.disk); err != nil {
+	if err := renamePortableFileWithRetry(tmp, cfg.disk); err != nil {
 		return err
 	}
 	published = true

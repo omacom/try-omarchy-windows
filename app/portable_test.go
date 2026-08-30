@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPortableModeDisablesAutomaticUpdates(t *testing.T) {
@@ -105,5 +107,87 @@ func TestCopyPortableArtifactHonorsCancellation(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("cancelled copy published %s: %v", path, err)
 		}
+	}
+}
+
+func TestRenamePortableFileRetriesTemporaryLocks(t *testing.T) {
+	configureSetupCancellation(false)
+	attempts := 0
+	waits := 0
+	err := renamePortableFileWith(
+		"staged",
+		"published",
+		func(from, to string) error {
+			attempts++
+			if from != "staged" || to != "published" {
+				t.Fatalf("rename paths = %q, %q", from, to)
+			}
+			if attempts < 3 {
+				return errors.New("temporarily locked")
+			}
+			return nil
+		},
+		func(delay time.Duration) error {
+			waits++
+			if delay != portableRenameDelay {
+				t.Fatalf("retry delay = %s", delay)
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 || waits != 2 {
+		t.Fatalf("attempts = %d, waits = %d", attempts, waits)
+	}
+}
+
+func TestRenamePortableFileStopsAfterBound(t *testing.T) {
+	configureSetupCancellation(false)
+	want := errors.New("still locked")
+	attempts := 0
+	waits := 0
+	err := renamePortableFileWith(
+		"staged",
+		"published",
+		func(string, string) error {
+			attempts++
+			return want
+		},
+		func(time.Duration) error {
+			waits++
+			return nil
+		},
+	)
+	if !errors.Is(err, want) {
+		t.Fatalf("rename error = %v", err)
+	}
+	if attempts != portableRenameAttempts || waits != portableRenameAttempts-1 {
+		t.Fatalf("attempts = %d, waits = %d", attempts, waits)
+	}
+}
+
+func TestRenamePortableFileHonorsCancellation(t *testing.T) {
+	configureSetupCancellation(false)
+	t.Cleanup(func() { configureSetupCancellation(false) })
+	attempts := 0
+	err := renamePortableFileWith(
+		"staged",
+		"published",
+		func(string, string) error {
+			attempts++
+			return errors.New("temporarily locked")
+		},
+		func(time.Duration) error {
+			requestSetupCancel()
+			return checkSetupCancelled()
+		},
+	)
+	if !errors.Is(err, errSetupCancelled) {
+		t.Fatalf("rename error = %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts after cancellation = %d", attempts)
 	}
 }

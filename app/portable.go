@@ -8,6 +8,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
+)
+
+const (
+	portableRenameAttempts = 15
+	portableRenameDelay    = 200 * time.Millisecond
 )
 
 func automaticUpdatesEnabled(cfg *config, noUpdate bool, release, sumsSHA256 string) bool {
@@ -142,9 +148,42 @@ func copyPortableArtifact(src, dest, want string, progress func(done, total int6
 	if err := out.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, dest); err != nil {
+	if err := renamePortableFileWithRetry(tmp, dest); err != nil {
 		return err
 	}
 	ok = true
 	return nil
+}
+
+// renamePortableFileWithRetry tolerates short-lived file locks from Defender
+// and indexers while keeping publication bounded and setup cancellation-aware.
+func renamePortableFileWithRetry(from, to string) error {
+	return renamePortableFileWith(
+		from,
+		to,
+		os.Rename,
+		sleepDuringSetup,
+	)
+}
+
+func renamePortableFileWith(
+	from, to string,
+	rename func(string, string) error,
+	sleep func(time.Duration) error,
+) error {
+	var renameErr error
+	for attempt := 0; attempt < portableRenameAttempts; attempt++ {
+		if err := checkSetupCancelled(); err != nil {
+			return err
+		}
+		if renameErr = rename(from, to); renameErr == nil {
+			return nil
+		}
+		if attempt+1 < portableRenameAttempts {
+			if err := sleep(portableRenameDelay); err != nil {
+				return err
+			}
+		}
+	}
+	return renameErr
 }
