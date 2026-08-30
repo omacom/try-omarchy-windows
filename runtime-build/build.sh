@@ -122,6 +122,7 @@ done
 cp -R "$installed_share/." "$runtime/bin/share/"
 cp /ucrt64/bin/libvirglrenderer-1.dll "$runtime/bin/"
 
+echo "Collecting runtime DLLs"
 "$recipe/collect-dlls.sh" "$runtime/bin" "$runtime/provenance/dll-sources.txt"
 
 copy_first_license() {
@@ -170,6 +171,7 @@ The corresponding source archive is published beside this runtime artifact.
 EOF
 
 source_bundle="$work/source"
+echo "Preparing corresponding source"
 mkdir -p "$source_bundle/qemu" "$source_bundle/virglrenderer" \
     "$source_bundle/build-recipe"
 tar -C "$qemu_source" --exclude=.git --exclude='*/.git' -cf - . | \
@@ -180,6 +182,7 @@ cp "$recipe"/*.py "$recipe"/*.sh "$recipe"/*.json "$recipe"/*.txt \
     "$source_bundle/build-recipe/"
 
 manifest="$runtime/provenance/runtime-manifest.json"
+echo "Creating runtime archives"
 python "$recipe/manifest.py" "$runtime" "$lock" "$used_packages" "$manifest"
 runtime_zip="$output/winq-emu-alpha10-portable.zip"
 source_zip="$output/winq-emu-alpha10-source.zip"
