@@ -10,7 +10,11 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 recipe="$repo_root/runtime-build"
 lock="$recipe/sources.lock.json"
 output=$(mkdir -p "$1" && cd "$1" && pwd)
-work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/try-omarchy-runtime.XXXXXX")
+temp_root=${RUNNER_TEMP:-/tmp}
+if command -v cygpath >/dev/null 2>&1; then
+    temp_root=$(cygpath -u "$temp_root")
+fi
+work=$(mktemp -d "$temp_root/try-omarchy-runtime.XXXXXX")
 trap 'chmod -R u+w "$work" 2>/dev/null || true; rm -rf -- "$work"' EXIT
 
 python "$recipe/validate-lock.py" "$lock"
