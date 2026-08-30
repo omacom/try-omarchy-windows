@@ -1,0 +1,100 @@
+name: Sign runtime test launcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_url:
+        description: Exact GitHub release download base for the isolated test release
+        required: true
+        type: string
+      sums_sha256:
+        description: Trusted SHA256 of that release's SHA256SUMS
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  sign:
+    name: Build and sign test launcher
+    runs-on: windows-2025
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Validate test pin
+        shell: pwsh
+        env:
+          TEST_RELEASE_URL: ${{ inputs.release_url }}
+          TEST_SUMS_SHA256: ${{ inputs.sums_sha256 }}
+        run: |
+          if ($env:TEST_RELEASE_URL -notmatch '^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/releases/download/[A-Za-z0-9_.-]+$') {
+            throw 'Test release URL is not an exact GitHub release download base'
+          }
+          if ($env:TEST_SUMS_SHA256 -notmatch '^[0-9a-f]{64}$') {
+            throw 'Test SHA256SUMS digest is invalid'
+          }
+
+      - name: Test launcher
+        working-directory: app
+        run: go test ./...
+
+      - name: Build pinned test launcher
+        working-directory: app
+        shell: pwsh
+        env:
+          TEST_RELEASE_URL: ${{ inputs.release_url }}
+          TEST_SUMS_SHA256: ${{ inputs.sums_sha256 }}
+        run: |
+          go build -trimpath -ldflags "-H windowsgui -s -w -X main.defaultReleaseURL=$env:TEST_RELEASE_URL -X main.defaultSumsSHA256=$env:TEST_SUMS_SHA256" -o TryOmarchy-runtime-test.exe .
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign launcher
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\app\TryOmarchy-runtime-test.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify signature and write checksum
+        shell: pwsh
+        run: |
+          $path = 'app/TryOmarchy-runtime-test.exe'
+          $signature = Get-AuthenticodeSignature $path
+          if ($signature.Status -ne 'Valid') {
+            throw "Authenticode verification failed: $($signature.StatusMessage)"
+          }
+          $hash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  TryOmarchy-runtime-test.exe" | Set-Content "$path.sha256" -Encoding ascii
+
+      - name: Upload signed test launcher
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: TryOmarchy-runtime-test-${{ github.sha }}
+          path: |
+            app/TryOmarchy-runtime-test.exe
+            app/TryOmarchy-runtime-test.exe.sha256
+          if-no-files-found: error
+          retention-days: 7

@@ -12,10 +12,13 @@ import (
 	"strings"
 )
 
-const (
+const maxSumsBytes = 1 << 20
+
+// Variables so the signed test-launcher workflow can pin an isolated release
+// with -ldflags -X. Normal builds retain these production defaults.
+var (
 	defaultReleaseURL = "https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.7-preview"
 	defaultSumsSHA256 = "fb9b8cf305b808fb03087cde7235e2685a0b4fc728371acfb0ad57fa20b92b7a"
-	maxSumsBytes      = 1 << 20
 )
 
 //go:embed testdata/SHA256SUMS.v0.0.7-preview
@@ -25,8 +28,11 @@ var defaultSums []byte
 // release. Custom release URLs still fetch a manifest and authenticate it
 // against the digest supplied by the caller.
 func releaseSums(client *http.Client, release, expectedSHA256 string) (map[string]string, error) {
+	embeddedDigest := sha256.Sum256(defaultSums)
+	embeddedSHA256 := hex.EncodeToString(embeddedDigest[:])
 	if normalizedRelease(release) == defaultReleaseURL &&
-		normalizedSHA256(expectedSHA256) == defaultSumsSHA256 {
+		normalizedSHA256(expectedSHA256) == defaultSumsSHA256 &&
+		normalizedSHA256(defaultSumsSHA256) == embeddedSHA256 {
 		return parseVerifiedSums(defaultSums, defaultSumsSHA256)
 	}
 	return fetchSums(client, normalizedRelease(release), expectedSHA256)
