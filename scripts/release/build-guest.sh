@@ -66,3 +66,7 @@ fi
 
 mkdir -p "$output"
 sudo bash "$work/guest/build-container.sh" --output "$output"
+# The container build runs as root so it can create and mount the factory
+# filesystem. Return the finished release artifacts to the workflow user before
+# later steps extend SHA256SUMS and upload the files.
+sudo chown -R -- "$(id -u):$(id -g)" "$output"
