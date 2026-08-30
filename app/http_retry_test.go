@@ -5,6 +5,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -34,6 +36,21 @@ func TestSetupFailureHelpExplainsDNS(t *testing.T) {
 	err := fmt.Errorf("download failed: %w", &net.DNSError{Err: "no such host", Name: "github.com"})
 	if got := setupFailureHelp(err); got == "Check your connection and start Try Omarchy again." {
 		t.Fatalf("DNS error got generic help: %q", got)
+	}
+}
+
+func TestSetupFailureHelpExplainsDiskFull(t *testing.T) {
+	err := fmt.Errorf("unpacking rootfs: %w", &os.PathError{
+		Op:   "write",
+		Path: `C:\Users\x\AppData\Local\TryOmarchy\guest.next\rootfs.ext4.part`,
+		Err:  diskFullErrno,
+	})
+	got := setupFailureHelp(err)
+	if got == "Check your connection and start Try Omarchy again." {
+		t.Fatalf("disk-full error got connection help: %q", got)
+	}
+	if !strings.Contains(got, "disk space") {
+		t.Fatalf("disk-full help does not mention disk space: %q", got)
 	}
 }
 
