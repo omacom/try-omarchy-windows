@@ -184,38 +184,58 @@ func releaseQemuCursor() {
 // floating window) and keeps our icon on it (HICONs are USER handles, valid
 // across processes in a session, so WM_SETICON onto QEMU's window works).
 // Users must never see QEMU chrome.
-func enforceTitle(pid uint32, maximize *bool, appIcon uintptr) {
-	cb := syscall.NewCallback(func(hwnd, _ uintptr) uintptr {
-		var wpid uint32
-		procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&wpid)))
-		if wpid != pid {
-			return 1
-		}
-		if v, _, _ := procIsWindowVisible.Call(hwnd); v == 0 {
-			return 1
-		}
-		qemuHwnd.Store(hwnd) // the close guard needs the live window handle
-		uiDone()             // the VM window is on screen: the splash's job is over
-		if *maximize {
-			*maximize = false
-			const swMaximize = 3
-			procShowWindow.Call(hwnd, swMaximize)
-			setTaskbarIdentity(hwnd) // once per window: our taskbar icon + name
-		}
-		if appIcon != 0 {
-			const wmSeticonMsg = 0x80
-			procSendMessageW.Call(hwnd, wmSeticonMsg, 1, appIcon) // ICON_BIG
-			procSendMessageW.Call(hwnd, wmSeticonMsg, 0, appIcon) // ICON_SMALL
-		}
-		buf := make([]uint16, maxTitle)
-		procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), maxTitle)
-		if syscall.UTF16ToString(buf) != appTitle {
-			t, _ := syscall.UTF16PtrFromString(appTitle)
-			procSetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(t)))
-		}
+//
+// The EnumWindows callback is built once for the process. syscall.NewCallback
+// permanently reserves one of a hard 2000-entry table and never frees it, and
+// a capturing closure allocates a fresh funcval every call so it cannot be
+// cached. Creating it here instead - at one call per second - killed the
+// launcher with "too many callback functions" after ~33 minutes, taking the
+// Windows-key hook, the close guard and the clipboard bridge down with it
+// while QEMU kept running, which reads to the user as Windows shortcuts
+// suddenly leaking through. The callback reads its inputs from the enumTitle*
+// variables; only runTitleEnforcer's goroutine calls enforceTitle, so the
+// handoff needs no locking.
+var (
+	enumTitlePid      uint32
+	enumTitleMaximize *bool
+	enumTitleIcon     uintptr
+	enumTitleCallback = syscall.NewCallback(enumTitleProc)
+)
+
+func enumTitleProc(hwnd, _ uintptr) uintptr {
+	var wpid uint32
+	procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&wpid)))
+	if wpid != enumTitlePid {
 		return 1
-	})
-	procEnumWindows.Call(cb, 0)
+	}
+	if v, _, _ := procIsWindowVisible.Call(hwnd); v == 0 {
+		return 1
+	}
+	qemuHwnd.Store(hwnd) // the close guard needs the live window handle
+	uiDone()             // the VM window is on screen: the splash's job is over
+	if *enumTitleMaximize {
+		*enumTitleMaximize = false
+		const swMaximize = 3
+		procShowWindow.Call(hwnd, swMaximize)
+		setTaskbarIdentity(hwnd) // once per window: our taskbar icon + name
+	}
+	if enumTitleIcon != 0 {
+		const wmSeticonMsg = 0x80
+		procSendMessageW.Call(hwnd, wmSeticonMsg, 1, enumTitleIcon) // ICON_BIG
+		procSendMessageW.Call(hwnd, wmSeticonMsg, 0, enumTitleIcon) // ICON_SMALL
+	}
+	buf := make([]uint16, maxTitle)
+	procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), maxTitle)
+	if syscall.UTF16ToString(buf) != appTitle {
+		t, _ := syscall.UTF16PtrFromString(appTitle)
+		procSetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(t)))
+	}
+	return 1
+}
+
+func enforceTitle(pid uint32, maximize *bool, appIcon uintptr) {
+	enumTitlePid, enumTitleMaximize, enumTitleIcon = pid, maximize, appIcon
+	procEnumWindows.Call(enumTitleCallback, 0)
 }
 
 func clipboardSeq() uint32 {

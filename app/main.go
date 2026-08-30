@@ -431,7 +431,7 @@ func supervise(cfg *config, cmdline string) bool {
 						logf("runtime update rollback failed: %v", rollbackErr)
 					} else if rolledBack {
 						logf("updated runtime failed to start - restored previous runtime")
-						continue
+						break probe
 					}
 					logf("QEMU exited at startup - falling back to CPU rendering")
 					cfg.useGpu = false
@@ -463,7 +463,7 @@ func supervise(cfg *config, cmdline string) bool {
 	if setupCancelled() {
 		return false
 	}
-	fatal("QEMU failed to come up healthy after 4 attempts.")
+	fatal("QEMU failed to come up healthy after 6 attempts.")
 	return false
 }
 
