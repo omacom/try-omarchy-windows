@@ -1,0 +1,227 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: Build a draft guest first, then publish after committing its manifest pin
+        required: true
+        type: choice
+        options:
+          - prepare
+          - publish
+      release_tag:
+        description: Release tag, for example v0.0.7-preview
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Validate request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the default branch and a preview tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/master
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-preview$ ]]
+
+  prepare:
+    name: Build guest draft
+    if: inputs.phase == 'prepare'
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: release
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      ARTIFACT_DIR: ${{ github.workspace }}/guest-release
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Reject an existing release
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists" >&2
+            exit 1
+          fi
+
+      - name: Check runner capacity
+        run: |
+          test "$(df --output=avail -B1G "$RUNNER_TEMP" | tail -1)" -ge 14
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          df -h "$RUNNER_TEMP" /var/lib/docker
+
+      - name: Install headless QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends qemu-system-x86
+
+      - name: Build locked guest image
+        run: scripts/release/build-guest.sh --output "$ARTIFACT_DIR"
+
+      - name: Add and verify the locked runtime
+        run: scripts/release/prepare-assets.sh "$ARTIFACT_DIR"
+
+      - name: Smoke-test instant first boot
+        run: scripts/release/smoke-guest.py "$ARTIFACT_DIR"
+
+      - name: Remove unpacked release input
+        run: rm -- "$ARTIFACT_DIR/rootfs.ext4"
+
+      - name: Create draft release
+        run: |
+          gh release create "$RELEASE_TAG" \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" \
+            --notes "Guest assets prepared by the release workflow."
+
+      - name: Upload authenticated guest assets
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            "$ARTIFACT_DIR/SHA256SUMS" \
+            "$ARTIFACT_DIR/build-spec.json" \
+            "$ARTIFACT_DIR/guest-manifest.json" \
+            "$ARTIFACT_DIR/initramfs-linux.img" \
+            "$ARTIFACT_DIR/LICENSE.omarchy" \
+            "$ARTIFACT_DIR/packages.lock.txt" \
+            "$ARTIFACT_DIR/provenance.json" \
+            "$ARTIFACT_DIR/rootfs.ext4.zst" \
+            "$ARTIFACT_DIR/vmlinuz-linux" \
+            "$ARTIFACT_DIR/winq-emu-alpha10-portable.zip"
+
+      - name: Record manifest pin
+        shell: bash
+        run: |
+          digest=$(sha256sum "$ARTIFACT_DIR/SHA256SUMS" | cut -d' ' -f1)
+          {
+            echo "## Draft guest ready"
+            echo
+            echo "Update app/manifest.go and its fixture before running the publish phase."
+            echo
+            echo "SHA256SUMS: \`$digest\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Sign and publish
+    if: inputs.phase == 'publish'
+    needs: guard
+    runs-on: windows-2025
+    timeout-minutes: 45
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Validate source pin and draft manifest
+        shell: pwsh
+        run: |
+          python scripts/release/validate-pin.py $env:RELEASE_TAG
+          New-Item -ItemType Directory -Force release-manifest | Out-Null
+          gh release download $env:RELEASE_TAG -p SHA256SUMS -D release-manifest --clobber
+          $fixture = "app/testdata/SHA256SUMS.$env:RELEASE_TAG"
+          if ((Get-FileHash $fixture -Algorithm SHA256).Hash -ne
+              (Get-FileHash release-manifest/SHA256SUMS -Algorithm SHA256).Hash) {
+            throw 'Draft release manifest does not match the signed source pin'
+          }
+          $draft = gh release view $env:RELEASE_TAG --json isDraft --jq .isDraft
+          if ($draft -ne 'true') { throw "Release $env:RELEASE_TAG is not a draft" }
+
+      - name: Test launcher
+        working-directory: app
+        shell: pwsh
+        run: |
+          go test -race ./...
+          go vet ./...
+          $env:GOOS = 'windows'
+          $env:GOARCH = 'amd64'
+          go vet ./...
+
+      - name: Build optimized launcher
+        working-directory: app
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ../release | Out-Null
+          go build -trimpath -ldflags '-H windowsgui -s -w' -o ../release/TryOmarchy.exe .
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign launcher
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\release\TryOmarchy.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify signature and write checksum
+        shell: pwsh
+        run: |
+          $exe = 'release/TryOmarchy.exe'
+          $signature = Get-AuthenticodeSignature $exe
+          if ($signature.Status -ne 'Valid') {
+            throw "Authenticode verification failed: $($signature.StatusMessage)"
+          }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  TryOmarchy.exe" | Set-Content release/TryOmarchy.exe.sha256 -Encoding ascii
+
+      - name: Upload launcher and release notes
+        shell: pwsh
+        run: |
+          python scripts/release/release-notes.py $env:RELEASE_TAG | Out-File release-notes.md -Encoding utf8
+          gh release upload $env:RELEASE_TAG release/TryOmarchy.exe release/TryOmarchy.exe.sha256 --clobber
+          gh release edit $env:RELEASE_TAG --target $env:GITHUB_SHA --title $env:RELEASE_TAG --notes-file release-notes.md
+
+      - name: Publish without changing Latest
+        shell: pwsh
+        run: gh release edit $env:RELEASE_TAG --draft=false --latest=false
+
+      - name: Verify public tagged assets
+        shell: pwsh
+        run: scripts/release/verify-public.ps1 -Tag $env:RELEASE_TAG
+
+      - name: Mark release Latest
+        shell: pwsh
+        run: gh release edit $env:RELEASE_TAG --latest
+
+      - name: Verify public Latest download
+        shell: pwsh
+        run: scripts/release/verify-public.ps1 -Tag $env:RELEASE_TAG -Latest

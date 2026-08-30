@@ -1,15 +1,18 @@
 # Guest image build
 
 The guest image is built from [jorge-huxley/try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win)'s
-`win` branch guest builder, plus the patches in this directory. Apply and build
-on a Linux box with Docker:
+`win` branch guest builder, plus the patches in this directory. The release
+helper checks out the exact commit in `source.lock.json`, applies every patch,
+and runs the guest contract tests before building:
 
 ```bash
-git clone -b win https://github.com/jorge-huxley/try-omarchy-win
-cd try-omarchy-win
-git am ../try-omarchy-windows/guest-build/*.patch
-sudo bash guest/build-container.sh    # ~10 min; artifacts land in dist/guest/
+scripts/release/build-guest.sh --contract-only
+scripts/release/build-guest.sh --output /path/to/artifacts
 ```
+
+The second command needs Docker and currently takes about ten minutes. Release
+CI also boots the resulting factory image with `scripts/release/smoke-guest.py`
+before it uploads anything.
 
 What the patches change (all proven live on hardware 2026-08-28):
 

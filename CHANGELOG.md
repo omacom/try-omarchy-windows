@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Added CI for launcher builds, release-pin validation, and guest patch contracts.
+- Added a two-phase release workflow that rebuilds and smoke-tests the guest, signs the optimized launcher through Azure OIDC, and verifies public downloads before marking a release Latest.
+
 ## v0.0.6-preview - 2026-08-29
 
 - Added a stable launcher under `%LOCALAPPDATA%\TryOmarchy` with optional Start-menu and Desktop shortcuts selected inside the branded setup window.

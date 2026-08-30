@@ -106,6 +106,7 @@ WHPX and Hyper-V share the same Windows hypervisor and are designed to coexist. 
 - `scripts/` — PowerShell path plus QMP tooling (screendump, send-key, WHPX smoke test)
 - `guest-build/` — patches on jorge's guest builder that produce our image, plus build instructions
 - `docs/FINDINGS.md` — technical findings, gotchas, and their fixes
+- `docs/RELEASING.md` - the authenticated two-phase build, signing, and publishing process
 
 The guest image (Omarchy 4.0.1, all upstream themes, screensavers, autologin, clipboard bridge) is built from [jorge-huxley/try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win)'s `win` branch guest builder (`guest/build-container.sh`, needs Docker on Linux) — an x86_64 retarget of the upstream try-omarchy build system — with the patches in `guest-build/` applied. Images are not committed; setup downloads the latest release artifact, or build your own.
 
