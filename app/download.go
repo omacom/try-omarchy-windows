@@ -1,20 +1,25 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
 const (
 	downloadPhaseTransfer = "download"
 	downloadPhaseVerify   = "verify"
+	commitRenameAttempts  = 15
+	commitRenameDelay     = 500 * time.Millisecond
 )
 
 type downloadProgress func(phase string, done, total int64)
@@ -260,10 +265,42 @@ func verifyAndCommitPart(tmp, dest, wantSum string, progress downloadProgress) (
 	if err != nil || !ok {
 		return ok, err
 	}
-	if err := os.Rename(tmp, dest); err != nil {
+	if err := renameDownloadedPart(tmp, dest, os.Rename, retryableRenameError, sleepDuringSetup); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+func renameDownloadedPart(tmp, dest string, rename func(string, string) error, retryable func(error) bool, sleep func(time.Duration) error) error {
+	var renameErr error
+	for attempt := 1; attempt <= commitRenameAttempts; attempt++ {
+		if err := checkSetupCancelled(); err != nil {
+			return err
+		}
+		if renameErr = rename(tmp, dest); renameErr == nil {
+			return nil
+		}
+		if !retryable(renameErr) || attempt == commitRenameAttempts {
+			return renameErr
+		}
+		if err := sleep(commitRenameDelay); err != nil {
+			return err
+		}
+	}
+	return renameErr
+}
+
+func retryableRenameError(err error) bool {
+	return runtime.GOOS == "windows" && retryableWindowsRenameError(err)
+}
+
+func retryableWindowsRenameError(err error) bool {
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		return false
+	}
+	// ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION.
+	return errno == 5 || errno == 32 || errno == 33
 }
 
 func copyDownloadBody(body io.ReadCloser, dst io.Writer, offset, total int64, progress downloadProgress, idleTimeout time.Duration) (int64, bool, error) {

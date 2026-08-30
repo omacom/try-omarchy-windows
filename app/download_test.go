@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -427,6 +428,86 @@ func TestDownloadVerifiedRejectsChecksumMismatch(t *testing.T) {
 	}
 	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
 		t.Fatalf("bad partial was retained: %v", err)
+	}
+}
+
+func TestRenameDownloadedPartRetriesTransientWindowsError(t *testing.T) {
+	transientErr := &os.LinkError{Op: "rename", Old: "payload.part", New: "payload", Err: syscall.Errno(32)}
+	attempts := 0
+	sleeps := 0
+	err := renameDownloadedPart("payload.part", "payload", func(string, string) error {
+		attempts++
+		if attempts < 3 {
+			return transientErr
+		}
+		return nil
+	}, retryableWindowsRenameError, func(delay time.Duration) error {
+		sleeps++
+		if delay != commitRenameDelay {
+			t.Fatalf("retry delay = %s, want %s", delay, commitRenameDelay)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 || sleeps != 2 {
+		t.Fatalf("attempts = %d, sleeps = %d; want 3 attempts and 2 sleeps", attempts, sleeps)
+	}
+}
+
+func TestRenameDownloadedPartFailsNonTransientErrorImmediately(t *testing.T) {
+	wantErr := &os.LinkError{Op: "rename", Old: "payload.part", New: "payload", Err: syscall.Errno(2)}
+	attempts := 0
+	sleeps := 0
+	err := renameDownloadedPart("payload.part", "payload", func(string, string) error {
+		attempts++
+		return wantErr
+	}, retryableWindowsRenameError, func(time.Duration) error {
+		sleeps++
+		return nil
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want %v", err, wantErr)
+	}
+	if attempts != 1 || sleeps != 0 {
+		t.Fatalf("attempts = %d, sleeps = %d; want 1 attempt and no sleep", attempts, sleeps)
+	}
+}
+
+func TestRenameDownloadedPartBoundsTransientRetries(t *testing.T) {
+	wantErr := &os.LinkError{Op: "rename", Old: "payload.part", New: "payload", Err: syscall.Errno(5)}
+	attempts := 0
+	sleeps := 0
+	err := renameDownloadedPart("payload.part", "payload", func(string, string) error {
+		attempts++
+		return wantErr
+	}, retryableWindowsRenameError, func(time.Duration) error {
+		sleeps++
+		return nil
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want %v", err, wantErr)
+	}
+	if attempts != commitRenameAttempts || sleeps != commitRenameAttempts-1 {
+		t.Fatalf("attempts = %d, sleeps = %d; want %d attempts and %d sleeps", attempts, sleeps, commitRenameAttempts, commitRenameAttempts-1)
+	}
+}
+
+func TestRenameDownloadedPartCancelsRetryDelay(t *testing.T) {
+	wantErr := &os.LinkError{Op: "rename", Old: "payload.part", New: "payload", Err: syscall.Errno(33)}
+	attempts := 0
+	err := renameDownloadedPart("payload.part", "payload", func(string, string) error {
+		attempts++
+		return wantErr
+	}, retryableWindowsRenameError, func(time.Duration) error {
+		return errSetupCancelled
+	})
+	if !errors.Is(err, errSetupCancelled) {
+		t.Fatalf("error = %v, want setup cancellation", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
 	}
 }
 
