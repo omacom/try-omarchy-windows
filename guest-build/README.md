@@ -1,4 +1,4 @@
-# Guest image build (v0.0.2)
+# Guest image build
 
 The guest image is built from [jorge-huxley/try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win)'s
 `win` branch guest builder, plus the patches in this directory. Apply and build

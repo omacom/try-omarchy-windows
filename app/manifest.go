@@ -13,12 +13,12 @@ import (
 )
 
 const (
-	defaultReleaseURL = "https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.3-preview"
-	defaultSumsSHA256 = "4cc3023d9837744cca1fcaa52a62b9d5c19e4430781e753d2b0a5c0639a6be17"
+	defaultReleaseURL = "https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.6-preview"
+	defaultSumsSHA256 = "83f4a9cda6ee621c1e3ed756282aed18ca4dc719524d269ea6bbb76ff102229a"
 	maxSumsBytes      = 1 << 20
 )
 
-//go:embed testdata/SHA256SUMS.v0.0.3-preview
+//go:embed testdata/SHA256SUMS.v0.0.6-preview
 var defaultSums []byte
 
 // releaseSums returns the embedded, authenticated manifest for the default

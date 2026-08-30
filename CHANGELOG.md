@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased
+## v0.0.6-preview - 2026-08-29
 
 - Added a stable launcher under `%LOCALAPPDATA%\TryOmarchy` with optional Start-menu and Desktop shortcuts selected inside the branded setup window.
 - Added an app compatibility guide covering Arch packages, VS Code, and current VM limitations.
 - Added an optional instant trial account that skips the first-boot form and lands directly on the desktop.
+
+Thanks to [Marx-Bray](https://github.com/Marx-Bray) for suggesting the launcher shortcuts in [issue #1](https://github.com/tsouth89/try-omarchy-windows/issues/1), and to everyone testing Try Omarchy across different Windows setups.
 
 ## v0.0.5-preview - 2026-08-29
 
