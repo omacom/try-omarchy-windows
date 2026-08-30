@@ -91,8 +91,13 @@ meson compile -C "$qemu_build"
 
 stage="$work/install"
 DESTDIR="$stage" meson install -C "$qemu_build"
-installed_bin="$stage/ucrt64/bin"
-installed_share="$stage/ucrt64/share/qemu"
+installed_windowless=$(find "$stage" -type f -name qemu-system-x86_64w.exe -print -quit)
+[[ -n "$installed_windowless" ]] || {
+    echo "QEMU install did not produce qemu-system-x86_64w.exe" >&2
+    exit 1
+}
+installed_bin=$(dirname "$installed_windowless")
+installed_share="$(dirname "$installed_bin")/share"
 runtime="$work/runtime"
 mkdir -p "$runtime/bin/share" "$runtime/LICENSES/qemu" \
     "$runtime/LICENSES/virglrenderer" "$runtime/LICENSES/msys2" \
