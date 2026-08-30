@@ -85,7 +85,8 @@ mkdir -p "$qemu_build"
         --enable-virglrenderer \
         --enable-slirp \
         --disable-docs \
-        --disable-plugins
+        --disable-plugins \
+        --disable-tests
 )
 meson compile -C "$qemu_build"
 
@@ -97,7 +98,12 @@ installed_windowless=$(find "$stage" -type f -name qemu-system-x86_64w.exe -prin
     exit 1
 }
 installed_bin=$(dirname "$installed_windowless")
-installed_share="$(dirname "$installed_bin")/share"
+installed_firmware=$(find "$stage" -type f -name bios-256k.bin -print -quit)
+[[ -n "$installed_firmware" ]] || {
+    echo "QEMU install did not produce bios-256k.bin" >&2
+    exit 1
+}
+installed_share=$(dirname "$installed_firmware")
 runtime="$work/runtime"
 mkdir -p "$runtime/bin/share" "$runtime/LICENSES/qemu" \
     "$runtime/LICENSES/virglrenderer" "$runtime/LICENSES/msys2" \
