@@ -128,6 +128,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      TRYOMARCHY_UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
     steps:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -169,6 +172,17 @@ jobs:
             throw "Authenticode verification failed: $($signature.StatusMessage)"
           }
 
+      - name: Verify update signing key
+        shell: pwsh
+        run: |
+          $manifestHash = (Get-FileHash "app/testdata/SHA256SUMS.$env:RELEASE_TAG" -Algorithm SHA256).Hash.ToLowerInvariant()
+          go -C app run ./cmd/sign-update `
+            -version $env:RELEASE_TAG `
+            -release "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG" `
+            -manifest-sha256 $manifestHash `
+            -launcher TryOmarchy.exe `
+            -output "$env:RUNNER_TEMP/update.json"
+
   publish:
     name: Sign and publish
     if: inputs.phase == 'publish'
@@ -185,6 +199,7 @@ jobs:
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TRYOMARCHY_UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
     steps:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -252,11 +267,27 @@ jobs:
           $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  TryOmarchy.exe" | Set-Content release/TryOmarchy.exe.sha256 -Encoding ascii
 
+      - name: Sign authenticated update metadata
+        shell: pwsh
+        run: |
+          $manifestHash = (Get-FileHash "app/testdata/SHA256SUMS.$env:RELEASE_TAG" -Algorithm SHA256).Hash.ToLowerInvariant()
+          go -C app run ./cmd/sign-update `
+            -version $env:RELEASE_TAG `
+            -release "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG" `
+            -manifest-sha256 $manifestHash `
+            -launcher ../release/TryOmarchy.exe `
+            -output ../release/update.json
+
       - name: Upload launcher and release notes
         shell: pwsh
         run: |
           python scripts/release/release-notes.py $env:RELEASE_TAG | Out-File release-notes.md -Encoding utf8
-          gh release upload $env:RELEASE_TAG release/TryOmarchy.exe release/TryOmarchy.exe.sha256 --clobber
+          gh release upload $env:RELEASE_TAG `
+            release/TryOmarchy.exe `
+            release/TryOmarchy.exe.sha256 `
+            release/update.json `
+            release/update.json.sig `
+            --clobber
           gh release edit $env:RELEASE_TAG --target $env:GITHUB_SHA --title $env:RELEASE_TAG --notes-file release-notes.md
 
       - name: Publish without changing Latest

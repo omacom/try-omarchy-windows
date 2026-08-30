@@ -54,6 +54,8 @@ Download [TryOmarchy.exe](https://github.com/tsouth89/try-omarchy-windows/releas
 
 After the first successful setup, Try Omarchy offers optional Start-menu and Desktop shortcuts. They point to a stable copy of the signed launcher in `%LOCALAPPDATA%\TryOmarchy`, so the original download can be moved or deleted. Opening a newer downloaded release refreshes that stable copy.
 
+Try Omarchy checks for updates when it starts. Release metadata is signed with a separate Ed25519 update key, and its authenticated hashes cover the signed launcher and the guest payload manifest. New files are fully downloaded and verified before they replace anything. The previous launcher, bundled runtime, and factory image remain available until the updated VM reaches a healthy boot, while `vm\disk.raw` is left untouched. If the first boot fails or is interrupted, the next launch restores the previous files automatically. Use `-no-update` when an offline or version-pinned launch is required.
+
 Already have WINQ-EMU at `C:\WINQ-EMU`, or stock QEMU from the old bootstrap? The app prefers what's installed and downloads nothing extra.
 
 Prefer to build the app yourself? Any machine with Go, then run the exe on Windows:
@@ -69,7 +71,8 @@ The launcher embeds and pins the SHA256 digest of the default release's
 manifest-bound install receipt for fast offline launches, and only promotes
 fully written rootfs and writable-disk staging files into place. When publishing
 a new image release, update `defaultReleaseURL`, `defaultSumsSHA256`, and the
-matching fixture in `app/testdata`. Custom release URLs must be paired with the
+matching fixture in `app/testdata`, plus `currentVersion` in `app/update.go`.
+Custom release URLs must be paired with the
 trusted manifest digest via `-sums-sha256`.
 
 Or skip the app and drive QEMU from PowerShell: `scripts\bootstrap.ps1` then `scripts\launch-omarchy.ps1` (elevated).

@@ -4,6 +4,8 @@
 
 - Added CI for launcher builds, release-pin validation, and guest patch contracts.
 - Added a two-phase release workflow that rebuilds and smoke-tests the guest, signs the optimized launcher through Azure OIDC, and verifies public downloads before marking a release Latest.
+- Added authenticated automatic updates for the launcher, bundled runtime, and factory guest image, with staged installs and automatic rollback after a failed first boot.
+- Added bounded retries for temporary DNS, connection, rate-limit, and server failures during setup downloads.
 
 ## v0.0.6-preview - 2026-08-29
 

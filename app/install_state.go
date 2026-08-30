@@ -30,6 +30,19 @@ type installReceipt struct {
 	Files          map[string]verifiedArtifact `json:"files"`
 }
 
+func installReceiptIdentity(dir string) (string, string, bool) {
+	data, err := os.ReadFile(filepath.Join(dir, installReceiptFilename))
+	if err != nil || len(data) > maxInstallReceiptBytes {
+		return "", "", false
+	}
+	var receipt installReceipt
+	if json.Unmarshal(data, &receipt) != nil || receipt.Version != installReceiptVersion ||
+		receipt.Release == "" || !validSHA256(receipt.ManifestSHA256) {
+		return "", "", false
+	}
+	return receipt.Release, receipt.ManifestSHA256, true
+}
+
 func normalizedRelease(release string) string {
 	return strings.TrimRight(strings.TrimSpace(release), "/")
 }

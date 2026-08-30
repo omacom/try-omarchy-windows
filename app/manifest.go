@@ -39,11 +39,7 @@ func fetchSums(client *http.Client, release, expectedSHA256 string) (map[string]
 	if !validSHA256(normalizedSHA256(expectedSHA256)) {
 		return nil, fmt.Errorf("trusted SHA256SUMS digest is not a valid SHA256")
 	}
-	req, err := http.NewRequestWithContext(setupContext(), http.MethodGet, release+"/SHA256SUMS", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := client.Do(req)
+	resp, err := getWithSetupRetry(client, release+"/SHA256SUMS", 5)
 	if err != nil {
 		return nil, err
 	}

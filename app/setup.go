@@ -33,6 +33,12 @@ import (
 
 const runtimeZip = "winq-emu-alpha10-portable.zip"
 
+const (
+	legacyRuntimeRelease  = "https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.6-preview"
+	legacyRuntimeManifest = "83f4a9cda6ee621c1e3ed756282aed18ca4dc719524d269ea6bbb76ff102229a"
+	legacyRuntimeArchive  = "bc4575388cb81caf2c55960d25484177253fc60a4c4faa58c30e884555d076c8"
+)
+
 var (
 	winhv                   = syscall.NewLazyDLL("WinHvPlatform.dll")
 	procWHvGetCapability    = winhv.NewProc("WHvGetCapability")
@@ -215,27 +221,65 @@ func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 		return "", err
 	}
 	root := filepath.Join(cfg.dir, "runtime")
-	if _, err := os.Stat(filepath.Join(root, "bin", "qemu-system-x86_64w.exe")); err == nil {
-		return root, nil
-	}
 	ui := getUI()
 	client := &http.Client{Timeout: 0}
 	sums, err := releaseSums(client, release, sumsSHA256)
 	if err != nil {
 		return "", fmt.Errorf("authenticating SHA256SUMS: %w", err)
 	}
+	archiveSHA := sums[runtimeZip]
+	if !validSHA256(archiveSHA) {
+		return "", fmt.Errorf("release manifest has no valid SHA256 for %s", runtimeZip)
+	}
+	if runtimeReceiptMatches(root, release, sumsSHA256, archiveSHA) {
+		return root, nil
+	}
+	executable := filepath.Join(root, "bin", "qemu-system-x86_64w.exe")
+	_, executableErr := os.Stat(executable)
+	_, receiptErr := os.Stat(filepath.Join(root, runtimeReceiptFilename))
+	if executableErr == nil && os.IsNotExist(receiptErr) {
+		// Migrate the runtime installed by v0.0.6 and earlier. It came from the
+		// same authenticated archive, but those launchers did not retain a
+		// receipt for future release comparisons.
+		if err := writeRuntimeReceipt(root, legacyRuntimeRelease, legacyRuntimeManifest, legacyRuntimeArchive); err != nil {
+			return "", err
+		}
+		if normalizedRelease(release) == legacyRuntimeRelease &&
+			normalizedSHA256(sumsSHA256) == legacyRuntimeManifest && archiveSHA == legacyRuntimeArchive {
+			return root, nil
+		}
+	}
+	updating := executableErr == nil
 	zipPath := filepath.Join(cfg.dir, runtimeZip)
 	if err := ensureVerifiedDownload(client, normalizedRelease(release)+"/"+runtimeZip, zipPath,
-		sums[runtimeZip], "Downloading the graphics engine...", ui); err != nil {
+		archiveSHA, "Downloading the graphics engine...", ui); err != nil {
 		return "", fmt.Errorf("preparing %s: %w", runtimeZip, err)
 	}
 	ui.setStatus("Unpacking the graphics engine...")
 	tmp := root + ".part"
+	if updating {
+		tmp = root + ".next"
+	}
 	os.RemoveAll(tmp)
 	if err := unzipTree(zipPath, tmp, ui); err != nil {
 		os.RemoveAll(tmp)
 		os.Remove(zipPath)
 		return "", fmt.Errorf("unpacking %s: %w", runtimeZip, err)
+	}
+	if err := writeRuntimeReceipt(tmp, release, sumsSHA256, archiveSHA); err != nil {
+		os.RemoveAll(tmp)
+		return "", fmt.Errorf("recording runtime install: %w", err)
+	}
+	if updating {
+		if err := recordPayloadUpdate(cfg.dir, releaseVersion(release), false, true); err != nil {
+			return "", fmt.Errorf("recording runtime rollback state: %w", err)
+		}
+		if err := publishDirectoryUpdate(root, tmp, root+".previous"); err != nil {
+			cancelPayloadUpdateRecord(cfg.dir, false, true)
+			return "", err
+		}
+		os.Remove(zipPath)
+		return root, nil
 	}
 	os.RemoveAll(root)
 	// Defender (and indexers) briefly hold handles on freshly unpacked

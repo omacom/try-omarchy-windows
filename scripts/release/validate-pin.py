@@ -39,6 +39,16 @@ def main() -> None:
         raise SystemExit(f"invalid release tag: {args.tag}")
 
     source = (args.root / "app/manifest.go").read_text(encoding="utf-8")
+
+    update_source = (args.root / "app/update.go").read_text(encoding="utf-8")
+    current_version = source_value(update_source, "currentVersion")
+    if current_version != args.tag:
+        raise SystemExit(f"currentVersion is {current_version}, expected {args.tag}")
+    update_key = source_value(update_source, "updatePublicKeyHex")
+    signer_source = (args.root / "app/cmd/sign-update/main.go").read_text(encoding="utf-8")
+    signer_key = source_value(signer_source, "expectedPublicKeyHex")
+    if update_key != signer_key or not SHA_RE.fullmatch(update_key):
+        raise SystemExit("update signer key does not match the launcher trust root")
     release_url = source_value(source, "defaultReleaseURL")
     expected_url = f"https://github.com/{args.repository}/releases/download/{args.tag}"
     if release_url != expected_url:

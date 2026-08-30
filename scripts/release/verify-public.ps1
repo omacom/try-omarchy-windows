@@ -25,6 +25,26 @@ try {
     }
     if (-not $matched) { throw "$releasePath kept serving a mismatched launcher and checksum" }
 
+    $updateMatched = $false
+    if (Test-Path 'release/update.json') {
+        for ($attempt = 1; $attempt -le 18; $attempt++) {
+            curl.exe --fail --silent --show-error --location --output "$work\update.json" "$base/update.json?attempt=$attempt"
+            curl.exe --fail --silent --show-error --location --output "$work\update.json.sig" "$base/update.json.sig?attempt=$attempt"
+            $expectedManifest = (Get-FileHash 'release/update.json' -Algorithm SHA256).Hash
+            $actualManifest = (Get-FileHash "$work\update.json" -Algorithm SHA256).Hash
+            $expectedSignature = (Get-FileHash 'release/update.json.sig' -Algorithm SHA256).Hash
+            $actualSignature = (Get-FileHash "$work\update.json.sig" -Algorithm SHA256).Hash
+            $manifestMatches = $expectedManifest -eq $actualManifest
+            $signatureMatches = $expectedSignature -eq $actualSignature
+            if ($manifestMatches -and $signatureMatches) {
+                $updateMatched = $true
+                break
+            }
+            Start-Sleep -Seconds 10
+        }
+        if (-not $updateMatched) { throw "$releasePath kept serving stale update metadata" }
+    }
+
     if (-not $Latest) {
         curl.exe --fail --silent --show-error --location --output "$work\SHA256SUMS" "$base/SHA256SUMS"
         $fixture = "app/testdata/SHA256SUMS.$Tag"

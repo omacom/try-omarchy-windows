@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -26,6 +27,44 @@ var (
 )
 
 func ensureGuest(cfg *config, release, sumsSHA256 string) error {
+	ready, err := installReceiptMatches(cfg.guestDir, release, sumsSHA256, installedGuestArtifacts)
+	if err != nil {
+		return fmt.Errorf("reading verified install state: %w", err)
+	}
+	if ready {
+		os.Remove(filepath.Join(cfg.guestDir, "rootfs.ext4.zst"))
+		return nil
+	}
+	oldRelease, oldManifest, haveOldReceipt := installReceiptIdentity(cfg.guestDir)
+	isReleaseUpdate := haveOldReceipt && (oldRelease != normalizedRelease(release) ||
+		oldManifest != normalizedSHA256(sumsSHA256))
+	if !isReleaseUpdate {
+		return ensureGuestFiles(cfg, release, sumsSHA256)
+	}
+
+	ui := getUI()
+	ui.setStatus("Preparing an Omarchy image update...")
+	staged := filepath.Join(cfg.dir, "guest.next")
+	if err := os.RemoveAll(staged); err != nil {
+		return err
+	}
+	stagedCfg := *cfg
+	stagedCfg.guestDir = staged
+	if err := ensureGuestFiles(&stagedCfg, release, sumsSHA256); err != nil {
+		_ = os.RemoveAll(staged)
+		return err
+	}
+	if err := recordPayloadUpdate(cfg.dir, releaseVersion(release), true, false); err != nil {
+		return fmt.Errorf("recording image rollback state: %w", err)
+	}
+	if err := publishDirectoryUpdate(cfg.guestDir, staged, filepath.Join(cfg.dir, "guest.previous")); err != nil {
+		cancelPayloadUpdateRecord(cfg.dir, true, false)
+		return fmt.Errorf("publishing image update: %w", err)
+	}
+	return nil
+}
+
+func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 	if err := checkSetupCancelled(); err != nil {
 		return err
 	}
@@ -102,6 +141,18 @@ func ensureGuest(cfg *config, release, sumsSHA256 string) error {
 	return sleepDuringSetup(700 * time.Millisecond)
 }
 
+func releaseVersion(release string) string {
+	parts := strings.Split(normalizedRelease(release), "/")
+	if len(parts) == 0 {
+		return currentVersion
+	}
+	version := parts[len(parts)-1]
+	if _, ok := parsePreviewVersion(version); ok {
+		return version
+	}
+	return currentVersion
+}
+
 func ensureVerifiedDownload(client *http.Client, url, dest, wantSum, status string, ui *progressUI) error {
 	if _, err := os.Lstat(dest); err == nil {
 		ui.setStatus("Checking cached %s...", filepath.Base(dest))
@@ -134,11 +185,7 @@ func download(client *http.Client, url, dest, wantSum string, ui *progressUI) er
 	if !validSHA256(wantSum) {
 		return fmt.Errorf("release manifest has no valid SHA256 for %s", filepath.Base(dest))
 	}
-	req, err := http.NewRequestWithContext(setupContext(), http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := client.Do(req)
+	resp, err := getWithSetupRetry(client, url, 5)
 	if err != nil {
 		return err
 	}

@@ -128,11 +128,17 @@ func main() {
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen")
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed")
 	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the trial account")
+	noUpdate := flag.Bool("no-update", false, "do not check for launcher or guest updates")
+	updateURL := flag.String("update-url", defaultUpdateURL, "authenticated update manifest URL")
 	release := flag.String("release", defaultReleaseURL,
 		"base URL the guest image is downloaded from on first run")
 	sumsSHA256 := flag.String("sums-sha256", defaultSumsSHA256,
 		"trusted SHA256 digest of the release's SHA256SUMS file")
 	enableWhp := flag.Bool("enable-whp", false, "internal: elevated helper that enables the Windows Hypervisor Platform")
+	applyLauncherUpdateFlag := flag.Bool("apply-launcher-update", false, "internal: apply a staged launcher update")
+	applyLauncherRollbackFlag := flag.Bool("apply-launcher-rollback", false, "internal: restore the previous launcher")
+	updateWaitPID := flag.Int("update-wait-pid", 0, "internal: process to wait for before replacing the launcher")
+	updateRestartArgs := flag.String("update-restart-args", "", "internal: encoded launcher restart arguments")
 	flag.Parse()
 
 	// The elevated relaunch does exactly one thing and reports back via exit
@@ -140,10 +146,29 @@ func main() {
 	if *enableWhp {
 		os.Exit(runDismEnable())
 	}
+	if *applyLauncherUpdateFlag || *applyLauncherRollbackFlag {
+		if err := applyLauncherUpdate(cfg.dir, *updateWaitPID, *updateRestartArgs, *applyLauncherRollbackFlag); err != nil {
+			errorBox("Try Omarchy could not finish applying its update.\n\n" + err.Error())
+			os.Exit(1)
+		}
+		return
+	}
+	restartArgs, err := encodeRestartArgs(os.Args[1:])
+	if err != nil {
+		fatal("Could not preserve launcher arguments for updates: %v", err)
+	}
+	if rollingBack, recoverErr := recoverLauncherUpdate(cfg.dir, restartArgs); recoverErr != nil {
+		logf("launcher update recovery: %v", recoverErr)
+	} else if rollingBack {
+		return
+	}
 
 	cfg.guestDir = filepath.Join(cfg.dir, "guest")
 	cfg.vmDir = filepath.Join(cfg.dir, "vm")
 	cfg.disk = filepath.Join(cfg.vmDir, "disk.raw")
+	if _, err := rollbackPendingPayloadUpdates(cfg.dir); err != nil {
+		fatal("Could not recover the previous Omarchy files after an interrupted update: %v", err)
+	}
 	completeAtStart := completeInstallExists(cfg.dir)
 	needsProvisioning := cfg.fresh || !completeAtStart
 	configureSetupCancellation(!completeAtStart)
@@ -171,6 +196,24 @@ func main() {
 	// previous run must not be mistaken for this one's.
 	os.Remove(filepath.Join(cfg.vmDir, "qemu-stderr.log"))
 
+	if !*noUpdate && normalizedRelease(*release) == defaultReleaseURL &&
+		normalizedSHA256(*sumsSHA256) == defaultSumsSHA256 {
+		checkDue := *updateURL != defaultUpdateURL || updateCheckDue(cfg.dir, time.Now())
+		if checkDue {
+			_ = recordUpdateCheck(cfg.dir, time.Now())
+			if updating, updateErr := maybeStartLauncherUpdate(cfg, *updateURL, os.Args[1:]); updateErr != nil {
+				logf("update check skipped: %v", updateErr)
+			} else if updating {
+				logf("starting authenticated launcher update")
+				uiDone()
+				if logFile != nil {
+					logFile.Close()
+				}
+				return
+			}
+		}
+	}
+
 	// Machine setup the old bootstrap.ps1 handled: hypervisor on (may walk the
 	// user through one restart and exit), then a QEMU to run. Existing setups
 	// win - C:\WINQ-EMU, then a previously downloaded runtime, then stock QEMU
@@ -186,11 +229,10 @@ func main() {
 	_, stockErr := os.Stat(stockQemu)
 	haveStock := stockErr == nil
 	gpuRoot := ""
-	for _, root := range []string{cfg.winqEmu, filepath.Join(cfg.dir, "runtime")} {
-		if _, err := os.Stat(filepath.Join(root, "bin", qemuExe)); err == nil {
-			gpuRoot = root
-			break
-		}
+	if _, err := os.Stat(filepath.Join(cfg.winqEmu, "bin", qemuExe)); err == nil {
+		// A user-managed WINQ-EMU install stays under the user's control. Only
+		// the bundled runtime under cfg.dir participates in automatic updates.
+		gpuRoot = cfg.winqEmu
 	}
 	if gpuRoot == "" && !(cfg.noGpu && haveStock) {
 		root, err := ensureRuntime(cfg, *release, *sumsSHA256)
@@ -200,7 +242,7 @@ func main() {
 			}
 			logf("runtime download failed: %v", err)
 			if !haveStock {
-				fatal("Downloading the graphics engine failed: %v\n\nCheck your connection and start Try Omarchy again.", err)
+				fatal("Downloading the graphics engine failed: %v\n\n%s", err, setupFailureHelp(err))
 			}
 		} else {
 			gpuRoot = root
@@ -218,7 +260,7 @@ func main() {
 		if finishSetupCancellation(cfg, err) {
 			return
 		}
-		fatal("Setting up the Omarchy image failed: %v\n\nCheck your connection and start Try Omarchy again.", err)
+		fatal("Setting up the Omarchy image failed: %v\n\n%s", err, setupFailureHelp(err))
 	}
 	if cfg.share != "" {
 		if st, err := os.Stat(cfg.share); err != nil || !st.IsDir() {
@@ -370,6 +412,12 @@ func supervise(cfg *config, cmdline string) bool {
 				// Broken host GL (remote sessions, ancient drivers) kills the
 				// gl=on display the same way; same binary, CPU args, still up.
 				if cfg.useGpu {
+					if rolledBack, rollbackErr := rollbackPendingRuntimeUpdate(cfg.dir); rollbackErr != nil {
+						logf("runtime update rollback failed: %v", rollbackErr)
+					} else if rolledBack {
+						logf("updated runtime failed to start - restored previous runtime")
+						continue
+					}
 					logf("QEMU exited at startup - falling back to CPU rendering")
 					cfg.useGpu = false
 					break probe
@@ -382,6 +430,8 @@ func supervise(cfg *config, cmdline string) bool {
 		}
 		if qmp != nil {
 			guestUp.Store(true)
+			commitLauncherUpdate(cfg.dir)
+			commitPayloadUpdates(cfg.dir)
 			defer qmp.close()
 			return watch(cfg, qmp, exited)
 		}

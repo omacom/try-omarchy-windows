@@ -19,6 +19,11 @@ The environment defines these variables:
 - `AZURE_SIGNING_ACCOUNT`
 - `AZURE_SIGNING_PROFILE`
 
+It also contains the `UPDATE_SIGNING_KEY` secret. This is the base64-encoded
+PKCS#8 Ed25519 private key paired with `updatePublicKeyHex` in `app/update.go`.
+The release job uses it only after Authenticode signing to authenticate the
+small update manifest. Never store the private key in the repository.
+
 The Azure application needs the `Artifact Signing Certificate Profile Signer`
 role on the signing account. The workflow itself requests only `id-token: write`
 and `contents: write` in the protected publish job.
@@ -36,7 +41,7 @@ OIDC or signing configuration.
    artifact, and creates a draft release.
 4. Download the draft `SHA256SUMS`, add it under `app/testdata`, and update
    `defaultReleaseURL`, `defaultSumsSHA256`, and the embedded fixture name in
-   `app/manifest.go`.
+   `app/manifest.go`. Update `currentVersion` in `app/update.go` to the same tag.
 5. Run `scripts/release/validate-pin.py TAG`, commit, and push the pin.
 
 The guest builder base is fixed in `guest-build/source.lock.json`. The temporary
@@ -50,6 +55,7 @@ Run the `Release` workflow again with phase `publish` and the same tag. It:
 - verifies that the source pin exactly matches the draft manifest;
 - runs launcher tests and produces the optimized Windows build;
 - signs through Azure Artifact Signing using GitHub OIDC;
+- signs `update.json` with the protected Ed25519 update key;
 - verifies Authenticode before upload;
 - publishes without changing `Latest`;
 - verifies the public tagged launcher, checksum, manifest, and guest URL;
@@ -57,3 +63,9 @@ Run the `Release` workflow again with phase `publish` and the same tag. It:
 
 If public verification fails, the release stays published but does not replace
 the previous `Latest` release.
+
+The updater accepts only a correctly signed manifest, a newer preview version,
+the expected repository release URL, and matching SHA256 values. It stages the
+launcher and payload directories atomically. The old files are removed only
+after QMP confirms a healthy VM boot, so the next start can roll back a failed
+update without touching the user's writable disk.
