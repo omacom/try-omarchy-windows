@@ -44,9 +44,12 @@ OIDC or signing configuration.
    `app/manifest.go`. Update `currentVersion` in `app/update.go` to the same tag.
 5. Run `scripts/release/validate-pin.py TAG`, commit, and push the pin.
 
-The guest builder base is fixed in `guest-build/source.lock.json`. The temporary
-WINQ-EMU binary source and checksum are fixed in `guest-build/runtime.lock.json`
-until the runtime is built from source in CI.
+The guest builder base is fixed in `guest-build/source.lock.json`. The runtime
+build inputs are fixed in `runtime-build/sources.lock.json`, and the Runtime
+workflow produces matching portable and source archives with licenses,
+provenance, and per-file hashes. The runtime used by a production release stays
+fixed in `guest-build/runtime.lock.json`; update that lock only after the new
+archive passes `docs/RUNTIME-VALIDATION.md`.
 
 ## Publish
 
