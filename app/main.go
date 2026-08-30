@@ -38,6 +38,7 @@ const (
 type config struct {
 	dir, winqEmu, share      string
 	fresh, fullscreen, noGpu bool
+	instant                  bool
 	guestDir, vmDir, disk    string
 	qemu                     string
 	useGpu                   bool
@@ -126,6 +127,7 @@ func main() {
 	flag.BoolVar(&cfg.fresh, "fresh", false, "discard the writable disk and start over")
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen")
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed")
+	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the trial account")
 	release := flag.String("release", defaultReleaseURL,
 		"base URL the guest image is downloaded from on first run")
 	sumsSHA256 := flag.String("sums-sha256", defaultSumsSHA256,
@@ -142,7 +144,9 @@ func main() {
 	cfg.guestDir = filepath.Join(cfg.dir, "guest")
 	cfg.vmDir = filepath.Join(cfg.dir, "vm")
 	cfg.disk = filepath.Join(cfg.vmDir, "disk.raw")
-	configureSetupCancellation(!completeInstallExists(cfg.dir))
+	completeAtStart := completeInstallExists(cfg.dir)
+	needsProvisioning := cfg.fresh || !completeAtStart
+	configureSetupCancellation(!completeAtStart)
 	os.MkdirAll(cfg.vmDir, 0o755)
 	logFile, _ = os.OpenFile(filepath.Join(cfg.vmDir, "shell.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if logFile != nil {
@@ -175,6 +179,7 @@ func main() {
 	if finishSetupCancellation(cfg, checkSetupCancelled()) {
 		return
 	}
+	chooseProvisionMode(cfg, needsProvisioning)
 
 	const qemuExe = "qemu-system-x86_64w.exe"
 	stockQemu := `C:\Program Files\qemu\` + qemuExe
@@ -238,6 +243,9 @@ func main() {
 	cmdline := strings.ReplaceAll(spec.Runtime.KernelCommandLine, "console=tty0 ", "")
 	cmdline = strings.ReplaceAll(cmdline, "console=hvc0", "console=ttyS0")
 	cmdline += " vt.global_cursor_default=0"
+	if cfg.instant {
+		cmdline += " tryomarchy.instant=1"
+	}
 
 	if err := prepareDisk(cfg, spec.Runtime.Storage.ExpandedSizeMiB); err != nil {
 		if finishSetupCancellation(cfg, err) {

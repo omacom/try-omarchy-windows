@@ -103,6 +103,32 @@ func boolInt(value bool) int {
 	return 0
 }
 
+func chooseProvisionMode(cfg *config, newInstall bool) {
+	if cfg.instant {
+		if err := writeProvisionMode(cfg.dir, provisionModeInstant); err != nil {
+			fatal("Could not save the instant trial choice: %v", err)
+		}
+		return
+	}
+	// -fresh creates a new writable guest, so let the user choose again instead
+	// of silently inheriting the previous guest's first-boot mode.
+	if mode, ok := readProvisionMode(cfg.dir); ok && !cfg.fresh {
+		cfg.instant = mode == provisionModeInstant
+		return
+	}
+	if !newInstall {
+		return
+	}
+	mode := provisionModePersonal
+	if getUI().chooseInstantMode() {
+		mode = provisionModeInstant
+		cfg.instant = true
+	}
+	if err := writeProvisionMode(cfg.dir, mode); err != nil {
+		fatal("Could not save the first-boot choice: %v", err)
+	}
+}
+
 // offerLauncherShortcuts runs only after the guest and writable disk are
 // complete. The signed launcher is copied into the app-data folder on every
 // successful launch, so opening a newer downloaded release refreshes the
@@ -121,8 +147,7 @@ func offerLauncherShortcuts(dir string) {
 	if shortcutOfferRecorded(installDir) {
 		return
 	}
-	startMenu := msgBox("Add Try Omarchy to the Start menu?", mbYesNo|mbIconQuestion) == idYes
-	desktop := msgBox("Add a Try Omarchy shortcut to your desktop?", mbYesNo|mbIconQuestion) == idYes
+	startMenu, desktop := getUI().chooseShortcuts()
 	if err := createLauncherShortcuts(target, installDir, startMenu, desktop); err != nil {
 		logf("shortcuts: %v", err)
 		errorBox("Try Omarchy is ready, but Windows could not create the requested shortcut. You can keep using the downloaded launcher.\n\n" + err.Error())

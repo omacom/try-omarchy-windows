@@ -29,6 +29,7 @@ var (
 	procDispatchMessageW     = user32.NewProc("DispatchMessageW")
 	procSetTimer             = user32.NewProc("SetTimer")
 	procSendMessageW         = user32.NewProc("SendMessageW")
+	procSetWindowPos         = user32.NewProc("SetWindowPos")
 	procPostQuitMessage      = user32.NewProc("PostQuitMessage")
 	procDestroyWindow        = user32.NewProc("DestroyWindow")
 	procGetSystemMetrics     = user32.NewProc("GetSystemMetrics")
@@ -67,11 +68,19 @@ const (
 	htCaption         = 2
 	vkEscape          = 0x1B
 	swShow            = 5
+	hwndTopmost       = ^uintptr(0)
+	hwndNotTopmost    = ^uintptr(1)
+	swpNoSize         = 0x0001
+	swpNoMove         = 0x0002
+	swpShowWindow     = 0x0040
 	smCxscreen        = 0
 	smCyscreen        = 1
 	iccProgress       = 0x20
 	transparentBkMode = 1
 	cancelControlID   = 1001
+	promptOption1ID   = 1002
+	promptOption2ID   = 1003
+	promptContinueID  = 1004
 
 	// The Omarchy look (Tokyo Night-ish, matching the boot splash). COLORREF
 	// is 0x00BBGGRR.
@@ -82,13 +91,33 @@ const (
 	colDim   = 0x00A27A73 // RGB(115,122,162)
 )
 
+type setupPromptKind uint8
+
+const (
+	setupPromptNone setupPromptKind = iota
+	setupPromptProvision
+	setupPromptShortcuts
+)
+
+type setupPromptRequest struct {
+	kind  setupPromptKind
+	reply chan setupPromptResult
+}
+
+type setupPromptResult struct {
+	primary   bool
+	secondary bool
+}
+
 type progressUI struct {
 	status    atomic.Value // string
 	cur       atomic.Int64
 	total     atomic.Int64
 	done      atomic.Bool
 	canceling atomic.Bool
+	available atomic.Bool
 	ready     chan struct{}
+	prompts   chan setupPromptRequest
 }
 
 // THE app has ONE splash (launch-UX requirement: it appears at launch and
@@ -117,7 +146,7 @@ func uiDone() {
 }
 
 func newProgressUI() *progressUI {
-	ui := &progressUI{ready: make(chan struct{})}
+	ui := &progressUI{ready: make(chan struct{}), prompts: make(chan setupPromptRequest)}
 	ui.status.Store("Preparing...")
 	go ui.run()
 	<-ui.ready
@@ -127,6 +156,25 @@ func newProgressUI() *progressUI {
 func (ui *progressUI) setStatus(format string, a ...any) { ui.status.Store(fmt.Sprintf(format, a...)) }
 func (ui *progressUI) setProgress(cur, total int64)      { ui.cur.Store(cur); ui.total.Store(total) }
 func (ui *progressUI) finish()                           { ui.done.Store(true) }
+
+func (ui *progressUI) chooseInstantMode() bool {
+	if !ui.available.Load() {
+		return false
+	}
+	reply := make(chan setupPromptResult, 1)
+	ui.prompts <- setupPromptRequest{kind: setupPromptProvision, reply: reply}
+	return (<-reply).primary
+}
+
+func (ui *progressUI) chooseShortcuts() (bool, bool) {
+	if !ui.available.Load() {
+		return false, false
+	}
+	reply := make(chan setupPromptResult, 1)
+	ui.prompts <- setupPromptRequest{kind: setupPromptShortcuts, reply: reply}
+	result := <-reply
+	return result.primary, result.secondary
+}
 
 func (ui *progressUI) confirmCancel(hCancel uintptr) {
 	if ui.canceling.Load() {
@@ -176,7 +224,57 @@ func (ui *progressUI) run() {
 	var hHead, hTag, hText, hSuperInfo uintptr
 	var hKeySpace, hKeyK, hKeyReturn, hKeyW uintptr
 	var hLabelMenu, hLabelKeys, hLabelTerminal, hLabelClose, hCancel uintptr
+	var hPromptTitle, hPromptBody, hPromptOption1, hPromptOption2, hPromptContinue uintptr
 	lastStatus := ""
+	promptKind := setupPromptNone
+	var promptReply chan setupPromptResult
+	primary, secondary := true, false
+
+	setText := func(handle uintptr, value string) {
+		t, _ := syscall.UTF16PtrFromString(value)
+		procSendMessageW.Call(handle, wmSettext, 0, uintptr(unsafe.Pointer(t)))
+	}
+	show := func(handle uintptr, visible bool) {
+		cmd := uintptr(0)
+		if visible {
+			cmd = swShow
+		}
+		procShowWindow.Call(handle, cmd)
+	}
+	setOptionText := func() {
+		mark := func(selected bool) string {
+			if selected {
+				return "●"
+			}
+			return "○"
+		}
+		if promptKind == setupPromptProvision {
+			setText(hPromptOption1, mark(primary)+"  GO STRAIGHT TO THE DESKTOP")
+			setText(hPromptOption2, mark(!primary)+"  CHOOSE MY USERNAME AND PASSWORD")
+		} else {
+			setText(hPromptOption1, mark(primary)+"  START MENU")
+			setText(hPromptOption2, mark(secondary)+"  DESKTOP")
+		}
+	}
+	setPromptVisible := func(visible bool) {
+		for _, h := range []uintptr{hText, hSuperInfo, hKeySpace, hKeyK, hKeyReturn, hKeyW,
+			hLabelMenu, hLabelKeys, hLabelTerminal, hLabelClose, hCancel} {
+			show(h, !visible)
+		}
+		for _, h := range []uintptr{hPromptTitle, hPromptBody, hPromptOption1, hPromptOption2, hPromptContinue} {
+			show(h, visible)
+		}
+	}
+	finishPrompt := func(hwnd uintptr) {
+		if promptKind == setupPromptNone || promptReply == nil {
+			return
+		}
+		promptReply <- setupPromptResult{primary: primary, secondary: secondary}
+		promptReply = nil
+		promptKind = setupPromptNone
+		setPromptVisible(false)
+		procSetWindowPos.Call(hwnd, hwndNotTopmost, 0, 0, 0, 0, swpNoSize|swpNoMove|swpShowWindow)
+	}
 
 	// Pixel O geometry: cell 8px at (40, 64).
 	const (
@@ -202,6 +300,25 @@ func (ui *progressUI) run() {
 				t, _ := syscall.UTF16PtrFromString(s)
 				procSendMessageW.Call(hText, wmSettext, 0, uintptr(unsafe.Pointer(t)))
 			}
+			select {
+			case request := <-ui.prompts:
+				promptKind = request.kind
+				promptReply = request.reply
+				primary, secondary = true, false
+				if promptKind == setupPromptProvision {
+					setText(hPromptTitle, "CHOOSE YOUR FIRST LAUNCH")
+					setText(hPromptBody, "Start instantly, or create your own Linux account.")
+				} else {
+					setText(hPromptTitle, "KEEP TRY OMARCHY HANDY")
+					setText(hPromptBody, "Choose where you want a launcher shortcut.")
+				}
+				setOptionText()
+				setPromptVisible(true)
+				procSetWindowPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0, swpNoSize|swpNoMove|swpShowWindow)
+				procSetForegroundWindow.Call(hwnd)
+				procInvalidateRect.Call(hwnd, 0, 1)
+			default:
+			}
 			procInvalidateRect.Call(hwnd, uintptr(unsafe.Pointer(&barRect)), 0)
 			return 0
 		case wmPaint:
@@ -212,18 +329,21 @@ func (ui *progressUI) run() {
 				procFillRect.Call(hdc, uintptr(unsafe.Pointer(&r)), greenBrush)
 			}
 			// Self-drawn slim progress bar: no classic-theme border, our colors.
-			procFillRect.Call(hdc, uintptr(unsafe.Pointer(&barRect)), barBgBrush)
-			if total := ui.total.Load(); total > 0 {
-				fill := barRect
-				fill[2] = fill[0] + int32(int64(fill[2]-fill[0])*ui.cur.Load()/total)
-				procFillRect.Call(hdc, uintptr(unsafe.Pointer(&fill)), greenBrush)
+			if promptKind == setupPromptNone {
+				procFillRect.Call(hdc, uintptr(unsafe.Pointer(&barRect)), barBgBrush)
+				if total := ui.total.Load(); total > 0 {
+					fill := barRect
+					fill[2] = fill[0] + int32(int64(fill[2]-fill[0])*ui.cur.Load()/total)
+					procFillRect.Call(hdc, uintptr(unsafe.Pointer(&fill)), greenBrush)
+				}
 			}
 			procEndPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 			return 0
 		case wmCtlcolorstatic:
 			procSetBkMode.Call(wParam, transparentBkMode)
 			switch lParam {
-			case hHead, hKeySpace, hKeyK, hKeyReturn, hKeyW, hCancel:
+			case hHead, hKeySpace, hKeyK, hKeyReturn, hKeyW, hCancel,
+				hPromptTitle, hPromptOption1, hPromptOption2, hPromptContinue:
 				procSetTextColor.Call(wParam, colGreen)
 			case hTag, uintptr(0):
 				procSetTextColor.Call(wParam, colDim)
@@ -241,13 +361,36 @@ func (ui *progressUI) run() {
 			}
 			return r
 		case wmKeydownMsg:
+			if promptKind != setupPromptNone && wParam == 0x0D {
+				finishPrompt(hwnd)
+				procInvalidateRect.Call(hwnd, 0, 1)
+				return 0
+			}
 			if wParam == vkEscape {
 				ui.confirmCancel(hCancel)
 			}
 			return 0
 		case wmCommand:
-			if wParam&0xffff == cancelControlID {
+			switch wParam & 0xffff {
+			case cancelControlID:
 				ui.confirmCancel(hCancel)
+			case promptOption1ID:
+				if promptKind == setupPromptProvision {
+					primary = true
+				} else {
+					primary = !primary
+				}
+				setOptionText()
+			case promptOption2ID:
+				if promptKind == setupPromptProvision {
+					primary = false
+				} else {
+					secondary = !secondary
+				}
+				setOptionText()
+			case promptContinueID:
+				finishPrompt(hwnd)
+				procInvalidateRect.Call(hwnd, 0, 1)
 			}
 			return 0
 		case wmClose:
@@ -331,6 +474,12 @@ func (ui *progressUI) run() {
 	hKeyW = mk("SUPER+W", 280, 288, 86, 20, 0, 0)
 	hLabelClose = mk("Close window", 368, 288, 100, 20, 0, 0)
 	hCancel = mk("CANCEL SETUP", 380, 318, 100, 20, ssNotify, cancelControlID)
+	hPromptTitle = mk("", 40, 168, windowW-80, 24, 0, 0)
+	hPromptBody = mk("", 40, 200, windowW-80, 22, 0, 0)
+	hPromptOption1 = mk("", 40, 238, windowW-80, 24, ssNotify, promptOption1ID)
+	hPromptOption2 = mk("", 40, 270, windowW-80, 24, ssNotify, promptOption2ID)
+	hPromptContinue = mk("CONTINUE", 380, 316, 100, 22, ssNotify, promptContinueID)
+	setPromptVisible(false)
 
 	font := func(height, weight int, name string) uintptr {
 		n, _ := syscall.UTF16PtrFromString(name)
@@ -349,12 +498,18 @@ func (ui *progressUI) run() {
 		procSendMessageW.Call(h, wmSetfont, font(13, 400, "Segoe UI"), 1)
 	}
 	procSendMessageW.Call(hCancel, wmSetfont, font(13, 600, "Segoe UI"), 1)
+	procSendMessageW.Call(hPromptTitle, wmSetfont, font(17, 700, "Segoe UI"), 1)
+	procSendMessageW.Call(hPromptBody, wmSetfont, font(14, 400, "Segoe UI"), 1)
+	procSendMessageW.Call(hPromptOption1, wmSetfont, font(14, 700, "Segoe UI"), 1)
+	procSendMessageW.Call(hPromptOption2, wmSetfont, font(14, 700, "Segoe UI"), 1)
+	procSendMessageW.Call(hPromptContinue, wmSetfont, font(13, 700, "Segoe UI"), 1)
 
 	procSetTimer.Call(hwnd, 1, 100, 0)
 	procShowWindow.Call(hwnd, swShow)
 	// Launched without foreground rights (shortcut helpers, background shells)
 	// the window opens buried; ask for the front anyway - best effort.
 	procSetForegroundWindow.Call(hwnd)
+	ui.available.Store(true)
 	close(ui.ready)
 
 	var m msgStruct

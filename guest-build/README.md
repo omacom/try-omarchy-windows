@@ -24,6 +24,8 @@ What the patches change (all proven live on hardware 2026-08-28):
   unit enabled for all users (host side lives in scripts/clipboard-bridge.ps1)
 - /mnt/host automounts the launcher's `-Share` folder (virtio-9p, condition-guarded
   so boots without a share stay clean)
+- An explicit `tryomarchy.instant=1` kernel flag creates and finalizes a local
+  trial account, while boots without the flag keep upstream's normal setup form
 
 If Arch has moved since the lock was written, refresh it first and review the diff:
 

@@ -19,6 +19,7 @@ const (
 type config struct {
 	dir, winqEmu, share      string
 	fresh, fullscreen, noGpu bool
+	instant                  bool
 	guestDir, vmDir, disk    string
 	qemu                     string
 	useGpu                   bool

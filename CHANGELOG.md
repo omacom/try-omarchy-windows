@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- Added a stable launcher under `%LOCALAPPDATA%\TryOmarchy` with optional Start-menu and Desktop shortcuts after setup.
+- Added a stable launcher under `%LOCALAPPDATA%\TryOmarchy` with optional Start-menu and Desktop shortcuts selected inside the branded setup window.
 - Added an app compatibility guide covering Arch packages, VS Code, and current VM limitations.
+- Added an optional instant trial account that skips the first-boot form and lands directly on the desktop.
 
 ## v0.0.5-preview - 2026-08-29
 

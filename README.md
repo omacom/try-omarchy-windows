@@ -17,7 +17,7 @@ Download, boot, Hyprland.
 - **One app, zero prerequisites**: `TryOmarchy.exe` (~8 MB, no console window). First run sets the machine up itself: switches on Windows' Hypervisor Platform (one permission prompt, one restart), then downloads the GPU runtime and the image SHA256-verified and boots into Omarchy's setup form. Once setup is complete it keeps a stable launcher under `%LOCALAPPDATA%\TryOmarchy` and can add optional Start-menu and Desktop shortcuts. After that it supervises everything: GPU/CPU auto-detect, the known WHPX launch wedge, in-guest reboot relaunch, poweroff cleanup.
 - **Feels like an app, not a VM**: the window is branded "Try Omarchy", the Windows key acts as Super only while the window is focused (Start menu and Win+Shift+S keep working everywhere else), Ctrl+Alt+F goes fullscreen.
 - **Two-way clipboard sharing** between Windows and Omarchy (own compositor-native bridge over wl-clipboard, no SPICE) and **folder sharing** (`-Share <folder>`, virtio-9p on the GPU stack).
-- First-boot account provisioning driven programmatically over QMP (basis for a "skip setup, just try it" mode), SDDM autologin after setup.
+- First boot offers an instant trial account or Omarchy's normal personalized account setup, with SDDM autologin after either path.
 - Reproducible x86_64 guest image build (containerized, package-locked, pinned Omarchy revision) and a headless QMP control plane for automated testing.
 
 See [app compatibility](docs/COMPATIBILITY.md) for package support and current VM limitations.
@@ -50,7 +50,7 @@ Proven boot recipe: `-accel whpx -machine q35 -cpu qemu64`, direct kernel boot (
 
 ## Try it
 
-Download [TryOmarchy.exe](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (~8 MB, [SHA256](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and open it. First run sets the machine up by itself: Windows asks permission to switch on the Hypervisor Platform and restarts once, then the app pulls the GPU runtime (a portable [WINQ-EMU](https://github.com/cmspam/winq-emu) tree, ~46 MB) and the Omarchy image (~1.4 GB) from the [v0.0.3-preview release](https://github.com/tsouth89/try-omarchy-windows/releases/tag/v0.0.3-preview), everything SHA256-verified. It walks you through Omarchy's setup form and lands you in Hyprland; every launch after goes straight to the desktop.
+Download [TryOmarchy.exe](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (~8 MB, [SHA256](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and open it. First run sets the machine up by itself: Windows asks permission to switch on the Hypervisor Platform and restarts once, then the app pulls the GPU runtime (a portable [WINQ-EMU](https://github.com/cmspam/winq-emu) tree, ~46 MB) and the Omarchy image (~1.4 GB), everything SHA256-verified. Choose the instant trial account to go straight to the desktop, or use Omarchy's setup form to choose your own account. Every launch after goes straight to the desktop.
 
 After the first successful setup, Try Omarchy offers optional Start-menu and Desktop shortcuts. They point to a stable copy of the signed launcher in `%LOCALAPPDATA%\TryOmarchy`, so the original download can be moved or deleted. Opening a newer downloaded release refreshes that stable copy.
 
@@ -87,6 +87,10 @@ TryOmarchy.exe is just the launcher. On first run it fetches the GPU runtime (~4
 ### Why not just use a live USB?
 
 A live USB means rebooting away from your machine and forgetting everything on shutdown. This runs in a window next to your actual work, keeps your state between sessions, and renders on your real GPU.
+
+### What are the instant trial credentials?
+
+The local trial account is named `omarchy` and its lock-screen password is `omarchy`. Sudo does not ask for a password in instant trial mode. Try Omarchy does not enable SSH or expose inbound network ports.
 
 ### How do I remove Try Omarchy?
 

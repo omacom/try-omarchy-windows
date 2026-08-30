@@ -1,0 +1,164 @@
+From 4894d1fcd2463fb0acefa616e84f4e2839e0c68a Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 29 Aug 2026 21:15:04 -0400
+Subject: [PATCH] Add instant trial provisioning mode
+
+---
+ .../20-try-omarchy.conf                       |  2 +
+ .../lib/try-omarchy/provision-instant-trial   | 74 +++++++++++++++++++
+ .../usr/local/lib/try-omarchy/provision-owner |  8 ++
+ guest/tests/verify.py                         | 31 ++++++++
+ 4 files changed, 115 insertions(+)
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/provision-owner
+
+diff --git a/guest/factory-overlay/etc/systemd/system/omarchy-provision-owner.service.d/20-try-omarchy.conf b/guest/factory-overlay/etc/systemd/system/omarchy-provision-owner.service.d/20-try-omarchy.conf
+index 6cd0cfa..9b4e2dd 100644
+--- a/guest/factory-overlay/etc/systemd/system/omarchy-provision-owner.service.d/20-try-omarchy.conf
++++ b/guest/factory-overlay/etc/systemd/system/omarchy-provision-owner.service.d/20-try-omarchy.conf
+@@ -2,4 +2,6 @@
+ # installs), so keep the autologin provisioning writes instead of letting the
+ # one-boot cleanup unit drop it — the generic SDDM greeter must never appear.
+ [Service]
++ExecStart=
++ExecStart=/usr/local/lib/try-omarchy/provision-owner
+ ExecStartPost=/usr/local/lib/try-omarchy/keep-autologin
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial b/guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial
+new file mode 100755
+index 0000000..e464b39
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial
+@@ -0,0 +1,74 @@
++#!/bin/bash
++# Create the explicit Try Omarchy trial account without stopping at the
++# interactive first-boot form. This runs only when the Windows launcher adds
++# tryomarchy.instant=1 to the kernel command line.
++set -euo pipefail
++
++provisioning_dir=/var/lib/omarchy/provisioning
++omarchy_path=${OMARCHY_PATH:-/usr/share/omarchy}
++log_file=/var/log/omarchy-provision-owner.log
++username=omarchy
++
++[[ -f $provisioning_dir/pending ]] || exit 0
++[[ ! -f $provisioning_dir/wipe-pending ]] || exit 1
++
++user_groups() {
++  local groups=wheel group
++  if [[ -f $provisioning_dir/groups ]]; then
++    while IFS= read -r group; do
++      [[ -n $group && $group != docker ]] || continue
++      getent group "$group" >/dev/null || continue
++      [[ ,$groups, == *,$group,* ]] || groups+=",$group"
++    done <"$provisioning_dir/groups"
++  fi
++  printf '%s\n' "$groups"
++}
++
++echo "[$(date '+%Y-%m-%d %H:%M:%S')] instant trial: creating $username" >>"$log_file"
++if getent passwd "$username" >/dev/null; then
++  usermod -aG "$(user_groups)" "$username"
++else
++  useradd -m -G "$(user_groups)" -s /bin/bash -c "Try Omarchy" "$username"
++fi
++
++# The VM window is the trial account's security boundary. A known password
++# keeps the lock screen usable, while passwordless sudo avoids putting a
++# credential hurdle in front of a disposable local trial.
++printf '%s:%s\n' "$username" omarchy | chpasswd
++cat >"/etc/sudoers.d/00-try-omarchy-trial" <<SUDOERS
++$username ALL=(ALL:ALL) NOPASSWD: ALL
++SUDOERS
++chmod 440 /etc/sudoers.d/00-try-omarchy-trial
++
++mkdir -p /var/lib/sddm /etc/sddm.conf.d /var/lib/try-omarchy
++printf '[Last]\nSession=omarchy.desktop\nUser=%s\n' "$username" >/var/lib/sddm/state.conf
++chown -R sddm:sddm /var/lib/sddm 2>/dev/null || true
++printf '[Autologin]\nUser=%s\nSession=omarchy.desktop\n' "$username" >/etc/sddm.conf.d/autologin.conf
++printf 'instant-trial\n' >/var/lib/try-omarchy/provision-mode
++hostnamectl set-hostname try-omarchy >>"$log_file" 2>&1 || printf 'try-omarchy\n' >/etc/hostname
++
++home=$(getent passwd "$username" | cut -d: -f6)
++shell=$(getent passwd "$username" | cut -d: -f7)
++if ! runuser -u "$username" -- env \
++  HOME="$home" \
++  USER="$username" \
++  LOGNAME="$username" \
++  SHELL="${shell:-/bin/bash}" \
++  OMARCHY_PATH="$omarchy_path" \
++  OMARCHY_INSTALL="$omarchy_path/install" \
++  OMARCHY_SETUP_CONTEXT=provision-owner \
++  OMARCHY_USER_NAME="Try Omarchy" \
++  OMARCHY_USER_EMAIL="" \
++  OMARCHY_INSTALL_LOG_FILE="$log_file" \
++  OMARCHY_LOG_TO_STDOUT=1 \
++  "$omarchy_path/bin/omarchy-provision-user" --force --first-install >>"$log_file" 2>&1; then
++  echo "[$(date '+%Y-%m-%d %H:%M:%S')] instant trial: user finalization reported errors" >>"$log_file"
++fi
++
++rm -f "$provisioning_dir/pending" "$provisioning_dir/authorized_keys" "$provisioning_dir/setup-user"
++rm -f /etc/systemd/system/multi-user.target.wants/omarchy-provision-owner.service
++rm -f /etc/systemd/system/graphical.target.wants/omarchy-provision-autologin-once.service \
++  /etc/systemd/system/omarchy-provision-autologin-once.service
++systemctl daemon-reload 2>/dev/null || true
++sync
++echo "[$(date '+%Y-%m-%d %H:%M:%S')] instant trial: complete" >>"$log_file"
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/provision-owner b/guest/factory-overlay/usr/local/lib/try-omarchy/provision-owner
+new file mode 100755
+index 0000000..4f4ddb3
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/provision-owner
+@@ -0,0 +1,8 @@
++#!/bin/bash
++set -euo pipefail
++
++if grep -qw 'tryomarchy.instant=1' /proc/cmdline; then
++  exec /usr/local/lib/try-omarchy/provision-instant-trial
++fi
++
++exec /usr/bin/omarchy-provision-owner
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index ce3eba4..f553e99 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -80,6 +80,37 @@ def main() -> None:
+     )
+     check("cmp -s" not in configure, "rootfs configuration uses only declared build tools")
+ 
++    provision_dispatch = read(
++        GUEST / "factory-overlay/usr/local/lib/try-omarchy/provision-owner"
++    )
++    instant_trial = read(
++        GUEST / "factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial"
++    )
++    provision_override = read(
++        GUEST
++        / "factory-overlay/etc/systemd/system/omarchy-provision-owner.service.d/20-try-omarchy.conf"
++    )
++    check(
++        "tryomarchy.instant=1" in provision_dispatch
++        and "/usr/bin/omarchy-provision-owner" in provision_dispatch,
++        "first boot dispatches explicit instant mode without changing normal provisioning",
++    )
++    check(
++        "ExecStart=/usr/local/lib/try-omarchy/provision-owner" in provision_override,
++        "owner provisioning uses the Try Omarchy dispatcher",
++    )
++    check(
++        "useradd -m" in instant_trial
++        and "omarchy-provision-user" in instant_trial
++        and "NOPASSWD: ALL" in instant_trial
++        and "User=%s" in instant_trial,
++        "instant mode creates, finalizes, and autologs into its trial account",
++    )
++    check(
++        "root:" not in instant_trial and "sshd" not in instant_trial,
++        "instant mode does not enable root or remote login",
++    )
++
+     finalizer = read(GUEST / "scripts/finalize-rootfs.sh")
+     check("factory" in finalizer and "x86_64" in finalizer, "finalizer enforces the native factory contract")
+     check("systemd-growfs-root.service" in finalizer, "factory disk grows on first boot")
+-- 
+2.55.0
+
