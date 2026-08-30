@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,14 +18,17 @@ const (
 )
 
 type config struct {
-	dir, winqEmu, share                  string
-	fresh, fullscreen, noGpu, hostCursor bool
-	instant                              bool
-	guestDir, vmDir, disk                string
-	qemu                                 string
-	useGpu                               bool
-	audio                                string
-	memMiB                               int
+	dir, hostDir, payloadDir string
+	winqEmu, share           string
+	fresh, fullscreen, noGpu bool
+	hostCursor               bool
+	instant, portable        bool
+	guestDir, vmDir, disk    string
+	diskFormat               string
+	qemu                     string
+	useGpu                   bool
+	audio                    string
+	memMiB                   int
 }
 
 type progressUI struct{}
@@ -52,7 +56,7 @@ func TestPrepareDiskPublishesCompleteFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(guestDir, "rootfs.ext4"), []byte("factory rootfs"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config{guestDir: guestDir, vmDir: vmDir, disk: filepath.Join(vmDir, "disk.raw")}
+	cfg := &config{guestDir: guestDir, vmDir: vmDir, disk: filepath.Join(vmDir, "disk.raw"), diskFormat: "raw"}
 	if err := prepareDisk(cfg, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +101,7 @@ func TestPrepareDiskQuarantinesLegacyPartialFile(t *testing.T) {
 	if err := os.WriteFile(disk, []byte("partial"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config{guestDir: guestDir, vmDir: vmDir, disk: disk}
+	cfg := &config{guestDir: guestDir, vmDir: vmDir, disk: disk, diskFormat: "raw"}
 	if err := prepareDisk(cfg, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -114,5 +118,20 @@ func TestPrepareDiskQuarantinesLegacyPartialFile(t *testing.T) {
 	}
 	if string(data) != "partial" {
 		t.Fatalf("quarantined content = %q, want partial", data)
+	}
+}
+
+func TestBuildQemuArgsUsesConfiguredDiskFormat(t *testing.T) {
+	cfg := &config{
+		vmDir:      "/usb/data/vm",
+		guestDir:   "/usb/data/guest",
+		disk:       "/usb/data/vm/disk.qcow2",
+		diskFormat: "qcow2",
+		memMiB:     4096,
+		audio:      "none",
+	}
+	args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
+	if !strings.Contains(args, "file=/usb/data/vm/disk.qcow2,format=qcow2,if=virtio") {
+		t.Fatalf("configured disk format missing from QEMU args: %s", args)
 	}
 }

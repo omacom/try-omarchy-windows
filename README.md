@@ -77,6 +77,20 @@ supports byte ranges, then the complete file is SHA256-verified before use.
 Custom release URLs must be paired with the
 trusted manifest digest via `-sums-sha256`.
 
+### Offline portable mode
+
+The launcher also accepts `-portable` for an experimental, persistent USB
+layout. In this mode it reads an authenticated release payload beside the
+executable, makes no setup-time network requests, stores all guest state on the
+removable drive, and uses a compact QCOW2 overlay that survives Windows drive
+letter changes and works on exFAT. The independently pinned `SHA256SUMS` digest,
+install receipts, cancellation handling, and atomic file publication apply to
+the portable path too.
+
+See [`docs/PORTABLE_USB.md`](docs/PORTABLE_USB.md) for the expected layout and
+host requirements. Bundle preparation and additional host launchers are kept
+out of this core Windows change so they can be reviewed separately.
+
 Or skip the app and drive QEMU from PowerShell: `scripts\bootstrap.ps1` then `scripts\launch-omarchy.ps1` (elevated).
 
 ## FAQ

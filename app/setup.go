@@ -169,7 +169,7 @@ func ensureWHP(cfg *config) {
 	if whpPresent() {
 		return
 	}
-	marker := filepath.Join(cfg.dir, "whp-requested")
+	marker := filepath.Join(cfg.hostDir, "whp-requested")
 	if st, err := os.Stat(marker); err == nil {
 		// The feature was already enabled on an earlier run. If the machine
 		// has rebooted since and the hypervisor is still absent, dism did its
@@ -222,7 +222,7 @@ func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 	root := filepath.Join(cfg.dir, "runtime")
 	ui := getUI()
 	client := newDownloadClient()
-	sums, err := releaseSums(client, release, sumsSHA256)
+	sums, err := releaseSumsForConfig(cfg, client, release, sumsSHA256)
 	if err != nil {
 		return "", fmt.Errorf("authenticating SHA256SUMS: %w", err)
 	}
@@ -250,7 +250,19 @@ func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 	}
 	updating := executableErr == nil
 	zipPath := filepath.Join(cfg.dir, runtimeZip)
-	if err := ensureVerifiedDownload(client, normalizedRelease(release)+"/"+runtimeZip, zipPath,
+	removeZip := true
+	if cfg.portable {
+		zipPath = filepath.Join(cfg.payloadDir, runtimeZip)
+		removeZip = false
+		ui.setStatus("Checking the portable graphics engine...")
+		ok, err := verifyFileSHA256(zipPath, sums[runtimeZip], ui.setProgress)
+		if err != nil {
+			return "", fmt.Errorf("checking %s: %w", runtimeZip, err)
+		}
+		if !ok {
+			return "", fmt.Errorf("checksum mismatch for %s", runtimeZip)
+		}
+	} else if err := ensureVerifiedDownload(client, normalizedRelease(release)+"/"+runtimeZip, zipPath,
 		archiveSHA, "Downloading the graphics engine...", ui); err != nil {
 		return "", fmt.Errorf("preparing %s: %w", runtimeZip, err)
 	}
@@ -262,7 +274,9 @@ func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 	os.RemoveAll(tmp)
 	if err := unzipTree(zipPath, tmp, ui); err != nil {
 		os.RemoveAll(tmp)
-		os.Remove(zipPath)
+		if removeZip {
+			os.Remove(zipPath)
+		}
 		return "", fmt.Errorf("unpacking %s: %w", runtimeZip, err)
 	}
 	if err := writeRuntimeReceipt(tmp, release, sumsSHA256, archiveSHA); err != nil {
@@ -298,7 +312,9 @@ func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 	if renameErr != nil {
 		return "", renameErr
 	}
-	os.Remove(zipPath)
+	if removeZip {
+		os.Remove(zipPath)
+	}
 	return root, nil
 }
 

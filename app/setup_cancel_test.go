@@ -104,7 +104,7 @@ func TestCleanupExistingInstallOnlyRemovesStagingFiles(t *testing.T) {
 
 func TestCompleteInstallDetection(t *testing.T) {
 	root := t.TempDir()
-	if completeInstallExists(root) {
+	if completeInstallExists(root, "disk.raw") {
 		t.Fatal("empty directory reported as a complete install")
 	}
 	for _, name := range []string{
@@ -120,7 +120,16 @@ func TestCompleteInstallDetection(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !completeInstallExists(root) {
+	if !completeInstallExists(root, "disk.raw") {
 		t.Fatal("complete installation was not detected")
+	}
+	if completeInstallExists(root, "disk.qcow2") {
+		t.Fatal("raw installation was reported as a portable installation")
+	}
+	if err := os.WriteFile(filepath.Join(root, "vm", "disk.qcow2"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !completeInstallExists(root, "disk.qcow2") {
+		t.Fatal("complete portable installation was not detected")
 	}
 }
