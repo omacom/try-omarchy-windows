@@ -1,0 +1,73 @@
+name: Runtime
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build WINQ-EMU from source
+    runs-on: windows-2025
+    timeout-minutes: 120
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Validate source lock
+        shell: pwsh
+        run: python runtime-build/validate-lock.py
+
+      - name: Set up MSYS2 UCRT64
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            bison
+            diffutils
+            flex
+            git
+            mingw-w64-ucrt-x86_64-SDL2
+            mingw-w64-ucrt-x86_64-dtc
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-libepoxy
+            mingw-w64-ucrt-x86_64-libslirp
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pixman
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-python-yaml
+            mingw-w64-ucrt-x86_64-vulkan-headers
+            mingw-w64-ucrt-x86_64-vulkan-loader
+            mingw-w64-ucrt-x86_64-zstd
+
+      - name: Build runtime and corresponding source
+        shell: msys2 {0}
+        run: runtime-build/build.sh runtime-output
+
+      - name: Smoke test QEMU
+        shell: msys2 {0}
+        run: |
+          runtime-output/smoke/qemu-system-x86_64.exe --version
+          runtime-output/smoke/qemu-system-x86_64.exe -accel help | tr -d '\r' | tee runtime-output/smoke/accelerators.txt
+          grep -Fx whpx runtime-output/smoke/accelerators.txt
+
+      - name: Verify archives
+        shell: pwsh
+        run: python runtime-build/verify.py runtime-output
+
+      - name: Remove smoke-test copy
+        shell: pwsh
+        run: Remove-Item -Recurse -Force runtime-output/smoke
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: winq-emu-alpha10-source-build
+          path: runtime-output/*
+          if-no-files-found: error
+          retention-days: 14

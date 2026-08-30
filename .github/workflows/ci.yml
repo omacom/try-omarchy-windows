@@ -23,7 +23,10 @@ jobs:
           cache-dependency-path: app/go.sum
 
       - name: Test release helpers
-        run: python3 -m py_compile scripts/release/*.py
+        run: |
+          python3 -m py_compile scripts/release/*.py runtime-build/*.py
+          python3 runtime-build/validate-lock.py
+          bash -n runtime-build/*.sh
 
       - name: Test launcher
         working-directory: app

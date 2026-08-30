@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "name": "winq-emu-alpha10-source-r1",
+  "sourceDateEpoch": 1777269494,
+  "qemu": {
+    "repository": "https://github.com/cmspam/winq-emu-qemu.git",
+    "commit": "2ce303cfbbc8b0e4a7a3c66e27a094a980426d73",
+    "upstream": "https://github.com/qemu/qemu.git",
+    "baseTag": "v11.0.0",
+    "baseCommit": "98b060da3a4f92b2a994ead5b16a87e783baf77c",
+    "license": "GPL-2.0"
+  },
+  "virglrenderer": {
+    "repository": "https://github.com/cmspam/winq-emu-virglrenderer.git",
+    "commit": "e80354b8f5a0dedc62374b905a181874682659cc",
+    "upstream": "https://gitlab.freedesktop.org/virgl/virglrenderer.git",
+    "baseTag": "1.3.0",
+    "baseCommit": "ca50e008863837e094747a69974dde3ae148aeaa",
+    "license": "MIT"
+  }
+}
