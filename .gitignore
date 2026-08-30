@@ -7,3 +7,5 @@ dist/
 *.ext4
 *.zst
 .wrangler/
+__pycache__/
+*.pyc
