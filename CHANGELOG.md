@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Added a stable launcher under `%LOCALAPPDATA%\TryOmarchy` with optional Start-menu and Desktop shortcuts after setup.
+- Added an app compatibility guide covering Arch packages, VS Code, and current VM limitations.
+
 ## v0.0.5-preview - 2026-08-29
 
 - Reworked the setup splash with a clear SUPER-key explanation and starter shortcuts.

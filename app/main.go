@@ -251,6 +251,10 @@ func main() {
 	if finishSetupCancellation(cfg, checkSetupCancelled()) {
 		return
 	}
+	offerLauncherShortcuts(cfg.dir)
+	if finishSetupCancellation(cfg, checkSetupCancelled()) {
+		return
+	}
 	cfg.memMiB = pickGuestMem(cfg.useGpu)
 	getUI().setStatus("Starting Omarchy...")
 
