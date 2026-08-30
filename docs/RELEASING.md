@@ -23,6 +23,10 @@ The Azure application needs the `Artifact Signing Certificate Profile Signer`
 role on the signing account. The workflow itself requests only `id-token: write`
 and `contents: write` in the protected publish job.
 
+The optional `signing-check` phase builds, signs, and verifies the current
+launcher without creating or modifying a release. Use it after changing the
+OIDC or signing configuration.
+
 ## Prepare the guest
 
 1. Add the new version section to `CHANGELOG.md` and push it to `master`.
