@@ -33,7 +33,8 @@ jobs:
         working-directory: app
         run: |
           go vet ./...
-          GOOS=windows GOARCH=amd64 go vet ./...
+          # Win32 callbacks and COM APIs pass pointers through uintptr by contract.
+          GOOS=windows GOARCH=amd64 go vet -unsafeptr=false ./...
 
       - name: Build Windows launcher
         working-directory: app
