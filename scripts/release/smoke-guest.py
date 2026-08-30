@@ -83,6 +83,8 @@ def main() -> None:
     sent_command = False
     password_sent_at: float | None = None
     password_offset = 0
+    last_login_prompt = -1
+    last_password_prompt = -1
 
     try:
         while time.monotonic() < deadline:
@@ -104,35 +106,36 @@ def main() -> None:
                     print("ok - instant guest reached a usable trial account")
                     return
 
-                recent = bytes(transcript[-4096:])
-                if recent.rstrip().endswith(b"login:") and login_attempts < 20:
+                login_prompt = transcript.rfind(b"login:")
+                if login_prompt > last_login_prompt and login_attempts < 20:
                     process.stdin.write(b"omarchy\n")
                     process.stdin.flush()
                     login_attempts += 1
-                    transcript.extend(b"\n")
-                elif recent.rstrip().endswith(b"Password:"):
+                    last_login_prompt = login_prompt
+
+                password_prompt = transcript.rfind(b"Password:")
+                if password_prompt > last_password_prompt:
                     process.stdin.write(b"omarchy\n")
                     process.stdin.flush()
                     password_sent_at = time.monotonic()
                     password_offset = len(transcript)
-                    transcript.extend(b"\n")
+                    last_password_prompt = password_prompt
 
                 if password_sent_at is not None and b"Login incorrect" in transcript[password_offset:]:
                     password_sent_at = None
 
-                if (
-                    password_sent_at is not None
-                    and not sent_command
-                    and time.monotonic() - password_sent_at >= 3
-                ):
-                    process.stdin.write(
-                        b"printf 'TRYOMARCHY_SMOKE:%s:%s\\n' \"$(id -un)\" "
-                        b"\"$(cat /var/lib/try-omarchy/provision-mode 2>/dev/null)\"; "
-                        b"sudo systemctl poweroff\n"
-                    )
-                    process.stdin.flush()
-                    sent_command = True
-                    transcript.extend(b"\n")
+            if (
+                password_sent_at is not None
+                and not sent_command
+                and time.monotonic() - password_sent_at >= 3
+            ):
+                process.stdin.write(
+                    b"printf 'TRYOMARCHY_SMOKE:%s:%s\\n' \"$(id -un)\" "
+                    b"\"$(cat /var/lib/try-omarchy/provision-mode 2>/dev/null)\"; "
+                    b"sudo systemctl poweroff\n"
+                )
+                process.stdin.flush()
+                sent_command = True
     finally:
         if process.poll() is None:
             process.terminate()
