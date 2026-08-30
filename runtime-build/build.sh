@@ -125,21 +125,19 @@ cp /ucrt64/bin/libvirglrenderer-1.dll "$runtime/bin/"
 echo "Collecting runtime DLLs"
 "$recipe/collect-dlls.sh" "$runtime/bin" "$runtime/provenance/dll-sources.txt"
 
-copy_first_license() {
-    local source_dir=$1
-    local destination=$2
-    shift 2
-    local candidate
-    for candidate in "$@"; do
-        if [[ -f "$source_dir/$candidate" ]]; then
-            cp "$source_dir/$candidate" "$destination/$(basename "$candidate")"
-        fi
-    done
+for license in COPYING COPYING.LIB LICENSE; do
+    [[ -f "$qemu_source/$license" ]] || {
+        echo "QEMU source is missing $license" >&2
+        exit 1
+    }
+    cp "$qemu_source/$license" "$runtime/LICENSES/qemu/$license"
+done
+[[ -f "$virgl_source/COPYING" ]] || {
+    echo "virglrenderer source is missing COPYING" >&2
+    exit 1
 }
-copy_first_license "$qemu_source" "$runtime/LICENSES/qemu" COPYING COPYING.LIB LICENSE
-copy_first_license "$virgl_source" "$runtime/LICENSES/virglrenderer" COPYING LICENSE
-compgen -G "$runtime/LICENSES/qemu/*" >/dev/null
-compgen -G "$runtime/LICENSES/virglrenderer/*" >/dev/null
+cp "$virgl_source/COPYING" "$runtime/LICENSES/virglrenderer/COPYING"
+echo "Collected project licenses"
 
 used_packages="$runtime/provenance/msys2-packages.txt"
 : >"$used_packages"
