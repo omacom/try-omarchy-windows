@@ -8,7 +8,7 @@ Download, boot, Hyprland.
 
 ![Live capture on the Ryzen 5 test laptop: fastfetch, the Omarchy menu, and a screensaver inside the Try Omarchy window](docs/images/demo.gif)
 
-**Status: working end to end on real hardware.** One app switches on Windows' virtualization, downloads the GPU runtime and the image, boots, and supervises; the desktop renders on the GPU and falls back to CPU rendering automatically. Landing page: [tryomarchy.com](https://tryomarchy.com).
+**Status: working end to end on real hardware.** One app switches on Windows' virtualization, downloads the GPU runtime and the image, boots, and supervises; the desktop renders on the GPU and falls back to CPU rendering automatically. Landing page: [tryomarchy.com](https://tryomarchy.com). See the [changelog](CHANGELOG.md) for release history.
 
 ## What works today
 
@@ -78,7 +78,7 @@ Yes, and that's the point. QEMU on WHPX is the best virtualization stack Windows
 
 ### Why is the download only ~8 MB?
 
-TryOmarchy.exe is just the launcher. On first run it fetches the GPU runtime (~46 MB) and the Omarchy image (~1.4 GB), SHA256-verifies both, and caches them in the same folder. After that, launches work offline.
+TryOmarchy.exe is just the launcher. On first run it fetches the GPU runtime (~46 MB) and the Omarchy image (~1.4 GB), SHA256-verifies both, and caches them in `%LOCALAPPDATA%\TryOmarchy`. After that, launches work offline.
 
 ### Why not just use a live USB?
 
