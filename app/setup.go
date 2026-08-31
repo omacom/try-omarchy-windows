@@ -166,6 +166,14 @@ func restartWindows() {
 // ensureWHP walks the user through switching the hypervisor on. Returns only
 // when WHPX is usable; every other path explains itself and exits.
 func ensureWHP(cfg *config) {
+	// One gate before everything: an emulated x64 launcher on ARM64 Windows
+	// cannot even load WinHvPlatform.dll, so the WHPX check below reads as
+	// "virtualization disabled" and the machine gets taken through a feature
+	// enable, a reboot, and firmware advice (VT-x/SVM) that does not exist on
+	// ARM. Tell the truth instead and stop here.
+	if reason := hostArchUnsupportedReason(); reason != "" {
+		fatal("%s", reason)
+	}
 	if whpPresent() {
 		return
 	}
