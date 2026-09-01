@@ -138,6 +138,16 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 		return err
 	}
 	defer src.Close()
+	allocated, err := allocatedFileBytes(filepath.Join(cfg.guestDir, "rootfs.ext4"))
+	if err != nil {
+		return fmt.Errorf("measuring the factory disk: %w", err)
+	}
+	if allocated > (1<<63-1)-diskSpaceReserve {
+		return fmt.Errorf("factory disk allocation is too large")
+	}
+	if err := requireDiskSpace(cfg.vmDir, allocated+diskSpaceReserve); err != nil {
+		return fmt.Errorf("preflighting writable disk storage: %w", err)
+	}
 	dst, err := os.Create(tmp)
 	if err != nil {
 		return err

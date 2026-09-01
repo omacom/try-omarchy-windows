@@ -20,7 +20,7 @@ import (
 // the authenticated SHA256SUMS, and decompresses the rootfs.
 
 var (
-	downloadedGuestArtifacts = []string{"build-spec.json", "vmlinuz-linux", "initramfs-linux.img"}
+	downloadedGuestArtifacts = []string{"guest-manifest.json", "build-spec.json", "vmlinuz-linux", "initramfs-linux.img"}
 	installedGuestArtifacts  = []string{"build-spec.json", "vmlinuz-linux", "initramfs-linux.img", "rootfs.ext4"}
 )
 
@@ -90,7 +90,7 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 	if err != nil {
 		return fmt.Errorf("authenticating SHA256SUMS: %w", err)
 	}
-	for _, name := range []string{"build-spec.json", "vmlinuz-linux", "initramfs-linux.img", "rootfs.ext4", "rootfs.ext4.zst"} {
+	for _, name := range []string{"guest-manifest.json", "build-spec.json", "vmlinuz-linux", "initramfs-linux.img", "rootfs.ext4", "rootfs.ext4.zst"} {
 		if !validSHA256(sums[name]) {
 			return fmt.Errorf("release manifest has no valid SHA256 for %s", name)
 		}
@@ -106,6 +106,10 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 			return fmt.Errorf("preparing %s: %w", name, err)
 		}
 	}
+	artifactSizes, err := readGuestArtifactSizes(filepath.Join(cfg.guestDir, "guest-manifest.json"), sums)
+	if err != nil {
+		return fmt.Errorf("reading authenticated guest artifact sizes: %w", err)
+	}
 
 	zst := filepath.Join(cfg.guestDir, "rootfs.ext4.zst")
 	rootfs := filepath.Join(cfg.guestDir, "rootfs.ext4")
@@ -120,10 +124,24 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 		if err := removeCachedFile(rootfs); err != nil {
 			return fmt.Errorf("removing incomplete rootfs.ext4: %w", err)
 		}
+		rootfsAllocated, err := estimatedSparseRootfsBytes(artifactSizes["rootfs.ext4"])
+		if err != nil {
+			return err
+		}
+		required, err := guestInstallSpaceRequired(remainingFileBytes(zst, artifactSizes["rootfs.ext4.zst"]), rootfsAllocated)
+		if err != nil {
+			return err
+		}
+		if err := requireDiskSpace(cfg.guestDir, required); err != nil {
+			return fmt.Errorf("preflighting Omarchy storage: %w", err)
+		}
 		if err := ensureVerifiedDownload(client, normalizedRelease(release)+"/rootfs.ext4.zst", zst,
 			sums["rootfs.ext4.zst"], fmt.Sprintf("Downloading Omarchy (%d of %d)...",
 				len(downloadedGuestArtifacts)+1, len(downloadedGuestArtifacts)+1), ui); err != nil {
 			return fmt.Errorf("preparing rootfs.ext4.zst: %w", err)
+		}
+		if err := requireDiskSpace(cfg.guestDir, rootfsAllocated+diskSpaceReserve); err != nil {
+			return fmt.Errorf("preflighting Omarchy unpack: %w", err)
 		}
 		ui.setStatus("Unpacking the Omarchy system...")
 		if err := decompress(zst, rootfs, sums["rootfs.ext4"], ui); err != nil {

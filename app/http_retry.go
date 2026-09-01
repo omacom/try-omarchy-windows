@@ -50,7 +50,7 @@ func setupFailureHelp(err error) string {
 	}
 	// Setup writes several GB, and an image update needs room for the old and
 	// new copies at once. Retrying on connection advice never clears that.
-	if isDiskFull(err) {
+	if errors.Is(err, errInsufficientDiskSpace) || isDiskFull(err) {
 		return "Your PC is out of disk space. Free up a few gigabytes, then start Try Omarchy again."
 	}
 	return "Check your connection and start Try Omarchy again."

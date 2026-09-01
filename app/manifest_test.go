@@ -20,6 +20,7 @@ func TestDefaultReleaseManifestPin(t *testing.T) {
 	}
 	for _, name := range []string{
 		"build-spec.json",
+		"guest-manifest.json",
 		"initramfs-linux.img",
 		"rootfs.ext4",
 		"rootfs.ext4.zst",
