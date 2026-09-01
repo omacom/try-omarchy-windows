@@ -296,9 +296,10 @@ func TestDownloadVerifiedCancelsActiveRequest(t *testing.T) {
 }
 
 type blockingDownloadBody struct {
-	started chan struct{}
-	closed  chan struct{}
-	once    sync.Once
+	started   chan struct{}
+	closed    chan struct{}
+	once      sync.Once
+	closeOnce sync.Once
 }
 
 func (b *blockingDownloadBody) Read([]byte) (int, error) {
@@ -309,12 +310,23 @@ func (b *blockingDownloadBody) Read([]byte) (int, error) {
 
 func (b *blockingDownloadBody) Close() error {
 	b.once.Do(func() { close(b.started) })
-	select {
-	case <-b.closed:
-	default:
-		close(b.closed)
-	}
+	b.closeOnce.Do(func() { close(b.closed) })
 	return nil
+}
+
+func TestBlockingDownloadBodyCloseIsConcurrentSafe(t *testing.T) {
+	body := &blockingDownloadBody{started: make(chan struct{}), closed: make(chan struct{})}
+	var wait sync.WaitGroup
+	for range 16 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			if err := body.Close(); err != nil {
+				t.Errorf("Close: %v", err)
+			}
+		}()
+	}
+	wait.Wait()
 }
 
 func TestDownloadVerifiedCancelsBlockedBodyAndCleansPartial(t *testing.T) {

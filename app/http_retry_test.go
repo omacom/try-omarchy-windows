@@ -54,6 +54,17 @@ func TestSetupFailureHelpExplainsDiskFull(t *testing.T) {
 	}
 }
 
+func TestSetupFailureHelpExplainsPreflightDiskFull(t *testing.T) {
+	err := fmt.Errorf("preflighting Omarchy storage: %w", errInsufficientDiskSpace)
+	got := setupFailureHelp(err)
+	if got == "Check your connection and start Try Omarchy again." {
+		t.Fatalf("preflight disk-full error got connection help: %q", got)
+	}
+	if !strings.Contains(got, "disk space") {
+		t.Fatalf("preflight disk-full help does not mention disk space: %q", got)
+	}
+}
+
 func TestGetWithSetupRetryStopsAfterBound(t *testing.T) {
 	configureSetupCancellation(false)
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {

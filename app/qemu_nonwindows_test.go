@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -65,6 +66,38 @@ func TestPrepareDiskPublishesCompleteFile(t *testing.T) {
 	}
 	if _, err := os.Stat(cfg.disk + ".part"); !os.IsNotExist(err) {
 		t.Fatalf("staging file remains after commit: %v", err)
+	}
+}
+
+func TestPrepareDiskRejectsInsufficientAllocatedSpace(t *testing.T) {
+	dir := t.TempDir()
+	guestDir := filepath.Join(dir, "guest")
+	vmDir := filepath.Join(dir, "vm")
+	if err := os.MkdirAll(guestDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(vmDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rootfs := filepath.Join(guestDir, "rootfs.ext4")
+	if err := os.WriteFile(rootfs, []byte("factory rootfs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	originalFree := diskFreeBytes
+	originalAllocated := allocatedFileBytes
+	diskFreeBytes = func(string) (int64, error) { return 2 << 30, nil }
+	allocatedFileBytes = func(string) (int64, error) { return 2 << 30, nil }
+	t.Cleanup(func() {
+		diskFreeBytes = originalFree
+		allocatedFileBytes = originalAllocated
+	})
+	cfg := &config{guestDir: guestDir, vmDir: vmDir, disk: filepath.Join(vmDir, "disk.raw")}
+	err := prepareDisk(cfg, 4*1024)
+	if err == nil || !strings.Contains(err.Error(), "preflighting writable disk storage") {
+		t.Fatalf("error = %v, want disk-space failure", err)
+	}
+	if _, statErr := os.Stat(cfg.disk + ".part"); !os.IsNotExist(statErr) {
+		t.Fatalf("disk staging file exists after preflight: %v", statErr)
 	}
 }
 
