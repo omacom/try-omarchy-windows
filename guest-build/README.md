@@ -37,6 +37,15 @@ What the patches change (all proven live on hardware 2026-08-28):
 - An explicit `tryomarchy.instant=1` kernel flag creates and finalizes a local
   trial account, shows its credentials once on the first desktop, and leaves
   boots without the flag on upstream's normal setup form
+- `tryomarchy.sshd=1` (set by the launcher when a host port forwards to guest
+  port 22) starts sshd for that boot only and authorizes the launcher-supplied
+  public key; sshd config and enablement stay untouched
+- `try-omarchy-export` archives home configuration, theme, and added packages
+  with a restore script for a real Omarchy install (docs/MIGRATION.md)
+- `tryomarchy.sharename=<base64>` links the -Share folder into the home
+  directory under its own name at login, and removes the link on launches
+  that share nothing
+- Overlay scripts have unprivileged behavioral tests under guest/tests
 
 If Arch has moved since the lock was written, refresh it first and review the diff:
 
