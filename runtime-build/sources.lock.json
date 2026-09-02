@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "name": "winq-emu-alpha10-source-r1",
+  "name": "winq-emu-alpha10-source-r2",
   "sourceDateEpoch": 1777269494,
   "qemu": {
     "repository": "https://github.com/cmspam/winq-emu-qemu.git",
@@ -8,7 +8,13 @@
     "upstream": "https://github.com/qemu/qemu.git",
     "baseTag": "v11.0.0",
     "baseCommit": "98b060da3a4f92b2a994ead5b16a87e783baf77c",
-    "license": "GPL-2.0"
+    "license": "GPL-2.0",
+    "patches": [
+      {
+        "file": "patches/qemu/0001-whpx-continue-when-nested-virtualization-is-refused.patch",
+        "sha256": "8dd4e1f9a3dcf6d09e01277262493ffa99ba66f11ba704742b1cd929b4088d57"
+      }
+    ]
   },
   "virglrenderer": {
     "repository": "https://github.com/cmspam/winq-emu-virglrenderer.git",

@@ -29,6 +29,7 @@ type config struct {
 	useGpu                   bool
 	audio                    string
 	memMiB                   int
+	irqchipOff               bool
 }
 
 type progressUI struct{}
@@ -150,6 +151,45 @@ func TestPrepareDiskQuarantinesLegacyPartialFile(t *testing.T) {
 	}
 	if string(data) != "partial" {
 		t.Fatalf("quarantined content = %q, want partial", data)
+	}
+}
+
+func TestBuildQemuArgsKeepsKernelIrqchipUnlessRefused(t *testing.T) {
+	for _, gpu := range []bool{true, false} {
+		cfg := &config{vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw",
+			diskFormat: "raw", memMiB: 4096, audio: "none", useGpu: gpu}
+		args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
+		if !strings.Contains(args, "-machine q35,accel=whpx -cpu") {
+			t.Fatalf("gpu=%v: default machine missing: %s", gpu, args)
+		}
+		cfg.irqchipOff = true
+		args = strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
+		if !strings.Contains(args, "-machine q35,accel=whpx,kernel-irqchip=off -cpu") {
+			t.Fatalf("gpu=%v: kernel-irqchip=off missing: %s", gpu, args)
+		}
+	}
+}
+
+func TestNestedVirtRefusedMatchesOnlyTheFatalForm(t *testing.T) {
+	cfg := &config{vmDir: t.TempDir()}
+	log := filepath.Join(cfg.vmDir, "qemu-stderr.log")
+	if nestedVirtRefused(cfg) {
+		t.Fatal("missing log reported a refusal")
+	}
+	fatal := "qemu-system-x86_64w.exe: WHPX: Failed to enable nested virtualization, hr=80370302\n" +
+		"qemu-system-x86_64w.exe: failed to initialize whpx: Invalid argument\n"
+	if err := os.WriteFile(log, []byte(fatal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !nestedVirtRefused(cfg) {
+		t.Fatal("fatal refusal not recognised")
+	}
+	patched := "qemu-system-x86_64w.exe: warning: WHPX: nested virtualization unavailable (hr=80370302), continuing without it\n"
+	if err := os.WriteFile(log, []byte(patched), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if nestedVirtRefused(cfg) {
+		t.Fatal("patched runtime warning treated as a refusal")
 	}
 }
 

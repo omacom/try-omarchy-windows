@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,9 +25,13 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 	} else if cfg.memMiB < 4096 {
 		hostmem = "2G"
 	}
+	machine := "q35,accel=whpx"
+	if cfg.irqchipOff {
+		machine += ",kernel-irqchip=off"
+	}
 	if cfg.useGpu {
 		args = append(args,
-			"-machine", "q35,accel=whpx", "-cpu", "host", "-smp", "6", "-m", mem,
+			"-machine", machine, "-cpu", "host", "-smp", "6", "-m", mem,
 			"-device", "virtio-vga-gl,blob=on,hostmem="+hostmem+",venus=on",
 			// The guest cursor is visible in the QEMU profile. Forcing SDL's host
 			// cursor as well produces two pointers that separate during motion.
@@ -39,7 +44,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		)
 	} else {
 		args = append(args,
-			"-machine", "q35,accel=whpx", "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes",
+			"-machine", machine, "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes",
 			"-smp", "6", "-m", mem,
 			"-vga", "none", "-device", "virtio-gpu-pci,id=gpu0",
 			"-display", sdlDisplay(false, cfg.hostCursor),
@@ -80,6 +85,18 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		args = append(args, "-full-screen")
 	}
 	return args
+}
+
+// nestedVirtRefused reports whether the current attempt's QEMU died because
+// the host advertised nested virtualization and then refused to enable it
+// for the partition (hr=80370302 on Meteor Lake laptops and hosts running
+// the full Hyper-V feature set). QEMU only asks for it with the kernel
+// irqchip, so the retry with kernel-irqchip=off sidesteps the request. The
+// source-built runtime also downgrades this to a warning with different
+// wording, so a patched runtime never matches here.
+func nestedVirtRefused(cfg *config) bool {
+	data, err := os.ReadFile(filepath.Join(cfg.vmDir, "qemu-stderr.log"))
+	return err == nil && bytes.Contains(data, []byte("Failed to enable nested virtualization"))
 }
 
 func sdlDisplay(gpu, hostCursor bool) string {
