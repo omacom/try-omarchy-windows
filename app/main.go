@@ -36,14 +36,17 @@ const (
 )
 
 type config struct {
-	dir, winqEmu, share                  string
-	fresh, fullscreen, noGpu, hostCursor bool
-	instant                              bool
-	guestDir, vmDir, disk                string
-	qemu                                 string
-	useGpu                               bool
-	audio                                string
-	memMiB                               int
+	dir, hostDir, payloadDir string
+	winqEmu, share           string
+	fresh, fullscreen, noGpu bool
+	hostCursor               bool
+	instant, portable        bool
+	guestDir, vmDir, disk    string
+	diskFormat               string
+	qemu                     string
+	useGpu                   bool
+	audio                    string
+	memMiB                   int
 }
 
 // pickGuestMem sizes the guest to the machine instead of demanding a fixed
@@ -133,6 +136,7 @@ func main() {
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed")
 	flag.BoolVar(&cfg.hostCursor, "host-cursor", false, "force the legacy Windows cursor over the guest")
 	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the trial account")
+	flag.BoolVar(&cfg.portable, "portable", false, "run entirely from data and payload folders beside the executable")
 	noUpdate := flag.Bool("no-update", false, "do not check for launcher or guest updates")
 	updateURL := flag.String("update-url", defaultUpdateURL, "authenticated update manifest URL")
 	release := flag.String("release", defaultReleaseURL,
@@ -161,33 +165,53 @@ func main() {
 	if *enableWhp {
 		os.Exit(runDismEnable())
 	}
-	if *applyLauncherUpdateFlag || *applyLauncherRollbackFlag {
-		if err := applyLauncherUpdate(cfg.dir, *updateWaitPID, *updateRestartArgs, *applyLauncherRollbackFlag); err != nil {
-			errorBox("Try Omarchy could not finish applying its update.\n\n" + err.Error())
-			os.Exit(1)
+	if cfg.portable {
+		self, err := os.Executable()
+		if err != nil {
+			fatal("Cannot find the portable launcher: %v", err)
 		}
-		return
-	}
-	restartArgs, err := encodeRestartArgs(os.Args[1:])
-	if err != nil {
-		fatal("Could not preserve launcher arguments for updates: %v", err)
-	}
-	if rollingBack, recoverErr := recoverLauncherUpdate(cfg.dir, restartArgs); recoverErr != nil {
-		logf("launcher update recovery: %v", recoverErr)
-	} else if rollingBack {
-		return
+		root := filepath.Dir(self)
+		cfg.dir = filepath.Join(root, "data")
+		cfg.payloadDir = filepath.Join(root, "payload")
+		// WHP is a property of this Windows host, so its restart marker must
+		// not travel to another PC with the USB.
+		cfg.hostDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "TryOmarchy", "portable-host")
+	} else {
+		cfg.hostDir = cfg.dir
+		if *applyLauncherUpdateFlag || *applyLauncherRollbackFlag {
+			if err := applyLauncherUpdate(cfg.dir, *updateWaitPID, *updateRestartArgs, *applyLauncherRollbackFlag); err != nil {
+				errorBox("Try Omarchy could not finish applying its update.\n\n" + err.Error())
+				os.Exit(1)
+			}
+			return
+		}
+		restartArgs, err := encodeRestartArgs(os.Args[1:])
+		if err != nil {
+			fatal("Could not preserve launcher arguments for updates: %v", err)
+		}
+		if rollingBack, recoverErr := recoverLauncherUpdate(cfg.dir, restartArgs); recoverErr != nil {
+			logf("launcher update recovery: %v", recoverErr)
+		} else if rollingBack {
+			return
+		}
 	}
 
 	cfg.guestDir = filepath.Join(cfg.dir, "guest")
 	cfg.vmDir = filepath.Join(cfg.dir, "vm")
+	cfg.diskFormat = "raw"
 	cfg.disk = filepath.Join(cfg.vmDir, "disk.raw")
+	if cfg.portable {
+		cfg.diskFormat = "qcow2"
+		cfg.disk = filepath.Join(cfg.vmDir, "disk.qcow2")
+	}
 	if _, err := rollbackPendingPayloadUpdates(cfg.dir); err != nil {
 		fatal("Could not recover the previous Omarchy files after an interrupted update: %v", err)
 	}
-	completeAtStart := completeInstallExists(cfg.dir)
+	completeAtStart := completeInstallExists(cfg.dir, filepath.Base(cfg.disk))
 	needsProvisioning := cfg.fresh || !completeAtStart
 	configureSetupCancellation(!completeAtStart)
 	os.MkdirAll(cfg.vmDir, 0o755)
+	os.MkdirAll(cfg.hostDir, 0o755)
 	logFile, _ = os.OpenFile(filepath.Join(cfg.vmDir, "shell.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if logFile != nil {
 		// A windowsgui process has no console: an unhandled panic (any
@@ -211,8 +235,7 @@ func main() {
 	// previous run must not be mistaken for this one's.
 	os.Remove(filepath.Join(cfg.vmDir, "qemu-stderr.log"))
 
-	if !*noUpdate && normalizedRelease(*release) == defaultReleaseURL &&
-		normalizedSHA256(*sumsSHA256) == defaultSumsSHA256 {
+	if automaticUpdatesEnabled(cfg, *noUpdate, *release, *sumsSHA256) {
 		checkDue := *updateURL != defaultUpdateURL || updateCheckDue(cfg.dir, time.Now())
 		if checkDue {
 			_ = recordUpdateCheck(cfg.dir, time.Now())
@@ -242,12 +265,15 @@ func main() {
 	const qemuExe = "qemu-system-x86_64w.exe"
 	stockQemu := `C:\Program Files\qemu\` + qemuExe
 	_, stockErr := os.Stat(stockQemu)
-	haveStock := stockErr == nil
+	haveStock := stockErr == nil && !cfg.portable
 	gpuRoot := ""
-	if _, err := os.Stat(filepath.Join(cfg.winqEmu, "bin", qemuExe)); err == nil {
-		// A user-managed WINQ-EMU install stays under the user's control. Only
-		// the bundled runtime under cfg.dir participates in automatic updates.
-		gpuRoot = cfg.winqEmu
+	if !cfg.portable {
+		_, err := os.Stat(filepath.Join(cfg.winqEmu, "bin", qemuExe))
+		if err == nil {
+			// A user-managed WINQ-EMU install stays under the user's control. Only
+			// the bundled runtime under cfg.dir participates in automatic updates.
+			gpuRoot = cfg.winqEmu
+		}
 	}
 	if gpuRoot == "" && !(cfg.noGpu && haveStock) {
 		root, err := ensureRuntime(cfg, *runtimeRelease, *runtimeSumsSHA256)
@@ -255,8 +281,11 @@ func main() {
 			if finishSetupCancellation(cfg, err) {
 				return
 			}
-			logf("runtime download failed: %v", err)
+			logf("runtime setup failed: %v", err)
 			if !haveStock {
+				if cfg.portable {
+					fatal("Setting up the portable graphics engine failed: %v\n\nThe USB payload may be missing or damaged.", err)
+				}
 				fatal("Downloading the graphics engine failed: %v\n\n%s", err, setupFailureHelp(err))
 			}
 		} else {
@@ -270,10 +299,14 @@ func main() {
 		cfg.qemu = stockQemu
 	}
 
-	// First run: the exe is the stub - fetch the guest image itself.
+	// First run: fetch the guest image, or copy and unpack the authenticated
+	// local payload. Portable mode never falls back to the network.
 	if err := ensureGuest(cfg, *release, *sumsSHA256); err != nil {
 		if finishSetupCancellation(cfg, err) {
 			return
+		}
+		if cfg.portable {
+			fatal("Setting up portable Omarchy failed: %v\n\nThe USB payload may be missing or damaged.", err)
 		}
 		fatal("Setting up the Omarchy image failed: %v\n\n%s", err, setupFailureHelp(err))
 	}
@@ -316,7 +349,11 @@ func main() {
 	if finishSetupCancellation(cfg, checkSetupCancelled()) {
 		return
 	}
-	offerLauncherShortcuts(cfg.dir)
+	// A shortcut to a copied portable executable would lose its sibling
+	// payload and defeat portability. The USB launcher remains the entrypoint.
+	if !cfg.portable {
+		offerLauncherShortcuts(cfg.dir)
+	}
 	if finishSetupCancellation(cfg, checkSetupCancelled()) {
 		return
 	}

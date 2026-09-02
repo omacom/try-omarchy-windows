@@ -86,7 +86,7 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 	ui := getUI()
 	client := newDownloadClient()
 
-	sums, err := releaseSums(client, release, sumsSHA256)
+	sums, err := releaseSumsForConfig(cfg, client, release, sumsSHA256)
 	if err != nil {
 		return fmt.Errorf("authenticating SHA256SUMS: %w", err)
 	}
@@ -101,9 +101,16 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 			return err
 		}
 		dest := filepath.Join(cfg.guestDir, name)
-		if err := ensureVerifiedDownload(client, normalizedRelease(release)+"/"+name, dest, sums[name],
-			fmt.Sprintf("Downloading Omarchy (%d of %d)...", i+1, len(downloadedGuestArtifacts)+1), ui); err != nil {
-			return fmt.Errorf("preparing %s: %w", name, err)
+		status := fmt.Sprintf("Downloading Omarchy (%d of %d)...", i+1, len(downloadedGuestArtifacts)+1)
+		var installErr error
+		if cfg.portable {
+			status = fmt.Sprintf("Checking portable Omarchy (%d of %d)...", i+1, len(downloadedGuestArtifacts)+1)
+			installErr = ensureVerifiedPortableCopy(filepath.Join(cfg.payloadDir, name), dest, sums[name], status, ui)
+		} else {
+			installErr = ensureVerifiedDownload(client, normalizedRelease(release)+"/"+name, dest, sums[name], status, ui)
+		}
+		if installErr != nil {
+			return fmt.Errorf("preparing %s: %w", name, installErr)
 		}
 	}
 	artifactSizes, err := readGuestArtifactSizes(filepath.Join(cfg.guestDir, "guest-manifest.json"), sums)
@@ -112,6 +119,11 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 	}
 
 	zst := filepath.Join(cfg.guestDir, "rootfs.ext4.zst")
+	removeZst := true
+	if cfg.portable {
+		zst = filepath.Join(cfg.payloadDir, "rootfs.ext4.zst")
+		removeZst = false
+	}
 	rootfs := filepath.Join(cfg.guestDir, "rootfs.ext4")
 	if _, err := os.Lstat(rootfs); err == nil {
 		ui.setStatus("Checking the cached Omarchy system...")
@@ -135,7 +147,16 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 		if err := requireDiskSpace(cfg.guestDir, required); err != nil {
 			return fmt.Errorf("preflighting Omarchy storage: %w", err)
 		}
-		if err := ensureVerifiedDownload(client, normalizedRelease(release)+"/rootfs.ext4.zst", zst,
+		if cfg.portable {
+			ui.setStatus("Checking the portable Omarchy system...")
+			ok, err := verifyFileSHA256(zst, sums["rootfs.ext4.zst"], ui.setProgress)
+			if err != nil {
+				return fmt.Errorf("checking rootfs.ext4.zst: %w", err)
+			}
+			if !ok {
+				return fmt.Errorf("checksum mismatch for rootfs.ext4.zst")
+			}
+		} else if err := ensureVerifiedDownload(client, normalizedRelease(release)+"/rootfs.ext4.zst", zst,
 			sums["rootfs.ext4.zst"], fmt.Sprintf("Downloading Omarchy (%d of %d)...",
 				len(downloadedGuestArtifacts)+1, len(downloadedGuestArtifacts)+1), ui); err != nil {
 			return fmt.Errorf("preparing rootfs.ext4.zst: %w", err)
@@ -151,7 +172,9 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 	if err := writeInstallReceipt(cfg.guestDir, release, sumsSHA256, installedGuestArtifacts, sums); err != nil {
 		return fmt.Errorf("recording verified install state: %w", err)
 	}
-	os.Remove(zst) // 1.4 GB nobody needs twice
+	if removeZst {
+		os.Remove(zst) // 1.4 GB nobody needs twice
+	}
 	ui.setStatus("Ready - starting Omarchy...")
 	ui.setProgress(1, 1)
 	return sleepDuringSetup(700 * time.Millisecond)
@@ -167,6 +190,26 @@ func releaseVersion(release string) string {
 		return version
 	}
 	return currentVersion
+}
+
+func ensureVerifiedPortableCopy(src, dest, wantSum, status string, ui *progressUI) error {
+	if _, err := os.Lstat(dest); err == nil {
+		ui.setStatus("Checking cached %s...", filepath.Base(dest))
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	ok, err := verifyFileSHA256(dest, wantSum, ui.setProgress)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
+	if err := removeCachedFile(dest); err != nil {
+		return err
+	}
+	ui.setStatus("%s", status)
+	return copyPortableArtifact(src, dest, wantSum, ui.setProgress)
 }
 
 func ensureVerifiedDownload(client *http.Client, url, dest, wantSum, status string, ui *progressUI) error {

@@ -88,11 +88,11 @@ func (r setupReader) Read(p []byte) (int, error) {
 	return r.r.Read(p)
 }
 
-func completeInstallExists(dir string) bool {
+func completeInstallExists(dir, diskName string) bool {
 	for _, name := range []string{
 		filepath.Join("guest", "build-spec.json"),
 		filepath.Join("guest", "rootfs.ext4"),
-		filepath.Join("vm", "disk.raw"),
+		filepath.Join("vm", diskName),
 	} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		if err != nil || !info.Mode().IsRegular() {

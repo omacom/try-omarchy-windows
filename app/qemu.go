@@ -47,7 +47,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		)
 	}
 	args = append(args,
-		"-drive", "file="+cfg.disk+",format=raw,if=virtio",
+		"-drive", "file="+cfg.disk+",format="+cfg.diskFormat+",if=virtio",
 		"-kernel", filepath.Join(cfg.guestDir, "vmlinuz-linux"),
 		"-initrd", filepath.Join(cfg.guestDir, "initramfs-linux.img"),
 		"-append", cmdline,
@@ -111,6 +111,9 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 		if err := os.Remove(cfg.disk); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("discarding the existing disk: %w", err)
 		}
+	}
+	if cfg.portable {
+		return preparePortableDisk(cfg, expandedBytes)
 	}
 	if info, err := os.Stat(cfg.disk); err == nil {
 		if !info.Mode().IsRegular() {
@@ -184,5 +187,51 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 		return err
 	}
 	complete = true
+	return nil
+}
+
+// preparePortableDisk publishes a compact QCOW2 overlay through a sibling
+// staging file. Its backing path is relative so drive-letter changes do not
+// break it, and an interrupted creation never appears under the final name.
+func preparePortableDisk(cfg *config, expandedBytes int64) error {
+	backing := filepath.ToSlash(filepath.Join("..", "guest", "rootfs.ext4"))
+	ok, err := qcow2OverlayMatches(cfg.disk, backing, expandedBytes)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
+	if info, statErr := os.Lstat(cfg.disk); statErr == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("disk path is not a regular file: %s", cfg.disk)
+		}
+		quarantine := fmt.Sprintf("%s.incomplete-%d", cfg.disk, time.Now().UnixNano())
+		if err := os.Rename(cfg.disk, quarantine); err != nil {
+			return fmt.Errorf("quarantining incomplete disk: %w", err)
+		}
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+	tmp := cfg.disk + ".part"
+	if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing stale disk staging file: %w", err)
+	}
+	if err := createQcow2Overlay(tmp, backing, expandedBytes); err != nil {
+		return fmt.Errorf("creating compact USB disk: %w", err)
+	}
+	published := false
+	defer func() {
+		if !published {
+			os.Remove(tmp)
+		}
+	}()
+	if err := checkSetupCancelled(); err != nil {
+		return err
+	}
+	if err := renamePortableFileWithRetry(tmp, cfg.disk); err != nil {
+		return err
+	}
+	published = true
 	return nil
 }
