@@ -29,6 +29,8 @@ type config struct {
 	useGpu                   bool
 	audio                    string
 	memMiB                   int
+	forwards   []portForward
+	sshKey     string
 	irqchipOff               bool
 }
 
@@ -190,6 +192,20 @@ func TestNestedVirtRefusedMatchesOnlyTheFatalForm(t *testing.T) {
 	}
 	if nestedVirtRefused(cfg) {
 		t.Fatal("patched runtime warning treated as a refusal")
+	}
+}
+
+func TestBuildQemuArgsForwardsPortsOnLoopback(t *testing.T) {
+	cfg := &config{vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw", diskFormat: "raw",
+		memMiB: 4096, audio: "none", forwards: []portForward{{"tcp", 2222, 22}}}
+	args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
+	if !strings.Contains(args, "-netdev user,id=n0,hostfwd=tcp:127.0.0.1:2222-:22 ") {
+		t.Fatalf("forward missing from QEMU args: %s", args)
+	}
+	cfg.forwards = nil
+	args = strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
+	if !strings.Contains(args, "-netdev user,id=n0 ") {
+		t.Fatalf("plain netdev missing: %s", args)
 	}
 }
 

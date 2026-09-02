@@ -77,6 +77,35 @@ supports byte ranges, then the complete file is SHA256-verified before use.
 Custom release URLs must be paired with the
 trusted manifest digest via `-sums-sha256`.
 
+### SSH and port forwarding
+
+Nothing listens by default. To reach Omarchy from Windows tools, forward a
+loopback port:
+
+```
+TryOmarchy.exe -ssh 2222
+```
+
+That forwards `127.0.0.1:2222` to Omarchy's sshd for this session only and
+asks the guest to start sshd for that boot. Nothing on your network can reach
+it. Your `~/.ssh/id_ed25519.pub` (or `id_ecdsa.pub`, `id_rsa.pub`) is authorized
+for the Omarchy account automatically; pass `-ssh-key PATH` to pick another
+public key, or use none and log in with the password you chose in Omarchy.
+Then:
+
+```
+ssh -p 2222 <omarchy-user>@127.0.0.1
+```
+
+The same alias works for `scp`, Git, and VS Code Remote SSH. Other services
+use `-forward tcp:8080:80` or `-forward udp:5000:5000` (repeatable); the guest
+service must listen on its network interface, not only on its own localhost.
+From Omarchy, `10.0.2.2:<port>` reaches a service on Windows without any
+mapping. Key-only or permanent SSH is Omarchy's own choice: run
+`omarchy-setup-security-sshd` inside the guest. A fresh disk (`-fresh`) gets a
+new host key, so remove the old `[127.0.0.1]:2222` entry from `known_hosts`
+if ssh complains.
+
 ### Offline portable mode
 
 The launcher also accepts `-portable` for an experimental, persistent USB
@@ -109,7 +138,7 @@ A live USB means rebooting away from your machine and forgetting everything on s
 
 ### What are the instant trial credentials?
 
-The local trial account is named `omarchy` and its lock-screen password is `omarchy`. Sudo does not ask for a password in instant trial mode. Try Omarchy does not enable SSH or expose inbound network ports.
+The local trial account is named `omarchy` and its lock-screen password is `omarchy`. Sudo does not ask for a password in instant trial mode. Try Omarchy does not enable SSH or expose inbound network ports unless you ask for a forward with `-ssh` or `-forward`, and those bind to `127.0.0.1` only.
 
 ### How do I remove Try Omarchy?
 

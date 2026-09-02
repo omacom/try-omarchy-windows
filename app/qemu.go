@@ -57,7 +57,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		"-initrd", filepath.Join(cfg.guestDir, "initramfs-linux.img"),
 		"-append", cmdline,
 		"-device", "virtio-keyboard-pci", "-device", "virtio-tablet-pci",
-		"-device", "virtio-net-pci,netdev=n0", "-netdev", "user,id=n0",
+		"-device", "virtio-net-pci,netdev=n0", "-netdev", netdevArg(cfg.forwards),
 		"-device", "virtio-rng-pci",
 		// The backend must be explicit: with no audiodev the guest's PipeWire
 		// stalls on virtio-snd control messages and the whole session hangs.

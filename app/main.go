@@ -50,6 +50,8 @@ type config struct {
 	// kernel-irqchip=off keeps WHPX from requesting nested virtualization,
 	// which some hosts advertise and then refuse (issue #19). Set by the
 	// startup retry, never by a flag.
+	forwards   []portForward
+	sshKey     string
 	irqchipOff bool
 }
 
@@ -141,6 +143,10 @@ func main() {
 	flag.BoolVar(&cfg.hostCursor, "host-cursor", false, "force the legacy Windows cursor over the guest")
 	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the trial account")
 	flag.BoolVar(&cfg.portable, "portable", false, "run entirely from data and payload folders beside the executable")
+	var forwards forwardList
+	flag.Var(&forwards, "forward", "forward a Windows loopback port into Omarchy, as tcp:2222:22 or 8080:80 (repeatable)")
+	sshPort := flag.Int("ssh", 0, "forward this Windows loopback port to Omarchy's sshd and start sshd for the session")
+	sshKeyPath := flag.String("ssh-key", "", "public key to authorize for the Omarchy account (default: your ~/.ssh/id_*.pub when -ssh is used)")
 	noUpdate := flag.Bool("no-update", false, "do not check for launcher or guest updates")
 	updateURL := flag.String("update-url", defaultUpdateURL, "authenticated update manifest URL")
 	release := flag.String("release", defaultReleaseURL,
@@ -314,6 +320,31 @@ func main() {
 		}
 		fatal("Setting up the Omarchy image failed: %v\n\n%s", err, setupFailureHelp(err))
 	}
+	if *sshPort != 0 {
+		if *sshPort < 1 || *sshPort > 65535 {
+			fatal("-ssh needs a Windows port between 1 and 65535.")
+		}
+		if err := forwards.add(portForward{proto: "tcp", hostPort: *sshPort, guestPort: 22}); err != nil {
+			fatal("%v", err)
+		}
+	}
+	cfg.forwards = forwards
+	if sshRequested(cfg.forwards) {
+		if *sshKeyPath != "" {
+			key, err := loadPublicKey(*sshKeyPath)
+			if err != nil {
+				fatal("Cannot use the SSH public key: %v", err)
+			}
+			cfg.sshKey = key
+		} else if home, err := os.UserHomeDir(); err == nil {
+			cfg.sshKey = defaultPublicKey(home)
+		}
+		if cfg.sshKey == "" {
+			logf("ssh requested without a public key - password login only")
+		}
+	} else if *sshKeyPath != "" {
+		fatal("-ssh-key only makes sense with -ssh or a -forward to Omarchy port 22.")
+	}
 	if cfg.share != "" {
 		if st, err := os.Stat(cfg.share); err != nil || !st.IsDir() {
 			fatal("Share folder not found: %s", cfg.share)
@@ -340,6 +371,7 @@ func main() {
 	if cfg.instant {
 		cmdline += " tryomarchy.instant=1"
 	}
+	cmdline += sshCmdline(cfg.forwards, cfg.sshKey)
 
 	if err := prepareDisk(cfg, spec.Runtime.Storage.ExpandedSizeMiB); err != nil {
 		if finishSetupCancellation(cfg, err) {
