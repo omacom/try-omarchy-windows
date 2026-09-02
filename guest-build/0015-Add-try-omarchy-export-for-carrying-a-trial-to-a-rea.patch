@@ -1,4 +1,4 @@
-From 2e595966dfbc0885e72d9a360abd37cc92321579 Mon Sep 17 00:00:00 2001
+From 25739168fe018e3fbd5a1473cf0201157d3839ae Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Wed, 2 Sep 2026 13:57:33 -0400
 Subject: [PATCH] Add try-omarchy-export for carrying a trial to a real install
@@ -9,17 +9,17 @@ AUR lists), with a restore.sh that replays them on a bare-metal Omarchy
 install. Writes to the Windows share when mounted. Keys, password stores,
 browser profiles, and caches stay out.
 ---
- .../usr/local/bin/try-omarchy-export          | 143 ++++++++++++++++++
+ .../usr/local/bin/try-omarchy-export          | 157 ++++++++++++++++++
  guest/tests/verify.py                         |  10 ++
- 2 files changed, 153 insertions(+)
+ 2 files changed, 167 insertions(+)
  create mode 100755 guest/factory-overlay/usr/local/bin/try-omarchy-export
 
 diff --git a/guest/factory-overlay/usr/local/bin/try-omarchy-export b/guest/factory-overlay/usr/local/bin/try-omarchy-export
 new file mode 100755
-index 0000000..f259665
+index 0000000..cca469b
 --- /dev/null
 +++ b/guest/factory-overlay/usr/local/bin/try-omarchy-export
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,157 @@
 +#!/bin/bash
 +# Export the parts of this trial worth carrying to a real Omarchy install:
 +# configuration under the home directory, the current theme, and the packages
@@ -91,15 +91,17 @@ index 0000000..f259665
 +  theme=$(<"$HOME/.local/state/omarchy/current/theme.name")
 +elif command -v omarchy-theme-current >/dev/null; then
 +  theme=$(omarchy-theme-current 2>/dev/null || true)
++  theme=${theme//$'\n'/}
 +fi
 +printf '%s\n' "$theme" >"$stage/theme"
 +
 +# Packages the user added beyond the factory image, split into the ones the
 +# repositories provide and the ones that came from the AUR.
-+pacman -Qqe | LC_ALL=C sort >"$work/explicit"
++pacman -Qqe 2>/dev/null | LC_ALL=C sort >"$work/explicit"
 +awk '{print $1}' "$factory_lock" | LC_ALL=C sort >"$work/factory"
 +LC_ALL=C comm -23 "$work/explicit" "$work/factory" >"$work/added"
-+pacman -Qqm | LC_ALL=C sort >"$work/foreign"
++# pacman exits nonzero when nothing is foreign; that is the common case here.
++{ pacman -Qqm 2>/dev/null || true; } | LC_ALL=C sort >"$work/foreign"
 +LC_ALL=C comm -23 "$work/added" "$work/foreign" >"$stage/packages/repo.txt"
 +LC_ALL=C comm -12 "$work/added" "$work/foreign" >"$stage/packages/aur.txt"
 +
@@ -126,17 +128,29 @@ index 0000000..f259665
 +backup="$HOME/.omarchy-restore-backup/$(date +%Y%m%d-%H%M%S)"
 +mkdir -p "$backup"
 +
++# Dotfiles are replaced as units. ~/.config and ~/.local/share are merged one
++# application directory at a time, so the real install keeps configuration
++# for apps the trial never touched.
++entries() {
++  find "$here/home" -mindepth 1 -maxdepth 1 ! -name .config ! -name .local -print0
++  [[ -d $here/home/.config ]] && find "$here/home/.config" -mindepth 1 -maxdepth 1 -print0
++  [[ -d $here/home/.local/share ]] && find "$here/home/.local/share" -mindepth 1 -maxdepth 1 -print0
++  [[ -e $here/home/.local/bin ]] && printf '%s\0' "$here/home/.local/bin"
++  return 0
++}
++
 +echo "Restoring configuration into $HOME (backups in $backup)"
 +while IFS= read -r -d '' path; do
 +  relative=${path#"$here/home/"}
 +  target="$HOME/$relative"
-+  if [[ -e $target ]]; then
++  if [[ -e $target || -L $target ]]; then
 +    mkdir -p "$backup/$(dirname "$relative")"
 +    mv "$target" "$backup/$relative"
 +  fi
 +  mkdir -p "$(dirname "$target")"
 +  cp -a "$path" "$target"
-+done < <(find "$here/home" -mindepth 1 -maxdepth 2 -print0)
++  echo "  restored $relative"
++done < <(entries)
 +
 +if [[ -s $here/packages/repo.txt ]]; then
 +  echo "Installing repository packages"
