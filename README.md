@@ -1,4 +1,8 @@
-# Try Omarchy for Windows
+<p align="center">
+  <img src="app/OmarchyIcon.svg" width="128" height="128" alt="Try Omarchy logo">
+</p>
+
+<h1 align="center">Try Omarchy for Windows</h1>
 
 Run the full [Omarchy](https://omarchy.org) desktop in a window on Windows 11. No VMware, no VirtualBox, no dual boot: QEMU on the Windows Hypervisor Platform (WHPX), a prebuilt Arch image with Omarchy baked in, and the desktop rendered on your actual GPU (virgl + Venus Vulkan via [WINQ-EMU](https://github.com/cmspam/winq-emu)) with CPU rendering as the automatic fallback. No partitions, no bootloader, no changes to your Windows install: everything lives in one folder, `%LOCALAPPDATA%\TryOmarchy`, and deleting that folder is the uninstall.
 
@@ -9,6 +13,11 @@ Download, boot, Hyprland.
 ![Live capture on the Ryzen 5 test laptop: fastfetch, the Omarchy menu, and a screensaver inside the Try Omarchy window](docs/images/demo.gif)
 
 **Status: working end to end on real hardware.** One app switches on Windows' virtualization, downloads the GPU runtime and the image, boots, and supervises; the desktop renders on the GPU and falls back to CPU rendering automatically. Landing page: [tryomarchy.com](https://tryomarchy.com). See the [changelog](CHANGELOG.md) for release history.
+
+Try Omarchy is a community project and is not official or affiliated with
+Omarchy. The Omarchy mark in the app icon is sourced from the
+[official Omarchy brand kit](https://omarchy.org/brand/) and remains subject to
+Omarchy's trademark rights.
 
 ## What works today
 

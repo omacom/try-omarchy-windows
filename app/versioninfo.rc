@@ -1,5 +1,7 @@
 // Windows resources for TryOmarchy.exe: the app icon and the version block that
 // Explorer, Task Manager and the UAC consent prompt read.
+// icon.ico is rendered from OmarchyIcon.svg, which preserves the official mark
+// from https://omarchy.org/brand/ inside the project's existing app-icon tile.
 //
 // Regenerate the committed object after editing this file (needs llvm-rc and
 // llvm-cvtres from the LLVM toolchain):

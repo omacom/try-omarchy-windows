@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+  width="1024" height="1024" viewBox="0 0 1024 1024"
+  role="img" aria-labelledby="title desc">
+  <title id="title">Try Omarchy app icon</title>
+  <desc id="desc">The official Omarchy logo, centered on a dark rounded tile.</desc>
+  <rect x="100" y="100" width="824" height="824" rx="191"
+    fill="#151912" stroke="#9ECE6A" stroke-opacity="0.28" stroke-width="4"/>
+  <!-- Official mark from omacom/omarchy-site@70d4015 (SHA-256 4d00403e...),
+       preserved without recoloring. See https://omarchy.org/brand/. -->
+  <g transform="translate(212 212) scale(0.5)">
+    <path clip-rule="evenodd"
+      d="m1200 1200h-480v-80h400v-1040h-479.996v160h-400v720h720v-720h-80v-80h159.996v880h-400v160h-640v-1200h1200zm-1120-80h480v-80h-400l.004-400h-80.004zm0-560h80.004v-400h400v-80h-480.004z"
+      fill="#9ece6a" fill-rule="evenodd"/>
+  </g>
+</svg>

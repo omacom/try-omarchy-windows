@@ -11,8 +11,8 @@ import (
 	"unsafe"
 )
 
-// The first-run splash: a borderless dark panel in the Omarchy look - pixel-art
-// O, the wordmark, a live status line and a slim green progress bar. The
+// The first-run splash: a borderless dark panel in the Omarchy look - the app
+// icon, the wordmark, a live status line and a slim green progress bar. The
 // download goroutine writes atomics; a WM_TIMER repaints from them. Esc or
 // closing cancels the setup (nothing else is running at that point). Drag
 // anywhere moves it.
@@ -38,6 +38,8 @@ var (
 	procEndPaint             = user32.NewProc("EndPaint")
 	procFillRect             = user32.NewProc("FillRect")
 	procLoadIconW            = user32.NewProc("LoadIconW")
+	procLoadImageW           = user32.NewProc("LoadImageW")
+	procDrawIconEx           = user32.NewProc("DrawIconEx")
 	procCreateFontW          = syscall.NewLazyDLL("gdi32.dll").NewProc("CreateFontW")
 	procCreateSolidBrush     = syscall.NewLazyDLL("gdi32.dll").NewProc("CreateSolidBrush")
 	procSetTextColor         = syscall.NewLazyDLL("gdi32.dll").NewProc("SetTextColor")
@@ -81,6 +83,9 @@ const (
 	promptOption1ID   = 1002
 	promptOption2ID   = 1003
 	promptContinueID  = 1004
+	imageIcon         = 1
+	lrShared          = 0x8000
+	diNormal          = 0x0003
 
 	// The Omarchy look (Tokyo Night-ish, matching the boot splash). COLORREF
 	// is 0x00BBGGRR.
@@ -198,28 +203,13 @@ func (ui *progressUI) confirmCancel(hCancel uintptr) {
 	procSendMessageW.Call(hCancel, wmSettext, 0, uintptr(unsafe.Pointer(t)))
 }
 
-// pixelO returns the cells of the chunky logo-style O: a 10x12 ring, sides 3
-// cells thick, top/bottom 2, notched corners (same design as the app icon).
-func pixelO() [][2]int32 {
-	var cells [][2]int32
-	for cx := int32(0); cx < 10; cx++ {
-		for cy := int32(0); cy < 12; cy++ {
-			onRing := cx < 3 || cx >= 7 || cy < 2 || cy >= 10
-			notch := (cx == 0 || cx == 9) && (cy == 0 || cy == 11)
-			if onRing && !notch {
-				cells = append(cells, [2]int32{cx, cy})
-			}
-		}
-	}
-	return cells
-}
-
 func (ui *progressUI) run() {
 	runtime.LockOSThread()
 	type iccex struct{ size, icc uint32 }
 	ic := iccex{8, iccProgress}
 	procInitCommonControlsEx.Call(uintptr(unsafe.Pointer(&ic)))
 	hInst, _, _ := procGetModuleHandleW.Call(0)
+	brandIcon, _, _ := procLoadImageW.Call(hInst, 1, imageIcon, 96, 96, lrShared)
 
 	bgBrush, _, _ := procCreateSolidBrush.Call(colBg)
 	greenBrush, _, _ := procCreateSolidBrush.Call(colGreen)
@@ -286,16 +276,14 @@ func (ui *progressUI) run() {
 		procSetWindowPos.Call(hwnd, hwndNotTopmost, 0, 0, 0, 0, swpNoSize|swpNoMove|swpShowWindow)
 	}
 
-	// Pixel O geometry: cell 8px at (40, 64).
 	const (
-		oCell      = 8
-		oX         = 40
-		oY         = 64
+		iconSize   = 96
+		iconX      = 40
+		iconY      = 64
 		windowW    = 520
 		windowH    = 374
 		sideMargin = 40
 	)
-	oCells := pixelO()
 	barRect := [4]int32{sideMargin, 204, windowW - sideMargin, 210}
 
 	wndProc := syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
@@ -339,9 +327,8 @@ func (ui *progressUI) run() {
 		case wmPaint:
 			var ps [16]uintptr // PAINTSTRUCT is 72 bytes on x64; overshoot is fine
 			hdc, _, _ := procBeginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
-			for _, c := range oCells {
-				r := [4]int32{oX + c[0]*oCell, oY + c[1]*oCell, oX + (c[0]+1)*oCell, oY + (c[1]+1)*oCell}
-				procFillRect.Call(hdc, uintptr(unsafe.Pointer(&r)), greenBrush)
+			if brandIcon != 0 {
+				procDrawIconEx.Call(hdc, iconX, iconY, brandIcon, iconSize, iconSize, 0, 0, diNormal)
 			}
 			// Self-drawn slim progress bar: no classic-theme border, our colors.
 			if promptKind == setupPromptNone {
