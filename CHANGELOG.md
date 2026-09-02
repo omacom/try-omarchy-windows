@@ -8,6 +8,7 @@
 - Shipped yay and the base-devel toolchain in the guest image, so Omarchy's AUR install and update flows work out of the box.
 - Updated the guest image to Omarchy 4.0.2, a security release covering sshd hardening, browser policy directories, sudoers tightening, and signed packages from the Omarchy repository. The instant trial account follows upstream's new rule for the input group.
 - Added loopback-only port forwarding into Omarchy (`-forward tcp:8080:80`) and an opt-in SSH preset (`-ssh 2222`) that starts sshd for that session and authorizes your public key for the Omarchy account. Nothing listens unless asked, and nothing is reachable from the network.
+- Added `try-omarchy-export` inside the guest: one archive with your configuration, theme, and added packages plus a restore script for a real Omarchy install. See docs/MIGRATION.md.
 - Fixed screen recording, which never started because the recorder was missing from the image, and shipped the other tools Omarchy's keybindings and menus expect: the screenshot editor, OCR and QR capture, emoji and clipboard paste, man pages, the calculator, writer and video trimmer, Herdr, and the screen-share picker.
 
 ## v0.0.8-preview - 2026-08-30

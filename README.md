@@ -106,6 +106,15 @@ mapping. Key-only or permanent SSH is Omarchy's own choice: run
 new host key, so remove the old `[127.0.0.1]:2222` entry from `known_hosts`
 if ssh complains.
 
+### Taking your setup to a real Omarchy install
+
+Inside Omarchy, run `try-omarchy-export`. It writes one archive with your
+configuration, theme, and the packages you added, to the shared Windows folder
+when one is mounted (`-Share`) or to your home folder otherwise. On the real
+install, extract it and run the `restore.sh` inside. Keys, password stores,
+and browser profiles are deliberately left out. See
+[`docs/MIGRATION.md`](docs/MIGRATION.md).
+
 ### Offline portable mode
 
 The launcher also accepts `-portable` for an experimental, persistent USB
