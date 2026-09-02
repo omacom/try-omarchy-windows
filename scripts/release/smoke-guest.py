@@ -14,6 +14,24 @@ from pathlib import Path
 
 
 SUCCESS = b"TRYOMARCHY_SMOKE:omarchy:instant-trial"
+# Facts the built image must satisfy, checked from inside the booted guest
+# and reported on the serial console as TRYOMARCHY_FACT:<name>:<value>.
+FACT_CHECKS = {
+    "yay": "pacman -Q yay >/dev/null 2>&1 && echo present || echo missing",
+    "recorder": "pacman -Q gpu-screen-recorder >/dev/null 2>&1 && echo present || echo missing",
+    "foreign": "pacman -Qem 2>/dev/null | wc -l",
+    "sshd": "systemctl is-active sshd 2>/dev/null || true",
+    "omarchy-repo-signed": "grep -A2 '^\\[omarchy\\]' /etc/pacman.conf | grep -q TrustAll && echo no || echo yes",
+    "input-group": "id -nG | tr ' ' '\\n' | grep -qx input && echo yes || echo no",
+}
+EXPECTED_FACTS = {
+    "yay": "present",
+    "recorder": "present",
+    "foreign": "0",
+    "sshd": "inactive",
+    "omarchy-repo-signed": "yes",
+    "input-group": "no",
+}
 
 
 def main() -> None:
@@ -103,7 +121,17 @@ def main() -> None:
 
                 if SUCCESS in transcript:
                     process.wait(timeout=90)
+                    facts = {}
+                    for line in bytes(transcript).decode("utf-8", errors="replace").splitlines():
+                        line = line.strip()
+                        if line.startswith("TRYOMARCHY_FACT:"):
+                            _, name, value = line.split(":", 2)
+                            facts[name] = value.strip()
+                    wrong = {name: (facts.get(name), want) for name, want in EXPECTED_FACTS.items() if facts.get(name) != want}
+                    if wrong:
+                        raise SystemExit(f"instant guest booted but the image facts are wrong: {wrong}")
                     print("ok - instant guest reached a usable trial account")
+                    print("ok - image facts: " + ", ".join(f"{k}={facts[k]}" for k in sorted(facts)))
                     return
 
                 login_prompt = transcript.rfind(b"login:")
@@ -129,8 +157,12 @@ def main() -> None:
                 and not sent_command
                 and time.monotonic() - password_sent_at >= 3
             ):
+                checks = "; ".join(
+                    f"printf 'TRYOMARCHY_FACT:{name}:%s\\n' \"$({command})\"" for name, command in FACT_CHECKS.items()
+                )
                 process.stdin.write(
-                    b"printf 'TRYOMARCHY_SMOKE:%s:%s\\n' \"$(id -un)\" "
+                    (checks + "; ").encode()
+                    + b"printf 'TRYOMARCHY_SMOKE:%s:%s\\n' \"$(id -un)\" "
                     b"\"$(cat /var/lib/try-omarchy/provision-mode 2>/dev/null)\"; "
                     b"sudo systemctl poweroff\n"
                 )
