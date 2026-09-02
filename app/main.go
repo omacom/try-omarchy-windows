@@ -47,6 +47,10 @@ type config struct {
 	useGpu                   bool
 	audio                    string
 	memMiB                   int
+	// kernel-irqchip=off keeps WHPX from requesting nested virtualization,
+	// which some hosts advertise and then refuse (issue #19). Set by the
+	// startup retry, never by a flag.
+	irqchipOff bool
 }
 
 // pickGuestMem sizes the guest to the machine instead of demanding a fixed
@@ -441,6 +445,17 @@ func supervise(cfg *config, cmdline string) bool {
 				return false
 			case <-exited:
 				startupDead = true
+				// The host refused nested virtualization for the partition
+				// (issue #19). Nothing else about the launch is wrong, so
+				// retry with the irqchip in QEMU, which never asks for it.
+				if nestedVirtRefused(cfg) {
+					if !cfg.irqchipOff {
+						logf("QEMU exited at startup - host refused nested virtualization, retrying with kernel-irqchip=off")
+						cfg.irqchipOff = true
+						break probe
+					}
+					fatal("Windows refused to start the virtual machine: the hypervisor does not allow nested virtualization on this PC.\n\nThis is a known problem with some Intel Core Ultra laptops and machines running the full Hyper-V feature set. Details are in %s\\qemu-stderr.log.", cfg.vmDir)
+				}
 				// No DirectSound device (VMs, some remote sessions) kills
 				// QEMU at startup; retry silent rather than dying.
 				if cfg.audio == "dsound" {

@@ -61,11 +61,34 @@ clone_locked() {
     }
 }
 
+apply_locked_patches() {
+    local name=$1
+    local destination=$2
+    local relative digest
+    while IFS=$'\t' read -r relative digest; do
+        [[ -n "$relative" ]] || continue
+        printf '%s  %s\n' "$digest" "$recipe/$relative" | sha256sum -c --quiet -
+        git -C "$destination" apply --index "$recipe/$relative"
+        echo "Applied $relative to $name"
+    done < <(python - "$lock" "$name" <<'PATCHES'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    component = json.load(source)[sys.argv[2]]
+for entry in component.get("patches", []):
+    print(f"{entry['file']}\t{entry['sha256']}")
+PATCHES
+)
+}
+
 qemu_source="$work/qemu"
 virgl_source="$work/virglrenderer"
 clone_locked qemu "$qemu_source"
 clone_locked virglrenderer "$virgl_source"
 git -C "$qemu_source" submodule update --init --recursive --depth=1
+apply_locked_patches qemu "$qemu_source"
+apply_locked_patches virglrenderer "$virgl_source"
 
 virgl_build="$work/virgl-build"
 meson setup "$virgl_build" "$virgl_source" \
@@ -174,6 +197,10 @@ done <"$used_packages"
 echo "Collected licenses for $(wc -l <"$used_packages") runtime packages"
 
 cp "$lock" "$runtime/provenance/sources.lock.json"
+if [[ -d "$recipe/patches" ]]; then
+    mkdir -p "$runtime/provenance/patches"
+    cp -R "$recipe/patches/." "$runtime/provenance/patches/"
+fi
 pacman -Q | sort >"$runtime/provenance/build-environment-packages.txt"
 cat >"$runtime/README.txt" <<'EOF'
 WINQ-EMU runtime for Try Omarchy
@@ -195,6 +222,9 @@ tar -C "$virgl_source" --exclude=.git --exclude='*/.git' -cf - . | \
     tar -C "$source_bundle/virglrenderer" -xf -
 cp "$recipe"/*.py "$recipe"/*.sh "$recipe"/*.json "$recipe"/*.txt \
     "$source_bundle/build-recipe/"
+if [[ -d "$recipe/patches" ]]; then
+    cp -R "$recipe/patches" "$source_bundle/build-recipe/patches"
+fi
 
 manifest="$runtime/provenance/runtime-manifest.json"
 echo "Creating runtime archives"

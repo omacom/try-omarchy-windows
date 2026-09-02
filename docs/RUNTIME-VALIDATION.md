@@ -13,5 +13,9 @@ runtime pin unchanged until all of these pass on Windows 11.
 - Windowed, fullscreen, guest reboot, guest poweroff, and relaunch all work.
 - The runtime archive extracts cleanly on a fresh machine without MSYS2 installed.
 - Task Manager shows no unexpected console window or extra launcher process.
+- On a host that refuses nested virtualization (Intel Core Ultra laptops, or
+  any machine with the full Hyper-V feature set enabled), QEMU starts and
+  `qemu-stderr.log` shows the "nested virtualization unavailable" warning
+  instead of `Failed to enable nested virtualization` (issue #19).
 
 Test at least one AMD, Intel, and NVIDIA host before changing the public pin.
