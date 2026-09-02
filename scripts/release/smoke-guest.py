@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import selectors
 import subprocess
 import sys
@@ -121,12 +122,17 @@ def main() -> None:
 
                 if SUCCESS in transcript:
                     process.wait(timeout=90)
+                    # The serial console echoes the command (with %s
+                    # placeholders) before the output, and glues terminal
+                    # escape sequences onto the first output line, so match
+                    # anywhere and keep the last real value per fact.
                     facts = {}
-                    for line in bytes(transcript).decode("utf-8", errors="replace").splitlines():
-                        line = line.strip()
-                        if line.startswith("TRYOMARCHY_FACT:"):
-                            _, name, value = line.split(":", 2)
-                            facts[name] = value.strip()
+                    for name, value in re.findall(
+                        r"TRYOMARCHY_FACT:([A-Za-z0-9-]+):([^\s\x1b'\"\\]*)",
+                        bytes(transcript).decode("utf-8", errors="replace"),
+                    ):
+                        if "%" not in value:
+                            facts[name] = value
                     wrong = {name: (facts.get(name), want) for name, want in EXPECTED_FACTS.items() if facts.get(name) != want}
                     if wrong:
                         raise SystemExit(f"instant guest booted but the image facts are wrong: {wrong}")
