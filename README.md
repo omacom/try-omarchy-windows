@@ -77,6 +77,30 @@ supports byte ranges, then the complete file is SHA256-verified before use.
 Custom release URLs must be paired with the
 trusted manifest digest via `-sums-sha256`.
 
+### Settings
+
+`%LOCALAPPDATA%\TryOmarchy\settings.json` keeps the choices that survive a
+relaunch. Every row has a matching flag, and a flag given on the command line
+wins for that launch:
+
+```json
+{
+  "schemaVersion": 1,
+  "fullscreen": false,
+  "memoryMiB": 0,
+  "share": "",
+  "forwards": ["tcp:2222:22"],
+  "sshKey": ""
+}
+```
+
+`fullscreen` is the Immersive mode (`-fullscreen`), `memoryMiB` overrides the
+automatic guest RAM sizing (`-memory`, 0 keeps it automatic), `share` is the
+Windows folder shared into Omarchy (`-Share`), `forwards` are loopback port
+forwards (`-forward`), and `sshKey` is the public key file to authorize when a
+forward targets sshd (`-ssh-key`). A settings window for these rows is
+planned; until then the file and the flags are the interface.
+
 ### SSH and port forwarding
 
 Nothing listens by default. To reach Omarchy from Windows tools, forward a

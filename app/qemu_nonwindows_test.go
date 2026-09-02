@@ -29,9 +29,11 @@ type config struct {
 	useGpu                   bool
 	audio                    string
 	memMiB                   int
-	forwards   []portForward
-	sshKey     string
-	irqchipOff               bool
+	forwards                 []portForward
+	sshKey                   string
+	// Guest RAM chosen by the user (settings.json or -memory); 0 = automatic.
+	memOverrideMiB int
+	irqchipOff     bool
 }
 
 type progressUI struct{}

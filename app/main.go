@@ -50,9 +50,11 @@ type config struct {
 	// kernel-irqchip=off keeps WHPX from requesting nested virtualization,
 	// which some hosts advertise and then refuse (issue #19). Set by the
 	// startup retry, never by a flag.
-	forwards   []portForward
-	sshKey     string
-	irqchipOff bool
+	forwards []portForward
+	sshKey   string
+	// Guest RAM chosen by the user (settings.json or -memory); 0 = automatic.
+	memOverrideMiB int
+	irqchipOff     bool
 }
 
 // pickGuestMem sizes the guest to the machine instead of demanding a fixed
@@ -138,7 +140,8 @@ func main() {
 	flag.StringVar(&cfg.winqEmu, "winq", `C:\WINQ-EMU`, "WINQ-EMU install path (GPU mode)")
 	flag.StringVar(&cfg.share, "share", "", "host folder shared into the guest at /mnt/host (GPU mode)")
 	flag.BoolVar(&cfg.fresh, "fresh", false, "discard the writable disk and start over")
-	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen")
+	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen (Immersive)")
+	flag.IntVar(&cfg.memOverrideMiB, "memory", 0, "guest RAM in MiB (default: sized to this PC)")
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed")
 	flag.BoolVar(&cfg.hostCursor, "host-cursor", false, "force the legacy Windows cursor over the guest")
 	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the trial account")
@@ -204,6 +207,21 @@ func main() {
 		} else if rollingBack {
 			return
 		}
+	}
+
+	// settings.json holds the rows the settings window edits; explicit flags
+	// win for this launch only.
+	explicitFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { explicitFlags[f.Name] = true })
+	userSettings, err := loadSettings(settingsPath(cfg.dir))
+	if err != nil {
+		fatal("Try Omarchy cannot read its settings: %v\n\nFix or delete the file and open Try Omarchy again.", err)
+	}
+	if err := applySettings(cfg, userSettings, explicitFlags, &forwards, sshKeyPath); err != nil {
+		fatal("Try Omarchy cannot use its settings: %v", err)
+	}
+	if cfg.memOverrideMiB != 0 && (cfg.memOverrideMiB < minimumGuestMemoryMiB || cfg.memOverrideMiB > maximumGuestMemoryMiB) {
+		fatal("-memory must be between %d and %d MiB.", minimumGuestMemoryMiB, maximumGuestMemoryMiB)
 	}
 
 	cfg.guestDir = filepath.Join(cfg.dir, "guest")
@@ -394,6 +412,11 @@ func main() {
 		return
 	}
 	cfg.memMiB = pickGuestMem(cfg.useGpu)
+	if cfg.memOverrideMiB != 0 {
+		// The user's choice stands; the startup memory ladder still halves it
+		// if Windows cannot actually provide that much.
+		cfg.memMiB = cfg.memOverrideMiB
+	}
 	getUI().setStatus("Starting Omarchy...")
 
 	// SDL's keyboard grab installs a system-wide Win-key hook that leaks past
