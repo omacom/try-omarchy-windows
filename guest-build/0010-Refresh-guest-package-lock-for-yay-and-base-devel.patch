@@ -1,14 +1,14 @@
-From f27e2b5c67f85187b5f5b4bcb0f03383ca7ea696 Mon Sep 17 00:00:00 2001
-From: Try Omarchy Release <actions@users.noreply.github.com>
-Date: Wed, 2 Sep 2026 00:42:55 -0400
-Subject: [PATCH 2/2] Refresh guest package lock for base-devel
+From ae9e627720e3d0ca7223c08d8917d140bb64fced Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 01:03:30 -0400
+Subject: [PATCH 10/10] Refresh guest package lock for yay and base-devel
 
 ---
- guest/packages.lock.json | 60 +++++++++++++++++++++++++++++-----------
- 1 file changed, 44 insertions(+), 16 deletions(-)
+ guest/packages.lock.json | 61 +++++++++++++++++++++++++++++-----------
+ 1 file changed, 45 insertions(+), 16 deletions(-)
 
 diff --git a/guest/packages.lock.json b/guest/packages.lock.json
-index 6d2f325..2af6d6a 100644
+index 6d2f325..79e2aa8 100644
 --- a/guest/packages.lock.json
 +++ b/guest/packages.lock.json
 @@ -1,7 +1,7 @@
@@ -285,12 +285,20 @@ index 6d2f325..2af6d6a 100644
      "wl-clipboard": "1:2.3.0-1",
      "woff2-font-awesome": "7.3.1-1",
      "wpa_supplicant": "2:2.12-1",
-@@ -602,6 +630,6 @@
+@@ -592,6 +620,7 @@
+     "xvidcore": "1.3.7-4",
+     "xxhash": "0.8.3-1",
+     "xz": "5.8.3-1",
++    "yay": "13.0.1-1",
+     "yyjson": "0.12.0-1",
+     "zeromq": "4.3.5-3",
+     "zimg": "3.0.6-2",
+@@ -602,6 +631,6 @@
      "zram-generator": "1.2.1-1",
      "zstd": "1.5.7-3"
    },
 -  "requestedFileSha256": "26c57b845a583fc88d01b5852fdd5cc581f85a46f2ab9981b115f054c76ef6bd",
-+  "requestedFileSha256": "ee18b62e0d011857d57009b3e675ff76c5c55182cbc5c1b653cf8732a6e8eacf",
++  "requestedFileSha256": "1c0beceed27b07afc9624ac4f5019780db56755e808e704e420935cc1246c898",
    "schemaVersion": 1
  }
 -- 
