@@ -149,6 +149,7 @@ func main() {
 	var forwards forwardList
 	flag.Var(&forwards, "forward", "forward a Windows loopback port into Omarchy, as tcp:2222:22 or 8080:80 (repeatable)")
 	sshPort := flag.Int("ssh", 0, "forward this Windows loopback port to Omarchy's sshd and start sshd for the session")
+	openSettings := flag.Bool("settings", false, "open the settings window, then exit")
 	diagnostics := flag.Bool("diagnostics", false, "write a zip of logs, settings, and machine facts for a bug report, then exit")
 	sshKeyPath := flag.String("ssh-key", "", "public key to authorize for the Omarchy account (default: your ~/.ssh/id_*.pub when -ssh is used)")
 	noUpdate := flag.Bool("no-update", false, "do not check for launcher or guest updates")
@@ -219,6 +220,13 @@ func main() {
 			os.Exit(1)
 		}
 		infoBox("Diagnostics written to:\n\n" + bundle + "\n\nAttach it to your GitHub issue. It holds launcher and QEMU logs, guest console output, settings, and machine facts, but no disk images or personal files.")
+		return
+	}
+
+	if *openSettings {
+		if runSettingsDialog(settingsPath(cfg.dir)) {
+			logf("settings saved to %s", settingsPath(cfg.dir))
+		}
 		return
 	}
 

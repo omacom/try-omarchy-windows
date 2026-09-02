@@ -106,8 +106,8 @@ wins for that launch:
 automatic guest RAM sizing (`-memory`, 0 keeps it automatic), `share` is the
 Windows folder shared into Omarchy (`-Share`), `forwards` are loopback port
 forwards (`-forward`), and `sshKey` is the public key file to authorize when a
-forward targets sshd (`-ssh-key`). A settings window for these rows is
-planned; until then the file and the flags are the interface.
+forward targets sshd (`-ssh-key`). `TryOmarchy.exe -settings` opens a small
+window that edits the same rows.
 
 ### SSH and port forwarding
 
