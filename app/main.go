@@ -149,6 +149,7 @@ func main() {
 	var forwards forwardList
 	flag.Var(&forwards, "forward", "forward a Windows loopback port into Omarchy, as tcp:2222:22 or 8080:80 (repeatable)")
 	sshPort := flag.Int("ssh", 0, "forward this Windows loopback port to Omarchy's sshd and start sshd for the session")
+	diagnostics := flag.Bool("diagnostics", false, "write a zip of logs, settings, and machine facts for a bug report, then exit")
 	sshKeyPath := flag.String("ssh-key", "", "public key to authorize for the Omarchy account (default: your ~/.ssh/id_*.pub when -ssh is used)")
 	noUpdate := flag.Bool("no-update", false, "do not check for launcher or guest updates")
 	updateURL := flag.String("update-url", defaultUpdateURL, "authenticated update manifest URL")
@@ -207,6 +208,18 @@ func main() {
 		} else if rollingBack {
 			return
 		}
+	}
+
+	// Runs before settings load on purpose: a damaged settings.json is one of
+	// the things a bug report needs to carry.
+	if *diagnostics {
+		bundle, err := writeDiagnostics(cfg.dir, launcherFacts(cfg))
+		if err != nil {
+			errorBox("Try Omarchy could not write the diagnostics bundle.\n\n" + err.Error())
+			os.Exit(1)
+		}
+		infoBox("Diagnostics written to:\n\n" + bundle + "\n\nAttach it to your GitHub issue. It holds launcher and QEMU logs, guest console output, settings, and machine facts, but no disk images or personal files.")
+		return
 	}
 
 	// settings.json holds the rows the settings window edits; explicit flags

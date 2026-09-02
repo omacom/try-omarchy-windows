@@ -77,6 +77,14 @@ supports byte ranges, then the complete file is SHA256-verified before use.
 Custom release URLs must be paired with the
 trusted manifest digest via `-sums-sha256`.
 
+### Reporting a problem
+
+Run `TryOmarchy.exe -diagnostics`. It writes one zip under
+`%LOCALAPPDATA%\TryOmarchy\diagnostics` with the launcher and QEMU logs, the
+guest's console output, settings, install and update state, the guest
+manifest, and machine facts (Windows build, CPU, memory). No disk images and
+nothing from your home folder. Attach it to the issue.
+
 ### Settings
 
 `%LOCALAPPDATA%\TryOmarchy\settings.json` keeps the choices that survive a
