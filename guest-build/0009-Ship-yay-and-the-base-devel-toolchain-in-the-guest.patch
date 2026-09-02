@@ -1,0 +1,312 @@
+From f60fd84d022cf9e09da74a35bb22b2525f4e470f Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Wed, 2 Sep 2026 00:42:55 -0400
+Subject: [PATCH 1/2] Ship yay and the base-devel toolchain in the guest
+
+Upstream Omarchy commands such as omarchy-pkg-aur-install and
+omarchy-update-aur-pkgs hard-code yay, so the factory image was shipping a
+desktop whose AUR entry points failed outright. Add the base-devel group to
+the pinned transaction, build yay 13.0.1 from its pinned commit with the
+container Go toolchain during image builds, and stage the resulting package
+in the guest's immutable local repository next to the runtime and mise.
+---
+ guest/Containerfile                        |   2 +-
+ guest/build.sh                             |   5 +
+ guest/packages.txt                         |   1 +
+ guest/scripts/register-local-repository.sh |   3 +-
+ guest/scripts/register-pinned-yay.sh       | 206 +++++++++++++++++++++
+ guest/spec.json                            |   6 +
+ 6 files changed, 221 insertions(+), 2 deletions(-)
+ create mode 100755 guest/scripts/register-pinned-yay.sh
+
+diff --git a/guest/Containerfile b/guest/Containerfile
+index c1f3b8f..0890491 100644
+--- a/guest/Containerfile
++++ b/guest/Containerfile
+@@ -6,7 +6,7 @@ RUN test "$(uname -m)" = x86_64
+ 
+ RUN pacman-key --init && pacman-key --populate archlinux && \
+     pacman -Syu --noconfirm && \
+-    pacman -S --needed --noconfirm arch-install-scripts e2fsprogs git python zstd && \
++    pacman -S --needed --noconfirm arch-install-scripts e2fsprogs gettext git go python zstd && \
+     pacman -Scc --noconfirm
+ 
+ WORKDIR /workspace
+diff --git a/guest/build.sh b/guest/build.sh
+index 558573a..e5efff6 100755
+--- a/guest/build.sh
++++ b/guest/build.sh
+@@ -230,6 +230,11 @@ done
+   --work "$work" \
+   --spec "$spec" \
+   --pacman-config "$pacman_config"
++"$guest_dir/scripts/register-pinned-yay.sh" \
++  --root "$root" \
++  --work "$work" \
++  --spec "$spec" \
++  --pacman-config "$pacman_config"
+ "$guest_dir/scripts/register-local-repository.sh" --root "$root" --spec "$spec"
+ arch-chroot "$root" /usr/local/lib/try-omarchy/finalize-rootfs
+ arch-chroot "$root" pacman -Q | LC_ALL=C sort >"$root/usr/share/try-omarchy/packages.lock.txt"
+diff --git a/guest/packages.txt b/guest/packages.txt
+index 8fda564..98f7cd4 100644
+--- a/guest/packages.txt
++++ b/guest/packages.txt
+@@ -1,6 +1,7 @@
+ # x86_64 transaction for the real Quattro first-boot owner-provisioning flow.
+ archlinux-keyring
+ base
++base-devel
+ bash-completion
+ bat
+ btop
+diff --git a/guest/scripts/register-local-repository.sh b/guest/scripts/register-local-repository.sh
+index 37d8521..06731f2 100755
+--- a/guest/scripts/register-local-repository.sh
++++ b/guest/scripts/register-local-repository.sh
+@@ -67,11 +67,12 @@ repo_dir="$root/usr/share/try-omarchy/repo"
+ shopt -s nullglob
+ archives=("$repo_dir"/*.pkg.tar.zst)
+ shopt -u nullglob
+-expected_archive_count=2
++expected_archive_count=3
+ (( ${#archives[@]} == expected_archive_count )) ||
+   fail "local repository expected $expected_archive_count package archive(s), found ${#archives[@]}"
+ [[ ${archives[*]} == *'/try-omarchy-runtime-'* ]] || fail "local repository is missing the Omarchy runtime"
+ [[ ${archives[*]} == *'/try-omarchy-mise-'* ]] || fail "factory repository is missing pinned mise"
++[[ ${archives[*]} == *'/yay-'* ]] || fail "local repository is missing yay"
+ 
+ temporary=$(mktemp -d "$root/usr/share/try-omarchy/.repo-db.XXXXXX")
+ cleanup() {
+diff --git a/guest/scripts/register-pinned-yay.sh b/guest/scripts/register-pinned-yay.sh
+new file mode 100755
+index 0000000..8f64414
+--- /dev/null
++++ b/guest/scripts/register-pinned-yay.sh
+@@ -0,0 +1,206 @@
++#!/bin/bash
++
++set -euo pipefail
++
++usage() {
++  cat <<'USAGE'
++Usage: register-pinned-yay.sh --root ROOT --work WORK --spec SPEC --pacman-config CONFIG
++
++Fetches the spec-pinned yay source at an exact commit, builds it with the
++container's Go toolchain under the module cache's go.sum verification, verifies
++the reported version, and installs it as a local Arch package staged in the
++guest's immutable local repository.
++USAGE
++}
++
++fail() {
++  echo "register-pinned-yay: $*" >&2
++  exit 1
++}
++
++root=""
++work=""
++spec=""
++pacman_config=""
++
++while (($#)); do
++  case "$1" in
++    --root)
++      root=${2:-}
++      shift 2
++      ;;
++    --work)
++      work=${2:-}
++      shift 2
++      ;;
++    --spec)
++      spec=${2:-}
++      shift 2
++      ;;
++    --pacman-config)
++      pacman_config=${2:-}
++      shift 2
++      ;;
++    -h|--help)
++      usage
++      exit 0
++      ;;
++    *)
++      fail "unknown option: $1"
++      ;;
++  esac
++done
++
++[[ $root == /* && -d $root ]] || fail "--root must be an absolute staged root"
++case "$root" in
++  /|/bin|/boot|/etc|/home|/opt|/root|/usr|/var)
++    fail "refusing unsafe root: $root"
++    ;;
++esac
++[[ $work == /* && -d $work ]] || fail "--work must be an absolute directory"
++[[ -f $spec ]] || fail "spec not found: $spec"
++[[ -f $pacman_config ]] || fail "pacman config not found: $pacman_config"
++for command in git go install msgfmt pacman python3 tar zstd; do
++  command -v "$command" >/dev/null || fail "$command is required"
++done
++
++mapfile -t metadata < <(python3 - "$spec" <<'PY'
++import json
++import pathlib
++import sys
++
++spec = json.loads(pathlib.Path(sys.argv[1]).read_text())
++component = spec.get("supplyChain", {}).get("yay")
++if component is None:
++    print("disabled")
++    raise SystemExit
++print("enabled")
++for key in ("version", "repository", "commit", "license"):
++    print(component[key])
++print(spec["image"]["architecture"])
++print(spec["image"]["sourceDateEpoch"])
++PY
++) || fail "could not read pinned yay metadata"
++[[ ${metadata[0]:-} == disabled ]] && exit 0
++[[ ${metadata[0]:-} == enabled ]] || fail "invalid pinned yay state"
++(( ${#metadata[@]} == 7 )) || fail "pinned yay metadata is incomplete"
++version=${metadata[1]}
++repository=${metadata[2]}
++commit=${metadata[3]}
++license=${metadata[4]}
++architecture=${metadata[5]}
++source_date_epoch=${metadata[6]}
++
++[[ $architecture == x86_64 ]] || fail "pinned yay component supports only x86_64"
++[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid yay version: $version"
++[[ $repository == https://github.com/Jguer/yay ]] || fail "unexpected yay repository: $repository"
++[[ $commit =~ ^[0-9a-f]{40}$ ]] || fail "invalid yay commit: $commit"
++[[ $license == GPL-3.0-or-later ]] || fail "unexpected yay license: $license"
++[[ $source_date_epoch =~ ^[0-9]+$ ]] || fail "invalid source date epoch"
++
++source_dir="$work/yay-source"
++if [[ -d $source_dir/.git ]]; then
++  actual_commit=$(git -C "$source_dir" rev-parse HEAD || true)
++  [[ $actual_commit == "$commit" ]] || rm -rf "$source_dir"
++fi
++if [[ ! -d $source_dir/.git ]]; then
++  git init --quiet "$source_dir"
++  git -C "$source_dir" remote add origin "$repository"
++  git -C "$source_dir" fetch --quiet --depth=1 origin "$commit"
++fi
++git -C "$source_dir" checkout --quiet --detach FETCH_HEAD
++actual_commit=$(git -C "$source_dir" rev-parse HEAD)
++[[ $actual_commit == "$commit" ]] || fail "yay checkout does not match the pinned commit"
++
++build_dir="$work/yay-build"
++install -d -m 0755 "$build_dir"
++export CGO_ENABLED=0
++export GOPATH="$build_dir/gopath"
++export GOCACHE="$build_dir/gocache"
++(
++  cd "$source_dir"
++  go build \
++    -trimpath \
++    -mod=readonly \
++    -modcacherw \
++    -buildvcs=false \
++    -buildmode=pie \
++    -ldflags "-X main.yayVersion=$version -X main.localePath=/usr/share/locale/" \
++    -o "$build_dir/yay" \
++    .
++)
++
++"$build_dir/yay" --version | grep -q "^yay v$version " ||
++  fail "yay reported an unexpected identity: $("$build_dir/yay" --version | tail -n 1)"
++
++stage=$(mktemp -d "$work/yay-package.XXXXXX")
++cleanup() {
++  rm -rf "$stage"
++}
++trap cleanup EXIT
++
++install -d -m 0755 "$stage/usr/bin"
++install -d -m 0755 "$stage/usr/share/licenses/yay"
++install -m 0755 "$build_dir/yay" "$stage/usr/bin/yay"
++install -m 0644 "$source_dir/LICENSE" "$stage/usr/share/licenses/yay/LICENSE"
++install -D -m 0644 "$source_dir/doc/yay.8" "$stage/usr/share/man/man8/yay.8"
++install -D -m 0644 "$source_dir/completions/bash" "$stage/usr/share/bash-completion/completions/yay"
++install -D -m 0644 "$source_dir/completions/zsh" "$stage/usr/share/zsh/site-functions/_yay"
++install -D -m 0644 "$source_dir/completions/fish" "$stage/usr/share/fish/vendor_completions.d/yay.fish"
++shopt -s nullglob
++for po in "$source_dir"/po/*.po; do
++  lang=$(basename "$po" .po)
++  install -d -m 0755 "$stage/usr/share/locale/$lang/LC_MESSAGES"
++  msgfmt "$po" --output-file "$stage/usr/share/locale/$lang/LC_MESSAGES/yay.mo"
++done
++shopt -u nullglob
++
++installed_size=$(du -sb "$stage/usr" | awk '{print $1}')
++cat >"$stage/.PKGINFO" <<EOF
++pkgname = yay
++pkgbase = yay
++pkgver = $version-1
++pkgdesc = AUR helper built from the pinned Jguer/yay commit for the Omarchy x86_64 guest
++url = $repository
++builddate = $source_date_epoch
++packager = Try Omarchy reproducible guest builder
++size = $installed_size
++arch = x86_64
++license = $license
++depend = pacman
++depend = git
++EOF
++
++package_archive="$stage/yay-$version-1-x86_64.pkg.tar.zst"
++tar \
++  --sort=name \
++  --mtime="@$source_date_epoch" \
++  --owner=0 \
++  --group=0 \
++  --numeric-owner \
++  --format=gnu \
++  -C "$stage" \
++  -cf - .PKGINFO usr |
++  zstd --force --quiet -12 --threads=1 -o "$package_archive"
++
++pacman \
++  --noconfirm \
++  --config "$pacman_config" \
++  --root "$root" \
++  --dbpath "$root/var/lib/pacman" \
++  --logfile "$root/var/log/pacman.log" \
++  -U "$package_archive"
++
++query=$(pacman --config "$pacman_config" --root "$root" --dbpath "$root/var/lib/pacman" -Q yay)
++[[ $query == "yay $version-1" ]] || fail "installed yay query returned: $query"
++pacman --config "$pacman_config" --root "$root" --dbpath "$root/var/lib/pacman" -Qkk yay >/dev/null ||
++  fail "installed yay package failed its ownership check"
++pacman --config "$pacman_config" --root "$root" --dbpath "$root/var/lib/pacman" -T git >/dev/null ||
++  fail "installed yay package does not satisfy the git dependency"
++reported=$(arch-chroot "$root" /usr/bin/yay --version | grep "^yay v$version " || true)
++[[ -n $reported ]] || fail "installed yay reported an unexpected identity"
++
++repo_dir="$root/usr/share/try-omarchy/repo"
++install -d -m 0755 "$repo_dir"
++install -m 0644 "$package_archive" "$repo_dir/$(basename "$package_archive")"
++echo "Registered $query from pinned source $commit"
+diff --git a/guest/spec.json b/guest/spec.json
+index 5c515e2..8add8c9 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -41,6 +41,12 @@
+       "binarySha256": "3d825b8341925abb398fba6fd8dcd7d6e92ade6820d892da62992e0765638e66",
+       "reportedVersion": "2026.8.11 linux-x64 (2026-08-23)",
+       "license": "MIT"
++    },
++    "yay": {
++      "version": "13.0.1",
++      "repository": "https://github.com/Jguer/yay",
++      "commit": "02fb6ba948720d2d7eae6e5989168a297710a3e4",
++      "license": "GPL-3.0-or-later"
+     }
+   },
+   "themes": [
+-- 
+2.55.0
+

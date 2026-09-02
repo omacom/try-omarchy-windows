@@ -2,6 +2,7 @@
 
 ## Unreleased
 - Stopped setup on ARM64 Windows PCs with a clear explanation instead of failing through a WHP feature enable, a reboot, and impossible BIOS advice. Try Omarchy remains x86_64-only.
+- Shipped yay and the base-devel toolchain in the guest image, so Omarchy's AUR install and update flows work out of the box.
 
 ## v0.0.8-preview - 2026-08-30
 

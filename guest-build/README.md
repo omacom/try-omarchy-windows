@@ -20,6 +20,8 @@ What the patches change (all proven live on hardware 2026-08-28):
   (upstream's `version` file lags its tags)
 - All 22 upstream themes included (was 6)
 - Packages: ttfx + hypridle (screensavers), vulkan-virtio (Venus ICD)
+- yay built at image build time from its pinned commit, plus the base-devel
+  toolchain, so Omarchy's AUR entry points work in the guest
 - Guest cursor visible under SDL (the hidden-cursor fragment was a VNC-era assumption)
 - Autologin stays permanent: a drop-in disarms upstream's one-boot autologin
   cleanup after provisioning (the VM window is the auth boundary here)
