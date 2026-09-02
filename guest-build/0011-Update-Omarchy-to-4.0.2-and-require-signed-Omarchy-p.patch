@@ -1,0 +1,158 @@
+From d21fc727b31c5760b103241e769e970c506bd234 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 13:36:16 -0400
+Subject: [PATCH 11/13] Update Omarchy to 4.0.2 and require signed Omarchy
+ packages
+
+4.0.2 is a security release: sshd hardening, browser policy directories,
+sudoers tightening, and no more unsigned packages from the Omarchy
+repository. Drop the SigLevel override to match upstream's pacman-stable.conf
+and teach the builder container to trust the Omarchy packaging key, checked
+by fingerprint against the vendored copy (the same key omarchy-keyring
+ships). Instant trial provisioning stops replaying the input group unless a
+feature that needs raw input devices is installed, the rule upstream's owner
+provisioning adopted in this release.
+---
+ guest/Containerfile                           |  9 +++++++
+ .../lib/try-omarchy/provision-instant-trial   |  7 ++++++
+ guest/keys/omarchy-pkgs.asc                   | 15 +++++++++++
+ guest/pacman-x86_64.conf                      |  1 -
+ guest/scripts/fetch-source.sh                 | 25 +++++++++++--------
+ guest/spec.json                               |  8 +++---
+ 6 files changed, 50 insertions(+), 15 deletions(-)
+ create mode 100644 guest/keys/omarchy-pkgs.asc
+
+diff --git a/guest/Containerfile b/guest/Containerfile
+index c1f3b8f..f75a47c 100644
+--- a/guest/Containerfile
++++ b/guest/Containerfile
+@@ -4,7 +4,16 @@ FROM docker.io/library/archlinux@sha256:b860afd5823683f7ea389ba5f00d812f4fe55f6f
+ 
+ RUN test "$(uname -m)" = x86_64
+ 
++# Omarchy 4.0.2 requires signed packages from its repository. The builder
++# trusts the Omarchy packaging key (fingerprint checked against the vendored
++# copy, which matches the key shipped in omarchy-keyring) before resolving
++# the transaction; the guest gets the same trust from omarchy-keyring itself.
++COPY guest/keys/omarchy-pkgs.asc /tmp/omarchy-pkgs.asc
+ RUN pacman-key --init && pacman-key --populate archlinux && \
++    test "$(gpg --batch --with-colons --show-keys /tmp/omarchy-pkgs.asc | awk -F: '/^fpr:/ { print $10; exit }')" = 40DFB630FF42BCFFB047046CF0134EE680CAC571 && \
++    pacman-key --add /tmp/omarchy-pkgs.asc && \
++    pacman-key --lsign-key 40DFB630FF42BCFFB047046CF0134EE680CAC571 && \
++    rm /tmp/omarchy-pkgs.asc && \
+     pacman -Syu --noconfirm && \
+     pacman -S --needed --noconfirm arch-install-scripts e2fsprogs git python zstd && \
+     pacman -Scc --noconfirm
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial b/guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial
+index e464b39..f146c15 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial
+@@ -17,6 +17,13 @@ user_groups() {
+   if [[ -f $provisioning_dir/groups ]]; then
+     while IFS= read -r group; do
+       [[ -n $group && $group != docker ]] || continue
++      # Same rule as upstream's owner provisioning: raw input device access
++      # is only kept when a feature that deliberately needs it is installed.
++      if [[ $group == input ]] &&
++        ! pacman -Qq xpadneo-dkms &>/dev/null &&
++        ! pacman -Qq ydotool &>/dev/null; then
++        continue
++      fi
+       getent group "$group" >/dev/null || continue
+       [[ ,$groups, == *,$group,* ]] || groups+=",$group"
+     done <"$provisioning_dir/groups"
+diff --git a/guest/keys/omarchy-pkgs.asc b/guest/keys/omarchy-pkgs.asc
+new file mode 100644
+index 0000000..91e9662
+--- /dev/null
++++ b/guest/keys/omarchy-pkgs.asc
+@@ -0,0 +1,15 @@
++-----BEGIN PGP PUBLIC KEY BLOCK-----
++Comment: 40DF B630 FF42 BCFF B047  046C F013 4EE6 80CA C571
++Comment: Omarchy <pkgs@omarchy.org>
++
++xjMEaLAsIhYJKwYBBAHaRw8BAQdAYmKmrWMlfpdIPh3QzvEMzzxdNd/kqDl/Bj8H
++mCavKjjNGk9tYXJjaHkgPHBrZ3NAb21hcmNoeS5vcmc+wpAEExYKADgWIQRA37Yw
++/0K8/7BHBGzwE07mgMrFcQUCaLAsIgIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIX
++gAAKCRDwE07mgMrFcRF2AQCjjvjgju/kowkN69nenqqRnE+v2MrHmWh2wU0ugIt9
++3gD/bXGugWc5J1vqoT+5aCnJAtfRRmHEfsrAiFgjduB+VA3OOARosCwiEgorBgEE
++AZdVAQUBAQdAJoU73WdgxE/pEYK5ofyRvQDs1IFRdfJHV9j4Jm+tuDUDAQgHwngE
++GBYKACAWIQRA37Yw/0K8/7BHBGzwE07mgMrFcQUCaLAsIgIbDAAKCRDwE07mgMrF
++cYXsAQC5eBEGK0xKsGwtnDDVeNAapx32dpvLgJ94W4DtIpdLlwEA85cSsTiBMuGy
++6kwYmHzqw7oFx3VYGXdMNl0SMKzvJA4=
++=nfPv
++-----END PGP PUBLIC KEY BLOCK-----
+diff --git a/guest/pacman-x86_64.conf b/guest/pacman-x86_64.conf
+index 3aede6c..d86ef38 100644
+--- a/guest/pacman-x86_64.conf
++++ b/guest/pacman-x86_64.conf
+@@ -27,5 +27,4 @@ Include = /etc/pacman.d/mirrorlist
+ Include = /etc/pacman.d/mirrorlist
+ 
+ [omarchy]
+-SigLevel = Optional TrustAll
+ Server = https://pkgs.omarchy.org/stable/$arch
+diff --git a/guest/scripts/fetch-source.sh b/guest/scripts/fetch-source.sh
+index 7426756..22e9102 100755
+--- a/guest/scripts/fetch-source.sh
++++ b/guest/scripts/fetch-source.sh
+@@ -48,22 +48,27 @@ tree=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["upstream
+ if [[ -d $destination/.git ]]; then
+   actual_commit=$(git -C "$destination" rev-parse HEAD)
+   actual_tree=$(git -C "$destination" rev-parse 'HEAD^{tree}')
+-  if [[ $actual_commit == "$commit" && $actual_tree == "$tree" && -z $(git -C "$destination" status --porcelain --untracked-files=all) ]]; then
++  [[ -z $(git -C "$destination" status --porcelain --untracked-files=all) ]] ||
++    fail "existing destination has local changes: $destination"
++  if [[ $actual_commit == "$commit" && $actual_tree == "$tree" ]]; then
+     echo "Using verified Omarchy checkout at $destination"
+     exit 0
+   fi
+-  fail "existing destination is not the clean pinned Omarchy checkout: $destination"
+-fi
+-
+-if [[ -e $destination ]]; then
+-  [[ -d $destination && -z $(find "$destination" -mindepth 1 -maxdepth 1 -print -quit) ]] || \
+-    fail "destination exists and is not empty: $destination"
++  # A clean checkout of an older pin is the normal state of a persistent
++  # work volume after the spec moves. Fetch the new pin into it.
++  echo "Existing checkout is $actual_commit, fetching pinned $commit"
++  git -C "$destination" remote set-url origin "$repository.git"
+ else
+-  mkdir -p "$destination"
++  if [[ -e $destination ]]; then
++    [[ -d $destination && -z $(find "$destination" -mindepth 1 -maxdepth 1 -print -quit) ]] || \
++      fail "destination exists and is not empty: $destination"
++  else
++    mkdir -p "$destination"
++  fi
++  git -C "$destination" init --quiet
++  git -C "$destination" remote add origin "$repository.git"
+ fi
+ 
+-git -C "$destination" init --quiet
+-git -C "$destination" remote add origin "$repository.git"
+ git -C "$destination" fetch --quiet --depth 1 origin "$commit"
+ git -C "$destination" checkout --quiet --detach FETCH_HEAD
+ 
+diff --git a/guest/spec.json b/guest/spec.json
+index 5c515e2..2f68213 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -23,10 +23,10 @@
+   },
+   "upstream": {
+     "repository": "https://github.com/basecamp/omarchy",
+-    "commit": "13f18b2cb7286fb54f87daf571a031aa6af3d8f0",
+-    "tree": "c458272b5d2b895185633255de88a3ce563c5028",
+-    "treeSha256": "3613aca0bf1861d2beee24768d11d3e61e2c719af35c12145a23081f288a2abb",
+-    "version": "4.0.1",
++    "commit": "346e69e1cec6c4e8924531874af6ba010a1bc99e",
++    "tree": "24ff1b25bf85aeffa234c95c3474b7703a062c08",
++    "treeSha256": "677f90b302dc1c622a3342ca2929084475caafb12db62790f13a9f4aea8f49ae",
++    "version": "4.0.2",
+     "versionFile": "4.0.0.alpha",
+     "channel": "quattro",
+     "license": "MIT"
+-- 
+2.55.0
+

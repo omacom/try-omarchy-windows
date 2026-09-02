@@ -5,6 +5,9 @@
 - Added a disk-space check before setup downloads anything, using the sizes in the authenticated guest manifest, so a full drive is reported up front instead of after a long download or a partial copy.
 - Added an experimental offline portable mode (`-portable`) that runs from a payload and data folder beside the launcher, keeps all guest state on the removable drive, makes no setup-time network requests, and uses a compact QCOW2 overlay that survives drive-letter changes and works on exFAT. See docs/PORTABLE_USB.md.
 - Fixed startup on PCs whose hypervisor refuses nested virtualization, such as Intel Core Ultra laptops and machines with the full Hyper-V feature set. The launcher now retries with the interrupt controller in QEMU instead of failing, and the source-built runtime no longer treats the refusal as fatal.
+- Shipped yay and the base-devel toolchain in the guest image, so Omarchy's AUR install and update flows work out of the box.
+- Updated the guest image to Omarchy 4.0.2, a security release covering sshd hardening, browser policy directories, sudoers tightening, and signed packages from the Omarchy repository. The instant trial account follows upstream's new rule for the input group.
+- Fixed screen recording, which never started because the recorder was missing from the image, and shipped the other tools Omarchy's keybindings and menus expect: the screenshot editor, OCR and QR capture, emoji and clipboard paste, man pages, the calculator, writer and video trimmer, Herdr, and the screen-share picker.
 
 ## v0.0.8-preview - 2026-08-30
 

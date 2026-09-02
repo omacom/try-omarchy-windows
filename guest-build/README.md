@@ -16,10 +16,17 @@ before it uploads anything.
 
 What the patches change (all proven live on hardware 2026-08-28):
 
-- Omarchy pin bumped to the v4.0.1 release tag, staged runtime stamped 4.0.1
+- Omarchy pin bumped to the v4.0.2 release tag, staged runtime stamped 4.0.2
   (upstream's `version` file lags its tags)
+- Omarchy repository packages must be signed, as in upstream 4.0.2; the builder
+  trusts the vendored Omarchy packaging key by fingerprint
 - All 22 upstream themes included (was 6)
-- Packages: ttfx + hypridle (screensavers), vulkan-virtio (Venus ICD)
+- Packages: ttfx + hypridle (screensavers), vulkan-virtio (Venus ICD), plus the
+  tools behind Omarchy's bound keys and menu entries (gpu-screen-recorder,
+  tensaku, tesseract, zbar, qrencode, wtype, plocate, man-db, xdg-terminal-exec,
+  omacalc, omawrite, omacut, herdr, hyprland-preview-share-picker)
+- yay from the Omarchy repository plus the base-devel toolchain, so upstream's
+  AUR entry points (omarchy-pkg-aur-add and friends) work in the guest
 - Guest cursor visible under SDL (the hidden-cursor fragment was a VNC-era assumption)
 - Autologin stays permanent: a drop-in disarms upstream's one-boot autologin
   cleanup after provisioning (the VM window is the auth boundary here)

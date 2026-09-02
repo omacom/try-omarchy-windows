@@ -6,7 +6,7 @@ Try Omarchy runs the full x86_64 Arch Linux environment used by Omarchy. It is n
 
 - Omarchy desktop apps, themes, menus, keybindings, and screensavers
 - Arch packages installed with `pacman`
-- AUR packages installed with `paru`
+- AUR packages installed with the preinstalled `yay` helper and the included `base-devel` toolchain
 - Graphical Linux applications, including Visual Studio Code
 - Web browsing and outbound networking through the Windows connection
 - Audio, two-way clipboard sharing, and persistent files inside the guest

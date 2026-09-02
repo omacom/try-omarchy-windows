@@ -12,7 +12,7 @@ Download, boot, Hyprland.
 
 ## What works today
 
-- **The full Omarchy 4.0.1 desktop**: Hyprland, the bar, notifications, all 22 themes, the screensavers. On our mid-range Ryzen 5 test laptop the desktop is up about 6 seconds after launch, and every launch after setup goes straight there. No Linux login screens, no console text, branded window.
+- **The full Omarchy 4.0.2 desktop**: Hyprland, the bar, notifications, all 22 themes, the screensavers. On our mid-range Ryzen 5 test laptop the desktop is up about 6 seconds after launch, and every launch after setup goes straight there. No Linux login screens, no console text, branded window.
 - **GPU acceleration**: Hyprland renders on the host GPU via virgl, `vulkaninfo` shows Venus, smooth video and audio (verified on a Radeon iGPU laptop); `-cpu host` (AVX2 and all) via WINQ-EMU's patched WHPX.
 - **One app, zero prerequisites**: `TryOmarchy.exe` (~8 MB, no console window). First run sets the machine up itself: switches on Windows' Hypervisor Platform (one permission prompt, one restart), then downloads the GPU runtime and the image SHA256-verified and boots into Omarchy's setup form. Once setup is complete it keeps a stable launcher under `%LOCALAPPDATA%\TryOmarchy` and can add optional Start-menu and Desktop shortcuts. After that it supervises everything: GPU/CPU auto-detect, the known WHPX launch wedge, in-guest reboot relaunch, poweroff cleanup.
 - **Feels like an app, not a VM**: the window is branded "Try Omarchy", the Windows key acts as Super only while the window is focused (Start menu and Win+Shift+S keep working everywhere else), Ctrl+Alt+F goes fullscreen.
@@ -128,7 +128,7 @@ WHPX and Hyper-V share the same Windows hypervisor and are designed to coexist. 
 - `docs/FINDINGS.md` — technical findings, gotchas, and their fixes
 - `docs/RELEASING.md` - the authenticated two-phase build, signing, and publishing process
 
-The guest image (Omarchy 4.0.1, all upstream themes, screensavers, autologin, clipboard bridge) is built from [jorge-huxley/try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win)'s `win` branch guest builder (`guest/build-container.sh`, needs Docker on Linux) — an x86_64 retarget of the upstream try-omarchy build system — with the patches in `guest-build/` applied. Images are not committed; setup downloads the latest release artifact, or build your own.
+The guest image (Omarchy 4.0.2, all upstream themes, screensavers, autologin, clipboard bridge) is built from [jorge-huxley/try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win)'s `win` branch guest builder (`guest/build-container.sh`, needs Docker on Linux) — an x86_64 retarget of the upstream try-omarchy build system — with the patches in `guest-build/` applied. Images are not committed; setup downloads the latest release artifact, or build your own.
 
 ## Credit where due
 
