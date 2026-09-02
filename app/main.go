@@ -359,30 +359,15 @@ func main() {
 		}
 		fatal("Setting up the Omarchy image failed: %v\n\n%s", err, setupFailureHelp(err))
 	}
-	if *sshPort != 0 {
-		if *sshPort < 1 || *sshPort > 65535 {
-			fatal("-ssh needs a Windows port between 1 and 65535.")
-		}
-		if err := forwards.add(portForward{proto: "tcp", hostPort: *sshPort, guestPort: 22}); err != nil {
-			fatal("%v", err)
-		}
+	home, _ := os.UserHomeDir()
+	sshKey, err := resolveSSHPreset(&forwards, *sshPort, *sshKeyPath, home)
+	if err != nil {
+		fatal("%v.", err)
 	}
 	cfg.forwards = forwards
-	if sshRequested(cfg.forwards) {
-		if *sshKeyPath != "" {
-			key, err := loadPublicKey(*sshKeyPath)
-			if err != nil {
-				fatal("Cannot use the SSH public key: %v", err)
-			}
-			cfg.sshKey = key
-		} else if home, err := os.UserHomeDir(); err == nil {
-			cfg.sshKey = defaultPublicKey(home)
-		}
-		if cfg.sshKey == "" {
-			logf("ssh requested without a public key - password login only")
-		}
-	} else if *sshKeyPath != "" {
-		fatal("-ssh-key only makes sense with -ssh or a -forward to Omarchy port 22.")
+	cfg.sshKey = sshKey
+	if sshRequested(cfg.forwards) && cfg.sshKey == "" {
+		logf("ssh requested without a public key - password login only")
 	}
 	if cfg.share != "" {
 		if st, err := os.Stat(cfg.share); err != nil || !st.IsDir() {

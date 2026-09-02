@@ -78,6 +78,55 @@ func TestSSHCmdlineOnlyForTCPForwardsToPort22(t *testing.T) {
 	}
 }
 
+func TestResolveSSHPresetCoversEveryDecision(t *testing.T) {
+	home := t.TempDir()
+	good := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxTNqPU2EXAMPLE user@pc"
+	os.MkdirAll(filepath.Join(home, ".ssh"), 0o700)
+	os.WriteFile(filepath.Join(home, ".ssh", "id_ed25519.pub"), []byte(good+"\n"), 0o600)
+	other := filepath.Join(home, "work.pub")
+	os.WriteFile(other, []byte("ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQEXAMPLE work\n"), 0o600)
+
+	// -ssh alone: forward added, usual key picked up.
+	var l forwardList
+	key, err := resolveSSHPreset(&l, 2222, "", home)
+	if err != nil || key != good || l.String() != "tcp:2222:22" {
+		t.Fatalf("-ssh alone: key=%q err=%v forwards=%s", key, err, l.String())
+	}
+	// Explicit key file wins over the usual one.
+	l = nil
+	key, err = resolveSSHPreset(&l, 2222, other, home)
+	if err != nil || !strings.HasPrefix(key, "ssh-rsa ") {
+		t.Fatalf("explicit key: key=%q err=%v", key, err)
+	}
+	// A forward to port 22 without -ssh still counts as an SSH request.
+	l = forwardList{{"tcp", 2299, 22}}
+	if key, err = resolveSSHPreset(&l, 0, "", home); err != nil || key != good {
+		t.Fatalf("forward-only request: key=%q err=%v", key, err)
+	}
+	// No key anywhere is fine: password login remains.
+	l = nil
+	if key, err = resolveSSHPreset(&l, 2222, "", t.TempDir()); err != nil || key != "" {
+		t.Fatalf("keyless: key=%q err=%v", key, err)
+	}
+	// Mistakes are reported, not guessed around.
+	l = nil
+	if _, err = resolveSSHPreset(&l, 70000, "", home); err == nil {
+		t.Fatal("bad port accepted")
+	}
+	l = nil
+	if _, err = resolveSSHPreset(&l, 0, other, home); err == nil {
+		t.Fatal("-ssh-key without an ssh forward accepted")
+	}
+	l = nil
+	if _, err = resolveSSHPreset(&l, 2222, filepath.Join(home, "missing.pub"), home); err == nil {
+		t.Fatal("missing key file accepted")
+	}
+	l = forwardList{{"tcp", 2222, 80}}
+	if _, err = resolveSSHPreset(&l, 2222, "", home); err == nil {
+		t.Fatal("duplicate Windows port accepted")
+	}
+}
+
 func TestLoadPublicKeyRefusesEverythingButOneKeyLine(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, content string) string {

@@ -150,6 +150,39 @@ func defaultPublicKey(home string) string {
 	return ""
 }
 
+// resolveSSHPreset folds -ssh and -ssh-key into the forward list and picks
+// the public key to authorize. It is the whole decision, kept out of main so
+// it can be tested: -ssh adds a TCP forward to port 22; a key path is loaded
+// and validated; without one the user's usual key is used if present; and
+// -ssh-key without any forward to sshd is a mistake worth reporting.
+func resolveSSHPreset(forwards *forwardList, sshPort int, keyPath, home string) (publicKey string, err error) {
+	if sshPort != 0 {
+		if sshPort < 1 || sshPort > 65535 {
+			return "", fmt.Errorf("-ssh needs a Windows port between 1 and 65535")
+		}
+		if err := forwards.add(portForward{proto: "tcp", hostPort: sshPort, guestPort: 22}); err != nil {
+			return "", err
+		}
+	}
+	if !sshRequested(*forwards) {
+		if keyPath != "" {
+			return "", fmt.Errorf("-ssh-key only makes sense with -ssh or a -forward to Omarchy port 22")
+		}
+		return "", nil
+	}
+	if keyPath != "" {
+		key, err := loadPublicKey(keyPath)
+		if err != nil {
+			return "", fmt.Errorf("cannot use the SSH public key: %w", err)
+		}
+		return key, nil
+	}
+	if home != "" {
+		return defaultPublicKey(home), nil
+	}
+	return "", nil
+}
+
 // sshCmdline renders the kernel command line words the guest's per-boot
 // sshd request reads. The key travels base64-encoded because the command
 // line is space separated; it is a public key, so its visibility in
