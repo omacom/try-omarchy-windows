@@ -138,7 +138,7 @@ func main() {
 	cfg := &config{}
 	flag.StringVar(&cfg.dir, "dir", filepath.Join(os.Getenv("LOCALAPPDATA"), defaultDataDirectoryName), "data directory")
 	flag.StringVar(&cfg.winqEmu, "winq", `C:\WINQ-EMU`, "WINQ-EMU install path (GPU mode)")
-	flag.StringVar(&cfg.share, "share", "", "host folder shared into the guest at /mnt/host (GPU mode)")
+	flag.StringVar(&cfg.share, "share", "", "Windows folder shared into Omarchy at /mnt/host and as ~/<folder name> (GPU mode)")
 	flag.BoolVar(&cfg.fresh, "fresh", false, "discard the writable disk and start over")
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen (Immersive)")
 	flag.IntVar(&cfg.memOverrideMiB, "memory", 0, "guest RAM in MiB (default: sized to this PC)")
@@ -403,6 +403,7 @@ func main() {
 		cmdline += " tryomarchy.instant=1"
 	}
 	cmdline += sshCmdline(cfg.forwards, cfg.sshKey)
+	cmdline += shareCmdline(cfg.share)
 
 	if err := prepareDisk(cfg, spec.Runtime.Storage.ExpandedSizeMiB); err != nil {
 		if finishSetupCancellation(cfg, err) {
