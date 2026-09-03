@@ -331,7 +331,7 @@ jobs:
 
       - name: Publish without changing Latest
         shell: pwsh
-        run: gh release edit $env:RELEASE_TAG --draft=false --latest=false
+        run: gh release edit $env:RELEASE_TAG --draft=false --prerelease=false --latest=false
 
       - name: Verify public tagged assets
         shell: pwsh
