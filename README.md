@@ -50,7 +50,7 @@ Proven boot recipe: `-accel whpx -machine q35 -cpu qemu64`, direct kernel boot (
 
 ## Try it
 
-Download [TryOmarchy.exe](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (~8 MB, [SHA256](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and open it. First run sets the machine up by itself: Windows asks permission to switch on the Hypervisor Platform and restarts once, then the app pulls the GPU runtime (a portable [WINQ-EMU](https://github.com/cmspam/winq-emu) tree, ~46 MB) and the Omarchy image (~1.4 GB), everything SHA256-verified. Choose the instant trial account to go straight to the desktop, or use Omarchy's setup form to choose your own account. Every launch after goes straight to the desktop.
+Download [TryOmarchy.exe](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (~8 MB, [SHA256](https://github.com/tsouth89/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and open it. First run sets the machine up by itself: Windows asks permission to switch on the Hypervisor Platform and restarts once, then the app pulls the GPU runtime (a portable [WINQ-EMU](https://github.com/cmspam/winq-emu) tree, ~84 MB) and the Omarchy image (~1.7 GB), everything SHA256-verified. Choose the instant trial account to go straight to the desktop, or use Omarchy's setup form to choose your own account. Every launch after goes straight to the desktop.
 
 After the first successful setup, Try Omarchy offers optional Start-menu and Desktop shortcuts. They point to a stable copy of the signed launcher in `%LOCALAPPDATA%\TryOmarchy`, so the original download can be moved or deleted. Opening a newer downloaded release refreshes that stable copy.
 
@@ -173,7 +173,7 @@ Yes, and that's the point. QEMU on WHPX is the best virtualization stack Windows
 
 ### Why is the download only ~8 MB?
 
-TryOmarchy.exe is just the launcher. On first run it fetches the GPU runtime (~46 MB) and the Omarchy image (~1.4 GB), SHA256-verifies both, and caches them in `%LOCALAPPDATA%\TryOmarchy`. After that, launches work offline.
+TryOmarchy.exe is just the launcher. On first run it fetches the GPU runtime (~84 MB) and the Omarchy image (~1.7 GB), SHA256-verifies both, and caches them in `%LOCALAPPDATA%\TryOmarchy`. After that, launches work offline.
 
 ### Why not just use a live USB?
 

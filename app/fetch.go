@@ -174,7 +174,7 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 		return fmt.Errorf("recording verified install state: %w", err)
 	}
 	if removeZst {
-		os.Remove(zst) // 1.4 GB nobody needs twice
+		os.Remove(zst) // Keep only the unpacked image after a successful install.
 	}
 	ui.setStatus("Ready - starting Omarchy...")
 	ui.setProgress(1, 1)

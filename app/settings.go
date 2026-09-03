@@ -13,7 +13,7 @@ import (
 
 // settings is the launcher's persistent configuration, settings.json in the
 // data directory. It carries the same rows the mac app's start menu has, so
-// the settings window (when it lands) only edits this file, and every row
+// the settings window only edits this file, and every row
 // stays usable today by editing the file or passing the matching flag. A
 // flag given on the command line wins over the file for that row, so
 // scripted launches stay predictable.

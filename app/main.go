@@ -286,7 +286,7 @@ func main() {
 	logf("---- %s starting ----", appTitle)
 
 	// Single-instance guard FIRST: binding the lifecycle port before the image
-	// fetch stops a double-click double-launch from downloading the same 1.4 GB
+	// fetch stops a double-click double-launch from downloading the same image
 	// into the same files twice (it happened).
 	runLifecycleListener()
 
