@@ -34,7 +34,6 @@ var (
 	procGetClipboardData         = user32.NewProc("GetClipboardData")
 	procSetClipboardData         = user32.NewProc("SetClipboardData")
 	procIsClipboardFormatAvail   = user32.NewProc("IsClipboardFormatAvailable")
-	procGetClipboardSeqNum       = user32.NewProc("GetClipboardSequenceNumber")
 	procSystemParametersInfoW    = user32.NewProc("SystemParametersInfoW")
 	procGlobalAlloc              = kernel32.NewProc("GlobalAlloc")
 	procGlobalSize               = kernel32.NewProc("GlobalSize")
@@ -237,11 +236,6 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 func enforceTitle(pid uint32, maximize *bool, appIcon uintptr) {
 	enumTitlePid, enumTitleMaximize, enumTitleIcon = pid, maximize, appIcon
 	procEnumWindows.Call(enumTitleCallback, 0)
-}
-
-func clipboardSeq() uint32 {
-	r, _, _ := procGetClipboardSeqNum.Call()
-	return uint32(r)
 }
 
 func clipboardGetText() (string, bool) {
