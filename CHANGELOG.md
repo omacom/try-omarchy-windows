@@ -1,16 +1,21 @@
 # Changelog
 
-## v0.0.10-preview - 2026-09-03
+## v0.0.11-preview - 2026-09-03
 
 ### Features
-- Standard installs now offer a dedicated `Omarchy Shared` folder for moving files between Windows and Omarchy. It is opt-in, can be disabled without forgetting the path, and appears in Omarchy's Files sidebar without replacing user bookmarks.
+- Standard installs now offer a dedicated `Omarchy Shared` folder for moving files between Windows and Omarchy. It is opt-in, can be disabled without forgetting the path, opens in Files the first time it is attached, and stays pinned in the sidebar without replacing user bookmarks.
 - Added a tray menu while Omarchy is running for reopening the VM, opening the shared folder, Settings, diagnostics, and clean shutdown. Start-menu installs also receive a separate Settings shortcut, including existing installs on their next successful launch.
 
 ### Fixes
+- Fixed upgraded guest disks skipping newer launcher integration when the Linux kernel version had not changed. Existing v0.8 through v0.10 guests now receive the shared-folder link and Files bookmark without replacing the guest or user data.
 - Kept folder sharing available with CPU rendering when the bundled WINQ-EMU runtime is installed.
 - Invalid or unavailable saved folders no longer prevent Omarchy from starting. Unsafe broad, system, network, reparse-point, and VM-data paths are rejected before launch.
 - Fixed Settings opening behind the maximized Omarchy window when selected from the tray.
 - Refreshed the locked guest packages for Mesa 26.2.2, WirePlumber 0.5.17, and GNOME Autoar 0.5.2.
+
+## v0.0.10-preview - 2026-09-03
+
+- Withdrawn during prerelease testing because upgraded guest disks could miss the new Files integration. Superseded by v0.0.11-preview.
 
 ## v0.0.9-preview - 2026-09-02
 
