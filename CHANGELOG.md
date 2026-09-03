@@ -13,6 +13,8 @@
 - Fixed Settings opening behind the maximized Omarchy window when selected from the tray.
 - Refreshed the locked guest packages for Mesa 26.2.2, WirePlumber 0.5.17, and GNOME Autoar 0.5.2.
 
+Thanks to [majilesh](https://github.com/majilesh) for portable USB mode, [Tom Ballard](https://github.com/tcballard) for disk-space preflight, [Pedro Perez](https://github.com/pjperez) for ARM64 host detection, and [Chainfire](https://github.com/Chainfire) for WHPX guidance. Thanks also to [Jocelyn Legault](https://github.com/joce), [eskwayrd](https://github.com/eskwayrd), [Anees Khan](https://github.com/aneeskhan47), and [Brady Walsh](https://github.com/knighthawkbro) for reports that led to fixes in this release.
+
 ## v0.0.10-preview - 2026-09-03
 
 - Withdrawn during prerelease testing because upgraded guest disks could miss the new Files integration. Superseded by v0.0.11-preview.
