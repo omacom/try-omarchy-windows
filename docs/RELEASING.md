@@ -84,9 +84,9 @@ fullscreen checks in `docs/RUNTIME-VALIDATION.md` pass on physical hardware.
 The guest builder base is fixed in `guest-build/source.lock.json`. The runtime
 build inputs are fixed in `runtime-build/sources.lock.json`, and the Runtime
 workflow produces matching portable and source archives with licenses,
-provenance, and per-file hashes. The runtime used by a production release stays
-fixed in `guest-build/runtime.lock.json`; update that lock only after the new
-archive passes `docs/RUNTIME-VALIDATION.md`.
+provenance, and per-file hashes. Both archives used by a production release
+stay fixed in `guest-build/runtime.lock.json`; update that lock only after the
+new runtime passes `docs/RUNTIME-VALIDATION.md`.
 
 ## Publish
 

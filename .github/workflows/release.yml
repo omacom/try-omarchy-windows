@@ -104,7 +104,8 @@ jobs:
             "$ARTIFACT_DIR/provenance.json" \
             "$ARTIFACT_DIR/rootfs.ext4.zst" \
             "$ARTIFACT_DIR/vmlinuz-linux" \
-            "$ARTIFACT_DIR/winq-emu-alpha10-portable.zip"
+            "$ARTIFACT_DIR/winq-emu-alpha10-portable.zip" \
+            "$ARTIFACT_DIR/winq-emu-alpha10-source.zip"
 
       - name: Record manifest pin
         shell: bash
