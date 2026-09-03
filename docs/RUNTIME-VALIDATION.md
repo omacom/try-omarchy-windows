@@ -1,7 +1,7 @@
 # Source-built runtime validation
 
 The Runtime workflow produces an unsigned test artifact. Keep the public
-runtime pin unchanged until all of these pass on Windows 11.
+runtime pin unchanged until all of these pass on supported Windows versions.
 
 - `qemu-system-x86_64.exe --version` reports QEMU 11.0.0.
 - `qemu-system-x86_64.exe -accel help` lists WHPX.

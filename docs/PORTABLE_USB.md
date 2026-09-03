@@ -7,7 +7,7 @@ this core change.
 
 ## Host requirements
 
-- 64-bit Windows 11
+- 64-bit Windows 10 or 11
 - Intel VT-x or AMD-V/SVM enabled in firmware
 - Windows Hypervisor Platform (the launcher can enable it with UAC and one
   restart)

@@ -15,7 +15,7 @@ Try Omarchy runs the full x86_64 Arch Linux environment used by Omarchy. It is n
 
 ## Current limits
 
-- Windows 11 with hardware virtualization is required.
+- 64-bit Windows 10 or 11 with hardware virtualization is required.
 - ARM64 Windows PCs (Snapdragon and similar) are not supported: the launcher, runtime, and guest image are all x86_64, and setup stops with an explanation instead of blaming virtualization settings.
 - GPU acceleration depends on the patched WINQ-EMU runtime and compatible Windows graphics drivers. Try Omarchy falls back to CPU rendering when that path is unavailable.
 - USB devices, host webcams, and arbitrary PCI devices are not passed through.
