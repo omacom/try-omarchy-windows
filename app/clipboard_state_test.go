@@ -31,3 +31,11 @@ func TestClipboardGuestTextDoesNotEchoBack(t *testing.T) {
 		t.Fatal("guest text would echo back to the guest")
 	}
 }
+
+func TestClipboardRejectsOversizedText(t *testing.T) {
+	tooLarge := string(make([]byte, maxClipboardTextBytes+1))
+	var state clipboardSyncState
+	if state.shouldAcceptGuest(tooLarge) || state.shouldSendHost(tooLarge) {
+		t.Fatal("oversized clipboard text was accepted")
+	}
+}

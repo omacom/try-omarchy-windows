@@ -17,7 +17,16 @@ $p = Get-Process qemu-system-x86_64w -ErrorAction SilentlyContinue | Where-Objec
 Check 'windowless QEMU binary running with a window' ($null -ne $p)
 if ($null -eq $p) { exit 1 }
 
-Check 'window titled "Try Omarchy"' ($p.MainWindowTitle -eq 'Try Omarchy')
+$titleReady = $false
+for ($attempt = 0; $attempt -lt 8; $attempt++) {
+    $p.Refresh()
+    if ($p.MainWindowTitle -eq 'Try Omarchy') {
+        $titleReady = $true
+        break
+    }
+    Start-Sleep -Milliseconds 250
+}
+Check 'window titled "Try Omarchy"' $titleReady
 Check 'window is maximized (not fullscreen, not floating)' ([UxCheck.Native]::IsZoomed($p.MainWindowHandle))
 
 $cl = (Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)").CommandLine

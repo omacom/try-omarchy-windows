@@ -12,11 +12,11 @@ Download, boot, Hyprland.
 
 ## What works today
 
-- **The full Omarchy 4.0.2 desktop**: Hyprland, the bar, notifications, all 22 themes, the screensavers. On our mid-range Ryzen 5 test laptop the desktop is up about 6 seconds after launch, and every launch after setup goes straight there. No Linux login screens, no console text, branded window.
+- **The full Omarchy 4.0.2 desktop on new or reset guests**: Hyprland, the bar, notifications, all 22 themes, the screensavers. On our mid-range Ryzen 5 test laptop the desktop is up about 6 seconds after launch, and every launch after setup goes straight there. No Linux login screens, no console text, branded window.
 - **GPU acceleration**: Hyprland renders on the host GPU via virgl, `vulkaninfo` shows Venus, smooth video and audio (verified on a Radeon iGPU laptop); `-cpu host` (AVX2 and all) via WINQ-EMU's patched WHPX.
 - **One app, zero prerequisites**: `TryOmarchy.exe` (~8 MB, no console window). First run sets the machine up itself: switches on Windows' Hypervisor Platform (one permission prompt, one restart), then downloads the GPU runtime and the image SHA256-verified and boots into Omarchy's setup form. Once setup is complete it keeps a stable launcher under `%LOCALAPPDATA%\TryOmarchy` and can add optional Start-menu and Desktop shortcuts. After that it supervises everything: GPU/CPU auto-detect, the known WHPX launch wedge, in-guest reboot relaunch, poweroff cleanup.
 - **Feels like an app, not a VM**: the window is branded "Try Omarchy", the Windows key acts as Super only while the window is focused (Start menu and Win+Shift+S keep working everywhere else), Ctrl+Alt+F goes fullscreen.
-- **Two-way text clipboard sharing** between Windows and Omarchy (own compositor-native bridge over wl-clipboard, no SPICE) and **folder sharing** (`-Share <folder>`, virtio-9p on the GPU stack): the folder appears inside Omarchy under its own name, so `C:\Users\me\Work` is `~/Work`, and at `/mnt/host`. File clipboard and drag-and-drop are not supported; use folder sharing to move files.
+- **Two-way text clipboard sharing** between Windows and Omarchy (own compositor-native bridge over wl-clipboard, no SPICE) and **folder sharing** (`-share <folder>`, virtio-9p on the GPU stack): the folder appears inside Omarchy under its own name, so `C:\Users\me\Work` is `~/Work`, and at `/mnt/host`. File clipboard and drag-and-drop are not supported; use folder sharing to move files.
 - First boot offers an instant trial account or Omarchy's normal personalized account setup, with SDDM autologin after either path. Instant mode keeps `omarchy` as both the local username and lock-screen password, shows that on the setup splash, and repeats it once on the first desktop. Sudo remains passwordless in this disposable local trial.
 - Reproducible x86_64 guest image build (containerized, package-locked, pinned Omarchy revision) and a headless QMP control plane for automated testing.
 
@@ -81,9 +81,10 @@ trusted manifest digest via `-sums-sha256`.
 
 Run `TryOmarchy.exe -diagnostics`. It writes one zip under
 `%LOCALAPPDATA%\TryOmarchy\diagnostics` with the launcher and QEMU logs, the
-guest's console output, settings, install and update state, the guest
-manifest, and machine facts (Windows build, CPU, memory). No disk images and
-nothing from your home folder. Attach it to the issue.
+guest's console output, redacted settings, install and update state, the guest
+manifest, and machine facts (Windows build, CPU, memory). It includes no disk
+images or home-folder files and redacts known account paths and SSH key data.
+Logs can still contain local details, so review the zip before attaching it.
 
 ### Settings
 
@@ -104,7 +105,7 @@ wins for that launch:
 
 `fullscreen` is the Immersive mode (`-fullscreen`), `memoryMiB` overrides the
 automatic guest RAM sizing (`-memory`, 0 keeps it automatic), `share` is the
-Windows folder shared into Omarchy (`-Share`), `forwards` are loopback port
+Windows folder shared into Omarchy (`-share`), `forwards` are loopback port
 forwards (`-forward`), and `sshKey` is the public key file to authorize when a
 forward targets sshd (`-ssh-key`). `TryOmarchy.exe -settings` opens a small
 window that edits the same rows.
@@ -141,10 +142,11 @@ if ssh complains.
 ### Taking your setup to a real Omarchy install
 
 Inside Omarchy, run `try-omarchy-export`. It writes one archive with your
-configuration, theme, and the packages you added, to the shared Windows folder
-when one is mounted (`-Share`) or to your home folder otherwise. On the real
+desktop configuration, theme, and the packages you added, to the shared Windows folder
+when one is mounted (`-share`) or to your home folder otherwise. On the real
 install, extract it and run the `restore.sh` inside. Keys, password stores,
-and browser profiles are deliberately left out. See
+browser profiles, and unlisted application configs are deliberately left out.
+Review the archive before sharing it with anyone. See
 [`docs/MIGRATION.md`](docs/MIGRATION.md).
 
 ### Offline portable mode

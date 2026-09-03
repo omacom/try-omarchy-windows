@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -25,15 +26,7 @@ import (
 // window, keeps the window branded, and bridges the clipboard. The SDL window
 // IS the app - the shell itself shows nothing but error dialogs.
 
-const (
-	appTitle      = "Try Omarchy"
-	qmpToolsPort  = 4445 // free for qmp.ps1 / provisioning tooling
-	qmpFwdPort    = 4446 // winkey forwarder
-	qmpSupPort    = 4447 // supervisor watchdog + lifecycle
-	clipPushPort  = 4448 // clipboard: guest -> host
-	clipPullPort  = 4449 // clipboard: host -> guest
-	lifecyclePort = 4450 // guest shutdown intent ("reboot") - see runLifecycleListener
-)
+const appTitle = "Try Omarchy"
 
 type config struct {
 	dir, hostDir, payloadDir string
@@ -219,7 +212,7 @@ func main() {
 			errorBox("Try Omarchy could not write the diagnostics bundle.\n\n" + err.Error())
 			os.Exit(1)
 		}
-		infoBox("Diagnostics written to:\n\n" + bundle + "\n\nAttach it to your GitHub issue. It holds launcher and QEMU logs, guest console output, settings, and machine facts, but no disk images or personal files.")
+		infoBox("Diagnostics written to:\n\n" + bundle + "\n\nIt contains redacted settings, recent logs, and machine facts, but no disk images or home-folder files. Review it before attaching it to an issue because logs can still contain local details.")
 		return
 	}
 
@@ -244,6 +237,16 @@ func main() {
 	if cfg.memOverrideMiB != 0 && (cfg.memOverrideMiB < minimumGuestMemoryMiB || cfg.memOverrideMiB > maximumGuestMemoryMiB) {
 		fatal("-memory must be between %d and %d MiB.", minimumGuestMemoryMiB, maximumGuestMemoryMiB)
 	}
+	home, _ := os.UserHomeDir()
+	sshKey, err := resolveSSHPreset(&forwards, *sshPort, *sshKeyPath, home, explicitFlags["ssh-key"])
+	if err != nil {
+		fatal("%v.", err)
+	}
+	cfg.forwards = forwards
+	cfg.sshKey = sshKey
+	if sshRequested(cfg.forwards) && cfg.sshKey == "" {
+		logf("ssh requested without a public key - password login only")
+	}
 
 	cfg.guestDir = filepath.Join(cfg.dir, "guest")
 	cfg.vmDir = filepath.Join(cfg.dir, "vm")
@@ -253,14 +256,25 @@ func main() {
 		cfg.diskFormat = "qcow2"
 		cfg.disk = filepath.Join(cfg.vmDir, "disk.qcow2")
 	}
-	if _, err := rollbackPendingPayloadUpdates(cfg.dir); err != nil {
+	payloadsRolledBack, err := rollbackPendingPayloadUpdates(cfg.dir)
+	if err != nil {
 		fatal("Could not recover the previous Omarchy files after an interrupted update: %v", err)
+	}
+	if payloadsRolledBack {
+		if err := pinRestoredPayloads(cfg.dir, release, sumsSHA256, runtimeRelease, runtimeSumsSHA256); err != nil {
+			fatal("Could not use the restored Omarchy files: %v", err)
+		}
+		logf("using restored guest and runtime for this recovery launch")
 	}
 	completeAtStart := completeInstallExists(cfg.dir, filepath.Base(cfg.disk))
 	needsProvisioning := cfg.fresh || !completeAtStart
 	configureSetupCancellation(!completeAtStart)
-	os.MkdirAll(cfg.vmDir, 0o755)
-	os.MkdirAll(cfg.hostDir, 0o755)
+	if err := os.MkdirAll(cfg.vmDir, 0o755); err != nil {
+		fatal("Could not create the Omarchy data directory: %v", err)
+	}
+	if err := os.MkdirAll(cfg.hostDir, 0o755); err != nil {
+		fatal("Could not create the Windows host-state directory: %v", err)
+	}
 	logFile, _ = os.OpenFile(filepath.Join(cfg.vmDir, "shell.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if logFile != nil {
 		// A windowsgui process has no console: an unhandled panic (any
@@ -325,20 +339,29 @@ func main() {
 		}
 	}
 	if gpuRoot == "" && !(cfg.noGpu && haveStock) {
-		root, err := ensureRuntime(cfg, *runtimeRelease, *runtimeSumsSHA256)
-		if err != nil {
-			if finishSetupCancellation(cfg, err) {
-				return
+		if payloadsRolledBack {
+			root := filepath.Join(cfg.dir, "runtime")
+			info, err := os.Stat(filepath.Join(root, "bin", qemuExe))
+			if err != nil || !info.Mode().IsRegular() {
+				fatal("The restored graphics engine is incomplete. Reinstall Try Omarchy or use a working stock QEMU installation.")
 			}
-			logf("runtime setup failed: %v", err)
-			if !haveStock {
-				if cfg.portable {
-					fatal("Setting up the portable graphics engine failed: %v\n\nThe USB payload may be missing or damaged.", err)
-				}
-				fatal("Downloading the graphics engine failed: %v\n\n%s", err, setupFailureHelp(err))
-			}
-		} else {
 			gpuRoot = root
+		} else {
+			root, err := ensureRuntime(cfg, *runtimeRelease, *runtimeSumsSHA256)
+			if err != nil {
+				if finishSetupCancellation(cfg, err) {
+					return
+				}
+				logf("runtime setup failed: %v", err)
+				if !haveStock {
+					if cfg.portable {
+						fatal("Setting up the portable graphics engine failed: %v\n\nThe USB payload may be missing or damaged.", err)
+					}
+					fatal("Downloading the graphics engine failed: %v\n\n%s", err, setupFailureHelp(err))
+				}
+			} else {
+				gpuRoot = root
+			}
 		}
 	}
 	if gpuRoot != "" {
@@ -350,24 +373,21 @@ func main() {
 
 	// First run: fetch the guest image, or copy and unpack the authenticated
 	// local payload. Portable mode never falls back to the network.
-	if err := ensureGuest(cfg, *release, *sumsSHA256); err != nil {
-		if finishSetupCancellation(cfg, err) {
-			return
+	if payloadsRolledBack {
+		ready, err := installReceiptMatches(cfg.guestDir, *release, *sumsSHA256, installedGuestArtifacts)
+		if err != nil || !ready {
+			fatal("The restored Omarchy image is incomplete. Reinstall Try Omarchy to recover it.")
 		}
-		if cfg.portable {
-			fatal("Setting up portable Omarchy failed: %v\n\nThe USB payload may be missing or damaged.", err)
+	} else {
+		if err := ensureGuest(cfg, *release, *sumsSHA256); err != nil {
+			if finishSetupCancellation(cfg, err) {
+				return
+			}
+			if cfg.portable {
+				fatal("Setting up portable Omarchy failed: %v\n\nThe USB payload may be missing or damaged.", err)
+			}
+			fatal("Setting up the Omarchy image failed: %v\n\n%s", err, setupFailureHelp(err))
 		}
-		fatal("Setting up the Omarchy image failed: %v\n\n%s", err, setupFailureHelp(err))
-	}
-	home, _ := os.UserHomeDir()
-	sshKey, err := resolveSSHPreset(&forwards, *sshPort, *sshKeyPath, home)
-	if err != nil {
-		fatal("%v.", err)
-	}
-	cfg.forwards = forwards
-	cfg.sshKey = sshKey
-	if sshRequested(cfg.forwards) && cfg.sshKey == "" {
-		logf("ssh requested without a public key - password login only")
 	}
 	if cfg.share != "" {
 		if st, err := os.Stat(cfg.share); err != nil || !st.IsDir() {
@@ -462,9 +482,11 @@ func main() {
 func supervise(cfg *config, cmdline string) bool {
 	var proc *exec.Cmd
 	var qmp *qmpConn
-	// 6 attempts: the fallback ladder (audio, GPU, then memory halvings) can
-	// legitimately consume several before a healthy launch.
-	for attempt := 1; attempt <= 6; attempt++ {
+	// The worst case can consume one attempt each for nested virtualization,
+	// audio, runtime rollback, and GPU fallback before walking 64 GiB down to a
+	// final 1 GiB memory attempt. Keep a small margin without allowing a loop.
+	const maxLaunchAttempts = 12
+	for attempt := 1; attempt <= maxLaunchAttempts; attempt++ {
 		if setupCancelled() {
 			return false
 		}
@@ -474,6 +496,7 @@ func supervise(cfg *config, cmdline string) bool {
 		}
 		logf("booting - %s (attempt %d)", mode, attempt)
 		pendingReboot.Store(false)
+		guestReady.Store(false)
 		proc = exec.Command(cfg.qemu, buildQemuArgs(cfg, cmdline)...)
 		// The w-binary's startup errors (bad args, SDL init) only ever reach
 		// stderr; without this they vanish and a dead QEMU is undebuggable.
@@ -520,7 +543,7 @@ func supervise(cfg *config, cmdline string) bool {
 				}
 				// No DirectSound device (VMs, some remote sessions) kills
 				// QEMU at startup; retry silent rather than dying.
-				if cfg.audio == "dsound" {
+				if cfg.audio == "dsound" && audioUnavailable(cfg) {
 					logf("QEMU exited at startup - retrying without audio")
 					cfg.audio = "none"
 					break probe
@@ -559,8 +582,10 @@ func supervise(cfg *config, cmdline string) bool {
 		}
 		if qmp != nil {
 			guestUp.Store(true)
-			commitLauncherUpdate(cfg.dir)
-			commitPayloadUpdates(cfg.dir)
+			// QMP answers while the guest is kernel-panicked, and a graphics
+			// runtime can start QMP before failing later in guest boot. Keep all
+			// update components rollback-capable until the in-guest readiness
+			// service reaches userspace and networking.
 			defer qmp.close()
 			return watch(cfg, qmp, exited)
 		}
@@ -577,7 +602,7 @@ func supervise(cfg *config, cmdline string) bool {
 	if setupCancelled() {
 		return false
 	}
-	fatal("QEMU failed to come up healthy after 6 attempts.")
+	fatal("QEMU failed to come up healthy after %d attempts.", maxLaunchAttempts)
 	return false
 }
 
@@ -590,6 +615,10 @@ func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
 	defer ticker.Stop()
 	procDown := false
 	for reason == "" && !procDown {
+		if guestReady.Swap(false) {
+			commitLauncherUpdate(cfg.dir)
+			commitPayloadUpdates(cfg.dir)
+		}
 		select {
 		case <-exited:
 			procDown = true
@@ -659,7 +688,10 @@ drained:
 	return false
 }
 
-var pendingReboot atomic.Bool
+var (
+	pendingReboot atomic.Bool
+	guestReady    atomic.Bool
+)
 
 // runLifecycleListener receives the guest's shutdown intent: the image's
 // try-omarchy-reboot-notify unit connects to 10.0.2.2:4450 (this listener via
@@ -679,10 +711,17 @@ func runLifecycleListener() {
 			go func(c net.Conn) {
 				defer c.Close()
 				c.SetReadDeadline(time.Now().Add(3 * time.Second))
-				line, _ := bufio.NewReader(c).ReadString('\n')
-				if strings.TrimSpace(line) == "reboot" {
+				line, err := bufio.NewReader(io.LimitReader(c, 64)).ReadString('\n')
+				if err != nil {
+					return
+				}
+				switch strings.TrimSpace(line) {
+				case "reboot":
 					logf("guest announced reboot")
 					pendingReboot.Store(true)
+				case "ready":
+					logf("guest userspace announced ready")
+					guestReady.Store(true)
 				}
 			}(c)
 		}

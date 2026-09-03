@@ -20,10 +20,13 @@ SUCCESS = b"TRYOMARCHY_SMOKE:omarchy:instant-trial"
 FACT_CHECKS = {
     "yay": "pacman -Q yay >/dev/null 2>&1 && echo present || echo missing",
     "recorder": "pacman -Q gpu-screen-recorder >/dev/null 2>&1 && echo present || echo missing",
-    "foreign": "pacman -Qem 2>/dev/null | wc -l",
+    "foreign": "pacman -Qmq 2>/dev/null | wc -l",
     "sshd": "systemctl is-active sshd 2>/dev/null || true",
     "omarchy-repo-signed": "grep -A2 '^\\[omarchy\\]' /etc/pacman.conf | grep -q TrustAll && echo no || echo yes",
     "input-group": "id -nG | tr ' ' '\\n' | grep -qx input && echo yes || echo no",
+    "compat-version": "test \"$(cat /usr/share/try-omarchy/compat-version)\" = \"1:$(uname -r)\" && echo yes || echo no",
+    "kernel-modules": "test -f /usr/lib/modules/$(uname -r)/modules.dep.bin && echo yes || echo no",
+    "ready-service": "systemctl is-enabled try-omarchy-ready.service 2>/dev/null || true",
 }
 EXPECTED_FACTS = {
     "yay": "present",
@@ -32,7 +35,27 @@ EXPECTED_FACTS = {
     "sshd": "inactive",
     "omarchy-repo-signed": "yes",
     "input-group": "no",
+    "compat-version": "yes",
+    "kernel-modules": "yes",
+    "ready-service": "enabled",
 }
+
+
+def parse_facts(transcript: bytes) -> dict[str, str]:
+    """Return the last real value printed for each smoke fact.
+
+    The serial console echoes the command before its output and may attach
+    terminal escape sequences to the first result, so matches can occur
+    anywhere. Echoed printf placeholders are not results.
+    """
+    facts = {}
+    for name, value in re.findall(
+        r"TRYOMARCHY_FACT:([A-Za-z0-9-]+):([^\s\x1b'\"\\]+)(?=\s|\x1b|$)",
+        transcript.decode("utf-8", errors="replace"),
+    ):
+        if "%" not in value:
+            facts[name] = value
+    return facts
 
 
 def main() -> None:
@@ -122,17 +145,7 @@ def main() -> None:
 
                 if SUCCESS in transcript:
                     process.wait(timeout=90)
-                    # The serial console echoes the command (with %s
-                    # placeholders) before the output, and glues terminal
-                    # escape sequences onto the first output line, so match
-                    # anywhere and keep the last real value per fact.
-                    facts = {}
-                    for name, value in re.findall(
-                        r"TRYOMARCHY_FACT:([A-Za-z0-9-]+):([^\s\x1b'\"\\]*)",
-                        bytes(transcript).decode("utf-8", errors="replace"),
-                    ):
-                        if "%" not in value:
-                            facts[name] = value
+                    facts = parse_facts(bytes(transcript))
                     wrong = {name: (facts.get(name), want) for name, want in EXPECTED_FACTS.items() if facts.get(name) != want}
                     if wrong:
                         raise SystemExit(f"instant guest booted but the image facts are wrong: {wrong}")

@@ -13,6 +13,9 @@ runtime pin unchanged until all of these pass on Windows 11.
 - Windowed, fullscreen, guest reboot, guest poweroff, and relaunch all work.
 - The runtime archive extracts cleanly on a fresh machine without MSYS2 installed.
 - Task Manager shows no unexpected console window or extra launcher process.
+- After the desktop settles, QEMU's Task Manager CPU use falls materially below
+  its active-animation level and does not pin one logical processor. Animation
+  and video remain smooth when display activity resumes.
 - On a host that refuses nested virtualization (Intel Core Ultra laptops, or
   any machine with the full Hyper-V feature set enabled), QEMU starts and
   `qemu-stderr.log` shows the "nested virtualization unavailable" warning

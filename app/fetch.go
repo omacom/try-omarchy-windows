@@ -56,7 +56,8 @@ func ensureGuest(cfg *config, release, sumsSHA256 string) error {
 		return fmt.Errorf("recording image rollback state: %w", err)
 	}
 	if err := publishDirectoryUpdate(cfg.guestDir, staged, filepath.Join(cfg.dir, "guest.previous")); err != nil {
-		cancelPayloadUpdateRecord(cfg.dir, true, false)
+		// Keep the rollback record. Publication may have moved the old tree
+		// before failing, and the next launch is the safest place to reconcile it.
 		return fmt.Errorf("publishing image update: %w", err)
 	}
 	return nil
@@ -136,7 +137,7 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 		if err := removeCachedFile(rootfs); err != nil {
 			return fmt.Errorf("removing incomplete rootfs.ext4: %w", err)
 		}
-		rootfsAllocated, err := estimatedSparseRootfsBytes(artifactSizes["rootfs.ext4"])
+		rootfsAllocated, err := rootfsInstallBytes(artifactSizes["rootfs.ext4"], cfg.portable)
 		if err != nil {
 			return err
 		}
@@ -286,12 +287,11 @@ func decompress(src, dest, wantSum string, ui *progressUI) error {
 			os.Remove(tmp)
 		}
 	}()
-	// The rootfs is mostly zeros; write it sparse so 6 GB lands as ~4 GB.
-	if err := setSparse(out); err == nil {
-		if err := sparseCopyStream(out, dec, st.Size(), counted, ui); err != nil {
-			return err
-		}
-	} else if _, err := io.Copy(out, setupReader{r: dec}); err != nil {
+	// The rootfs is mostly zeros. NTFS stores the skipped blocks sparsely;
+	// exFAT allocates them when the file is truncated but uses the same copy
+	// loop so progress continues to update during the full-size fallback.
+	_ = setSparse(out)
+	if err := sparseCopyStream(out, dec, st.Size(), counted, ui); err != nil {
 		return err
 	}
 	if err := out.Sync(); err != nil {

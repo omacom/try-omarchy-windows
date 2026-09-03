@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -52,7 +53,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		)
 	}
 	args = append(args,
-		"-drive", "file="+cfg.disk+",format="+cfg.diskFormat+",if=virtio",
+		"-drive", "file="+qemuOptionValue(cfg.disk)+",format="+cfg.diskFormat+",if=virtio",
 		"-kernel", filepath.Join(cfg.guestDir, "vmlinuz-linux"),
 		"-initrd", filepath.Join(cfg.guestDir, "initramfs-linux.img"),
 		"-append", cmdline,
@@ -76,7 +77,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 	)
 	if cfg.share != "" {
 		if cfg.useGpu {
-			args = append(args, "-virtfs", "local,path="+cfg.share+",mount_tag=hostshare,security_model=none")
+			args = append(args, "-virtfs", "local,path="+qemuOptionValue(cfg.share)+",mount_tag=hostshare,security_model=none")
 		}
 		// Stock QEMU for Windows ships no virtio-9p; silently launching
 		// without the share would be confusing, so main() rejects that combo.
@@ -85,6 +86,13 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		args = append(args, "-full-screen")
 	}
 	return args
+}
+
+// QEMU's structured option parser uses commas as separators and represents a
+// literal comma as two commas. Paths are already separate argv values, but a
+// folder such as C:\Work,Notes still needs this option-level escaping.
+func qemuOptionValue(value string) string {
+	return strings.ReplaceAll(value, ",", ",,")
 }
 
 // nestedVirtRefused reports whether the current attempt's QEMU died because
@@ -97,6 +105,20 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 func nestedVirtRefused(cfg *config) bool {
 	data, err := os.ReadFile(filepath.Join(cfg.vmDir, "qemu-stderr.log"))
 	return err == nil && bytes.Contains(data, []byte("Failed to enable nested virtualization"))
+}
+
+// audioUnavailable distinguishes a missing DirectSound device from unrelated
+// startup failures. Retrying every failure without audio used to consume a
+// fallback attempt even when the real problem was memory or graphics.
+func audioUnavailable(cfg *config) bool {
+	data, err := os.ReadFile(filepath.Join(cfg.vmDir, "qemu-stderr.log"))
+	if err != nil {
+		return false
+	}
+	message := bytes.ToLower(data)
+	return bytes.Contains(message, []byte("dsound:")) ||
+		bytes.Contains(message, []byte("directsound")) ||
+		bytes.Contains(message, []byte("dsound audio driver"))
 }
 
 func sdlDisplay(gpu, hostCursor bool) string {
@@ -128,6 +150,11 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 		if err := os.Remove(cfg.disk); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("discarding the existing disk: %w", err)
 		}
+		if cfg.portable {
+			if err := os.Remove(portableBackingStatePath(cfg.disk)); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("discarding the portable disk identity: %w", err)
+			}
+		}
 	}
 	if cfg.portable {
 		return preparePortableDisk(cfg, expandedBytes)
@@ -139,12 +166,46 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 		if info.Size() >= expandedBytes {
 			return nil
 		}
-		// Older launchers wrote directly to disk.raw, so an interrupted first
-		// copy can exist under the final name. Preserve it for inspection while
-		// rebuilding a complete disk atomically.
-		quarantine := fmt.Sprintf("%s.incomplete-%d", cfg.disk, time.Now().UnixNano())
-		if err := os.Rename(cfg.disk, quarantine); err != nil {
-			return fmt.Errorf("quarantining incomplete disk: %w", err)
+		factoryInfo, err := os.Stat(filepath.Join(cfg.guestDir, "rootfs.ext4"))
+		if err != nil {
+			return fmt.Errorf("measuring the factory disk: %w", err)
+		}
+		if !factoryInfo.Mode().IsRegular() {
+			return fmt.Errorf("factory disk is not a regular file")
+		}
+		if info.Size() < factoryInfo.Size() {
+			// Older launchers copied directly to disk.raw. A setup interrupted
+			// during that copy left the partial file under its final name. Keep it
+			// for recovery or inspection, then build a complete disk atomically.
+			quarantine := fmt.Sprintf("%s.incomplete-%d", cfg.disk, time.Now().UnixNano())
+			if err := os.Rename(cfg.disk, quarantine); err != nil {
+				return fmt.Errorf("quarantining incomplete disk: %w", err)
+			}
+		} else {
+			// A smaller disk can be a complete guest from an older release whose
+			// expanded size has since increased. Grow it in place and let the existing
+			// systemd-growfs-root unit extend ext4 at boot. Replacing it with the
+			// factory image here would silently discard the user's system and files.
+			disk, err := os.OpenFile(cfg.disk, os.O_RDWR, 0)
+			if err != nil {
+				return fmt.Errorf("opening the existing writable disk: %w", err)
+			}
+			if err := setSparse(disk); err != nil {
+				disk.Close()
+				return fmt.Errorf("marking the existing writable disk sparse: %w", err)
+			}
+			if err := disk.Truncate(expandedBytes); err != nil {
+				disk.Close()
+				return fmt.Errorf("growing the existing writable disk: %w", err)
+			}
+			if err := disk.Sync(); err != nil {
+				disk.Close()
+				return fmt.Errorf("flushing the expanded writable disk: %w", err)
+			}
+			if err := disk.Close(); err != nil {
+				return fmt.Errorf("closing the expanded writable disk: %w", err)
+			}
+			return nil
 		}
 	} else if !os.IsNotExist(err) {
 		return err
@@ -212,11 +273,22 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 // break it, and an interrupted creation never appears under the final name.
 func preparePortableDisk(cfg *config, expandedBytes int64) error {
 	backing := filepath.ToSlash(filepath.Join("..", "guest", "rootfs.ext4"))
+	backingSHA256, ok := installReceiptArtifactSHA256(cfg.guestDir, "rootfs.ext4")
+	if !ok {
+		return fmt.Errorf("verified factory disk identity is missing")
+	}
 	ok, err := qcow2OverlayMatches(cfg.disk, backing, expandedBytes)
 	if err != nil {
 		return err
 	}
 	if ok {
+		matches, err := portableBackingStateMatches(cfg.disk, backingSHA256)
+		if err != nil {
+			return err
+		}
+		if !matches {
+			return fmt.Errorf("portable guest data belongs to a different factory image; restore the matching payload or start with -portable -fresh")
+		}
 		return nil
 	}
 	if info, statErr := os.Lstat(cfg.disk); statErr == nil {
@@ -244,6 +316,13 @@ func preparePortableDisk(cfg *config, expandedBytes int64) error {
 		}
 	}()
 	if err := checkSetupCancelled(); err != nil {
+		return err
+	}
+	// Publish the authenticated backing identity first. If setup is interrupted
+	// before the QCOW2 rename, the harmless sidecar is reused on the next
+	// attempt. Publishing the disk first would leave a crash window where an
+	// existing overlay had no safe way to identify its backing image.
+	if err := writePortableBackingState(cfg.disk, backingSHA256); err != nil {
 		return err
 	}
 	if err := renamePortableFileWithRetry(tmp, cfg.disk); err != nil {

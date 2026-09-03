@@ -37,6 +37,7 @@ var (
 	procGetClipboardSeqNum       = user32.NewProc("GetClipboardSequenceNumber")
 	procSystemParametersInfoW    = user32.NewProc("SystemParametersInfoW")
 	procGlobalAlloc              = kernel32.NewProc("GlobalAlloc")
+	procGlobalSize               = kernel32.NewProc("GlobalSize")
 	procGlobalLock               = kernel32.NewProc("GlobalLock")
 	procGlobalUnlock             = kernel32.NewProc("GlobalUnlock")
 	procGlobalFree               = kernel32.NewProc("GlobalFree")
@@ -255,20 +256,28 @@ func clipboardGetText() (string, bool) {
 	if h == 0 {
 		return "", false
 	}
+	size, _, _ := procGlobalSize.Call(h)
+	if size < 2 || size > uintptr((maxClipboardTextBytes+1)*2) {
+		return "", false
+	}
 	p, _, _ := procGlobalLock.Call(h)
 	if p == 0 {
 		return "", false
 	}
 	defer procGlobalUnlock.Call(h)
-	var chars []uint16
-	for i := 0; ; i++ {
+	maxChars := int(size / 2)
+	chars := make([]uint16, 0, maxChars)
+	for i := 0; i < maxChars; i++ {
 		c := *(*uint16)(unsafe.Pointer(p + uintptr(i)*2))
 		if c == 0 {
-			break
+			text := syscall.UTF16ToString(chars)
+			return text, clipboardTextAllowed(text)
 		}
 		chars = append(chars, c)
 	}
-	return syscall.UTF16ToString(chars), true
+	// CF_UNICODETEXT is required to be NUL-terminated. Refuse a malformed
+	// clipboard handle instead of reading beyond its allocation.
+	return "", false
 }
 
 func clipboardSetText(s string) bool {

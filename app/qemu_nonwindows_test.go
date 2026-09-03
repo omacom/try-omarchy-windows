@@ -11,10 +11,7 @@ import (
 )
 
 const (
-	appTitle     = "Try Omarchy"
-	qmpToolsPort = 4445
-	qmpFwdPort   = 4446
-	qmpSupPort   = 4447
+	appTitle = "Try Omarchy"
 )
 
 type config struct {
@@ -121,7 +118,7 @@ func TestSDLDisplayUsesOnlyGuestCursorByDefault(t *testing.T) {
 	}
 }
 
-func TestPrepareDiskQuarantinesLegacyPartialFile(t *testing.T) {
+func TestPrepareDiskRebuildsLegacyPartialCopy(t *testing.T) {
 	dir := t.TempDir()
 	guestDir := filepath.Join(dir, "guest")
 	vmDir := filepath.Join(dir, "vm")
@@ -142,6 +139,13 @@ func TestPrepareDiskQuarantinesLegacyPartialFile(t *testing.T) {
 	if err := prepareDisk(cfg, 1); err != nil {
 		t.Fatal(err)
 	}
+	data, err := os.ReadFile(disk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 1<<20 || string(data[:len("factory rootfs")]) != "factory rootfs" {
+		t.Fatalf("rebuilt disk = size %d prefix %q", len(data), data[:len("factory rootfs")])
+	}
 	matches, err := filepath.Glob(disk + ".incomplete-*")
 	if err != nil {
 		t.Fatal(err)
@@ -149,12 +153,46 @@ func TestPrepareDiskQuarantinesLegacyPartialFile(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("quarantined disks = %d, want 1", len(matches))
 	}
-	data, err := os.ReadFile(matches[0])
+	old, err := os.ReadFile(matches[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "partial" {
-		t.Fatalf("quarantined content = %q, want partial", data)
+	if string(old) != "partial" {
+		t.Fatalf("quarantined contents = %q", old)
+	}
+}
+
+func TestPrepareDiskGrowsCompleteOlderDiskWithoutReplacingIt(t *testing.T) {
+	dir := t.TempDir()
+	guestDir := filepath.Join(dir, "guest")
+	vmDir := filepath.Join(dir, "vm")
+	if err := os.MkdirAll(guestDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(vmDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(guestDir, "rootfs.ext4"), []byte("factory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	disk := filepath.Join(vmDir, "disk.raw")
+	original := []byte("older complete disk")
+	if err := os.WriteFile(disk, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config{guestDir: guestDir, vmDir: vmDir, disk: disk, diskFormat: "raw"}
+	if err := prepareDisk(cfg, 1); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(disk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 1<<20 || string(data[:len(original)]) != string(original) {
+		t.Fatalf("grown disk lost its existing prefix: size=%d prefix=%q", len(data), data[:len(original)])
+	}
+	if matches, err := filepath.Glob(disk + ".incomplete-*"); err != nil || len(matches) != 0 {
+		t.Fatalf("complete disk was quarantined: matches=%v err=%v", matches, err)
 	}
 }
 
@@ -197,6 +235,47 @@ func TestNestedVirtRefusedMatchesOnlyTheFatalForm(t *testing.T) {
 	}
 }
 
+func TestAudioUnavailableRecognizesQEMUDSoundErrorsOnly(t *testing.T) {
+	cfg := &config{vmDir: t.TempDir()}
+	log := filepath.Join(cfg.vmDir, "qemu-stderr.log")
+	for _, message := range []string{
+		"dsound: Could not initialize playback: No sound device\n",
+		"DirectSound subsystem could not allocate resources\n",
+		"Failed to initialize dsound audio driver\n",
+	} {
+		if err := os.WriteFile(log, []byte(message), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !audioUnavailable(cfg) {
+			t.Fatalf("audio error was not recognized: %q", message)
+		}
+	}
+	if err := os.WriteFile(log, []byte("WHPX: cannot set up guest memory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if audioUnavailable(cfg) {
+		t.Fatal("unrelated startup failure was classified as an audio error")
+	}
+}
+
+func TestAudioUnavailableMatchesOnlyDirectSoundStartupFailures(t *testing.T) {
+	cfg := &config{vmDir: t.TempDir()}
+	log := filepath.Join(cfg.vmDir, "qemu-stderr.log")
+	for message, want := range map[string]bool{
+		"Could not initialize DirectSound: no device": true,
+		"audio: Could not init dsound audio driver":   true,
+		"cannot set up guest memory":                  false,
+		"SDL failed to create an OpenGL context":      false,
+	} {
+		if err := os.WriteFile(log, []byte(message), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := audioUnavailable(cfg); got != want {
+			t.Fatalf("audioUnavailable(%q) = %v, want %v", message, got, want)
+		}
+	}
+}
+
 func TestBuildQemuArgsForwardsPortsOnLoopback(t *testing.T) {
 	cfg := &config{vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw", diskFormat: "raw",
 		memMiB: 4096, audio: "none", forwards: []portForward{{"tcp", 2222, 22}}}
@@ -223,5 +302,19 @@ func TestBuildQemuArgsUsesConfiguredDiskFormat(t *testing.T) {
 	args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
 	if !strings.Contains(args, "file=/usb/data/vm/disk.qcow2,format=qcow2,if=virtio") {
 		t.Fatalf("configured disk format missing from QEMU args: %s", args)
+	}
+}
+
+func TestBuildQemuArgsEscapesCommasInsidePaths(t *testing.T) {
+	cfg := &config{
+		vmDir: "/vm", guestDir: "/guest", disk: "/data,one/disk.raw", diskFormat: "raw",
+		share: "/host/Work,Notes", useGpu: true, memMiB: 4096, audio: "none",
+	}
+	args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
+	if !strings.Contains(args, "file=/data,,one/disk.raw,format=raw") {
+		t.Fatalf("disk comma was not escaped: %s", args)
+	}
+	if !strings.Contains(args, "local,path=/host/Work,,Notes,mount_tag=hostshare") {
+		t.Fatalf("share comma was not escaped: %s", args)
 	}
 }

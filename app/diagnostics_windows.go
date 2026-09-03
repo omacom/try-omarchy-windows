@@ -13,13 +13,11 @@ import (
 // Windows build, CPU, memory, and whether the machine is ARM64 in disguise.
 func hostFacts() map[string]string {
 	facts := map[string]string{
-		"host.os":           os.Getenv("OS"),
-		"host.cpu":          os.Getenv("PROCESSOR_IDENTIFIER"),
-		"host.cpuArch":      os.Getenv("PROCESSOR_ARCHITECTURE"),
-		"host.cpuCount":     os.Getenv("NUMBER_OF_PROCESSORS"),
-		"host.emulated":     fmt.Sprint(os.Getenv("PROCESSOR_ARCHITEW6432") != ""),
-		"host.computer":     os.Getenv("COMPUTERNAME"),
-		"host.localAppData": os.Getenv("LOCALAPPDATA"),
+		"host.os":       os.Getenv("OS"),
+		"host.cpu":      os.Getenv("PROCESSOR_IDENTIFIER"),
+		"host.cpuArch":  os.Getenv("PROCESSOR_ARCHITECTURE"),
+		"host.cpuCount": os.Getenv("NUMBER_OF_PROCESSORS"),
+		"host.emulated": fmt.Sprint(os.Getenv("PROCESSOR_ARCHITEW6432") != ""),
 	}
 	var v struct {
 		size, major, minor, build, platform uint32

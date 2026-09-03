@@ -110,6 +110,18 @@ func TestEstimatedSparseRootfsBytesRejectsInvalidSize(t *testing.T) {
 	}
 }
 
+func TestPortableRootfsBudgetDoesNotAssumeSparseExFAT(t *testing.T) {
+	const logical = int64(6 << 30)
+	got, err := rootfsInstallBytes(logical, true)
+	if err != nil || got != logical {
+		t.Fatalf("portable rootfs budget = %d, %v; want %d", got, err, logical)
+	}
+	standard, err := rootfsInstallBytes(logical, false)
+	if err != nil || standard >= logical {
+		t.Fatalf("standard sparse rootfs budget = %d, %v", standard, err)
+	}
+}
+
 func TestRemainingFileBytesUsesLargestStagedFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "payload")
 	if err := os.WriteFile(path, make([]byte, 3), 0o644); err != nil {

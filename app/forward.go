@@ -22,6 +22,8 @@ type portForward struct {
 	guestPort int
 }
 
+const maxPublicKeyBytes = 1024
+
 func (f portForward) String() string {
 	return fmt.Sprintf("%s:%d:%d", f.proto, f.hostPort, f.guestPort)
 }
@@ -82,6 +84,9 @@ func (l *forwardList) Set(value string) error {
 }
 
 func (l *forwardList) add(f portForward) error {
+	if f.proto == "tcp" && f.hostPort >= qmpToolsPort && f.hostPort <= lifecyclePort {
+		return fmt.Errorf("Windows TCP port %d is reserved by Try Omarchy; choose a port outside %d-%d", f.hostPort, qmpToolsPort, lifecyclePort)
+	}
 	for _, existing := range *l {
 		if existing.proto == f.proto && existing.hostPort == f.hostPort {
 			return fmt.Errorf("Windows port %d is already forwarded for %s", f.hostPort, f.proto)
@@ -117,12 +122,19 @@ var publicKeyLine = regexp.MustCompile(`^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(2
 // a private key handed over by mistake, is refused before it can reach the
 // kernel command line.
 func loadPublicKey(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		return "", err
 	}
-	if len(data) > 4096 {
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular public key file", path)
+	}
+	if info.Size() > maxPublicKeyBytes {
 		return "", fmt.Errorf("%s is too large to be a public key", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
 	}
 	line := strings.TrimSpace(strings.ReplaceAll(string(data), "\r\n", "\n"))
 	if strings.Contains(line, "\n") {
@@ -150,12 +162,11 @@ func defaultPublicKey(home string) string {
 	return ""
 }
 
-// resolveSSHPreset folds -ssh and -ssh-key into the forward list and picks
-// the public key to authorize. It is the whole decision, kept out of main so
-// it can be tested: -ssh adds a TCP forward to port 22; a key path is loaded
-// and validated; without one the user's usual key is used if present; and
-// -ssh-key without any forward to sshd is a mistake worth reporting.
-func resolveSSHPreset(forwards *forwardList, sshPort int, keyPath, home string) (publicKey string, err error) {
+// resolveSSHPreset folds -ssh and the effective key path into the forward
+// list and picks the public key to authorize. rejectUnusedKey distinguishes
+// an explicit -ssh-key, which is an error without an SSH forward, from a
+// saved default key that should stay dormant until SSH is requested.
+func resolveSSHPreset(forwards *forwardList, sshPort int, keyPath, home string, rejectUnusedKey bool) (publicKey string, err error) {
 	if sshPort != 0 {
 		if sshPort < 1 || sshPort > 65535 {
 			return "", fmt.Errorf("-ssh needs a Windows port between 1 and 65535")
@@ -165,7 +176,7 @@ func resolveSSHPreset(forwards *forwardList, sshPort int, keyPath, home string) 
 		}
 	}
 	if !sshRequested(*forwards) {
-		if keyPath != "" {
+		if keyPath != "" && rejectUnusedKey {
 			return "", fmt.Errorf("-ssh-key only makes sense with -ssh or a -forward to Omarchy port 22")
 		}
 		return "", nil

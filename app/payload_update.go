@@ -40,7 +40,9 @@ func publishDirectoryUpdate(current, staged, previous string) error {
 	}
 	if err := renameDirectoryWithRetry(staged, current); err != nil {
 		if hadCurrent {
-			_ = renameDirectoryWithRetry(previous, current)
+			if restoreErr := renameDirectoryWithRetry(previous, current); restoreErr != nil {
+				return fmt.Errorf("publishing update: %v; restoring previous files: %w", err, restoreErr)
+			}
 		}
 		return err
 	}
@@ -114,13 +116,30 @@ func writePayloadUpdateState(dir string, state *payloadUpdateState) error {
 	data = append(data, '\n')
 	path := filepath.Join(dir, payloadUpdateStateFilename)
 	staged := path + ".part"
-	if err := os.WriteFile(staged, data, 0o644); err != nil {
+	f, err := os.OpenFile(staged, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			f.Close()
+			os.Remove(staged)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	if err := os.Rename(staged, path); err != nil {
-		os.Remove(staged)
 		return err
 	}
+	ok = true
 	return nil
 }
 
@@ -133,24 +152,6 @@ func recordPayloadUpdate(dir, version string, guest, runtime bool) error {
 	state.RuntimePending = state.RuntimePending || runtime
 	state.Started = true
 	return writePayloadUpdateState(dir, state)
-}
-
-func cancelPayloadUpdateRecord(dir string, guest, runtime bool) {
-	state, err := readPayloadUpdateState(dir)
-	if err != nil || state == nil {
-		return
-	}
-	if guest {
-		state.GuestPending = false
-	}
-	if runtime {
-		state.RuntimePending = false
-	}
-	if !state.GuestPending && !state.RuntimePending {
-		_ = os.Remove(filepath.Join(dir, payloadUpdateStateFilename))
-		return
-	}
-	_ = writePayloadUpdateState(dir, state)
 }
 
 func rollbackPendingPayloadUpdates(dir string) (bool, error) {
@@ -184,22 +185,68 @@ func rollbackPendingPayloadUpdates(dir string) (bool, error) {
 	return rolledBack, nil
 }
 
-func commitPayloadUpdates(dir string) {
+// pinRestoredPayloads prevents a failed payload from being selected again in
+// the same recovery launch. The next ordinary launch can check for updates
+// again after the restored guest has had one chance to boot.
+func pinRestoredPayloads(dir string, guestRelease, guestManifest, runtimeRelease, runtimeManifest *string) error {
+	release, manifest, ok := installReceiptIdentity(filepath.Join(dir, "guest"))
+	if !ok {
+		return fmt.Errorf("restored guest install state is missing or invalid")
+	}
+	*guestRelease = release
+	*guestManifest = manifest
+	if release, manifest, ok := runtimeReceiptIdentity(filepath.Join(dir, "runtime")); ok {
+		*runtimeRelease = release
+		*runtimeManifest = manifest
+	}
+	return nil
+}
+
+func commitGuestPayloadUpdate(dir string) {
 	state, err := readPayloadUpdateState(dir)
-	if err != nil || state == nil {
+	if err != nil || state == nil || !state.GuestPending {
 		return
 	}
-	if state.GuestPending {
-		_ = os.RemoveAll(filepath.Join(dir, "guest.previous"))
-	}
+	_ = os.RemoveAll(filepath.Join(dir, "guest.previous"))
+	state.GuestPending = false
 	if state.RuntimePending {
-		_ = os.RemoveAll(filepath.Join(dir, "runtime.previous"))
+		if err := writePayloadUpdateState(dir, state); err != nil {
+			logf("recording successful guest update: %v", err)
+		}
+		return
 	}
 	if err := os.Remove(filepath.Join(dir, payloadUpdateStateFilename)); err != nil && !os.IsNotExist(err) {
-		logf("clearing successful payload update: %v", err)
+		logf("clearing successful guest update: %v", err)
 		return
 	}
-	logf("payload update %s confirmed after healthy boot", state.Version)
+	logf("guest update %s confirmed after userspace reported ready", state.Version)
+}
+
+func commitRuntimePayloadUpdate(dir string) {
+	state, err := readPayloadUpdateState(dir)
+	if err != nil || state == nil || !state.RuntimePending {
+		return
+	}
+	_ = os.RemoveAll(filepath.Join(dir, "runtime.previous"))
+	state.RuntimePending = false
+	if state.GuestPending {
+		if err := writePayloadUpdateState(dir, state); err != nil {
+			logf("recording successful runtime update: %v", err)
+		}
+		return
+	}
+	if err := os.Remove(filepath.Join(dir, payloadUpdateStateFilename)); err != nil && !os.IsNotExist(err) {
+		logf("clearing successful runtime update: %v", err)
+		return
+	}
+	logf("runtime update %s confirmed after guest userspace reported ready", state.Version)
+}
+
+// Normal launch commits every payload only after the guest's userspace
+// readiness service reaches the lifecycle listener.
+func commitPayloadUpdates(dir string) {
+	commitRuntimePayloadUpdate(dir)
+	commitGuestPayloadUpdate(dir)
 }
 
 func rollbackPendingRuntimeUpdate(dir string) (bool, error) {

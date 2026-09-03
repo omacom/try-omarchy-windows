@@ -14,7 +14,9 @@ The second command needs Docker and currently takes about ten minutes. Release
 CI also boots the resulting factory image with `scripts/release/smoke-guest.py`
 before it uploads anything.
 
-What the patches change (all proven live on hardware 2026-08-28):
+What the patches change (the original graphics path was proven on hardware
+2026-08-28; later additions are covered by contract, release-smoke, and nested
+Windows VM tests unless noted in the release checklist):
 
 - Omarchy pin bumped to the v4.0.2 release tag, staged runtime stamped 4.0.2
   (upstream's `version` file lags its tags)
@@ -32,7 +34,7 @@ What the patches change (all proven live on hardware 2026-08-28):
   cleanup after provisioning (the VM window is the auth boundary here)
 - Clipboard bridge baked in: /usr/local/bin/clipboard-bridge + a systemd user
   unit enabled for all users (host side lives in scripts/clipboard-bridge.ps1)
-- /mnt/host automounts the launcher's `-Share` folder (virtio-9p, condition-guarded
+- /mnt/host automounts the launcher's `-share` folder (virtio-9p, condition-guarded
   so boots without a share stay clean)
 - An explicit `tryomarchy.instant=1` kernel flag creates and finalizes a local
   trial account, shows its credentials once on the first desktop, and leaves
@@ -40,12 +42,16 @@ What the patches change (all proven live on hardware 2026-08-28):
 - `tryomarchy.sshd=1` (set by the launcher when a host port forwards to guest
   port 22) starts sshd for that boot only and authorizes the launcher-supplied
   public key; sshd config and enablement stay untouched
-- `try-omarchy-export` archives home configuration, theme, and added packages
-  with a restore script for a real Omarchy install (docs/MIGRATION.md)
-- `tryomarchy.sharename=<base64>` links the -Share folder into the home
+- `try-omarchy-export` archives an allowlist of desktop configuration, the
+  theme, and added packages with a restore script for a real Omarchy install
+  (docs/MIGRATION.md)
+- `tryomarchy.sharename=<base64>` links the `-share` folder into the home
   directory under its own name at login, and removes the link on launches
   that share nothing
 - Overlay scripts have unprivileged behavioral tests under guest/tests
+- The initramfs carries those launcher-integration files onto persistent disks
+  created by older releases and reports userspace readiness before the Windows
+  launcher commits a guest-image update
 
 If Arch has moved since the lock was written, refresh it first and review the diff:
 

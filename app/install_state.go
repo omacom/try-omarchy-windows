@@ -43,6 +43,22 @@ func installReceiptIdentity(dir string) (string, string, bool) {
 	return receipt.Release, receipt.ManifestSHA256, true
 }
 
+func installReceiptArtifactSHA256(dir, name string) (string, bool) {
+	data, err := os.ReadFile(filepath.Join(dir, installReceiptFilename))
+	if err != nil || len(data) > maxInstallReceiptBytes {
+		return "", false
+	}
+	var receipt installReceipt
+	if json.Unmarshal(data, &receipt) != nil || receipt.Version != installReceiptVersion {
+		return "", false
+	}
+	artifact, ok := receipt.Files[name]
+	if !ok || !validSHA256(artifact.SHA256) {
+		return "", false
+	}
+	return normalizedSHA256(artifact.SHA256), true
+}
+
 func normalizedRelease(release string) string {
 	return strings.TrimRight(strings.TrimSpace(release), "/")
 }

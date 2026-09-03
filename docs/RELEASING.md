@@ -44,6 +44,43 @@ OIDC or signing configuration.
    `app/manifest.go`. Update `currentVersion` in `app/update.go` to the same tag.
 5. Run `scripts/release/validate-pin.py TAG`, commit, and push the pin.
 
+## Test the draft on physical Windows
+
+A GitHub draft's assets require authentication, while the launcher downloads
+without a GitHub token. Do not point the launcher directly at the draft URL.
+After the manifest pin is pushed:
+
+1. Run the `signing-check` phase on the pinned commit and download its signed
+   launcher artifact.
+2. Download every draft asset into one folder with an authenticated browser or
+   `gh release download TAG --dir candidate-assets`.
+3. Serve that folder over loopback on the test PC. For example, from the asset
+   folder run `py -m http.server 18080 --bind 127.0.0.1`.
+4. Close Try Omarchy and copy `%LOCALAPPDATA%\TryOmarchy` to a separate test
+   directory. Never use the only copy of a real guest for candidate testing.
+5. Start the signed candidate with the copied data directory and the local
+   payload:
+
+   ```powershell
+   .\TryOmarchy.exe `
+     -dir C:\TryOmarchyCandidate `
+     -release http://127.0.0.1:18080 `
+     -sums-sha256 SHA256SUMS_DIGEST `
+     -runtime-release http://127.0.0.1:18080 `
+     -runtime-sums-sha256 SHA256SUMS_DIGEST `
+     -no-update
+   ```
+
+Confirm that the existing desktop and files survive, the new external kernel
+boots, reboot and poweroff work, and a second launch does not repeat the guest
+compatibility repair. For the rollback check, stop the first candidate boot
+before userspace reports ready, then start the candidate again. The copied
+install must restore its previous guest and runtime without downloading the
+failed payload again.
+
+Keep the release as a draft until the GPU, idle CPU, audio, input, resize, and
+fullscreen checks in `docs/RUNTIME-VALIDATION.md` pass on physical hardware.
+
 The guest builder base is fixed in `guest-build/source.lock.json`. The runtime
 build inputs are fixed in `runtime-build/sources.lock.json`, and the Runtime
 workflow produces matching portable and source archives with licenses,
@@ -69,6 +106,10 @@ the previous `Latest` release.
 
 The updater accepts only a correctly signed manifest, a newer preview version,
 the expected repository release URL, and matching SHA256 values. It stages the
-launcher and payload directories atomically. The old files are removed only
-after QMP confirms a healthy VM boot, so the next start can roll back a failed
-update without touching the user's writable disk.
+launcher and payload directories atomically. Launcher, runtime, and guest
+updates stay rollback-capable until the guest's userspace readiness service
+reaches the launcher after networking starts, so QMP responding during a
+kernel panic cannot commit a bad update. The writable disk is
+preserved, and the updated initramfs installs the small matching launcher
+integration onto disks created by older releases without replacing their OS or
+user data.

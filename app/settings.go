@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // settings is the launcher's persistent configuration, settings.json in the
@@ -32,8 +35,12 @@ type settings struct {
 const (
 	settingsSchemaVersion = 1
 	settingsFileName      = "settings.json"
+	maxSettingsBytes      = 64 << 10
 	minimumGuestMemoryMiB = 1024
-	maximumGuestMemoryMiB = 262144
+	// The startup attempts can step 64 GiB down to 1 GiB on a constrained
+	// host. A larger accepted value could exhaust the whole retry ladder before
+	// reaching a usable size and fail even though enough memory was available.
+	maximumGuestMemoryMiB = 65536
 )
 
 func settingsPath(dir string) string {
@@ -45,15 +52,30 @@ func settingsPath(dir string) string {
 // because silently ignoring it would launch with the wrong memory or share.
 func loadSettings(path string) (settings, error) {
 	var s settings
-	data, err := os.ReadFile(path)
+	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
 	}
 	if err != nil {
 		return s, err
 	}
-	if err := json.Unmarshal(data, &s); err != nil {
+	if !info.Mode().IsRegular() {
+		return s, fmt.Errorf("%s is not a regular file", path)
+	}
+	if info.Size() > maxSettingsBytes {
+		return s, fmt.Errorf("%s is too large", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return s, err
+	}
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&s); err != nil {
 		return s, fmt.Errorf("%s: %v", path, err)
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return s, fmt.Errorf("%s: settings contain trailing data", path)
 	}
 	if s.SchemaVersion != settingsSchemaVersion {
 		return s, fmt.Errorf("%s: schemaVersion %d is not supported by this launcher", path, s.SchemaVersion)
@@ -100,6 +122,32 @@ func (s settings) validate() error {
 		}
 	}
 	return nil
+}
+
+// settingsFromForm converts the Win32 controls into the persisted model. It
+// stays outside the window procedure so all input and file validation is
+// covered by the platform-independent test suite.
+func settingsFromForm(fullscreen bool, memory, share, forwards, sshKey string) (settings, error) {
+	s := settings{Fullscreen: fullscreen, Share: strings.TrimSpace(share), SSHKey: strings.TrimSpace(sshKey)}
+	memory = strings.TrimSpace(memory)
+	if memory != "" {
+		n, err := strconv.Atoi(memory)
+		if err != nil {
+			return s, fmt.Errorf("guest memory must be a number of MiB, or 0 for automatic")
+		}
+		s.MemoryMiB = n
+	}
+	for _, line := range strings.Split(strings.ReplaceAll(forwards, "\r\n", "\n"), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			s.Forwards = append(s.Forwards, line)
+		}
+	}
+	if s.SSHKey != "" {
+		if _, err := loadPublicKey(s.SSHKey); err != nil {
+			return s, err
+		}
+	}
+	return s, s.validate()
 }
 
 // applySettings folds the file into the parsed flags. explicit holds the

@@ -159,7 +159,9 @@ func system32(tool string) string {
 func restartWindows() {
 	cmd := exec.Command(system32("shutdown.exe"), "/r", "/t", "3")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
-	cmd.Start()
+	if err := cmd.Start(); err != nil {
+		fatal("Windows could not schedule the restart: %v", err)
+	}
 	os.Exit(0)
 }
 
@@ -210,7 +212,9 @@ func ensureWHP(cfg *config) {
 	if code != 0 && code != dismRebootRequired {
 		fatal("Windows couldn't enable its virtualization feature (error %d).\n\nYou can enable it manually: Windows Features > Windows Hypervisor Platform.", code)
 	}
-	os.WriteFile(marker, []byte(time.Now().Format(time.RFC3339)+"\n"), 0o644)
+	if err := os.WriteFile(marker, []byte(time.Now().Format(time.RFC3339)+"\n"), 0o644); err != nil {
+		fatal("Try Omarchy enabled Windows' virtualization but could not record that setup needs a restart: %v", err)
+	}
 	logf("WHP enable requested (dism exit %d)", code)
 	if code == 0 && whpPresent() {
 		return
@@ -296,7 +300,8 @@ func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 			return "", fmt.Errorf("recording runtime rollback state: %w", err)
 		}
 		if err := publishDirectoryUpdate(root, tmp, root+".previous"); err != nil {
-			cancelPayloadUpdateRecord(cfg.dir, false, true)
+			// Keep the rollback record in case publication moved the old tree
+			// before failing. Recovery reconciles it on the next launch.
 			return "", err
 		}
 		os.Remove(zipPath)

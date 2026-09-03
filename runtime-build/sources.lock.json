@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "name": "winq-emu-alpha10-source-r2",
+  "name": "winq-emu-alpha10-source-r3",
   "sourceDateEpoch": 1777269494,
   "qemu": {
     "repository": "https://github.com/cmspam/winq-emu-qemu.git",
@@ -13,6 +13,10 @@
       {
         "file": "patches/qemu/0001-whpx-continue-when-nested-virtualization-is-refused.patch",
         "sha256": "8dd4e1f9a3dcf6d09e01277262493ffa99ba66f11ba704742b1cd929b4088d57"
+      },
+      {
+        "file": "patches/qemu/0002-restore-bounded-sdl-refresh-intervals.patch",
+        "sha256": "61bc4a8e9a18487a4363241d4d949321758ed1b1fae7bb800cbb4f37f494403a"
       }
     ]
   },

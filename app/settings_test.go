@@ -43,6 +43,9 @@ func TestLoadSettingsRejectsDamageInsteadOfIgnoringIt(t *testing.T) {
 		"memory":    `{"schemaVersion": 1, "memoryMiB": 512}`,
 		"forward":   `{"schemaVersion": 1, "forwards": ["tcp:22"]}`,
 		"duplicate": `{"schemaVersion": 1, "forwards": ["tcp:2222:22", "2222:80"]}`,
+		"unknown":   `{"schemaVersion": 1, "memoryMB": 4096}`,
+		"trailing":  `{"schemaVersion": 1} true`,
+		"oversize":  strings.Repeat(" ", maxSettingsBytes+1),
 	}
 	for name, content := range cases {
 		path := filepath.Join(dir, name+".json")
@@ -78,5 +81,34 @@ func TestApplySettingsLetsExplicitFlagsWin(t *testing.T) {
 	}
 	if cfg.fullscreen || cfg.memOverrideMiB != 0 || cfg.share != "" || keyPath != "" || forwards.String() != "tcp:2299:22" {
 		t.Fatalf("explicit flags overridden: %+v forwards=%s key=%s", cfg, forwards.String(), keyPath)
+	}
+}
+
+func TestSettingsFromFormParsesAndValidatesEveryRow(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "id_ed25519.pub")
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxTNqPU2EXAMPLE user@pc"
+	if err := os.WriteFile(keyPath, []byte(key+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := settingsFromForm(true, " 6144 ", ` C:\Users\me\Work `, " tcp:2222:22\r\n\r\n udp:5000:5000 ", " "+keyPath+" ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.Fullscreen || s.MemoryMiB != 6144 || s.Share != `C:\Users\me\Work` || s.SSHKey != keyPath ||
+		strings.Join(s.Forwards, ",") != "tcp:2222:22,udp:5000:5000" {
+		t.Fatalf("form parsed incorrectly: %+v", s)
+	}
+
+	for name, input := range map[string][3]string{
+		"memory-text":  {"lots", "", ""},
+		"memory-range": {"512", "", ""},
+		"forward":      {"0", "tcp:22", ""},
+		"key":          {"0", "tcp:2222:22", filepath.Join(dir, "missing.pub")},
+	} {
+		if _, err := settingsFromForm(false, input[0], "", input[1], input[2]); err == nil {
+			t.Fatalf("%s input accepted", name)
+		}
 	}
 }

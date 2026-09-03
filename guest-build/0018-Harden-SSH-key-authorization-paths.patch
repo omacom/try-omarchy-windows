@@ -1,0 +1,95 @@
+From 4f9ca11e91e531ddc860c243683414fe7265905a Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 16:15:00 -0400
+Subject: [PATCH] Harden SSH key authorization paths
+
+The per-boot root service must not follow an account-controlled .ssh or
+authorized_keys symlink. Refuse unsafe path types, and change ownership only
+on the directory and file the service creates instead of recursively touching
+the whole .ssh tree. Behavioral tests cover both symlink cases.
+---
+ .../usr/local/lib/try-omarchy/request-sshd    | 29 ++++++++++++++------
+ guest/tests/test_overlay_scripts.py           | 21 ++++++++++++++
+ 2 files changed, 42 insertions(+), 8 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/request-sshd b/guest/factory-overlay/usr/local/lib/try-omarchy/request-sshd
+index 6a16a8c..1174e3e 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/request-sshd
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/request-sshd
+@@ -15,7 +15,7 @@ for word in $(</proc/cmdline); do
+ done
+ 
+ authorize_key() {
+-  local encoded=$1 decoded account home group
++  local encoded=$1 decoded account home group ssh_dir authorized_keys
+   decoded=$(printf '%s' "$encoded" | base64 -d 2>/dev/null) || decoded=""
+   if [[ ! $decoded =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\ [A-Za-z0-9+/=]+( [^[:cntrl:]]*)?$ ]] ||
+     ! ssh-keygen -l -f <(printf '%s\n' "$decoded") >/dev/null 2>&1; then
+@@ -32,14 +32,25 @@ authorize_key() {
+   fi
+   home=$(getent passwd "$account" | cut -d: -f6)
+   [[ -d $home ]] || return 0
+-  mkdir -p "$home/.ssh"
+-  chmod 0700 "$home/.ssh"
+-  [[ -f $home/.ssh/authorized_keys ]] || : >"$home/.ssh/authorized_keys"
+-  chmod 0600 "$home/.ssh/authorized_keys"
++  group=$(id -gn "$account")
++  ssh_dir="$home/.ssh"
++  authorized_keys="$ssh_dir/authorized_keys"
++  if [[ -L $ssh_dir || ( -e $ssh_dir && ! -d $ssh_dir ) ]]; then
++    echo "refusing unsafe SSH directory for $account" >&2
++    return 0
++  fi
++  mkdir -p "$ssh_dir"
++  chmod 0700 "$ssh_dir"
++  if [[ -L $authorized_keys || ( -e $authorized_keys && ! -f $authorized_keys ) ]]; then
++    echo "refusing unsafe authorized_keys for $account" >&2
++    return 0
++  fi
++  [[ -f $authorized_keys ]] || : >"$authorized_keys"
++  chmod 0600 "$authorized_keys"
+   # The unit runs as root; the contract tests run it unprivileged.
+-  (( EUID != 0 )) || chown -R "$account:$(id -gn "$account")" "$home/.ssh"
+-  if ! grep -qxF "$decoded" "$home/.ssh/authorized_keys"; then
+-    printf '%s\n' "$decoded" >>"$home/.ssh/authorized_keys"
++  (( EUID != 0 )) || chown "$account:$group" "$ssh_dir" "$authorized_keys"
++  if ! grep -qxF "$decoded" "$authorized_keys"; then
++    printf '%s\n' "$decoded" >>"$authorized_keys"
+     echo "authorized the launcher-supplied key for $account"
+   fi
+ }
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index 8bc4fe3..291bbd9 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -152,6 +152,27 @@ class RequestSshdTests(OverlayCase):
+             self.assertFalse(self.authorized.exists(), bad)
+             self.assertIn("sshd.service", self.log.read_text())
+ 
++    def test_refuses_a_symlinked_ssh_directory(self) -> None:
++        victim = self.root / "victim"
++        victim.mkdir()
++        self.authorized.parent.symlink_to(victim, target_is_directory=True)
++        result = self.run_request(f"tryomarchy.sshd=1 tryomarchy.sshkey={b64(self.key)}")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertFalse((victim / "authorized_keys").exists())
++        self.assertIn("refusing unsafe SSH directory", result.stderr)
++        self.assertIn("sshd.service", self.log.read_text())
++
++    def test_refuses_a_symlinked_authorized_keys(self) -> None:
++        victim = self.root / "victim"
++        victim.write_text("keep\n")
++        self.authorized.parent.mkdir()
++        self.authorized.symlink_to(victim)
++        result = self.run_request(f"tryomarchy.sshd=1 tryomarchy.sshkey={b64(self.key)}")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(victim.read_text(), "keep\n")
++        self.assertIn("refusing unsafe authorized_keys", result.stderr)
++        self.assertIn("sshd.service", self.log.read_text())
++
+ 
+ class ExportTests(OverlayCase):
+     def setUp(self) -> None:
+-- 
+2.55.0
+

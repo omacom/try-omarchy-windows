@@ -3,7 +3,6 @@
 package main
 
 import (
-	"fmt"
 	"runtime"
 	"strconv"
 	"strings"
@@ -87,30 +86,8 @@ func runSettingsDialog(path string) (saved bool) {
 		procSendMessageW.Call(handle, wmSettext, 0, uintptr(unsafe.Pointer(t)))
 	}
 	collect := func() (settings, error) {
-		var s settings
 		checked, _, _ := procSendMessageW.Call(hFull, bmGetcheck, 0, 0)
-		s.Fullscreen = checked == bstChecked
-		mem := strings.TrimSpace(text(hMem))
-		if mem != "" {
-			n, err := strconv.Atoi(mem)
-			if err != nil {
-				return s, fmt.Errorf("guest memory must be a number of MiB, or 0 for automatic")
-			}
-			s.MemoryMiB = n
-		}
-		s.Share = strings.TrimSpace(text(hShare))
-		for _, line := range strings.Split(strings.ReplaceAll(text(hFwd), "\r\n", "\n"), "\n") {
-			if line = strings.TrimSpace(line); line != "" {
-				s.Forwards = append(s.Forwards, line)
-			}
-		}
-		s.SSHKey = strings.TrimSpace(text(hKey))
-		if s.SSHKey != "" {
-			if _, err := loadPublicKey(s.SSHKey); err != nil {
-				return s, err
-			}
-		}
-		return s, s.validate()
+		return settingsFromForm(checked == bstChecked, text(hMem), text(hShare), text(hFwd), text(hKey))
 	}
 	browseFolder := func() {
 		var display [260]uint16

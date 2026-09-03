@@ -1,0 +1,416 @@
+From e36cdc0fc034a3664446c1d47f7efc062b1103ca Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 18:49:28 -0400
+Subject: [PATCH] Keep launcher integration compatible across guest updates
+
+---
+ .../etc/initcpio/hooks/tryomarchy_compat      | 34 ++++++++++++
+ .../etc/initcpio/install/tryomarchy_compat    | 14 +++++
+ .../etc/mkinitcpio.conf.d/90-try-omarchy.conf |  2 +-
+ .../try-omarchy-ready.service                 |  1 +
+ .../systemd/system/try-omarchy-ready.service  | 10 ++++
+ .../try-omarchy-factory-update-notice.service |  1 +
+ .../try-omarchy-factory-update-notice.service | 12 +++++
+ .../usr/local/bin/try-omarchy-export          | 53 +++++++++++--------
+ .../usr/local/lib/try-omarchy/guest-ready     | 16 ++++++
+ .../try-omarchy/show-factory-update-notice    |  9 ++++
+ guest/scripts/finalize-rootfs.sh              | 28 ++++++++++
+ guest/tests/test_overlay_scripts.py           | 13 +++++
+ guest/tests/verify.py                         | 45 ++++++++++++++++
+ 13 files changed, 215 insertions(+), 23 deletions(-)
+ create mode 100755 guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat
+ create mode 100755 guest/factory-overlay/etc/initcpio/install/tryomarchy_compat
+ create mode 120000 guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-ready.service
+ create mode 100644 guest/factory-overlay/etc/systemd/system/try-omarchy-ready.service
+ create mode 120000 guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/try-omarchy-factory-update-notice.service
+ create mode 100644 guest/factory-overlay/etc/systemd/user/try-omarchy-factory-update-notice.service
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/guest-ready
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/show-factory-update-notice
+
+diff --git a/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat b/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat
+new file mode 100755
+index 0000000..e097196
+--- /dev/null
++++ b/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat
+@@ -0,0 +1,34 @@
++#!/usr/bin/ash
++
++run_latehook() {
++    root=/new_root
++    marker="$root/usr/share/try-omarchy/compat-version"
++    version=$(cat /tryomarchy-compat-version 2>/dev/null) || return 0
++    kernel=$(uname -r)
++    [ -d "$root" ] || return 0
++    if [ "$(cat "$marker" 2>/dev/null)" = "$version" ] &&
++       [ -f "$root/usr/lib/modules/$kernel/modules.dep.bin" ]; then
++        return 0
++    fi
++
++    echo ":: Updating Try Omarchy launcher integration"
++    if ! tar -xf /tryomarchy-compat-overlay.tar -C "$root"; then
++        echo "ERROR: Try Omarchy launcher integration update failed" >&2
++        return 1
++    fi
++    # The launcher boots the release's external kernel. Persistent disks can
++    # still contain an older linux package, so carry this initramfs's matching
++    # module tree across before switch_root. A failed copy is retried next boot.
++    if [ ! -f "$root/usr/lib/modules/$kernel/modules.dep.bin" ]; then
++        if ! mkdir -p "$root/usr/lib/modules" ||
++           ! cp -a "/usr/lib/modules/$kernel" "$root/usr/lib/modules/"; then
++            echo "ERROR: Try Omarchy could not install modules for $kernel" >&2
++            rm -rf "$root/usr/lib/modules/$kernel"
++            return 1
++        fi
++    fi
++    mkdir -p "$(dirname "$marker")"
++    printf '%s\n' "$version" >"$marker"
++    mkdir -p "$root/var/lib/try-omarchy"
++    printf '1\n' >"$root/var/lib/try-omarchy/factory-update-available"
++}
+diff --git a/guest/factory-overlay/etc/initcpio/install/tryomarchy_compat b/guest/factory-overlay/etc/initcpio/install/tryomarchy_compat
+new file mode 100755
+index 0000000..45414b3
+--- /dev/null
++++ b/guest/factory-overlay/etc/initcpio/install/tryomarchy_compat
+@@ -0,0 +1,14 @@
++#!/usr/bin/env bash
++
++build() {
++    add_file /usr/share/try-omarchy/compat-overlay.tar /tryomarchy-compat-overlay.tar
++    add_file /usr/share/try-omarchy/compat-version /tryomarchy-compat-version
++    add_runscript
++}
++
++help() {
++    cat <<HELPEOF
++Install launcher integration files into persistent Try Omarchy disks created
++from an older factory image.
++HELPEOF
++}
+diff --git a/guest/factory-overlay/etc/mkinitcpio.conf.d/90-try-omarchy.conf b/guest/factory-overlay/etc/mkinitcpio.conf.d/90-try-omarchy.conf
+index 85ba281..6f25183 100644
+--- a/guest/factory-overlay/etc/mkinitcpio.conf.d/90-try-omarchy.conf
++++ b/guest/factory-overlay/etc/mkinitcpio.conf.d/90-try-omarchy.conf
+@@ -2,5 +2,5 @@
+ MODULES=(virtio_pci virtio_mmio virtio_blk virtio_gpu virtio_input virtio_console virtio_rng virtio_net usbhid hid_generic)
+ BINARIES=()
+ FILES=()
+-HOOKS=(base udev modconf kms keyboard keymap consolefont block filesystems fsck)
++HOOKS=(base udev modconf kms keyboard keymap consolefont block filesystems fsck tryomarchy_compat)
+ COMPRESSION="zstd"
+diff --git a/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-ready.service b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-ready.service
+new file mode 120000
+index 0000000..63ed08e
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-ready.service
+@@ -0,0 +1 @@
++../try-omarchy-ready.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/system/try-omarchy-ready.service b/guest/factory-overlay/etc/systemd/system/try-omarchy-ready.service
+new file mode 100644
+index 0000000..0b51244
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/try-omarchy-ready.service
+@@ -0,0 +1,10 @@
++[Unit]
++Description=Report a usable Try Omarchy guest to the Windows launcher
++After=NetworkManager.service
++
++[Service]
++Type=oneshot
++ExecStart=/usr/local/lib/try-omarchy/guest-ready
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/try-omarchy-factory-update-notice.service b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/try-omarchy-factory-update-notice.service
+new file mode 120000
+index 0000000..be39d12
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/try-omarchy-factory-update-notice.service
+@@ -0,0 +1 @@
++../try-omarchy-factory-update-notice.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/user/try-omarchy-factory-update-notice.service b/guest/factory-overlay/etc/systemd/user/try-omarchy-factory-update-notice.service
+new file mode 100644
+index 0000000..1a5f647
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/try-omarchy-factory-update-notice.service
+@@ -0,0 +1,12 @@
++[Unit]
++Description=Explain a preserved Try Omarchy guest after a factory update
++ConditionPathExists=/var/lib/try-omarchy/factory-update-available
++ConditionPathExists=!%h/.local/state/try-omarchy/factory-update-notice-shown
++After=graphical-session.target
++
++[Service]
++Type=oneshot
++ExecStart=/usr/local/lib/try-omarchy/show-factory-update-notice
++
++[Install]
++WantedBy=graphical-session.target
+diff --git a/guest/factory-overlay/usr/local/bin/try-omarchy-export b/guest/factory-overlay/usr/local/bin/try-omarchy-export
+index 6520e4a..c2426e7 100755
+--- a/guest/factory-overlay/usr/local/bin/try-omarchy-export
++++ b/guest/factory-overlay/usr/local/bin/try-omarchy-export
+@@ -3,7 +3,8 @@
+ # configuration under the home directory, the current theme, and the packages
+ # added on top of the factory image. Writes one archive with a restore script
+ # inside it, to the shared Windows folder when one is mounted, otherwise to
+-# the home directory. Secrets are left out on purpose.
++# the home directory. Only an explicit allowlist of desktop configuration is
++# copied so credentials hidden in unrelated application config stay behind.
+ #
+ # Usage: try-omarchy-export [DESTINATION-DIRECTORY]
+ set -euo pipefail
+@@ -45,23 +46,28 @@ trap 'rm -rf "$work"' EXIT
+ stage="$work/$name"
+ mkdir -p "$stage/home" "$stage/packages"
+ 
+-# Configuration. Everything under ~/.config and ~/.local/share/omarchy, the
+-# shell dotfiles, and the user's local binaries. Never ~/.ssh, ~/.gnupg,
+-# browser profiles, password stores, or caches: those either hold secrets or
+-# are rebuilt on the new machine.
++# Configuration. Do not copy ~/.config wholesale: GitHub clients, sync tools,
++# browsers, and other applications commonly store credentials there. Keep this
++# list limited to Omarchy and desktop configuration that is useful on the real
++# install. The archive is still user data and should be reviewed before it is
++# shared with anyone.
+ copy_home() {
+   local relative=$1
+   [[ -e $HOME/$relative ]] || return 0
+   mkdir -p "$stage/home/$(dirname "$relative")"
+   cp -a "$HOME/$relative" "$stage/home/$relative"
+ }
+-for item in .config .local/share/omarchy .local/bin .bashrc .bash_profile .zshrc .zprofile .profile .gitconfig .tmux.conf .vimrc .inputrc; do
++for item in \
++  .config/alacritty .config/autostart .config/btop .config/fastfetch \
++  .config/fcitx5 .config/fontconfig .config/foot .config/ghostty \
++  .config/hypr .config/imv .config/kitty .config/mako .config/omarchy \
++  .config/starship.toml .config/tmux .config/uwsm .config/walker \
++  .config/waybar .config/wireplumber .config/xournalpp \
++  .local/share/omarchy .local/bin \
++  .bashrc .bash_profile .zshrc .zprofile .profile .gitconfig \
++  .tmux.conf .vimrc .inputrc; do
+   copy_home "$item"
+ done
+-for secret in .config/gcloud .config/op .config/1Password .config/chromium .config/BraveSoftware .config/google-chrome .config/Signal .config/discord .config/Bitwarden .config/keepassxc .config/Code/User/globalStorage .config/herdr/secrets; do
+-  rm -rf "$stage/home/$secret"
+-done
+-find "$stage/home" -type d \( -name Cache -o -name cache -o -name 'Service Worker' -o -name GPUCache \) -prune -exec rm -rf {} + 2>/dev/null || true
+ 
+ # Theme name, so restore can select it without depending on symlink layout.
+ theme=""
+@@ -83,18 +89,21 @@ LC_ALL=C comm -23 "$work/explicit" "$work/factory" >"$work/added"
+ LC_ALL=C comm -23 "$work/added" "$work/foreign" >"$stage/packages/repo.txt"
+ LC_ALL=C comm -12 "$work/added" "$work/foreign" >"$stage/packages/aur.txt"
+ 
+-cat >"$stage/manifest.json" <<EOF
+-{
+-  "kind": "try-omarchy-export",
+-  "schemaVersion": 1,
+-  "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+-  "omarchyVersion": "$(cat /usr/share/omarchy/version 2>/dev/null || echo unknown)",
+-  "user": "$(id -un)",
+-  "theme": "$theme",
+-  "repoPackages": $(wc -l <"$stage/packages/repo.txt"),
+-  "aurPackages": $(wc -l <"$stage/packages/aur.txt")
+-}
+-EOF
++created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
++omarchy_version=$(cat /usr/share/omarchy/version 2>/dev/null || echo unknown)
++jq -n \
++  --arg kind try-omarchy-export \
++  --argjson schemaVersion 1 \
++  --arg created "$created" \
++  --arg omarchyVersion "$omarchy_version" \
++  --arg user "$(id -un)" \
++  --arg theme "$theme" \
++  --argjson repoPackages "$(wc -l <"$stage/packages/repo.txt")" \
++  --argjson aurPackages "$(wc -l <"$stage/packages/aur.txt")" \
++  '{kind: $kind, schemaVersion: $schemaVersion, created: $created,
++    omarchyVersion: $omarchyVersion, user: $user, theme: $theme,
++    repoPackages: $repoPackages, aurPackages: $aurPackages}' \
++  >"$stage/manifest.json"
+ 
+ cat >"$stage/restore.sh" <<'RESTORE'
+ #!/bin/bash
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/guest-ready b/guest/factory-overlay/usr/local/lib/try-omarchy/guest-ready
+new file mode 100755
+index 0000000..3ac6ad1
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/guest-ready
+@@ -0,0 +1,16 @@
++#!/bin/bash
++# Payload updates are kept rollback-capable until the guest reaches userspace
++# with networking. The launcher listens on the existing lifecycle channel.
++# A persistent disk upgraded across kernel releases is not ready until the
++# initramfs compatibility hook installed the matching module tree and marker.
++kernel=$(uname -r)
++marker=$(cat /usr/share/try-omarchy/compat-version 2>/dev/null || true)
++[[ $marker == *:"$kernel" ]] || exit 0
++[[ -f /usr/lib/modules/$kernel/modules.dep.bin ]] || exit 0
++for _ in {1..10}; do
++  if printf 'ready\n' | socat -u - TCP:10.0.2.2:4450,connect-timeout=2 2>/dev/null; then
++    exit 0
++  fi
++  sleep 1
++done
++exit 0
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/show-factory-update-notice b/guest/factory-overlay/usr/local/lib/try-omarchy/show-factory-update-notice
+new file mode 100755
+index 0000000..51dfc38
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/show-factory-update-notice
+@@ -0,0 +1,9 @@
++#!/bin/bash
++set -euo pipefail
++
++state="$HOME/.local/state/try-omarchy/factory-update-notice-shown"
++mkdir -p "$(dirname "$state")"
++notify-send -a "Try Omarchy" -u normal -t 20000 \
++  "Your existing Omarchy system was preserved" \
++  "The launcher integration was updated without replacing your files or installed OS. To use the newest factory image and packages, run try-omarchy-export first, then start Try Omarchy with -fresh."
++touch "$state"
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 95e47f7..47e4926 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -48,6 +48,34 @@ ln -sfn /usr/lib/systemd/system/systemd-growfs-root.service \
+ fc-cache -f
+ update-desktop-database /usr/share/applications || true
+ 
++# The launcher updates the external kernel and initramfs without replacing a
++# user's persistent disk. Carry the small host/guest integration surface in
++# the initramfs so disks created by older releases gain matching SSH, share,
++# export, lifecycle, and readiness behavior without touching user data or
++# attempting a full package upgrade.
++compat_paths=(
++  etc/systemd/system/try-omarchy-ready.service
++  etc/systemd/system/multi-user.target.wants/try-omarchy-ready.service
++  etc/systemd/system/try-omarchy-sshd.service
++  etc/systemd/system/multi-user.target.wants/try-omarchy-sshd.service
++  etc/systemd/user/try-omarchy-share-link.service
++  etc/systemd/user/default.target.wants/try-omarchy-share-link.service
++  etc/systemd/user/try-omarchy-factory-update-notice.service
++  etc/systemd/user/graphical-session.target.wants/try-omarchy-factory-update-notice.service
++  usr/local/bin/try-omarchy-export
++  usr/local/lib/try-omarchy/guest-ready
++  usr/local/lib/try-omarchy/request-sshd
++  usr/local/lib/try-omarchy/share-link
++  usr/local/lib/try-omarchy/show-factory-update-notice
++)
++tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
++kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
++[[ -n $kernel_release && $kernel_release != *$'\n'* ]] || {
++  echo "Expected exactly one installed kernel module tree" >&2
++  exit 1
++}
++printf '1:%s\n' "$kernel_release" >/usr/share/try-omarchy/compat-version
++
+ # Never let the container host's hardware autodetection remove the virtual
+ # devices required by QEMU on the Windows host.
+ mkinitcpio -P
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index 291bbd9..371bfda 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -5,6 +5,7 @@ export time without needing a booted image."""
+ from __future__ import annotations
+ 
+ import base64
++import json
+ import os
+ import shutil
+ import subprocess
+@@ -184,6 +185,10 @@ class ExportTests(OverlayCase):
+         (self.home / ".config/hypr/monitors.conf").write_text("monitor=,preferred\n")
+         (self.home / ".config/chromium").mkdir()
+         (self.home / ".config/chromium/Cookies").write_text("secret")
++        (self.home / ".config/gh").mkdir()
++        (self.home / ".config/gh/hosts.yml").write_text("oauth_token: secret\n")
++        (self.home / ".config/rclone").mkdir()
++        (self.home / ".config/rclone/rclone.conf").write_text("password = secret\n")
+         (self.home / ".ssh").mkdir()
+         (self.home / ".ssh/id_ed25519").write_text("private")
+         (self.home / ".bashrc").write_text("export PS1=x\n")
+@@ -210,11 +215,19 @@ class ExportTests(OverlayCase):
+             self.assertNotIn("home/.ssh/id_ed25519", names)
+             self.assertFalse(any(".ssh" in n for n in names), names)
+             self.assertFalse(any("chromium" in n for n in names), names)
++            self.assertFalse(any("hosts.yml" in n or "rclone.conf" in n for n in names), names)
+             self.assertEqual(member("theme").strip(), "tokyo-night")
+             self.assertEqual(member("packages/repo.txt").split(), ["cowsay"])
+             self.assertEqual(member("packages/aur.txt").split(), ["some-aur-tool"])
+             self.assertIn('"theme": "tokyo-night"', member("manifest.json"))
+ 
++    def test_manifest_escapes_user_controlled_theme_text(self) -> None:
++        (self.home / ".local/state/omarchy/current/theme.name").write_text('night-"quoted"\n')
++        archive = self.export()
++        with tarfile.open(archive) as tar:
++            manifest = json.load(tar.extractfile(next(m for m in tar.getmembers() if m.name.endswith("/manifest.json"))))
++        self.assertEqual(manifest["theme"], 'night-"quoted"')
++
+     def test_export_on_a_factory_image_with_nothing_added(self) -> None:
+         self.fake("pacman", 'case "$1" in -Qqe) printf "base\\ngit\\nomarchy\\n";; -Qqm) exit 1;; *) exit 1;; esac')
+         archive = self.export()
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 17e0495..a490e4f 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -163,9 +163,54 @@ def main() -> None:
+         "the share link only ever replaces its own link or an empty directory",
+     )
+ 
++    ready_unit = read(GUEST / "factory-overlay/etc/systemd/system/try-omarchy-ready.service")
++    ready_script = GUEST / "factory-overlay/usr/local/lib/try-omarchy/guest-ready"
++    initcpio_config = read(GUEST / "factory-overlay/etc/mkinitcpio.conf.d/90-try-omarchy.conf")
++    compat_install = GUEST / "factory-overlay/etc/initcpio/install/tryomarchy_compat"
++    compat_hook = GUEST / "factory-overlay/etc/initcpio/hooks/tryomarchy_compat"
++    check(
++        "guest-ready" in ready_unit
++        and ready_script.stat().st_mode & stat.S_IXUSR != 0
++        and "ready" in read(ready_script)
++        and "modules.dep.bin" in read(ready_script)
++        and "compat-version" in read(ready_script)
++        and (GUEST / "factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-ready.service").is_symlink(),
++        "guest readiness is reported only after userspace and networking start",
++    )
++    check(
++        "tryomarchy_compat" in initcpio_config
++        and compat_install.stat().st_mode & stat.S_IXUSR != 0
++        and compat_hook.stat().st_mode & stat.S_IXUSR != 0
++        and "run_latehook" in read(compat_hook)
++        and "tryomarchy-compat-version" in read(compat_install),
++        "the initramfs updates launcher integration on persistent older disks",
++    )
++    check(
++        'kernel=$(uname -r)' in read(compat_hook)
++        and 'modules.dep.bin" ]; then' in read(compat_hook)
++        and 'cp -a "/usr/lib/modules/$kernel" "$root/usr/lib/modules/"' in read(compat_hook),
++        "persistent older disks receive modules matching the external release kernel",
++    )
++    update_notice = read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/show-factory-update-notice")
++    update_notice_unit = read(GUEST / "factory-overlay/etc/systemd/user/try-omarchy-factory-update-notice.service")
++    check(
++        "factory-update-available" in update_notice_unit
++        and "-fresh" in update_notice
++        and "try-omarchy-export" in update_notice
++        and update_notice.index("notify-send") < update_notice.index('touch "$state"')
++        and (GUEST / "factory-overlay/etc/systemd/user/graphical-session.target.wants/try-omarchy-factory-update-notice.service").is_symlink(),
++        "older persistent guests explain that the factory OS was preserved",
++    )
++
+     finalizer = read(GUEST / "scripts/finalize-rootfs.sh")
+     check("factory" in finalizer and "x86_64" in finalizer, "finalizer enforces the native factory contract")
+     check("systemd-growfs-root.service" in finalizer, "factory disk grows on first boot")
++    check(
++        "compat-overlay.tar" in finalizer
++        and "compat_paths" in finalizer
++        and "kernel_release=$(find /usr/lib/modules" in finalizer,
++        "finalizer packages the versioned compatibility overlay",
++    )
+ 
+     manifest_writer = read(GUEST / "scripts/write-guest-manifest.py")
+     check('"kind": "try-omarchy-guest-artifacts"' in manifest_writer, "new artifacts use the native manifest identity")
+-- 
+2.55.0

@@ -1,0 +1,40 @@
+sdl2: restore bounded display refresh intervals
+
+Applies on top of cmspam/winq-emu-qemu commit 2ce303cf (QEMU 11.0.0 base).
+
+The fork changed both QEMU's default GUI refresh interval and SDL's busy
+interval to 1 ms. Its scanout path also switches back to the busy interval
+whenever the guest presents a frame. A guest compositor that keeps presenting
+therefore makes the main loop poll at 1000 Hz, including when the desktop looks
+idle.
+
+Restore QEMU's 30 ms idle interval and SDL's upstream 10 ms busy interval. The
+fork's frame-present hook still selects the faster interval while frames are
+arriving, then SDL returns to the idle interval after activity stops.
+
+diff --git a/include/ui/console.h b/include/ui/console.h
+index bb777e67..3e97f6e5 100644
+--- a/include/ui/console.h
++++ b/include/ui/console.h
+@@ -44,7 +44,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(QemuFixedTextConsole, QEMU_FIXED_TEXT_CONSOLE)
+ #define QEMU_CAPS_LOCK_LED   (1 << 2)
+ 
+ /* in ms */
+-#define GUI_REFRESH_INTERVAL_DEFAULT    1
++#define GUI_REFRESH_INTERVAL_DEFAULT   30
+ #define GUI_REFRESH_INTERVAL_IDLE     3000
+ 
+ /* Global EDID refresh rate from -display refresh-rate= option (millihertz) */
+diff --git a/include/ui/sdl2.h b/include/ui/sdl2.h
+index a4ad8b9d..c37d12c5 100644
+--- a/include/ui/sdl2.h
++++ b/include/ui/sdl2.h
+@@ -26,7 +26,7 @@
+ # include "ui/egl-helpers.h"
+ #endif
+ 
+-#define SDL2_REFRESH_INTERVAL_BUSY 1
++#define SDL2_REFRESH_INTERVAL_BUSY 10
+ 
+ struct sdl2_console {
+     DisplayGLCtx dgc;

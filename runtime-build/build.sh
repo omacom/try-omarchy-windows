@@ -38,6 +38,9 @@ with open(sys.argv[1], encoding="utf-8") as source:
     print(json.load(source)["sourceDateEpoch"])
 PY
 )
+# Native Windows Python writes CRLF even under MSYS2. Command substitution and
+# read strip LF but can retain CR, which corrupts hashes and environment values.
+source_date_epoch=${source_date_epoch%$'\r'}
 export SOURCE_DATE_EPOCH="$source_date_epoch"
 export TZ=UTC
 export LC_ALL=C
@@ -49,6 +52,9 @@ clone_locked() {
     repository=$(lock_value "$name" repository)
     commit=$(lock_value "$name" commit)
     base=$(lock_value "$name" baseCommit)
+    repository=${repository%$'\r'}
+    commit=${commit%$'\r'}
+    base=${base%$'\r'}
 
     git init --quiet "$destination"
     git -C "$destination" remote add origin "$repository"
@@ -66,6 +72,8 @@ apply_locked_patches() {
     local destination=$2
     local relative digest
     while IFS=$'\t' read -r relative digest; do
+        relative=${relative%$'\r'}
+        digest=${digest%$'\r'}
         [[ -n "$relative" ]] || continue
         printf '%s  %s\n' "$digest" "$recipe/$relative" | sha256sum -c --quiet -
         git -C "$destination" apply --index "$recipe/$relative"
@@ -86,7 +94,12 @@ qemu_source="$work/qemu"
 virgl_source="$work/virglrenderer"
 clone_locked qemu "$qemu_source"
 clone_locked virglrenderer "$virgl_source"
-git -C "$qemu_source" submodule update --init --recursive --depth=1
+# Match QEMU's release process. Top-level ROM sources are included, and EDK2's
+# direct dependencies are included separately. QEMU explicitly avoids a fully
+# recursive EDK2 checkout because those dependencies do not use submodules of
+# submodules; recursing downloads large unrelated trees such as pyca and krb5.
+git -C "$qemu_source" submodule update --init --depth=1
+git -C "$qemu_source/roms/edk2" submodule update --init --depth=1
 apply_locked_patches qemu "$qemu_source"
 apply_locked_patches virglrenderer "$virgl_source"
 

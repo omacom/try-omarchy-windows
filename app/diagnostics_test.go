@@ -21,9 +21,11 @@ func TestWriteDiagnosticsBundlesLogsStateAndFactsOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("vm/shell.log", "12:00:00 booting\n")
+	write("vm/shell.log", "12:00:00 booting "+strings.ToUpper(dir)+" tryomarchy.sshkey=AAA-user-at-pc\n")
 	write("vm/qemu-stderr.log", "WHPX: Failed to enable nested virtualization, hr=80370302\n")
-	write("settings.json", `{"schemaVersion":1}`)
+	write("settings.json", `{"schemaVersion":1,"share":"C:\\Users\\secret\\Work","forwards":["tcp:2222:22"],"sshKey":"C:\\Users\\secret\\.ssh\\id.pub"}`)
+	write("guest/install-state.json", `{"version":1}`)
+	write("runtime/runtime-install-state.json", `{"version":1}`)
 	write("guest/guest-manifest.json", `{"kind":"try-omarchy-guest-artifacts"}`)
 	write("vm/disk.raw", strings.Repeat("x", 4096))
 	write("guest/rootfs.ext4", "not a log")
@@ -57,7 +59,7 @@ func TestWriteDiagnosticsBundlesLogsStateAndFactsOnly(t *testing.T) {
 		rc.Close()
 		contents[f.Name] = string(data)
 	}
-	for _, want := range []string{"facts.txt", "contents.txt", "vm/shell.log", "vm/qemu-stderr.log", "settings.json", "guest/guest-manifest.json", "vm/serial.log"} {
+	for _, want := range []string{"facts.txt", "contents.txt", "vm/shell.log", "vm/qemu-stderr.log", "settings.redacted.json", "guest/install-state.json", "runtime/runtime-install-state.json", "guest/guest-manifest.json", "vm/serial.log"} {
 		if _, ok := contents[want]; !ok {
 			t.Fatalf("bundle lacks %s; has %v", want, keys(contents))
 		}
@@ -70,6 +72,14 @@ func TestWriteDiagnosticsBundlesLogsStateAndFactsOnly(t *testing.T) {
 	if !strings.Contains(contents["facts.txt"], "host.os: test\n") || !strings.Contains(contents["facts.txt"], "launcher.version: v9.9.9\n") {
 		t.Fatalf("facts.txt = %q", contents["facts.txt"])
 	}
+	if strings.Contains(contents["settings.redacted.json"], `C:\\Users`) ||
+		!strings.Contains(contents["settings.redacted.json"], `"shareConfigured": true`) ||
+		!strings.Contains(contents["settings.redacted.json"], `"sshKeyConfigured": true`) {
+		t.Fatalf("settings were not safely summarized: %s", contents["settings.redacted.json"])
+	}
+	if strings.Contains(strings.ToLower(contents["vm/shell.log"]), strings.ToLower(dir)) || strings.Contains(contents["vm/shell.log"], "AAA-user-at-pc") {
+		t.Fatalf("sensitive diagnostic values were not redacted: %s", contents["vm/shell.log"])
+	}
 	serial := contents["vm/serial.log"]
 	if !strings.HasPrefix(serial, "[truncated: last") || !strings.HasSuffix(serial, "NEWEST!!\n") || len(serial) > diagnosticTailBytes+200 {
 		t.Fatalf("large log not tailed: len=%d head=%q", len(serial), serial[:40])
@@ -81,7 +91,19 @@ func TestWriteDiagnosticsBundlesLogsStateAndFactsOnly(t *testing.T) {
 
 func TestWriteDiagnosticsWithNothingToCollectStillWritesFacts(t *testing.T) {
 	dir := t.TempDir()
-	path, err := writeDiagnostics(dir, launcherFacts(&config{dir: dir}))
+	facts := launcherFacts(&config{dir: dir, winqEmu: `C:\WINQ-EMU`, noGpu: true})
+	if facts["launcher.noGpu"] != "true" {
+		t.Fatalf("diagnostic configuration facts = %#v", facts)
+	}
+	for _, private := range []string{"launcher.winqPath", "launcher.dataDir", "launcher.args", "host.computer", "host.localAppData"} {
+		if _, present := facts[private]; present {
+			t.Fatalf("diagnostics included private fact %s: %#v", private, facts)
+		}
+	}
+	if _, misleading := facts["launcher.gpu"]; misleading {
+		t.Fatalf("diagnostics claimed a selected launch mode before launch: %#v", facts)
+	}
+	path, err := writeDiagnostics(dir, facts)
 	if err != nil {
 		t.Fatal(err)
 	}

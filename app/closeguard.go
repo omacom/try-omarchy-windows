@@ -24,10 +24,10 @@ var (
 )
 
 const (
-	whMouseLL     = 14
-	wmLbuttondown = 0x0201
-	htCloseBtn    = 20
-	vkF4          = 0x73
+	whMouseLL       = 14
+	wmLbuttondown   = 0x0201
+	htCloseBtn      = 20
+	vkF4            = 0x73
 	mbDefbutton2    = 0x100
 	mbSetForeground = 0x10000
 	mbTopmost       = 0x40000

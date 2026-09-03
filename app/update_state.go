@@ -63,13 +63,30 @@ func writeLauncherUpdateState(dir string, state *launcherUpdateState) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(staged, data, 0o644); err != nil {
+	f, err := os.OpenFile(staged, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			f.Close()
+			os.Remove(staged)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	if err := os.Rename(staged, path); err != nil {
-		os.Remove(staged)
 		return err
 	}
+	ok = true
 	return nil
 }
 

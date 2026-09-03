@@ -20,6 +20,19 @@ type runtimeReceipt struct {
 	Executable     verifiedArtifact `json:"executable"`
 }
 
+func runtimeReceiptIdentity(root string) (string, string, bool) {
+	data, err := os.ReadFile(filepath.Join(root, runtimeReceiptFilename))
+	if err != nil || len(data) > maxInstallReceiptBytes {
+		return "", "", false
+	}
+	var receipt runtimeReceipt
+	if json.Unmarshal(data, &receipt) != nil || receipt.Schema != 1 ||
+		receipt.Release == "" || !validSHA256(receipt.ManifestSHA256) {
+		return "", "", false
+	}
+	return receipt.Release, receipt.ManifestSHA256, true
+}
+
 func runtimeReceiptMatches(root, release, manifestSHA, archiveSHA string) bool {
 	data, err := os.ReadFile(filepath.Join(root, runtimeReceiptFilename))
 	if err != nil || len(data) > maxInstallReceiptBytes {

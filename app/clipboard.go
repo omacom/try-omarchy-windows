@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -56,13 +57,16 @@ func (b *clipBridge) acceptPush(l net.Listener) {
 		go func(c net.Conn) {
 			defer c.Close()
 			c.SetReadDeadline(time.Now().Add(3 * time.Second))
-			line, err := bufio.NewReader(c).ReadString('\n')
-			line = strings.TrimRight(line, "\r\n")
-			if err != nil && line == "" {
+			// A compromised or broken guest must not make the Windows launcher
+			// allocate an unbounded line. Base64 expands data by at most 4/3.
+			encodedLimit := int64((maxClipboardTextBytes+2)/3*4 + 2)
+			line, err := bufio.NewReader(io.LimitReader(c, encodedLimit)).ReadString('\n')
+			if err != nil || !strings.HasSuffix(line, "\n") {
 				return
 			}
+			line = strings.TrimRight(line, "\r\n")
 			data, err := base64.StdEncoding.DecodeString(line)
-			if err != nil || len(data) == 0 {
+			if err != nil || len(data) == 0 || len(data) > maxClipboardTextBytes {
 				return
 			}
 			text := string(data)

@@ -13,19 +13,23 @@ try-omarchy-export
 ```
 
 It writes `omarchy-export-<date>.tar.gz` to the shared Windows folder when
-Try Omarchy was started with `-Share`, otherwise to your home folder. Pass a
+Try Omarchy was started with `-share`, otherwise to your home folder. Pass a
 directory to choose another place. The archive contains:
 
-- `home/`: your `~/.config`, `~/.local/share/omarchy`, `~/.local/bin`, and the
-  shell dotfiles (`.bashrc`, `.zshrc`, `.gitconfig`, and friends).
+- `home/`: an allowlist of Omarchy, Hyprland, terminal, bar, notification,
+  input, and other desktop configuration; `~/.local/share/omarchy`;
+  `~/.local/bin`; and shell dotfiles (`.bashrc`, `.zshrc`, `.gitconfig`, and
+  friends).
 - `theme`: the name of the theme you had selected.
 - `packages/repo.txt` and `packages/aur.txt`: packages you added on top of the
   factory image, split by where they come from.
 - `restore.sh` and `manifest.json`.
 
-Left out on purpose: `~/.ssh`, `~/.gnupg`, password managers, browser
-profiles, and caches. Those either hold secrets you should move yourself or
-are rebuilt on the new machine.
+Left out on purpose: unlisted application config, `~/.ssh`, `~/.gnupg`,
+password managers, browser profiles, and caches. Those either may hold secrets
+you should move yourself or are rebuilt on the new machine. The allowlist
+avoids common credential files under `~/.config`, but the archive is still
+your data. Review it before sharing it with anyone.
 
 ## Restore on the real install
 

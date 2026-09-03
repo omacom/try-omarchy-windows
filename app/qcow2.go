@@ -5,13 +5,82 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 const (
-	qcow2ClusterBits = 16
-	qcow2ClusterSize = int64(1 << qcow2ClusterBits)
-	qcow2HeaderSize  = 104
+	qcow2ClusterBits           = 16
+	qcow2ClusterSize           = int64(1 << qcow2ClusterBits)
+	qcow2HeaderSize            = 104
+	portableBackingStateSuffix = ".backing-sha256"
 )
+
+func portableBackingStatePath(disk string) string {
+	return disk + portableBackingStateSuffix
+}
+
+// A QCOW2 overlay depends on the exact bytes of its raw backing image. The
+// header stores only the relative path, so keep the authenticated rootfs
+// digest beside the overlay and refuse to run if a newer portable payload has
+// replaced the backing image underneath persistent guest data.
+func portableBackingStateMatches(disk, backingSHA256 string) (bool, error) {
+	path := portableBackingStatePath(disk)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, fmt.Errorf("portable disk backing identity is missing; restore it with the matching payload or start with -portable -fresh")
+	}
+	if err != nil {
+		return false, err
+	}
+	if len(data) > 128 {
+		return false, fmt.Errorf("portable disk backing identity is invalid")
+	}
+	got := normalizedSHA256(string(data))
+	if !validSHA256(got) {
+		return false, fmt.Errorf("portable disk backing identity is invalid")
+	}
+	return got == normalizedSHA256(backingSHA256), nil
+}
+
+func writePortableBackingState(disk, backingSHA256 string) error {
+	backingSHA256 = normalizedSHA256(backingSHA256)
+	if !validSHA256(backingSHA256) {
+		return fmt.Errorf("portable factory disk identity is invalid")
+	}
+	path := portableBackingStatePath(disk)
+	if data, err := os.ReadFile(path); err == nil {
+		if normalizedSHA256(string(data)) == backingSHA256 {
+			return nil
+		}
+		return fmt.Errorf("portable disk backing identity already exists for a different factory image")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	tmp := path + ".part"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write([]byte(strings.ToLower(backingSHA256) + "\n")); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := renamePortableFileWithRetry(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
 
 // createQcow2Overlay writes the small amount of QCOW2 v3 metadata needed for
 // an empty overlay backed by a raw image. QEMU allocates data and L2 tables as

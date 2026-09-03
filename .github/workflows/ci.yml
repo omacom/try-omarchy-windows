@@ -25,6 +25,7 @@ jobs:
       - name: Test release helpers
         run: |
           python3 -m py_compile scripts/release/*.py runtime-build/*.py
+          python3 -m unittest discover -s scripts/release -p 'test_*.py'
           python3 runtime-build/validate-lock.py
           bash -n runtime-build/*.sh
 

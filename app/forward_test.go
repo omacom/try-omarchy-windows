@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,18 @@ func TestForwardListRejectsDuplicateHostPortPerProtocol(t *testing.T) {
 	}
 	if got := l.String(); got != "tcp:2222:22,udp:2222:22,tcp:8080:80" {
 		t.Fatalf("String() = %q", got)
+	}
+}
+
+func TestForwardListReservesLauncherTCPPortsButNotUDP(t *testing.T) {
+	for port := qmpToolsPort; port <= lifecyclePort; port++ {
+		var l forwardList
+		if err := l.Set(fmt.Sprintf("tcp:%d:80", port)); err == nil {
+			t.Fatalf("reserved TCP port %d accepted", port)
+		}
+		if err := l.Set(fmt.Sprintf("udp:%d:80", port)); err != nil {
+			t.Fatalf("UDP port %d incorrectly reserved: %v", port, err)
+		}
 	}
 }
 
@@ -88,41 +101,45 @@ func TestResolveSSHPresetCoversEveryDecision(t *testing.T) {
 
 	// -ssh alone: forward added, usual key picked up.
 	var l forwardList
-	key, err := resolveSSHPreset(&l, 2222, "", home)
+	key, err := resolveSSHPreset(&l, 2222, "", home, false)
 	if err != nil || key != good || l.String() != "tcp:2222:22" {
 		t.Fatalf("-ssh alone: key=%q err=%v forwards=%s", key, err, l.String())
 	}
 	// Explicit key file wins over the usual one.
 	l = nil
-	key, err = resolveSSHPreset(&l, 2222, other, home)
+	key, err = resolveSSHPreset(&l, 2222, other, home, false)
 	if err != nil || !strings.HasPrefix(key, "ssh-rsa ") {
 		t.Fatalf("explicit key: key=%q err=%v", key, err)
 	}
 	// A forward to port 22 without -ssh still counts as an SSH request.
 	l = forwardList{{"tcp", 2299, 22}}
-	if key, err = resolveSSHPreset(&l, 0, "", home); err != nil || key != good {
+	if key, err = resolveSSHPreset(&l, 0, "", home, false); err != nil || key != good {
 		t.Fatalf("forward-only request: key=%q err=%v", key, err)
 	}
 	// No key anywhere is fine: password login remains.
 	l = nil
-	if key, err = resolveSSHPreset(&l, 2222, "", t.TempDir()); err != nil || key != "" {
+	if key, err = resolveSSHPreset(&l, 2222, "", t.TempDir(), false); err != nil || key != "" {
 		t.Fatalf("keyless: key=%q err=%v", key, err)
 	}
 	// Mistakes are reported, not guessed around.
 	l = nil
-	if _, err = resolveSSHPreset(&l, 70000, "", home); err == nil {
+	if _, err = resolveSSHPreset(&l, 70000, "", home, false); err == nil {
 		t.Fatal("bad port accepted")
 	}
 	l = nil
-	if _, err = resolveSSHPreset(&l, 0, other, home); err == nil {
+	if _, err = resolveSSHPreset(&l, 0, other, home, true); err == nil {
 		t.Fatal("-ssh-key without an ssh forward accepted")
 	}
 	l = nil
-	if _, err = resolveSSHPreset(&l, 2222, filepath.Join(home, "missing.pub"), home); err == nil {
+	if key, err = resolveSSHPreset(&l, 0, other, home, false); err != nil || key != "" {
+		t.Fatalf("dormant saved key: key=%q err=%v", key, err)
+	}
+	l = nil
+	if _, err = resolveSSHPreset(&l, 2222, filepath.Join(home, "missing.pub"), home, false); err == nil {
 		t.Fatal("missing key file accepted")
 	}
 	l = forwardList{{"tcp", 2222, 80}}
-	if _, err = resolveSSHPreset(&l, 2222, "", home); err == nil {
+	if _, err = resolveSSHPreset(&l, 2222, "", home, false); err == nil {
 		t.Fatal("duplicate Windows port accepted")
 	}
 }
@@ -146,6 +163,7 @@ func TestLoadPublicKeyRefusesEverythingButOneKeyLine(t *testing.T) {
 		"garbage":  "hello world\n",
 		"badtype":  "ssh-dss AAAA user@pc\n",
 		"control":  "ssh-ed25519 AAAA user\x07pc\n",
+		"oversize": "ssh-rsa " + strings.Repeat("A", maxPublicKeyBytes) + " user@pc\n",
 	}
 	for name, content := range bad {
 		if _, err := loadPublicKey(write(name, content)); err == nil {
