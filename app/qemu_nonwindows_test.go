@@ -24,6 +24,7 @@ type config struct {
 	diskFormat               string
 	qemu                     string
 	useGpu                   bool
+	supportsSharing          bool
 	audio                    string
 	memMiB                   int
 	forwards                 []portForward
@@ -308,7 +309,7 @@ func TestBuildQemuArgsUsesConfiguredDiskFormat(t *testing.T) {
 func TestBuildQemuArgsEscapesCommasInsidePaths(t *testing.T) {
 	cfg := &config{
 		vmDir: "/vm", guestDir: "/guest", disk: "/data,one/disk.raw", diskFormat: "raw",
-		share: "/host/Work,Notes", useGpu: true, memMiB: 4096, audio: "none",
+		share: "/host/Work,Notes", useGpu: false, supportsSharing: true, memMiB: 4096, audio: "none",
 	}
 	args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
 	if !strings.Contains(args, "file=/data,,one/disk.raw,format=raw") {

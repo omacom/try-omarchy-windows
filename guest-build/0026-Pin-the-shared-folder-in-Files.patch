@@ -1,0 +1,213 @@
+From 1056e9073a5a330c0a3515f5ab2a8532131d20e9 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Wed, 2 Sep 2026 23:32:44 -0400
+Subject: [PATCH] Pin the shared folder in Files
+
+---
+ .../usr/local/lib/try-omarchy/share-link      | 74 ++++++++++++++++---
+ guest/tests/test_overlay_scripts.py           | 38 ++++++++++
+ guest/tests/verify.py                         |  4 +-
+ 3 files changed, 106 insertions(+), 10 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/share-link b/guest/factory-overlay/usr/local/lib/try-omarchy/share-link
+index 0f2a063..2368e29 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/share-link
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/share-link
+@@ -5,18 +5,65 @@
+ # into the home directory under the same name, so C:\Users\me\Work shows up
+ # as ~/Work, and removes the link again on boots that share nothing. Only a
+ # link this script created, an empty directory, or a dangling link is ever
+-# replaced; a real folder with content is left alone.
++# replaced; a real folder with content is left alone. A bookmark managed in
++# the same narrow way keeps the share visible in Files without touching the
++# user's other sidebar entries.
+ set -euo pipefail
+ 
+ cmdline_file=${TRY_OMARCHY_CMDLINE:-/proc/cmdline}
+ state_dir="$HOME/.local/state/try-omarchy"
+ state_file="$state_dir/share-link"
++bookmark_state="$state_dir/share-bookmark"
++bookmarks="$HOME/.config/gtk-3.0/bookmarks"
+ mount_point=/mnt/host
+ 
+ log() {
+   echo "share-link: $*"
+ }
+ 
++remove_managed_bookmark() {
++  [[ -f $bookmark_state && ! -L $bookmark_state ]] || return 0
++  local previous temp line
++  previous=$(<"$bookmark_state")
++  if [[ $previous == "file://$mount_point "* && -f $bookmarks && ! -L $bookmarks ]]; then
++    temp=$(mktemp "$(dirname "$bookmarks")/.bookmarks.try-omarchy.XXXXXX")
++    while IFS= read -r line || [[ -n $line ]]; do
++      [[ $line == "$previous" ]] || printf '%s\n' "$line" >>"$temp"
++    done <"$bookmarks"
++    chmod --reference="$bookmarks" "$temp"
++    mv -f "$temp" "$bookmarks"
++  fi
++  rm -f "$bookmark_state"
++}
++
++add_managed_bookmark() {
++  local bookmark="file://$mount_point $name" existing temp config_dir
++  config_dir=$(dirname "$bookmarks")
++  mkdir -p "$config_dir" "$state_dir"
++  if [[ -e $bookmarks && (! -f $bookmarks || -L $bookmarks) ]]; then
++    log "$bookmarks is not a regular file; leaving it alone"
++    return 0
++  fi
++  if [[ -f $bookmarks ]]; then
++    while IFS= read -r existing || [[ -n $existing ]]; do
++      if [[ $existing == "file://$mount_point" || $existing == "file://$mount_point "* ]]; then
++        return 0
++      fi
++    done <"$bookmarks"
++  fi
++  temp=$(mktemp "$config_dir/.bookmarks.try-omarchy.XXXXXX")
++  if [[ -f $bookmarks ]]; then
++    cat "$bookmarks" >"$temp"
++    chmod --reference="$bookmarks" "$temp"
++  fi
++  printf '%s\n' "$bookmark" >>"$temp"
++  mv -f "$temp" "$bookmarks"
++  temp=$(mktemp "$state_dir/.share-bookmark.XXXXXX")
++  printf '%s\n' "$bookmark" >"$temp"
++  mv -f "$temp" "$bookmark_state"
++  log "added the Windows share to Files"
++}
++
+ # Drop the link from the previous session first; it is recreated below when
+ # the share is still attached under the same name.
+ if [[ -f $state_file ]]; then
+@@ -27,6 +74,7 @@ if [[ -f $state_file ]]; then
+   fi
+   rm -f "$state_file"
+ fi
++remove_managed_bookmark
+ 
+ encoded=""
+ for word in $(<"$cmdline_file"); do
+@@ -47,23 +95,31 @@ if ! mountpoint -q "$mount_point"; then
+ fi
+ 
+ target="$HOME/$name"
++can_link=1
+ if [[ -L $target ]]; then
+   if [[ $(readlink "$target") != "$mount_point" && -e $target ]]; then
+     log "$target is a link to something else; leaving it alone"
+-    exit 0
++    can_link=0
++  fi
++  if ((can_link)); then
++    rm -f "$target"
+   fi
+-  rm -f "$target"
+ elif [[ -d $target ]]; then
+   if ! rmdir "$target" 2>/dev/null; then
+     log "$target already exists with content; the share stays at $mount_point only"
+-    exit 0
++    can_link=0
+   fi
+ elif [[ -e $target ]]; then
+   log "$target exists and is not a folder; the share stays at $mount_point only"
+-  exit 0
++  can_link=0
+ fi
+ 
+-ln -s "$mount_point" "$target"
+-mkdir -p "$state_dir"
+-printf '%s\n' "$target" >"$state_file"
+-log "linked $target to the Windows share"
++if ((can_link)); then
++  ln -s "$mount_point" "$target"
++  mkdir -p "$state_dir"
++  temp=$(mktemp "$state_dir/.share-link.XXXXXX")
++  printf '%s\n' "$target" >"$temp"
++  mv -f "$temp" "$state_file"
++  log "linked $target to the Windows share"
++fi
++add_managed_bookmark
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index 371bfda..74d1270 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -61,6 +61,8 @@ class ShareLinkTests(OverlayCase):
+         super().setUp()
+         self.fake("mountpoint", 'exit 0')
+         self.state = self.home / ".local/state/try-omarchy/share-link"
++        self.bookmark_state = self.home / ".local/state/try-omarchy/share-bookmark"
++        self.bookmarks = self.home / ".config/gtk-3.0/bookmarks"
+ 
+     def test_links_the_share_under_its_name_and_records_it(self) -> None:
+         result = self.run_script(SHARE_LINK, cmdline=f"root=/dev/vda tryomarchy.sharename={b64('Work')}")
+@@ -69,6 +71,8 @@ class ShareLinkTests(OverlayCase):
+         self.assertTrue(link.is_symlink())
+         self.assertEqual(os.readlink(link), "/mnt/host")
+         self.assertEqual(self.state.read_text().strip(), str(link))
++        self.assertEqual(self.bookmarks.read_text(), "file:///mnt/host Work\n")
++        self.assertEqual(self.bookmark_state.read_text().strip(), "file:///mnt/host Work")
+ 
+     def test_removes_its_link_on_a_launch_without_a_share(self) -> None:
+         self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Work')}")
+@@ -77,6 +81,40 @@ class ShareLinkTests(OverlayCase):
+         self.assertFalse((self.home / "Work").exists())
+         self.assertFalse((self.home / "Work").is_symlink())
+         self.assertFalse(self.state.exists())
++        self.assertFalse(self.bookmark_state.exists())
++        self.assertEqual(self.bookmarks.read_text(), "")
++
++    def test_preserves_user_bookmarks_when_the_share_changes_or_stops(self) -> None:
++        self.bookmarks.parent.mkdir(parents=True)
++        self.bookmarks.write_text("file:///home/test/Documents Documents\n")
++        self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Work')}")
++        self.assertEqual(
++            self.bookmarks.read_text(),
++            "file:///home/test/Documents Documents\nfile:///mnt/host Work\n",
++        )
++        self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Exchange')}")
++        self.assertEqual(
++            self.bookmarks.read_text(),
++            "file:///home/test/Documents Documents\nfile:///mnt/host Exchange\n",
++        )
++        self.run_script(SHARE_LINK, cmdline="root=/dev/vda")
++        self.assertEqual(self.bookmarks.read_text(), "file:///home/test/Documents Documents\n")
++
++    def test_keeps_the_files_bookmark_when_the_home_link_name_is_occupied(self) -> None:
++        (self.home / "Work").mkdir()
++        (self.home / "Work/mine.txt").write_text("keep")
++        self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Work')}")
++        self.assertEqual(self.bookmarks.read_text(), "file:///mnt/host Work\n")
++
++    def test_does_not_replace_a_symlinked_bookmarks_file(self) -> None:
++        victim = self.root / "victim"
++        victim.write_text("keep\n")
++        self.bookmarks.parent.mkdir(parents=True)
++        self.bookmarks.symlink_to(victim)
++        result = self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Work')}")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(victim.read_text(), "keep\n")
++        self.assertFalse(self.bookmark_state.exists())
+ 
+     def test_never_replaces_a_folder_with_content(self) -> None:
+         (self.home / "Work").mkdir()
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index fee12fc..9b61eab 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -237,9 +237,11 @@ def main() -> None:
+         "tryomarchy.sharename" in share_unit
+         and "ln -s" in share_link
+         and "rmdir" in share_link
++        and "gtk-3.0/bookmarks" in share_link
++        and "file://$mount_point" in share_link
+         and "rm -rf" not in share_link
+         and (GUEST / "factory-overlay/etc/systemd/user/default.target.wants/try-omarchy-share-link.service").is_symlink(),
+-        "the share link only ever replaces its own link or an empty directory",
++        "the share link and Files bookmark preserve existing user entries",
+     )
+ 
+     ready_unit = read(GUEST / "factory-overlay/etc/systemd/system/try-omarchy-ready.service")
+-- 
+2.55.0
+

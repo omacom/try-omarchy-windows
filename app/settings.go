@@ -25,6 +25,12 @@ type settings struct {
 	MemoryMiB int `json:"memoryMiB"`
 	// Windows folder shared into Omarchy. Empty means no share.
 	Share string `json:"share"`
+	// ShareDisabled remembers a chosen folder while preventing it from being
+	// exported. The zero value keeps older settings with a share enabled.
+	ShareDisabled bool `json:"shareDisabled,omitempty"`
+	// SharedFolderPrompted distinguishes an intentional empty choice from an
+	// older install that has never been offered the recommended exchange folder.
+	SharedFolderPrompted bool `json:"sharedFolderPrompted,omitempty"`
 	// Loopback port forwards in -forward syntax, for example "tcp:2222:22".
 	Forwards []string `json:"forwards"`
 	// Public key file authorized for the Omarchy account when a forward
@@ -127,8 +133,15 @@ func (s settings) validate() error {
 // settingsFromForm converts the Win32 controls into the persisted model. It
 // stays outside the window procedure so all input and file validation is
 // covered by the platform-independent test suite.
-func settingsFromForm(fullscreen bool, memory, share, forwards, sshKey string) (settings, error) {
-	s := settings{Fullscreen: fullscreen, Share: strings.TrimSpace(share), SSHKey: strings.TrimSpace(sshKey)}
+func settingsFromForm(fullscreen, shareEnabled bool, memory, share, forwards, sshKey string) (settings, error) {
+	s := settings{
+		Fullscreen: fullscreen, Share: strings.TrimSpace(share),
+		ShareDisabled: !shareEnabled, SharedFolderPrompted: true,
+		SSHKey: strings.TrimSpace(sshKey),
+	}
+	if s.Share == "" {
+		s.ShareDisabled = false
+	}
 	memory = strings.TrimSpace(memory)
 	if memory != "" {
 		n, err := strconv.Atoi(memory)
@@ -150,6 +163,17 @@ func settingsFromForm(fullscreen bool, memory, share, forwards, sshKey string) (
 	return s, s.validate()
 }
 
+func (s settings) activeShare() string {
+	if s.ShareDisabled {
+		return ""
+	}
+	return s.Share
+}
+
+func shouldOfferRecommendedShare(s settings, portable, explicitShare bool) bool {
+	return !portable && !explicitShare && !s.SharedFolderPrompted && s.Share == ""
+}
+
 // applySettings folds the file into the parsed flags. explicit holds the
 // flag names the user actually passed; those rows keep the flag's value.
 // Forwards are all-or-nothing: any -forward or -ssh on the command line
@@ -162,7 +186,7 @@ func applySettings(cfg *config, s settings, explicit map[string]bool, forwards *
 		cfg.memOverrideMiB = s.MemoryMiB
 	}
 	if !explicit["share"] {
-		cfg.share = s.Share
+		cfg.share = s.activeShare()
 	}
 	if !explicit["forward"] && !explicit["ssh"] {
 		*forwards = nil

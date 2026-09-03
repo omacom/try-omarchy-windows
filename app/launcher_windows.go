@@ -63,28 +63,34 @@ func shortcutArguments(dir string) string {
 	return `-dir "` + dir + `"`
 }
 
+func settingsShortcutArguments(dir string) string {
+	return strings.TrimSpace(shortcutArguments(dir) + " -settings")
+}
+
 func createLauncherShortcuts(target, dir string, startMenu, desktop bool) error {
 	if !startMenu && !desktop {
 		return nil
 	}
 	const script = `$ErrorActionPreference='Stop'; ` +
 		`$shell=New-Object -ComObject WScript.Shell; ` +
-		`function Add-TryOmarchyShortcut([string]$path) { ` +
+		`function Add-TryOmarchyShortcut([string]$path,[string]$arguments,[string]$description) { ` +
 		`$shortcut=$shell.CreateShortcut($path); ` +
 		`$shortcut.TargetPath=$env:TRYOMARCHY_SHORTCUT_TARGET; ` +
-		`$shortcut.Arguments=$env:TRYOMARCHY_SHORTCUT_ARGS; ` +
+		`$shortcut.Arguments=$arguments; ` +
 		`$shortcut.WorkingDirectory=$env:TRYOMARCHY_SHORTCUT_WORKDIR; ` +
 		`$shortcut.IconLocation=$env:TRYOMARCHY_SHORTCUT_TARGET+',0'; ` +
-		`$shortcut.Description='Run Omarchy on Windows'; $shortcut.Save() }; ` +
+		`$shortcut.Description=$description; $shortcut.Save() }; ` +
 		`if ($env:TRYOMARCHY_SHORTCUT_START -eq '1') { ` +
-		`Add-TryOmarchyShortcut (Join-Path ([Environment]::GetFolderPath('Programs')) 'Try Omarchy.lnk') }; ` +
+		`Add-TryOmarchyShortcut (Join-Path ([Environment]::GetFolderPath('Programs')) 'Try Omarchy.lnk') $env:TRYOMARCHY_SHORTCUT_ARGS 'Run Omarchy on Windows'; ` +
+		`Add-TryOmarchyShortcut (Join-Path ([Environment]::GetFolderPath('Programs')) 'Try Omarchy Settings.lnk') $env:TRYOMARCHY_SETTINGS_ARGS 'Configure Try Omarchy' }; ` +
 		`if ($env:TRYOMARCHY_SHORTCUT_DESKTOP -eq '1') { ` +
-		`Add-TryOmarchyShortcut (Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Try Omarchy.lnk') }`
+		`Add-TryOmarchyShortcut (Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Try Omarchy.lnk') $env:TRYOMARCHY_SHORTCUT_ARGS 'Run Omarchy on Windows' }`
 	cmd := exec.Command(system32("WindowsPowerShell\\v1.0\\powershell.exe"),
 		"-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
 	cmd.Env = append(os.Environ(),
 		"TRYOMARCHY_SHORTCUT_TARGET="+target,
 		"TRYOMARCHY_SHORTCUT_ARGS="+shortcutArguments(dir),
+		"TRYOMARCHY_SETTINGS_ARGS="+settingsShortcutArguments(dir),
 		"TRYOMARCHY_SHORTCUT_WORKDIR="+dir,
 		fmt.Sprintf("TRYOMARCHY_SHORTCUT_START=%d", boolInt(startMenu)),
 		fmt.Sprintf("TRYOMARCHY_SHORTCUT_DESKTOP=%d", boolInt(desktop)),
@@ -92,6 +98,34 @@ func createLauncherShortcuts(target, dir string, startMenu, desktop bool) error 
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("creating shortcuts: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func ensureSettingsShortcutForExistingInstall(target, dir string) error {
+	const script = `$ErrorActionPreference='Stop'; ` +
+		`$programs=[Environment]::GetFolderPath('Programs'); ` +
+		`$launcher=Join-Path $programs 'Try Omarchy.lnk'; ` +
+		`if (Test-Path -LiteralPath $launcher) { ` +
+		`$shell=New-Object -ComObject WScript.Shell; ` +
+		`$existing=$shell.CreateShortcut($launcher); ` +
+		`if ([StringComparer]::OrdinalIgnoreCase.Equals($existing.TargetPath,$env:TRYOMARCHY_SHORTCUT_TARGET)) { ` +
+		`$shortcut=$shell.CreateShortcut((Join-Path $programs 'Try Omarchy Settings.lnk')); ` +
+		`$shortcut.TargetPath=$env:TRYOMARCHY_SHORTCUT_TARGET; ` +
+		`$shortcut.Arguments=$env:TRYOMARCHY_SETTINGS_ARGS; ` +
+		`$shortcut.WorkingDirectory=$env:TRYOMARCHY_SHORTCUT_WORKDIR; ` +
+		`$shortcut.IconLocation=$env:TRYOMARCHY_SHORTCUT_TARGET+',0'; ` +
+		`$shortcut.Description='Configure Try Omarchy'; $shortcut.Save() } }`
+	cmd := exec.Command(system32("WindowsPowerShell\\v1.0\\powershell.exe"),
+		"-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	cmd.Env = append(os.Environ(),
+		"TRYOMARCHY_SHORTCUT_TARGET="+target,
+		"TRYOMARCHY_SETTINGS_ARGS="+settingsShortcutArguments(dir),
+		"TRYOMARCHY_SHORTCUT_WORKDIR="+dir,
+	)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("creating settings shortcut: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
@@ -126,6 +160,9 @@ func chooseProvisionMode(cfg *config, newInstall bool) {
 		mode = provisionModeInstant
 		cfg.instant = true
 	}
+	if setupCancelled() {
+		return
+	}
 	getUI().setInstantMode(cfg.instant)
 	if err := writeProvisionMode(cfg.dir, mode); err != nil {
 		fatal("Could not save the first-boot choice: %v", err)
@@ -147,10 +184,16 @@ func offerLauncherShortcuts(dir string) {
 		logf("stable launcher: %v", err)
 		return
 	}
+	if err := ensureSettingsShortcutForExistingInstall(target, installDir); err != nil {
+		logf("settings shortcut: %v", err)
+	}
 	if shortcutOfferRecorded(installDir) {
 		return
 	}
 	startMenu, desktop := getUI().chooseShortcuts()
+	if setupCancelled() {
+		return
+	}
 	if err := createLauncherShortcuts(target, installDir, startMenu, desktop); err != nil {
 		logf("shortcuts: %v", err)
 		errorBox("Try Omarchy is ready, but Windows could not create the requested shortcut. You can keep using the downloaded launcher.\n\n" + err.Error())

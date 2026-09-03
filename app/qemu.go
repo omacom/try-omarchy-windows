@@ -76,11 +76,11 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		"-name", appTitle,
 	)
 	if cfg.share != "" {
-		if cfg.useGpu {
+		if cfg.supportsSharing {
 			args = append(args, "-virtfs", "local,path="+qemuOptionValue(cfg.share)+",mount_tag=hostshare,security_model=none")
 		}
-		// Stock QEMU for Windows ships no virtio-9p; silently launching
-		// without the share would be confusing, so main() rejects that combo.
+		// Stock QEMU for Windows ships no virtio-9p. main() selects the bundled
+		// runtime when possible and otherwise tells the user before continuing.
 	}
 	if cfg.fullscreen {
 		args = append(args, "-full-screen")

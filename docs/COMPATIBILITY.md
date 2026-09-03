@@ -10,7 +10,8 @@ Try Omarchy runs the full x86_64 Arch Linux environment used by Omarchy. It is n
 - Graphical Linux applications, including Visual Studio Code
 - Web browsing and outbound networking through the Windows connection
 - Audio, two-way clipboard sharing, and persistent files inside the guest
-- Host-folder sharing with `-share <folder>` when the WINQ-EMU runtime is active
+- Host-folder sharing through the recommended `Omarchy Shared` folder or
+  `-share <folder>` when the WINQ-EMU runtime is available, including CPU rendering
 
 ## Current limits
 
@@ -19,7 +20,9 @@ Try Omarchy runs the full x86_64 Arch Linux environment used by Omarchy. It is n
 - GPU acceleration depends on the patched WINQ-EMU runtime and compatible Windows graphics drivers. Try Omarchy falls back to CPU rendering when that path is unavailable.
 - USB devices, host webcams, and arbitrary PCI devices are not passed through.
 - Networking uses QEMU NAT. Services inside the guest are not exposed to the Windows network automatically.
-- Host-folder sharing is not available with the stock QEMU CPU-only fallback.
+- Host-folder sharing is not available with an external stock QEMU fallback.
+- Text clipboard sharing works in both directions. File clipboard and drag and
+  drop are not implemented yet; use the shared folder for files.
 - The launcher boots its pinned kernel and initramfs from the release image. Ordinary package installation is supported, but replacing the guest kernel independently can leave it out of sync with those boot files.
 - There is not yet a built-in snapshot, export, or migration workflow. Keep important work somewhere you also back up outside the guest.
 

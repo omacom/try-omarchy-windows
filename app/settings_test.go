@@ -16,7 +16,7 @@ func TestLoadSettingsMissingFileIsDefaults(t *testing.T) {
 
 func TestSettingsRoundTrip(t *testing.T) {
 	path := settingsPath(filepath.Join(t.TempDir(), "TryOmarchy"))
-	in := settings{Fullscreen: true, MemoryMiB: 6144, Share: `C:\Users\me\Work`,
+	in := settings{Fullscreen: true, MemoryMiB: 6144, Share: `C:\Users\me\Work`, SharedFolderPrompted: true,
 		Forwards: []string{"tcp:2222:22", "udp:5000:5000"}, SSHKey: `C:\Users\me\.ssh\work.pub`}
 	if err := saveSettings(path, in); err != nil {
 		t.Fatal(err)
@@ -30,7 +30,8 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 	in.SchemaVersion = settingsSchemaVersion
 	if out.SchemaVersion != in.SchemaVersion || out.Fullscreen != in.Fullscreen || out.MemoryMiB != in.MemoryMiB ||
-		out.Share != in.Share || out.SSHKey != in.SSHKey || strings.Join(out.Forwards, ",") != strings.Join(in.Forwards, ",") {
+		out.Share != in.Share || out.ShareDisabled != in.ShareDisabled || out.SharedFolderPrompted != in.SharedFolderPrompted ||
+		out.SSHKey != in.SSHKey || strings.Join(out.Forwards, ",") != strings.Join(in.Forwards, ",") {
 		t.Fatalf("round trip changed settings: %+v vs %+v", out, in)
 	}
 }
@@ -84,6 +85,19 @@ func TestApplySettingsLetsExplicitFlagsWin(t *testing.T) {
 	}
 }
 
+func TestApplySettingsKeepsDisabledShareInactive(t *testing.T) {
+	cfg := &config{}
+	var forwards forwardList
+	keyPath := ""
+	file := settings{Share: `D:\Share`, ShareDisabled: true}
+	if err := applySettings(cfg, file, map[string]bool{}, &forwards, &keyPath); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.share != "" {
+		t.Fatalf("disabled shared folder was applied as %q", cfg.share)
+	}
+}
+
 func TestSettingsFromFormParsesAndValidatesEveryRow(t *testing.T) {
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "id_ed25519.pub")
@@ -92,11 +106,11 @@ func TestSettingsFromFormParsesAndValidatesEveryRow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := settingsFromForm(true, " 6144 ", ` C:\Users\me\Work `, " tcp:2222:22\r\n\r\n udp:5000:5000 ", " "+keyPath+" ")
+	s, err := settingsFromForm(true, true, " 6144 ", ` C:\Users\me\Work `, " tcp:2222:22\r\n\r\n udp:5000:5000 ", " "+keyPath+" ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !s.Fullscreen || s.MemoryMiB != 6144 || s.Share != `C:\Users\me\Work` || s.SSHKey != keyPath ||
+	if !s.Fullscreen || !s.SharedFolderPrompted || s.ShareDisabled || s.MemoryMiB != 6144 || s.Share != `C:\Users\me\Work` || s.SSHKey != keyPath ||
 		strings.Join(s.Forwards, ",") != "tcp:2222:22,udp:5000:5000" {
 		t.Fatalf("form parsed incorrectly: %+v", s)
 	}
@@ -107,8 +121,42 @@ func TestSettingsFromFormParsesAndValidatesEveryRow(t *testing.T) {
 		"forward":      {"0", "tcp:22", ""},
 		"key":          {"0", "tcp:2222:22", filepath.Join(dir, "missing.pub")},
 	} {
-		if _, err := settingsFromForm(false, input[0], "", input[1], input[2]); err == nil {
+		if _, err := settingsFromForm(false, false, input[0], "", input[1], input[2]); err == nil {
 			t.Fatalf("%s input accepted", name)
 		}
+	}
+}
+
+func TestSharedFolderOfferAndEnableState(t *testing.T) {
+	if !shouldOfferRecommendedShare(settings{}, false, false) {
+		t.Fatal("an unconfigured standard install was not offered a shared folder")
+	}
+	for name, tc := range map[string]struct {
+		settings settings
+		portable bool
+		explicit bool
+	}{
+		"declined": {settings: settings{SharedFolderPrompted: true}},
+		"chosen":   {settings: settings{Share: `C:\Users\me\Work`}},
+		"portable": {portable: true},
+		"flag":     {explicit: true},
+	} {
+		if shouldOfferRecommendedShare(tc.settings, tc.portable, tc.explicit) {
+			t.Fatalf("%s install was offered a shared folder", name)
+		}
+	}
+
+	s := settings{Share: `C:\Users\me\Work`}
+	if got := s.activeShare(); got != s.Share {
+		t.Fatalf("enabled share = %q", got)
+	}
+	s.ShareDisabled = true
+	if got := s.activeShare(); got != "" {
+		t.Fatalf("disabled share = %q", got)
+	}
+
+	s, err := settingsFromForm(false, false, "0", `C:\Users\me\Work`, "", "")
+	if err != nil || !s.ShareDisabled || s.activeShare() != "" || !s.SharedFolderPrompted {
+		t.Fatalf("disabled form state = %+v, %v", s, err)
 	}
 }

@@ -51,8 +51,8 @@ Windows VM tests unless noted in the release checklist):
   theme, and added packages with a restore script for a real Omarchy install
   (docs/MIGRATION.md)
 - `tryomarchy.sharename=<base64>` links the `-share` folder into the home
-  directory under its own name at login, and removes the link on launches
-  that share nothing
+  directory under its own name at login, pins it in the Files sidebar, and
+  removes only those managed entries on launches that share nothing
 - Overlay scripts have unprivileged behavioral tests under guest/tests
 - The initramfs carries those launcher-integration files onto persistent disks
   created by older releases and reports userspace readiness before the Windows

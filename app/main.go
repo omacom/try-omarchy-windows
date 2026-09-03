@@ -38,6 +38,7 @@ type config struct {
 	diskFormat               string
 	qemu                     string
 	useGpu                   bool
+	supportsSharing          bool
 	audio                    string
 	memMiB                   int
 	// kernel-irqchip=off keeps WHPX from requesting nested virtualization,
@@ -131,7 +132,7 @@ func main() {
 	cfg := &config{}
 	flag.StringVar(&cfg.dir, "dir", filepath.Join(os.Getenv("LOCALAPPDATA"), defaultDataDirectoryName), "data directory")
 	flag.StringVar(&cfg.winqEmu, "winq", `C:\WINQ-EMU`, "WINQ-EMU install path (GPU mode)")
-	flag.StringVar(&cfg.share, "share", "", "Windows folder shared into Omarchy at /mnt/host and as ~/<folder name> (GPU mode)")
+	flag.StringVar(&cfg.share, "share", "", "Windows folder shared into Omarchy at /mnt/host and as ~/<folder name>")
 	flag.BoolVar(&cfg.fresh, "fresh", false, "discard the writable disk and start over")
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen (Immersive)")
 	flag.IntVar(&cfg.memOverrideMiB, "memory", 0, "guest RAM in MiB (default: sized to this PC)")
@@ -193,14 +194,18 @@ func main() {
 			}
 			return
 		}
-		restartArgs, err := encodeRestartArgs(os.Args[1:])
-		if err != nil {
-			fatal("Could not preserve launcher arguments for updates: %v", err)
-		}
-		if rollingBack, recoverErr := recoverLauncherUpdate(cfg.dir, restartArgs); recoverErr != nil {
-			logf("launcher update recovery: %v", recoverErr)
-		} else if rollingBack {
-			return
+		// Settings and diagnostics may be opened from the running app's tray.
+		// They must not inspect or roll back an update owned by that parent.
+		if !*openSettings && !*diagnostics {
+			restartArgs, err := encodeRestartArgs(os.Args[1:])
+			if err != nil {
+				fatal("Could not preserve launcher arguments for updates: %v", err)
+			}
+			if rollingBack, recoverErr := recoverLauncherUpdate(cfg.dir, restartArgs); recoverErr != nil {
+				logf("launcher update recovery: %v", recoverErr)
+			} else if rollingBack {
+				return
+			}
 		}
 	}
 
@@ -217,7 +222,7 @@ func main() {
 	}
 
 	if *openSettings {
-		if runSettingsDialog(settingsPath(cfg.dir)) {
+		if runSettingsDialog(settingsPath(cfg.dir), cfg.dir) {
 			logf("settings saved to %s", settingsPath(cfg.dir))
 		}
 		return
@@ -227,7 +232,8 @@ func main() {
 	// win for this launch only.
 	explicitFlags := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicitFlags[f.Name] = true })
-	userSettings, err := loadSettings(settingsPath(cfg.dir))
+	settingsFile := settingsPath(cfg.dir)
+	userSettings, err := loadSettings(settingsFile)
 	if err != nil {
 		fatal("Try Omarchy cannot read its settings: %v\n\nFix or delete the file and open Try Omarchy again.", err)
 	}
@@ -294,6 +300,28 @@ func main() {
 	// through every phase until the Omarchy window itself is visible (the
 	// title enforcer closes it). Setup must never look like nothing happened.
 	getUI().setStatus("Starting Try Omarchy...")
+	if err := configureRecommendedSharedFolder(cfg, &userSettings, settingsFile, home, explicitFlags["share"]); err != nil {
+		if finishSetupCancellation(cfg, err) {
+			return
+		}
+		fatal("Could not set up the recommended shared folder: %v", err)
+	}
+	if finishSetupCancellation(cfg, checkSetupCancelled()) {
+		return
+	}
+	if cfg.share != "" {
+		validated, shareErr := validateWindowsSharedFolder(cfg.share, cfg.dir, home)
+		if shareErr != nil {
+			if explicitFlags["share"] {
+				fatal("Cannot share %s: %v", cfg.share, shareErr)
+			}
+			logf("shared folder disabled for this launch: %v", shareErr)
+			infoBox("The saved shared folder is unavailable and will not be shared this time. Omarchy will still start.\n\n" + shareErr.Error() + "\n\nChoose another folder from Settings.")
+			cfg.share = ""
+		} else {
+			cfg.share = validated
+		}
+	}
 	// Per-run stderr: the memory ladder sniffs this file, stale errors from a
 	// previous run must not be mistaken for this one's.
 	os.Remove(filepath.Join(cfg.vmDir, "qemu-stderr.log"))
@@ -324,6 +352,9 @@ func main() {
 		return
 	}
 	chooseProvisionMode(cfg, needsProvisioning)
+	if finishSetupCancellation(cfg, checkSetupCancelled()) {
+		return
+	}
 
 	const qemuExe = "qemu-system-x86_64w.exe"
 	stockQemu := `C:\Program Files\qemu\` + qemuExe
@@ -338,7 +369,7 @@ func main() {
 			gpuRoot = cfg.winqEmu
 		}
 	}
-	if gpuRoot == "" && !(cfg.noGpu && haveStock) {
+	if gpuRoot == "" && !(cfg.noGpu && haveStock && cfg.share == "") {
 		if payloadsRolledBack {
 			root := filepath.Join(cfg.dir, "runtime")
 			info, err := os.Stat(filepath.Join(root, "bin", qemuExe))
@@ -367,6 +398,7 @@ func main() {
 	if gpuRoot != "" {
 		cfg.qemu = filepath.Join(gpuRoot, "bin", qemuExe)
 		cfg.useGpu = !cfg.noGpu
+		cfg.supportsSharing = true
 	} else {
 		cfg.qemu = stockQemu
 	}
@@ -389,13 +421,10 @@ func main() {
 			fatal("Setting up the Omarchy image failed: %v\n\n%s", err, setupFailureHelp(err))
 		}
 	}
-	if cfg.share != "" {
-		if st, err := os.Stat(cfg.share); err != nil || !st.IsDir() {
-			fatal("Share folder not found: %s", cfg.share)
-		}
-		if !cfg.useGpu {
-			fatal("Folder sharing needs the WINQ-EMU build (stock QEMU for Windows has no virtio-9p).")
-		}
+	if cfg.share != "" && !cfg.supportsSharing {
+		logf("shared folder disabled for this launch: selected QEMU has no virtio-9p")
+		infoBox("The shared folder cannot be attached with the available graphics engine. Omarchy will start without it this time.\n\nTry again when the WINQ-EMU runtime is available.")
+		cfg.share = ""
 	}
 
 	specData, err := os.ReadFile(filepath.Join(cfg.guestDir, "build-spec.json"))
@@ -445,6 +474,8 @@ func main() {
 		cfg.memMiB = cfg.memOverrideMiB
 	}
 	getUI().setStatus("Starting Omarchy...")
+	stopTray := startTray(cfg)
+	defer stopTray()
 
 	// SDL's keyboard grab installs a system-wide Win-key hook that leaks past
 	// window focus; our hook does it right (focus-scoped).

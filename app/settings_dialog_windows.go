@@ -3,6 +3,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -30,39 +32,40 @@ var (
 )
 
 const (
-	wsCaption        = 0x00C00000
-	wsSysmenu        = 0x00080000
-	wsBorder         = 0x00800000
-	wsTabstop        = 0x00010000
-	wsVscroll        = 0x00200000
-	esAutohscroll    = 0x0080
-	esMultiline      = 0x0004
-	esAutovscroll    = 0x0040
-	bsAutocheckbox   = 0x0003
-	bsDefpushbutton  = 0x0001
-	bmGetcheck       = 0x00F0
-	bmSetcheck       = 0x00F1
-	bstChecked       = 1
-	idcArrow         = 32512
-	colorBtnface     = 15
-	defaultGuiFont   = 17
-	idCancel         = 2
-	bifReturnOnlyFS  = 0x0001
-	wmGettextlength  = 0x000E
-	wmGettext        = 0x000D
-	settingsSaveID   = 2001
-	settingsCancelID = 2002
-	settingsBrowseID = 2003
-	settingsFullID   = 2010
-	settingsMemID    = 2011
-	settingsShareID  = 2012
-	settingsFwdID    = 2013
-	settingsKeyID    = 2014
+	wsCaption         = 0x00C00000
+	wsSysmenu         = 0x00080000
+	wsBorder          = 0x00800000
+	wsTabstop         = 0x00010000
+	wsVscroll         = 0x00200000
+	esAutohscroll     = 0x0080
+	esMultiline       = 0x0004
+	esAutovscroll     = 0x0040
+	bsAutocheckbox    = 0x0003
+	bsDefpushbutton   = 0x0001
+	bmGetcheck        = 0x00F0
+	bmSetcheck        = 0x00F1
+	bstChecked        = 1
+	idcArrow          = 32512
+	colorBtnface      = 15
+	defaultGuiFont    = 17
+	idCancel          = 2
+	bifReturnOnlyFS   = 0x0001
+	wmGettextlength   = 0x000E
+	wmGettext         = 0x000D
+	settingsSaveID    = 2001
+	settingsCancelID  = 2002
+	settingsBrowseID  = 2003
+	settingsFullID    = 2010
+	settingsMemID     = 2011
+	settingsShareID   = 2012
+	settingsFwdID     = 2013
+	settingsKeyID     = 2014
+	settingsShareOnID = 2015
 )
 
 // runSettingsDialog shows the window and returns once it closes. saved is
 // true when the file was written.
-func runSettingsDialog(path string) (saved bool) {
+func runSettingsDialog(path, dataDir string) (saved bool) {
 	runtime.LockOSThread()
 	current, err := loadSettings(path)
 	if err != nil {
@@ -73,7 +76,7 @@ func runSettingsDialog(path string) (saved bool) {
 	hInst, _, _ := procGetModuleHandleW.Call(0)
 	className, _ := syscall.UTF16PtrFromString("TryOmarchySettings")
 	var hwnd uintptr
-	var hFull, hMem, hShare, hFwd, hKey uintptr
+	var hFull, hMem, hShare, hShareOn, hFwd, hKey uintptr
 
 	text := func(handle uintptr) string {
 		n, _, _ := procSendMessageW.Call(handle, wmGettextlength, 0, 0)
@@ -87,7 +90,9 @@ func runSettingsDialog(path string) (saved bool) {
 	}
 	collect := func() (settings, error) {
 		checked, _, _ := procSendMessageW.Call(hFull, bmGetcheck, 0, 0)
-		return settingsFromForm(checked == bstChecked, text(hMem), text(hShare), text(hFwd), text(hKey))
+		shareChecked, _, _ := procSendMessageW.Call(hShareOn, bmGetcheck, 0, 0)
+		return settingsFromForm(checked == bstChecked, shareChecked == bstChecked,
+			text(hMem), text(hShare), text(hFwd), text(hKey))
 	}
 	browseFolder := func() {
 		var display [260]uint16
@@ -110,6 +115,7 @@ func runSettingsDialog(path string) (saved bool) {
 		var pathBuf [1024]uint16
 		if ok, _, _ := procSHGetPathFromIDListW.Call(pidl, uintptr(unsafe.Pointer(&pathBuf[0]))); ok != 0 {
 			setText(hShare, syscall.UTF16ToString(pathBuf[:]))
+			procSendMessageW.Call(hShareOn, bmSetcheck, bstChecked, 0)
 		}
 		procCoTaskMemFree.Call(pidl)
 	}
@@ -120,6 +126,14 @@ func runSettingsDialog(path string) (saved bool) {
 			switch wParam & 0xffff {
 			case settingsSaveID:
 				s, err := collect()
+				if err == nil && s.activeShare() != "" {
+					home, homeErr := os.UserHomeDir()
+					if homeErr != nil {
+						err = fmt.Errorf("finding the Windows home folder: %w", homeErr)
+					} else {
+						s.Share, err = validateWindowsSharedFolder(s.Share, dataDir, home)
+					}
+				}
 				if err == nil {
 					err = saveSettings(path, s)
 				}
@@ -164,7 +178,7 @@ func runSettingsDialog(path string) (saved bool) {
 		return false
 	}
 
-	const clientW, clientH = 480, 372
+	const clientW, clientH = 480, 400
 	rect := [4]int32{0, 0, clientW, clientH}
 	style := uintptr(wsCaption | wsSysmenu)
 	procAdjustWindowRectEx.Call(uintptr(unsafe.Pointer(&rect[0])), style, 0, 0)
@@ -196,12 +210,18 @@ func runSettingsDialog(path string) (saved bool) {
 		procSendMessageW.Call(hFull, bmSetcheck, bstChecked, 0)
 	}
 	y += 34
-	mk("STATIC", "Guest memory (MiB, 0 = automatic)", left, y+3, labelW, 20, ssNoprefix, 0)
+	mk("STATIC", "Guest memory (MiB)", left, y+3, labelW, 20, ssNoprefix, 0)
 	hMem = mk("EDIT", strconv.Itoa(current.MemoryMiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsMemID)
 	y += 34
 	mk("STATIC", "Shared folder", left, y+3, labelW, 20, ssNoprefix, 0)
 	hShare = mk("EDIT", current.Share, fieldX, y, fieldW-80, 24, wsBorder|wsTabstop|esAutohscroll, settingsShareID)
 	mk("BUTTON", "Browse...", fieldX+fieldW-72, y, 72, 24, wsTabstop, settingsBrowseID)
+	y += 28
+	hShareOn = mk("BUTTON", "Allow Omarchy to read and change this folder", fieldX, y, fieldW, 22,
+		bsAutocheckbox|wsTabstop, settingsShareOnID)
+	if current.Share != "" && !current.ShareDisabled {
+		procSendMessageW.Call(hShareOn, bmSetcheck, bstChecked, 0)
+	}
 	y += 34
 	mk("STATIC", "Port forwards, one per line\n(tcp:2222:22 forwards\n127.0.0.1:2222 to sshd)", left, y+3, labelW, 60, ssNoprefix, 0)
 	hFwd = mk("EDIT", strings.Join(current.Forwards, "\r\n"), fieldX, y, fieldW, 96,
@@ -214,7 +234,12 @@ func runSettingsDialog(path string) (saved bool) {
 		left, y, clientW-2*left, 36, ssNoprefix, 0)
 	mk("BUTTON", "Save", clientW-16-180, clientH-40, 84, 26, bsDefpushbutton|wsTabstop, settingsSaveID)
 	mk("BUTTON", "Cancel", clientW-16-84, clientH-40, 84, 26, wsTabstop, settingsCancelID)
+	// Settings is often opened from the tray while the maximized QEMU window
+	// owns the foreground. Raise it once, then immediately return it to the
+	// normal z-order so it is visible without staying above unrelated apps.
+	procSetWindowPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0, swpNoSize|swpNoMove|swpShowWindow)
 	procSetForegroundWindow.Call(hwnd)
+	procSetWindowPos.Call(hwnd, hwndNotTopmost, 0, 0, 0, 0, swpNoSize|swpNoMove|swpShowWindow)
 	procSetFocus.Call(hFull)
 
 	var m msgStruct

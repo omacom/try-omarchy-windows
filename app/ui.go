@@ -96,6 +96,7 @@ type setupPromptKind uint8
 const (
 	setupPromptNone setupPromptKind = iota
 	setupPromptProvision
+	setupPromptSharedFolder
 	setupPromptShortcuts
 )
 
@@ -181,21 +182,31 @@ func (ui *progressUI) chooseShortcuts() (bool, bool) {
 	return result.primary, result.secondary
 }
 
-func (ui *progressUI) confirmCancel(hCancel uintptr) {
+func (ui *progressUI) chooseSharedFolder() bool {
+	if !ui.available.Load() {
+		return false
+	}
+	reply := make(chan setupPromptResult, 1)
+	ui.prompts <- setupPromptRequest{kind: setupPromptSharedFolder, reply: reply}
+	return (<-reply).primary
+}
+
+func (ui *progressUI) confirmCancel(hCancel uintptr) bool {
 	if ui.canceling.Load() {
-		return
+		return true
 	}
 	if msgBox("Cancel Try Omarchy setup?\n\nUnfinished setup files will be removed. An existing working installation will be kept.", mbYesNo|mbIconQuestion|mbDefbutton2) != idYes {
-		return
+		return false
 	}
 	if !ui.canceling.CompareAndSwap(false, true) {
-		return
+		return true
 	}
 	requestSetupCancel()
 	ui.setStatus("Cancelling and cleaning up...")
 	ui.setProgress(0, 0)
 	t, _ := syscall.UTF16PtrFromString("CANCELLING...")
 	procSendMessageW.Call(hCancel, wmSettext, 0, uintptr(unsafe.Pointer(t)))
+	return true
 }
 
 // pixelO returns the cells of the chunky logo-style O: a 10x12 ring, sides 3
@@ -254,10 +265,14 @@ func (ui *progressUI) run() {
 			}
 			return "○"
 		}
-		if promptKind == setupPromptProvision {
+		switch promptKind {
+		case setupPromptProvision:
 			setText(hPromptOption1, mark(primary)+"  INSTANT TRIAL  (omarchy / omarchy)")
 			setText(hPromptOption2, mark(!primary)+"  CHOOSE MY USERNAME AND PASSWORD")
-		} else {
+		case setupPromptSharedFolder:
+			setText(hPromptOption1, mark(primary)+"  CREATE OMARCHY SHARED  (RECOMMENDED)")
+			setText(hPromptOption2, mark(!primary)+"  NOT NOW")
+		case setupPromptShortcuts:
 			setText(hPromptOption1, mark(primary)+"  START MENU")
 			setText(hPromptOption2, mark(secondary)+"  DESKTOP")
 		}
@@ -320,10 +335,14 @@ func (ui *progressUI) run() {
 				promptKind = request.kind
 				promptReply = request.reply
 				primary, secondary = true, false
-				if promptKind == setupPromptProvision {
+				switch promptKind {
+				case setupPromptProvision:
 					setText(hPromptTitle, "CHOOSE YOUR FIRST LAUNCH")
 					setText(hPromptBody, "Start instantly, or create your own Linux account.")
-				} else {
+				case setupPromptSharedFolder:
+					setText(hPromptTitle, "SHARE FILES WITH WINDOWS")
+					setText(hPromptBody, "Omarchy can read and change only the folder created for sharing.")
+				case setupPromptShortcuts:
 					setText(hPromptTitle, "KEEP TRY OMARCHY HANDY")
 					setText(hPromptBody, "Choose where you want a launcher shortcut.")
 				}
@@ -382,22 +401,28 @@ func (ui *progressUI) run() {
 				return 0
 			}
 			if wParam == vkEscape {
-				ui.confirmCancel(hCancel)
+				if ui.confirmCancel(hCancel) && promptKind != setupPromptNone {
+					primary, secondary = false, false
+					finishPrompt(hwnd)
+				}
 			}
 			return 0
 		case wmCommand:
 			switch wParam & 0xffff {
 			case cancelControlID:
-				ui.confirmCancel(hCancel)
+				if ui.confirmCancel(hCancel) && promptKind != setupPromptNone {
+					primary, secondary = false, false
+					finishPrompt(hwnd)
+				}
 			case promptOption1ID:
-				if promptKind == setupPromptProvision {
+				if promptKind == setupPromptProvision || promptKind == setupPromptSharedFolder {
 					primary = true
 				} else {
 					primary = !primary
 				}
 				setOptionText()
 			case promptOption2ID:
-				if promptKind == setupPromptProvision {
+				if promptKind == setupPromptProvision || promptKind == setupPromptSharedFolder {
 					primary = false
 				} else {
 					secondary = !secondary
@@ -409,7 +434,10 @@ func (ui *progressUI) run() {
 			}
 			return 0
 		case wmClose:
-			ui.confirmCancel(hCancel)
+			if ui.confirmCancel(hCancel) && promptKind != setupPromptNone {
+				primary, secondary = false, false
+				finishPrompt(hwnd)
+			}
 			return 0
 		case wmDestroy:
 			procPostQuitMessage.Call(0)
