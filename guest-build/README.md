@@ -29,6 +29,7 @@ Windows VM tests unless noted in the release checklist):
   omacalc, omawrite, omacut, herdr, hyprland-preview-share-picker)
 - yay from the Omarchy repository plus the base-devel toolchain, so upstream's
   AUR entry points (omarchy-pkg-aur-add and friends) work in the guest
+- Omarchy's LazyVim configuration and clang, matching the upstream editor setup
 - Guest cursor visible under SDL (the hidden-cursor fragment was a VNC-era assumption)
 - Autologin stays permanent: a drop-in disarms upstream's one-boot autologin
   cleanup after provisioning (the VM window is the auth boundary here)

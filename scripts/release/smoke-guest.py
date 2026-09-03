@@ -18,7 +18,10 @@ SUCCESS = b"TRYOMARCHY_SMOKE:omarchy:instant-trial"
 # Facts the built image must satisfy, checked from inside the booted guest
 # and reported on the serial console as TRYOMARCHY_FACT:<name>:<value>.
 FACT_CHECKS = {
+    "clang": "command -v clang >/dev/null 2>&1 && echo present || echo missing",
     "yay": "pacman -Q yay >/dev/null 2>&1 && echo present || echo missing",
+    "omarchy-nvim": "pacman -Q omarchy-nvim >/dev/null 2>&1 && echo present || echo missing",
+    "nvim-config": "test -f ~/.config/nvim/init.lua && echo present || echo missing",
     "recorder": "pacman -Q gpu-screen-recorder >/dev/null 2>&1 && echo present || echo missing",
     "foreign": "pacman -Qmq 2>/dev/null | wc -l",
     "sshd": "systemctl is-active sshd 2>/dev/null || true",
@@ -29,7 +32,10 @@ FACT_CHECKS = {
     "ready-service": "systemctl is-enabled try-omarchy-ready.service 2>/dev/null || true",
 }
 EXPECTED_FACTS = {
+    "clang": "present",
     "yay": "present",
+    "omarchy-nvim": "present",
+    "nvim-config": "present",
     "recorder": "present",
     "foreign": "0",
     "sshd": "inactive",

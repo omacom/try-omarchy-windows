@@ -1,0 +1,41 @@
+From 02637bf4a84d883d946c21efce7da1f8cdb1d4e2 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 20:54:30 -0400
+Subject: [PATCH] Lock Omarchy's Neovim setup and clang
+
+---
+ guest/packages.lock.json | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index b4b9ae1..edbd273 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -40,6 +40,8 @@
+     "cairo": "1.18.4-1",
+     "cfitsio": "1:4.7.0-1",
+     "chromium": "152.0.7977.75-1",
++    "clang": "22.1.8-1",
++    "compiler-rt": "22.1.8-1",
+     "coreutils": "9.11-2",
+     "cpio": "2.15-3",
+     "cpptrace": "1.0.4-2",
+@@ -459,6 +461,7 @@
+     "omacalc": "0.2.2-1",
+     "omacut": "0.4.0-1",
+     "omarchy-keyring": "20251027-1",
++    "omarchy-nvim": "2026.8.13-1",
+     "omawrite": "0.5.0-1",
+     "onetbb": "2023.1.0-1",
+     "oniguruma": "6.9.10-1",
+@@ -652,6 +655,6 @@
+     "zram-generator": "1.2.1-1",
+     "zstd": "1.5.7-3"
+   },
+-  "requestedFileSha256": "6036ce121d2c3eb21d8f68b02661f60b8d23b63fabce817730e82fc6f959db34",
++  "requestedFileSha256": "2612845972c32d1a263493b6b0a5fd3e61fdd8c891b7b0573d5b878d31930333",
+   "schemaVersion": 1
+ }
+-- 
+2.55.0
+
