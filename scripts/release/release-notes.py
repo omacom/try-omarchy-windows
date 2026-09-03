@@ -12,7 +12,18 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("tag")
     parser.add_argument("--changelog", type=Path, default=Path("CHANGELOG.md"))
+    parser.add_argument("--notes-dir", type=Path, default=Path(".github/release-notes"))
     args = parser.parse_args()
+
+    if Path(args.tag).name != args.tag:
+        raise SystemExit("tag must not contain a path")
+    notes = args.notes_dir / f"{args.tag}.md"
+    if notes.is_file():
+        body = notes.read_text(encoding="utf-8").strip()
+        if not body:
+            raise SystemExit(f"{notes} is empty")
+        print(body)
+        return
 
     lines = args.changelog.read_text(encoding="utf-8").splitlines()
     header = re.compile(rf"^## {re.escape(args.tag)}(?:\s+-\s+.+)?$")
