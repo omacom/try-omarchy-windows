@@ -30,6 +30,8 @@ Windows VM tests unless noted in the release checklist):
 - yay from the Omarchy repository plus the base-devel toolchain, so upstream's
   AUR entry points (omarchy-pkg-aur-add and friends) work in the guest
 - Omarchy's LazyVim configuration and clang, matching the upstream editor setup
+- Reviewed Omarchy fixes for notification dismissal and for keeping notification
+  contents hidden while the lock screen or screensaver obscures the session
 - A fixed 4096-frame PipeWire quantum for stable playback through QEMU's
   emulated Intel HDA device
 - Guest cursor visible under SDL (the hidden-cursor fragment was a VNC-era assumption)

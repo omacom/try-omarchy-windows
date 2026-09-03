@@ -23,6 +23,7 @@
 - Bound portable QCOW2 data to the authenticated factory-image digest so replacing its backing payload is refused instead of risking silent filesystem corruption.
 - Rebuilt the Windows runtime to avoid 1 ms SDL redraw polling while the guest is idle. Real-hardware idle CPU and graphics checks still gate publication.
 - Raised the guest PipeWire quantum to prevent false underruns from QEMU's coarse emulated HDA position updates.
+- Backported Omarchy's notification close control and kept notification contents hidden while the lock screen or screensaver is active.
 - Hardened failed-update recovery, settings and receipt writes, clipboard size checks, audio fallback, directory setup, and diagnostics redaction.
 
 ## v0.0.8-preview - 2026-08-30
