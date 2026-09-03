@@ -52,11 +52,13 @@ Windows VM tests unless noted in the release checklist):
   (docs/MIGRATION.md)
 - `tryomarchy.sharename=<base64>` links the `-share` folder into the home
   directory under its own name at login, pins it in the Files sidebar, and
+  opens each newly selected share once so users can find it immediately; it
   removes only those managed entries on launches that share nothing
 - Overlay scripts have unprivileged behavioral tests under guest/tests
 - The initramfs carries those launcher-integration files onto persistent disks
   created by older releases and reports userspace readiness before the Windows
-  launcher commits a guest-image update
+  launcher commits a guest-image update. Its explicit integration revision is
+  bumped whenever those files must be reapplied without a kernel version change
 
 If Arch has moved since the lock was written, refresh it first and review the diff:
 

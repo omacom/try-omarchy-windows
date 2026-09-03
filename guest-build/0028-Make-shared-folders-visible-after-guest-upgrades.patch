@@ -1,0 +1,155 @@
+From 7774a928430f08688633bb35ae71502b461c7325 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 00:49:17 -0400
+Subject: [PATCH] Make shared folders visible after guest upgrades
+
+---
+ .../usr/local/lib/try-omarchy/share-link      | 24 ++++++++++++++++++-
+ guest/scripts/finalize-rootfs.sh              |  5 +++-
+ guest/tests/test_overlay_scripts.py           | 19 +++++++++++++++
+ guest/tests/verify.py                         |  9 +++++++
+ 4 files changed, 55 insertions(+), 2 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/share-link b/guest/factory-overlay/usr/local/lib/try-omarchy/share-link
+index 2368e29..c85634d 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/share-link
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/share-link
+@@ -14,6 +14,7 @@ cmdline_file=${TRY_OMARCHY_CMDLINE:-/proc/cmdline}
+ state_dir="$HOME/.local/state/try-omarchy"
+ state_file="$state_dir/share-link"
+ bookmark_state="$state_dir/share-bookmark"
++open_state="$state_dir/share-opened"
+ bookmarks="$HOME/.config/gtk-3.0/bookmarks"
+ mount_point=/mnt/host
+ 
+@@ -64,6 +65,23 @@ add_managed_bookmark() {
+   log "added the Windows share to Files"
+ }
+ 
++open_share_once() {
++  local identity="file://$mount_point $name" previous="" temp
++  if [[ -f $open_state && ! -L $open_state ]]; then
++    previous=$(<"$open_state")
++  fi
++  [[ $previous != "$identity" ]] || return 0
++  if gio open "$mount_point"; then
++    mkdir -p "$state_dir"
++    temp=$(mktemp "$state_dir/.share-opened.XXXXXX")
++    printf '%s\n' "$identity" >"$temp"
++    mv -f "$temp" "$open_state"
++    log "opened the Windows share in Files"
++  else
++    log "could not open the Windows share; Files will try again next login"
++  fi
++}
++
+ # Drop the link from the previous session first; it is recreated below when
+ # the share is still attached under the same name.
+ if [[ -f $state_file ]]; then
+@@ -82,7 +100,10 @@ for word in $(<"$cmdline_file"); do
+     tryomarchy.sharename=*) encoded=${word#tryomarchy.sharename=} ;;
+   esac
+ done
+-[[ -n $encoded ]] || exit 0
++if [[ -z $encoded ]]; then
++  rm -f "$open_state"
++  exit 0
++fi
+ 
+ name=$(printf '%s' "$encoded" | base64 -d 2>/dev/null) || name=""
+ if [[ -z $name || $name == . || $name == .. || $name == */* || $name =~ [[:cntrl:]] || ${#name} -gt 255 ]]; then
+@@ -123,3 +144,4 @@ if ((can_link)); then
+   log "linked $target to the Windows share"
+ fi
+ add_managed_bookmark
++open_share_once
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 47e4926..e5b77fa 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -74,7 +74,10 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+   echo "Expected exactly one installed kernel module tree" >&2
+   exit 1
+ }
+-printf '1:%s\n' "$kernel_release" >/usr/share/try-omarchy/compat-version
++# Bump this revision whenever compat-overlay.tar changes in a way that must be
++# applied to persistent disks created by an earlier launcher release.
++compat_revision=2
++printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+ # devices required by QEMU on the Windows host.
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index 74d1270..e5cc93f 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -60,8 +60,10 @@ class ShareLinkTests(OverlayCase):
+     def setUp(self) -> None:
+         super().setUp()
+         self.fake("mountpoint", 'exit 0')
++        self.fake("gio", f'echo "gio $*" >>"{self.log}"')
+         self.state = self.home / ".local/state/try-omarchy/share-link"
+         self.bookmark_state = self.home / ".local/state/try-omarchy/share-bookmark"
++        self.open_state = self.home / ".local/state/try-omarchy/share-opened"
+         self.bookmarks = self.home / ".config/gtk-3.0/bookmarks"
+ 
+     def test_links_the_share_under_its_name_and_records_it(self) -> None:
+@@ -73,6 +75,22 @@ class ShareLinkTests(OverlayCase):
+         self.assertEqual(self.state.read_text().strip(), str(link))
+         self.assertEqual(self.bookmarks.read_text(), "file:///mnt/host Work\n")
+         self.assertEqual(self.bookmark_state.read_text().strip(), "file:///mnt/host Work")
++        self.assertEqual(self.open_state.read_text().strip(), "file:///mnt/host Work")
++        self.assertEqual(self.log.read_text(), "gio open /mnt/host\n")
++
++    def test_opens_each_new_share_only_once(self) -> None:
++        self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Work')}")
++        self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Work')}")
++        self.assertEqual(self.log.read_text(), "gio open /mnt/host\n")
++        self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Exchange')}")
++        self.assertEqual(self.log.read_text(), "gio open /mnt/host\ngio open /mnt/host\n")
++
++    def test_retries_opening_after_files_cannot_start(self) -> None:
++        self.fake("gio", f'echo "gio $*" >>"{self.log}"; exit 1')
++        result = self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Work')}")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertFalse(self.open_state.exists())
++        self.assertIn("try again next login", result.stdout)
+ 
+     def test_removes_its_link_on_a_launch_without_a_share(self) -> None:
+         self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Work')}")
+@@ -82,6 +100,7 @@ class ShareLinkTests(OverlayCase):
+         self.assertFalse((self.home / "Work").is_symlink())
+         self.assertFalse(self.state.exists())
+         self.assertFalse(self.bookmark_state.exists())
++        self.assertFalse(self.open_state.exists())
+         self.assertEqual(self.bookmarks.read_text(), "")
+ 
+     def test_preserves_user_bookmarks_when_the_share_changes_or_stops(self) -> None:
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 9b61eab..41be500 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -239,11 +239,20 @@ def main() -> None:
+         and "rmdir" in share_link
+         and "gtk-3.0/bookmarks" in share_link
+         and "file://$mount_point" in share_link
++        and 'gio open "$mount_point"' in share_link
++        and "share-opened" in share_link
+         and "rm -rf" not in share_link
+         and (GUEST / "factory-overlay/etc/systemd/user/default.target.wants/try-omarchy-share-link.service").is_symlink(),
+         "the share link and Files bookmark preserve existing user entries",
+     )
+ 
++    finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
++    check(
++        "compat_revision=2" in finalize_rootfs
++        and "compat_revision" in finalize_rootfs.split("compat-version")[0],
++        "launcher integration has an explicit revision for persistent-disk upgrades",
++    )
++
+     ready_unit = read(GUEST / "factory-overlay/etc/systemd/system/try-omarchy-ready.service")
+     ready_script = GUEST / "factory-overlay/usr/local/lib/try-omarchy/guest-ready"
+     initcpio_config = read(GUEST / "factory-overlay/etc/mkinitcpio.conf.d/90-try-omarchy.conf")
+-- 
+2.55.0
+
