@@ -23,8 +23,19 @@ func TestValidateWindowsSharedFolderPolicy(t *testing.T) {
 		}
 	}
 	got, err := validateWindowsSharedFolder(share, data, home)
-	if err != nil || !sameWindowsPath(got, share) {
+	if err != nil {
 		t.Fatalf("valid share = %q, %v", got, err)
+	}
+	want, err := filepath.EvalSymlinks(share)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err = filepath.Abs(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameWindowsPath(got, want) {
+		t.Fatalf("canonical share = %q, want %q", got, want)
 	}
 	if _, err := validateWindowsSharedFolder(home, data, home); err == nil {
 		t.Fatal("the whole home folder was accepted")
