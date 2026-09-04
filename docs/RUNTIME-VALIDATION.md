@@ -21,4 +21,4 @@ runtime pin unchanged until all of these pass on supported Windows versions.
   `qemu-stderr.log` shows the "nested virtualization unavailable" warning
   instead of `Failed to enable nested virtualization` (issue #19).
 
-Test at least one AMD, Intel, and NVIDIA host before changing the public pin.
+Test at least one AMD, Intel, and NVIDIA graphics configuration before changing the public pin. Record the launcher version, runtime hash, Windows build, and driver version using [TESTING.md](TESTING.md).
