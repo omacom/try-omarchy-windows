@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Features
+- Added disk-capacity controls for standard installs, with in-place growth, current capacity and Windows free-space information. Lowering the setting never shrinks an existing disk.
 - New standard installs now ask whether to use the default Local AppData folder or a different local drive or folder before downloading the runtime and guest image. Alternate locations are checked for write access and free space, remembered across launches, and carried into Start-menu and Desktop shortcuts.
 
 ### Fixes

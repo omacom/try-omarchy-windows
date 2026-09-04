@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 
 var (
 	procIsDialogMessageW   = user32.NewProc("IsDialogMessageW")
+	procEnableWindow       = user32.NewProc("EnableWindow")
 	procLoadCursorW        = user32.NewProc("LoadCursorW")
 	procGetStockObject     = syscall.NewLazyDLL("gdi32.dll").NewProc("GetStockObject")
 	procSetFocus           = user32.NewProc("SetFocus")
@@ -54,11 +56,12 @@ const (
 	settingsFwdID     = 2013
 	settingsKeyID     = 2014
 	settingsShareOnID = 2015
+	settingsDiskID    = 2016
 )
 
 // runSettingsDialog shows the window and returns once it closes. saved is
 // true when the file was written.
-func runSettingsDialog(path, dataDir string) (saved bool) {
+func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	runtime.LockOSThread()
 	current, err := loadSettings(path)
 	if err != nil {
@@ -66,10 +69,15 @@ func runSettingsDialog(path, dataDir string) (saved bool) {
 		return false
 	}
 
+	storage, err := loadStorageSettings(dataDir)
+	if err != nil {
+		errorBox("Try Omarchy cannot read its storage preferences:\n\n" + err.Error())
+		return false
+	}
 	hInst, _, _ := procGetModuleHandleW.Call(0)
 	className, _ := syscall.UTF16PtrFromString("TryOmarchySettings")
 	var hwnd uintptr
-	var hFull, hMem, hShare, hShareOn, hFwd, hKey uintptr
+	var hFull, hMem, hDisk, hShare, hShareOn, hFwd, hKey uintptr
 
 	text := func(handle uintptr) string {
 		n, _, _ := procSendMessageW.Call(handle, wmGettextlength, 0, 0)
@@ -100,6 +108,10 @@ func runSettingsDialog(path, dataDir string) (saved bool) {
 			switch wParam & 0xffff {
 			case settingsSaveID:
 				s, err := collect()
+				diskGiB := storage.DiskGiB
+				if err == nil && !portable {
+					diskGiB, err = parseDiskGiB(text(hDisk))
+				}
 				if err == nil && s.activeShare() != "" {
 					home, homeErr := os.UserHomeDir()
 					if homeErr != nil {
@@ -110,6 +122,12 @@ func runSettingsDialog(path, dataDir string) (saved bool) {
 				}
 				if err == nil {
 					err = saveSettings(path, s)
+				}
+				if err == nil && !portable && diskGiB != storage.DiskGiB {
+					if storageErr := saveStorageSettings(dataDir, diskGiB); storageErr != nil {
+						errorBox("Other settings were saved, but disk capacity could not be saved:\n\n" + storageErr.Error())
+						return 0
+					}
 				}
 				if err != nil {
 					errorBox("These settings cannot be saved:\n\n" + err.Error())
@@ -152,7 +170,7 @@ func runSettingsDialog(path, dataDir string) (saved bool) {
 		return false
 	}
 
-	const clientW, clientH = 480, 400
+	const clientW, clientH = 480, 488
 	rect := [4]int32{0, 0, clientW, clientH}
 	style := uintptr(wsCaption | wsSysmenu)
 	procAdjustWindowRectEx.Call(uintptr(unsafe.Pointer(&rect[0])), style, 0, 0)
@@ -187,6 +205,29 @@ func runSettingsDialog(path, dataDir string) (saved bool) {
 	mk("STATIC", "Guest memory (MiB)", left, y+3, labelW, 20, ssNoprefix, 0)
 	hMem = mk("EDIT", strconv.Itoa(current.MemoryMiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsMemID)
 	y += 34
+	mk("STATIC", "Disk capacity (GiB)", left, y+3, labelW, 20, ssNoprefix, 0)
+	hDisk = mk("EDIT", strconv.Itoa(storage.DiskGiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsDiskID)
+	if portable {
+		procEnableWindow.Call(hDisk, 0)
+	}
+	y += 28
+	capacityHelp := "0 keeps the default. Increasing grows the disk next launch; lowering never shrinks it. Space is used as files are added."
+	if portable {
+		capacityHelp = "Portable disks keep their existing capacity."
+	}
+	mk("STATIC", capacityHelp, left, y, clientW-2*left, 36, ssNoprefix, 0)
+	y += 38
+	status := ""
+	if !portable {
+		if info, err := os.Stat(filepath.Join(dataDir, "vm", "disk.raw")); err == nil {
+			status = "Current capacity: " + formatGiB(info.Size()) + ". "
+		}
+	}
+	if available, err := diskFreeBytes(dataDir); err == nil {
+		status += "Free on Windows drive: " + formatGiB(available) + "."
+	}
+	mk("STATIC", status, left, y, clientW-2*left, 20, ssNoprefix, 0)
+	y += 26
 	mk("STATIC", "Shared folder", left, y+3, labelW, 20, ssNoprefix, 0)
 	hShare = mk("EDIT", current.Share, fieldX, y, fieldW-80, 24, wsBorder|wsTabstop|esAutohscroll, settingsShareID)
 	mk("BUTTON", "Browse...", fieldX+fieldW-72, y, 72, 24, wsTabstop, settingsBrowseID)
@@ -204,7 +245,7 @@ func runSettingsDialog(path, dataDir string) (saved bool) {
 	mk("STATIC", "SSH public key file\n(blank: your ~/.ssh/id_*.pub)", left, y+3, labelW, 40, ssNoprefix, 0)
 	hKey = mk("EDIT", current.SSHKey, fieldX, y, fieldW, 24, wsBorder|wsTabstop|esAutohscroll, settingsKeyID)
 	y += 36
-	mk("STATIC", "Saved to settings.json and used on the next launch. A flag on the command line wins for that launch.",
+	mk("STATIC", "Changes apply the next time Omarchy starts.",
 		left, y, clientW-2*left, 36, ssNoprefix, 0)
 	mk("BUTTON", "Save", clientW-16-180, clientH-40, 84, 26, bsDefpushbutton|wsTabstop, settingsSaveID)
 	mk("BUTTON", "Cancel", clientW-16-84, clientH-40, 84, 26, wsTabstop, settingsCancelID)

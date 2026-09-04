@@ -127,6 +127,22 @@ forwards (`-forward`), and `sshKey` is the public key file to authorize when a
 forward targets sshd (`-ssh-key`). Open Settings from the tray, the Start menu,
 or `TryOmarchy.exe -settings`. Changes apply on the next launch.
 
+### Disk capacity
+
+Open Settings and set **Disk capacity (GiB)**, or launch with `-disk-size 64`.
+Standard installs accept 24 to 1024 GiB; 0 keeps the release default. The next
+launch grows an existing disk in place and preserves its files. Lowering the
+setting never shrinks the disk. A fresh guest uses at least the factory image's
+required capacity.
+
+Capacity is a limit, not space reserved on Windows. The sparse disk uses host
+storage as you add files. Settings shows the current capacity and free space on
+the Windows drive. Keep important files backed up outside the guest.
+
+This preference is saved separately in `storage.json` so older launchers can
+still read their settings after rollback. An explicit `-disk-size` applies only
+to that launch. Portable QCOW2 disks keep their existing capacity.
+
 ### SSH and port forwarding
 
 Nothing listens by default. To reach Omarchy from Windows tools, forward a

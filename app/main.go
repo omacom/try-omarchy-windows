@@ -48,6 +48,7 @@ type config struct {
 	sshKey   string
 	// Guest RAM chosen by the user (settings.json or -memory); 0 = automatic.
 	memOverrideMiB int
+	diskGiB        int
 	irqchipOff     bool
 }
 
@@ -134,6 +135,7 @@ func main() {
 	flag.BoolVar(&cfg.fresh, "fresh", false, "discard the writable disk and start over")
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen (Immersive)")
 	flag.IntVar(&cfg.memOverrideMiB, "memory", 0, "guest RAM in MiB (default: sized to this PC)")
+	flag.IntVar(&cfg.diskGiB, "disk-size", 0, "guest disk capacity in GiB (0: default; grows existing standard disks, never shrinks)")
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed")
 	flag.BoolVar(&cfg.hostCursor, "host-cursor", false, "force the legacy Windows cursor over the guest")
 	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the trial account")
@@ -249,7 +251,7 @@ func main() {
 	}
 
 	if *openSettings {
-		if runSettingsDialog(settingsPath(cfg.dir), cfg.dir) {
+		if runSettingsDialog(settingsPath(cfg.dir), cfg.dir, cfg.portable) {
 			logf("settings saved to %s", settingsPath(cfg.dir))
 		}
 		return
@@ -267,6 +269,16 @@ func main() {
 	}
 	if cfg.memOverrideMiB != 0 && (cfg.memOverrideMiB < minimumGuestMemoryMiB || cfg.memOverrideMiB > maximumGuestMemoryMiB) {
 		fatal("-memory must be between %d and %d MiB.", minimumGuestMemoryMiB, maximumGuestMemoryMiB)
+	}
+	if !explicitFlags["disk-size"] {
+		storage, err := loadStorageSettings(cfg.dir)
+		if err != nil {
+			fatal("Cannot read storage preferences: %v", err)
+		}
+		cfg.diskGiB = storage.DiskGiB
+	}
+	if _, err := requestedDiskMiB(24*1024, cfg.diskGiB, cfg.portable); err != nil {
+		fatal("%v", err)
 	}
 	home, _ := os.UserHomeDir()
 	sshKey, err := resolveSSHPreset(&forwards, *sshPort, *sshKeyPath, home, explicitFlags["ssh-key"])
