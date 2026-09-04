@@ -6,7 +6,26 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"unsafe"
 )
+
+var procGetDriveTypeW = syscall.NewLazyDLL("kernel32.dll").NewProc("GetDriveTypeW")
+
+const driveRemote = 4
+
+func dataLocationIsLocal(path string) bool {
+	volume := filepath.VolumeName(path)
+	if volume == "" || strings.HasPrefix(volume, `\\`) {
+		return false
+	}
+	root, err := syscall.UTF16PtrFromString(volume + `\`)
+	if err != nil {
+		return false
+	}
+	driveType, _, _ := procGetDriveTypeW.Call(uintptr(unsafe.Pointer(root)))
+	return driveType != driveRemote
+}
 
 // chooseFirstRunDataDirectory asks once, before any payload is downloaded.
 // The folder picker selects a drive or parent folder and the launcher keeps
@@ -34,8 +53,7 @@ func chooseFirstRunDataDirectory(defaultDir string) (string, bool, error) {
 				errorBox("Try Omarchy cannot use that location.\n\n" + err.Error())
 				continue
 			}
-			volume := filepath.VolumeName(selected)
-			if volume == "" || strings.HasPrefix(volume, `\\`) {
+			if !dataLocationIsLocal(selected) {
 				errorBox("Choose a folder on a local Windows drive. Network locations are not supported for the virtual disk.")
 				continue
 			}
