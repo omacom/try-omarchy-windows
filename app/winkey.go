@@ -147,7 +147,7 @@ func runWinKeyQmp() {
 // this the taskbar shows the QEMU logo - the last piece of QEMU chrome).
 func runTitleEnforcer(fullscreen bool) {
 	hInst, _, _ := procGetModuleHandleW.Call(0)
-	appIcon, _, _ := procLoadIconW.Call(hInst, 1) // the embedded pixel-O .ico
+	appIcon, _, _ := procLoadIconW.Call(hInst, 1) // the embedded Omarchy .ico
 	lastPid := uint32(0)
 	maximize := false
 	for {
