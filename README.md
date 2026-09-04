@@ -30,7 +30,7 @@ Omarchy's trademark rights.
 - First boot offers an instant trial account or Omarchy's normal personalized account setup, with SDDM autologin after either path. Instant mode keeps `omarchy` as both the local username and lock-screen password, shows that on the setup splash, and repeats it once on the first desktop. Sudo remains passwordless in this disposable local trial.
 - Reproducible x86_64 guest image build (containerized, package-locked, pinned Omarchy revision) and a headless QMP control plane for automated testing.
 
-See [app compatibility](docs/COMPATIBILITY.md) for package support and current VM limitations.
+See [app compatibility](docs/COMPATIBILITY.md) for package support and current VM limitations. The [v1 checklist](docs/V1-READINESS.md) tracks the remaining release work.
 
 | First run | Screensaver |
 |---|---|
