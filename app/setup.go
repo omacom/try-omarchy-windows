@@ -53,9 +53,12 @@ const (
 	mbIconInfo     = 0x40
 	mbIconQuestion = 0x20
 	mbYesNo        = 0x04
+	mbYesNoCancel  = 0x03
 	mbOkCancel     = 0x01
 	idOk           = 1
+	idCancel       = 2
 	idYes          = 6
+	idNo           = 7
 
 	seeMaskNoCloseProcess = 0x40
 	errorCancelled        = 1223 // user said No to the UAC prompt

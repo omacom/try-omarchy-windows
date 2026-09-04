@@ -1,4 +1,4 @@
-module github.com/tsouth89/try-omarchy-windows/app
+module github.com/omacom/try-omarchy-windows/app
 
 go 1.27
 

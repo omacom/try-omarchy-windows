@@ -102,3 +102,23 @@ func TestInvalidInstallReceiptTriggersRecovery(t *testing.T) {
 		t.Fatal("malformed receipt was accepted")
 	}
 }
+
+func TestInstallReceiptSurvivesRepositoryTransfer(t *testing.T) {
+	dir := t.TempDir()
+	data := []byte("root filesystem")
+	if err := os.WriteFile(filepath.Join(dir, "rootfs"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := testSHA256([]byte("manifest"))
+	tag := "v0.0.11-preview"
+	if err := writeInstallReceipt(dir, legacyReleaseBase+tag, manifest, []string{"rootfs"}, map[string]string{"rootfs": testSHA256(data)}); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := installReceiptMatches(dir, transferredReleaseBase+tag, manifest, []string{"rootfs"})
+	if err != nil || !ok {
+		t.Fatalf("transferred receipt = %v, %v", ok, err)
+	}
+	if releaseLocationsEquivalent(legacyReleaseBase+tag, transferredReleaseBase+"v0.0.12-preview") {
+		t.Fatal("different release tags were treated as equivalent")
+	}
+}

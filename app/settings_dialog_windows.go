@@ -18,17 +18,12 @@ import (
 // so it behaves like every other Windows dialog with keyboard, high DPI and
 // screen readers, unlike the custom-painted splash.
 
-// shell32 and ole32 are the package-level handles declared in setup.go and
-// taskbar.go.
 var (
-	procSHBrowseForFolderW   = shell32.NewProc("SHBrowseForFolderW")
-	procSHGetPathFromIDListW = shell32.NewProc("SHGetPathFromIDListW")
-	procCoTaskMemFree        = ole32.NewProc("CoTaskMemFree")
-	procIsDialogMessageW     = user32.NewProc("IsDialogMessageW")
-	procLoadCursorW          = user32.NewProc("LoadCursorW")
-	procGetStockObject       = syscall.NewLazyDLL("gdi32.dll").NewProc("GetStockObject")
-	procSetFocus             = user32.NewProc("SetFocus")
-	procAdjustWindowRectEx   = user32.NewProc("AdjustWindowRectEx")
+	procIsDialogMessageW   = user32.NewProc("IsDialogMessageW")
+	procLoadCursorW        = user32.NewProc("LoadCursorW")
+	procGetStockObject     = syscall.NewLazyDLL("gdi32.dll").NewProc("GetStockObject")
+	procSetFocus           = user32.NewProc("SetFocus")
+	procAdjustWindowRectEx = user32.NewProc("AdjustWindowRectEx")
 )
 
 const (
@@ -48,8 +43,6 @@ const (
 	idcArrow          = 32512
 	colorBtnface      = 15
 	defaultGuiFont    = 17
-	idCancel          = 2
-	bifReturnOnlyFS   = 0x0001
 	wmGettextlength   = 0x000E
 	wmGettext         = 0x000D
 	settingsSaveID    = 2001
@@ -95,29 +88,10 @@ func runSettingsDialog(path, dataDir string) (saved bool) {
 			text(hMem), text(hShare), text(hFwd), text(hKey))
 	}
 	browseFolder := func() {
-		var display [260]uint16
-		title, _ := syscall.UTF16PtrFromString("Choose the Windows folder to share with Omarchy")
-		type browseInfo struct {
-			owner       uintptr
-			root        uintptr
-			displayName *uint16
-			title       *uint16
-			flags       uint32
-			callback    uintptr
-			param       uintptr
-			image       int32
-		}
-		bi := browseInfo{owner: hwnd, displayName: &display[0], title: title, flags: bifReturnOnlyFS}
-		pidl, _, _ := procSHBrowseForFolderW.Call(uintptr(unsafe.Pointer(&bi)))
-		if pidl == 0 {
-			return
-		}
-		var pathBuf [1024]uint16
-		if ok, _, _ := procSHGetPathFromIDListW.Call(pidl, uintptr(unsafe.Pointer(&pathBuf[0]))); ok != 0 {
-			setText(hShare, syscall.UTF16ToString(pathBuf[:]))
+		if selected, ok := browseForFolder(hwnd, "Choose the Windows folder to share with Omarchy"); ok {
+			setText(hShare, selected)
 			procSendMessageW.Call(hShareOn, bmSetcheck, bstChecked, 0)
 		}
-		procCoTaskMemFree.Call(pidl)
 	}
 
 	wndProc := syscall.NewCallback(func(h, msg, wParam, lParam uintptr) uintptr {

@@ -38,7 +38,7 @@ func signedUpdateServer(t *testing.T, body []byte, mutateSignature bool) (*httpt
 func validUpdateJSON(version string) []byte {
 	return []byte(fmt.Sprintf(`{"schema":1,"version":%q,"release":%q,"manifestSHA256":%q,"launcher":{"name":"TryOmarchy.exe","sha256":%q}}`,
 		version,
-		"https://github.com/tsouth89/try-omarchy-windows/releases/download/"+version,
+		transferredReleaseBase+version,
 		strings.Repeat("a", 64), strings.Repeat("b", 64)))
 }
 
@@ -77,6 +77,17 @@ func TestValidateUpdateManifestAcceptsOfficialRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest.Release = officialReleaseBase + manifest.Version
+	if err := validateUpdateManifest(&manifest); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateUpdateManifestAcceptsLegacyRepository(t *testing.T) {
+	var manifest updateManifest
+	if err := json.Unmarshal(validUpdateJSON("v0.0.8-preview"), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Release = legacyReleaseBase + manifest.Version
 	if err := validateUpdateManifest(&manifest); err != nil {
 		t.Fatal(err)
 	}

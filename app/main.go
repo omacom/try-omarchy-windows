@@ -93,10 +93,6 @@ type buildSpec struct {
 
 var logFile *os.File
 
-// Kept as a variable so isolated signed test builds can use their own data
-// directory without changing production behavior.
-var defaultDataDirectoryName = "TryOmarchy"
-
 func logf(format string, a ...any) {
 	if logFile != nil {
 		fmt.Fprintf(logFile, "%s %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, a...))
@@ -130,7 +126,9 @@ func finishSetupCancellation(cfg *config, err error) bool {
 
 func main() {
 	cfg := &config{}
-	flag.StringVar(&cfg.dir, "dir", filepath.Join(os.Getenv("LOCALAPPDATA"), defaultDataDirectoryName), "data directory")
+	removeStandardDataOnCancel := false
+	defaultDir := filepath.Join(os.Getenv("LOCALAPPDATA"), defaultDataDirectoryName)
+	flag.StringVar(&cfg.dir, "dir", defaultDir, "Try Omarchy data directory (virtual machine, runtime, and settings)")
 	flag.StringVar(&cfg.winqEmu, "winq", `C:\WINQ-EMU`, "WINQ-EMU install path (GPU mode)")
 	flag.StringVar(&cfg.share, "share", "", "Windows folder shared into Omarchy at /mnt/host and as ~/<folder name>")
 	flag.BoolVar(&cfg.fresh, "fresh", false, "discard the writable disk and start over")
@@ -162,6 +160,8 @@ func main() {
 	updateWaitPID := flag.Int("update-wait-pid", 0, "internal: process to wait for before replacing the launcher")
 	updateRestartArgs := flag.String("update-restart-args", "", "internal: encoded launcher restart arguments")
 	flag.Parse()
+	explicitFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { explicitFlags[f.Name] = true })
 	if strings.TrimSpace(*runtimeRelease) == "" {
 		*runtimeRelease = *release
 	}
@@ -173,6 +173,13 @@ func main() {
 	// code (see setup.go); it must not touch the single-instance port.
 	if *enableWhp {
 		os.Exit(runDismEnable())
+	}
+	// Bind before the first-run location prompt. Two quick launches must not
+	// race each other through the folder choice or write the same pointer and
+	// payload files. Settings, diagnostics, and update helpers remain usable
+	// while the VM owns the lifecycle port.
+	if !*openSettings && !*diagnostics && !*applyLauncherUpdateFlag && !*applyLauncherRollbackFlag {
+		runLifecycleListener()
 	}
 	if cfg.portable {
 		self, err := os.Executable()
@@ -186,7 +193,27 @@ func main() {
 		// not travel to another PC with the USB.
 		cfg.hostDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "TryOmarchy", "portable-host")
 	} else {
+		promptForLocation := !*diagnostics && !*applyLauncherUpdateFlag && !*applyLauncherRollbackFlag
+		selected, proceed, err := resolveStandardDataDirectory(
+			defaultDir, cfg.dir, explicitFlags["dir"], promptForLocation, chooseFirstRunDataDirectory,
+		)
+		if err != nil {
+			fatal("Try Omarchy cannot resolve its data location: %v\n\nIf a saved location is damaged, fix or delete %s, then open Try Omarchy again.", err, dataLocationPointerPath(defaultDir))
+		}
+		if !proceed {
+			return
+		}
+		if !explicitFlags["dir"] && !pathsEqual(selected, defaultDir) {
+			if err := validateStandardDataDrive(selected); err != nil {
+				fatal("The saved Try Omarchy data location is unavailable or incompatible:\n\n%s\n\n%v\n\nReconnect the drive or delete %s to choose another location.", selected, err, dataLocationPointerPath(defaultDir))
+			}
+		}
+		cfg.dir = selected
 		cfg.hostDir = cfg.dir
+		removeStandardDataOnCancel, err = dataDirectoryEmpty(cfg.dir)
+		if err != nil {
+			fatal("Try Omarchy cannot inspect its data location: %v", err)
+		}
 		if *applyLauncherUpdateFlag || *applyLauncherRollbackFlag {
 			if err := applyLauncherUpdate(cfg.dir, *updateWaitPID, *updateRestartArgs, *applyLauncherRollbackFlag); err != nil {
 				errorBox("Try Omarchy could not finish applying its update.\n\n" + err.Error())
@@ -230,8 +257,6 @@ func main() {
 
 	// settings.json holds the rows the settings window edits; explicit flags
 	// win for this launch only.
-	explicitFlags := map[string]bool{}
-	flag.Visit(func(f *flag.Flag) { explicitFlags[f.Name] = true })
 	settingsFile := settingsPath(cfg.dir)
 	userSettings, err := loadSettings(settingsFile)
 	if err != nil {
@@ -274,7 +299,7 @@ func main() {
 	}
 	completeAtStart := completeInstallExists(cfg.dir, filepath.Base(cfg.disk))
 	needsProvisioning := cfg.fresh || !completeAtStart
-	configureSetupCancellation(!completeAtStart)
+	configureSetupCancellation(!completeAtStart && (cfg.portable || removeStandardDataOnCancel))
 	if err := os.MkdirAll(cfg.vmDir, 0o755); err != nil {
 		fatal("Could not create the Omarchy data directory: %v", err)
 	}
@@ -290,11 +315,6 @@ func main() {
 		os.Stderr = logFile
 	}
 	logf("---- %s starting ----", appTitle)
-
-	// Single-instance guard FIRST: binding the lifecycle port before the image
-	// fetch stops a double-click double-launch from downloading the same image
-	// into the same files twice (it happened).
-	runLifecycleListener()
 
 	// The splash IS the launch experience: it appears here and stays on screen
 	// through every phase until the Omarchy window itself is visible (the

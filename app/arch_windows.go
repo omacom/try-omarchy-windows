@@ -70,6 +70,6 @@ func intelAMDOnlyMessage(detail string) string {
 		fmt.Sprintf("This PC has %s. Nothing is misconfigured: the x86_64 virtualization Try Omarchy is built on is not supported on ARM64 Windows, so setup cannot continue on this PC.", detail),
 		"",
 		"To try Omarchy, run it on an Intel or AMD Windows PC. There is no ARM64 build yet - if you would like one, please open an issue:",
-		"https://github.com/tsouth89/try-omarchy-windows/issues",
+		"https://github.com/omacom/try-omarchy-windows/issues",
 	}, "\n")
 }

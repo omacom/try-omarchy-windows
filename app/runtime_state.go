@@ -40,7 +40,7 @@ func runtimeReceiptMatches(root, release, manifestSHA, archiveSHA string) bool {
 	}
 	var receipt runtimeReceipt
 	if json.Unmarshal(data, &receipt) != nil || receipt.Schema != 1 ||
-		receipt.Release != normalizedRelease(release) ||
+		!releaseLocationsEquivalent(receipt.Release, release) ||
 		receipt.ManifestSHA256 != normalizedSHA256(manifestSHA) ||
 		receipt.ArchiveSHA256 != normalizedSHA256(archiveSHA) ||
 		!validSHA256(receipt.Executable.SHA256) {

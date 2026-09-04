@@ -34,7 +34,7 @@ func ensureGuest(cfg *config, release, sumsSHA256 string) error {
 		return nil
 	}
 	oldRelease, oldManifest, haveOldReceipt := installReceiptIdentity(cfg.guestDir)
-	isReleaseUpdate := haveOldReceipt && (oldRelease != normalizedRelease(release) ||
+	isReleaseUpdate := haveOldReceipt && (!releaseLocationsEquivalent(oldRelease, release) ||
 		oldManifest != normalizedSHA256(sumsSHA256))
 	if !isReleaseUpdate {
 		return ensureGuestFiles(cfg, release, sumsSHA256)

@@ -63,6 +63,25 @@ func normalizedRelease(release string) string {
 	return strings.TrimRight(strings.TrimSpace(release), "/")
 }
 
+// releaseLocationsEquivalent recognizes only the repository-transfer form of
+// the same tagged release. This prevents an owner-only URL change from looking
+// like a payload update while keeping unrelated repositories and tags distinct.
+func releaseLocationsEquivalent(a, b string) bool {
+	a = normalizedRelease(a)
+	b = normalizedRelease(b)
+	if a == b {
+		return true
+	}
+	legacyTag := strings.TrimPrefix(a, legacyReleaseBase)
+	transferredTag := strings.TrimPrefix(b, transferredReleaseBase)
+	if legacyTag != a && transferredTag != b && legacyTag != "" && legacyTag == transferredTag {
+		return true
+	}
+	legacyTag = strings.TrimPrefix(b, legacyReleaseBase)
+	transferredTag = strings.TrimPrefix(a, transferredReleaseBase)
+	return legacyTag != b && transferredTag != a && legacyTag != "" && legacyTag == transferredTag
+}
+
 func normalizedSHA256(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
@@ -85,7 +104,7 @@ func installReceiptMatches(dir, release, manifestSHA256 string, names []string) 
 	var receipt installReceipt
 	if json.Unmarshal(data, &receipt) != nil ||
 		receipt.Version != installReceiptVersion ||
-		receipt.Release != normalizedRelease(release) ||
+		!releaseLocationsEquivalent(receipt.Release, release) ||
 		receipt.ManifestSHA256 != normalizedSHA256(manifestSHA256) {
 		return false, nil
 	}

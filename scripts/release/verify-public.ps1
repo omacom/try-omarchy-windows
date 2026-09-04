@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repository = 'tsouth89/try-omarchy-windows'
+$repository = 'omacom/try-omarchy-windows'
 $releasePath = if ($Latest) { 'latest/download' } else { "download/$Tag" }
 $base = "https://github.com/$repository/releases/$releasePath"
 $work = Join-Path $env:RUNNER_TEMP "try-omarchy-public-$([guid]::NewGuid())"
