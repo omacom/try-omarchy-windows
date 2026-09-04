@@ -102,7 +102,7 @@ func readPayloadUpdateState(dir string) (*payloadUpdateState, error) {
 	if state.Schema != payloadUpdateStateVersion {
 		return nil, fmt.Errorf("payload update state is invalid")
 	}
-	if _, ok := parsePreviewVersion(state.Version); !ok {
+	if _, ok := parseReleaseVersion(state.Version); !ok {
 		return nil, fmt.Errorf("payload update version is invalid")
 	}
 	return &state, nil

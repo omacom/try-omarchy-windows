@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 
-TAG_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+-preview$")
+TAG_RE = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-preview)?$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 REQUIRED = {
     "build-spec.json",

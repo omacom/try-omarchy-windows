@@ -43,7 +43,7 @@ func readLauncherUpdateState(dir string) (*launcherUpdateState, error) {
 	if state.Schema != updateStateVersion || !validSHA256(state.SHA256) {
 		return nil, fmt.Errorf("update state is invalid")
 	}
-	if _, ok := parsePreviewVersion(state.Version); !ok {
+	if _, ok := parseReleaseVersion(state.Version); !ok {
 		return nil, fmt.Errorf("update state version is invalid")
 	}
 	return &state, nil

@@ -95,7 +95,7 @@ Run the `Release` workflow again with phase `publish` and the same tag. It:
 - verifies that the source pin exactly matches the draft manifest;
 - runs launcher tests and produces the optimized Windows build;
 - signs through Azure Artifact Signing using GitHub OIDC;
-- signs `update.json` with the protected Ed25519 update key;
+- signs current update metadata with the protected Ed25519 update key;
 - verifies Authenticode before upload;
 - publishes without changing `Latest`;
 - verifies the public tagged launcher, checksum, manifest, and guest URL;
@@ -104,7 +104,7 @@ Run the `Release` workflow again with phase `publish` and the same tag. It:
 If public verification fails, the release stays published but does not replace
 the previous `Latest` release.
 
-The updater accepts only a correctly signed manifest, a newer preview version,
+The updater accepts only a correctly signed manifest, a newer supported version,
 the expected repository release URL, and matching SHA256 values. It stages the
 launcher and payload directories atomically. Launcher, runtime, and guest
 updates stay rollback-capable until the guest's userspace readiness service
@@ -113,3 +113,36 @@ kernel panic cannot commit a bad update. The writable disk is
 preserved, and the updated initramfs installs the small matching launcher
 integration onto disks created by older releases without replacing their OS or
 user data.
+
+## Moving from preview to stable
+
+Ship and test a bridge preview containing the stable-version updater before
+publishing v1. Set the release environment variable `LEGACY_UPDATE_BRIDGE_TAG`
+to that published preview tag. Keep its launcher, payload, and signed metadata
+available permanently. Stable publication refuses to proceed without verified
+bridge metadata.
+
+Each release carries two signed feeds:
+
+- `update-v2.json` describes the current release and is used by the bridge and
+  all newer launchers.
+- `update.json` is for older launchers, which only accept preview tags. Preview
+  releases use their own metadata; stable releases carry the original signed
+  bridge metadata unchanged.
+
+An old installation that misses the bridge still finds it through the stable
+release's legacy feed. After installing the bridge, its next scheduled update
+check uses the current feed and can install stable. The normal Latest launcher
+link always serves the current executable. Signature verification, pinned
+payload hashes, and rollback remain required at both steps.
+
+Before v1, test an old preview against a candidate stable release with both
+feeds, then verify bridge installation, stable installation, and forced
+rollback on physical Windows with a copied guest disk. Also test a direct
+stable download and a subsequent stable update. Automated tests cover feed
+routing and recovery-state parsing, but do not replace these Windows checks.
+
+Stable installations never automatically switch to a preview. The workflow
+also prevents a later preview or older version from replacing a newer stable
+Latest release. Retain the bridge feed on every future stable release so
+infrequently used installations can still update.
