@@ -17,7 +17,7 @@ import (
 
 const (
 	currentVersion         = "v0.0.11-preview"
-	defaultUpdateURL       = "https://github.com/omacom/try-omarchy-windows/releases/latest/download/update.json"
+	defaultUpdateURL       = "https://github.com/omacom/try-omarchy-windows/releases/latest/download/update-v2.json"
 	legacyReleaseBase      = "https://github.com/tsouth89/try-omarchy-windows/releases/download/"
 	transferredReleaseBase = "https://github.com/omacom/try-omarchy-windows/releases/download/"
 	officialReleaseBase    = "https://github.com/omacom/omarchy-win/releases/download/"
@@ -30,7 +30,7 @@ const (
 	updatePublicKeyHex = "f1edc8c2fc8fc8a7a108832eb93a9d9f2f8c07c5547fc4e4cb805c3b1615c9cd"
 )
 
-var previewVersionPattern = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)-preview$`)
+var releaseVersionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-preview)?$`)
 
 type updateManifest struct {
 	Schema         int    `json:"schema"`
@@ -97,7 +97,7 @@ func validateUpdateManifest(manifest *updateManifest) error {
 	if manifest.Schema != 1 {
 		return fmt.Errorf("unsupported update manifest schema %d", manifest.Schema)
 	}
-	if _, ok := parsePreviewVersion(manifest.Version); !ok {
+	if _, ok := parseReleaseVersion(manifest.Version); !ok {
 		return fmt.Errorf("invalid update version %q", manifest.Version)
 	}
 	release := normalizedRelease(manifest.Release)
@@ -127,9 +127,10 @@ func updatePublicKey() (ed25519.PublicKey, error) {
 }
 
 func updateIsNewer(candidate, current string) bool {
-	a, okA := parsePreviewVersion(candidate)
-	b, okB := parsePreviewVersion(current)
-	if !okA || !okB {
+	a, okA := parseReleaseVersion(candidate)
+	b, okB := parseReleaseVersion(current)
+	// Stable installations do not opt into preview updates.
+	if !okA || !okB || (b[3] == 1 && a[3] == 0) {
 		return false
 	}
 	for i := range a {
@@ -140,18 +141,21 @@ func updateIsNewer(candidate, current string) bool {
 	return false
 }
 
-func parsePreviewVersion(value string) ([3]int, bool) {
-	var out [3]int
-	match := previewVersionPattern.FindStringSubmatch(value)
+func parseReleaseVersion(value string) ([4]int, bool) {
+	var out [4]int
+	match := releaseVersionPattern.FindStringSubmatch(value)
 	if match == nil {
 		return out, false
 	}
-	for i := range out {
+	for i := 0; i < 3; i++ {
 		n, err := strconv.Atoi(match[i+1])
 		if err != nil {
 			return out, false
 		}
 		out[i] = n
+	}
+	if match[4] == "" {
+		out[3] = 1 // A stable release follows its preview at the same version.
 	}
 	return out, true
 }

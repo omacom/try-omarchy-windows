@@ -25,24 +25,29 @@ try {
     }
     if (-not $matched) { throw "$releasePath kept serving a mismatched launcher and checksum" }
 
-    $updateMatched = $false
-    if (Test-Path 'release/update.json') {
+    foreach ($feed in @('update.json', 'update-v2.json')) {
+        $updateMatched = $false
+        if (-not (Test-Path "release/$feed")) { throw "Missing local $feed" }
         for ($attempt = 1; $attempt -le 18; $attempt++) {
-            curl.exe --fail --silent --show-error --location --output "$work\update.json" "$base/update.json?attempt=$attempt"
-            curl.exe --fail --silent --show-error --location --output "$work\update.json.sig" "$base/update.json.sig?attempt=$attempt"
-            $expectedManifest = (Get-FileHash 'release/update.json' -Algorithm SHA256).Hash
-            $actualManifest = (Get-FileHash "$work\update.json" -Algorithm SHA256).Hash
-            $expectedSignature = (Get-FileHash 'release/update.json.sig' -Algorithm SHA256).Hash
-            $actualSignature = (Get-FileHash "$work\update.json.sig" -Algorithm SHA256).Hash
-            $manifestMatches = $expectedManifest -eq $actualManifest
-            $signatureMatches = $expectedSignature -eq $actualSignature
-            if ($manifestMatches -and $signatureMatches) {
-                $updateMatched = $true
-                break
+            curl.exe --fail --silent --show-error --location --output "$work\$feed" "$base/$($feed)?attempt=$attempt"
+            $metadataOK = $LASTEXITCODE -eq 0
+            curl.exe --fail --silent --show-error --location --output "$work\$feed.sig" "$base/$($feed).sig?attempt=$attempt"
+            $signatureOK = $LASTEXITCODE -eq 0
+            if ($metadataOK -and $signatureOK) {
+                $manifestMatches = (Get-FileHash "release/$feed").Hash -eq (Get-FileHash "$work\$feed").Hash
+                $signatureMatches = (Get-FileHash "release/$feed.sig").Hash -eq (Get-FileHash "$work\$feed.sig").Hash
+                if ($manifestMatches -and $signatureMatches) {
+                    $updateMatched = $true
+                    break
+                }
             }
             Start-Sleep -Seconds 10
         }
-        if (-not $updateMatched) { throw "$releasePath kept serving stale update metadata" }
+        if (-not $updateMatched) { throw "$releasePath kept serving stale $feed metadata" }
+    }
+    $current = Get-Content "$work\update-v2.json" -Raw | ConvertFrom-Json
+    if ($current.version -ne $Tag -or $current.launcher.sha256 -ne $actual) {
+        throw 'Current update metadata does not match the public launcher and requested version'
     }
 
     if (-not $Latest) {

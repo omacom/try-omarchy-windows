@@ -105,6 +105,17 @@ func TestUpdateVersionOrdering(t *testing.T) {
 		{"v0.0.6-preview", "v0.0.6-preview", false},
 		{"v0.0.5-preview", "v0.0.6-preview", false},
 		{"latest", "v0.0.6-preview", false},
+		{"v1.0.0", "v0.0.12-preview", true},
+		{"v1.0.0", "v1.0.0-preview", true},
+		{"v1.0.0", "v1.0.0", false},
+		{"v1.0.1", "v1.0.0", true},
+		{"v1.0.0-preview", "v1.0.0", false},
+		{"v1.1.0-preview", "v1.0.0", false},
+		{"v0.9.0", "v1.0.0-preview", false},
+		{"v01.0.0", "v0.0.12-preview", false},
+		{"v1.0.0-rc.1", "v0.0.12-preview", false},
+		{"v1.0.0+build", "v0.0.12-preview", false},
+		{"v999999999999999999999999.0.0", "v0.0.12-preview", false},
 	} {
 		if got := updateIsNewer(tc.candidate, tc.current); got != tc.newer {
 			t.Errorf("updateIsNewer(%q, %q) = %v", tc.candidate, tc.current, got)
@@ -119,5 +130,58 @@ func TestEmbeddedUpdatePublicKey(t *testing.T) {
 	}
 	if len(key) != ed25519.PublicKeySize {
 		t.Fatalf("public key length = %d", len(key))
+	}
+}
+
+func TestFetchStableUpdateAuthenticatesMetadata(t *testing.T) {
+	server, key := signedUpdateServer(t, validUpdateJSON("v1.0.0"), false)
+	defer server.Close()
+	manifest, err := fetchUpdateManifest(server.Client(), server.URL+"/update.json", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != "v1.0.0" {
+		t.Fatalf("version = %q", manifest.Version)
+	}
+}
+
+func TestMissedBridgeUsesSeparateSignedFeeds(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge := validUpdateJSON("v0.0.12-preview")
+	stable := validUpdateJSON("v1.0.0")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var data []byte
+		switch strings.TrimSuffix(r.URL.Path, ".sig") {
+		case "/update.json":
+			data = bridge
+		case "/update-v2.json":
+			data = stable
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, ".sig") {
+			fmt.Fprintln(w, base64.StdEncoding.EncodeToString(ed25519.Sign(private, data)))
+		} else {
+			w.Write(data)
+		}
+	}))
+	defer server.Close()
+	oldFeed, err := fetchUpdateManifest(server.Client(), server.URL+"/update.json", public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldFeed.Version != "v0.0.12-preview" || !updateIsNewer(oldFeed.Version, "v0.0.11-preview") {
+		t.Fatal("old launcher cannot reach the bridge preview")
+	}
+	newFeed, err := fetchUpdateManifest(server.Client(), server.URL+"/update-v2.json", public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updateIsNewer(newFeed.Version, oldFeed.Version) || newFeed.Version != "v1.0.0" {
+		t.Fatal("bridge cannot reach stable")
 	}
 }

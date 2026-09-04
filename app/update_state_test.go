@@ -88,3 +88,23 @@ func TestUpdatePathsStayInsideInstall(t *testing.T) {
 		}
 	}
 }
+
+func TestStableRecoveryStateSurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	launcher := &launcherUpdateState{Schema: updateStateVersion, Version: "v1.0.0",
+		SHA256: strings.Repeat("a", 64), Started: true, HasPrevious: true}
+	if err := writeLauncherUpdateState(dir, launcher); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readLauncherUpdateState(dir)
+	if err != nil || got == nil || *got != *launcher {
+		t.Fatalf("launcher state = %+v, %v", got, err)
+	}
+	if err := recordPayloadUpdate(dir, "v1.0.0", true, true); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := readPayloadUpdateState(dir)
+	if err != nil || payload == nil || payload.Version != "v1.0.0" || !payload.GuestPending || !payload.RuntimePending {
+		t.Fatalf("payload state = %+v, %v", payload, err)
+	}
+}

@@ -187,7 +187,7 @@ func releaseVersion(release string) string {
 		return currentVersion
 	}
 	version := parts[len(parts)-1]
-	if _, ok := parsePreviewVersion(version); ok {
+	if _, ok := parseReleaseVersion(version); ok {
 		return version
 	}
 	return currentVersion

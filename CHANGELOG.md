@@ -6,6 +6,7 @@
 - New standard installs now ask whether to use the default Local AppData folder or a different local drive or folder before downloading the runtime and guest image. Alternate locations are checked for write access and free space, remembered across launches, and carried into Start-menu and Desktop shortcuts.
 
 ### Fixes
+- Added stable-release update support, including a bridge for older preview launchers and recovery-state compatibility. Stable installs stay on stable releases.
 - Updated active download, update, issue, clone, and module links after the repository moved to `omacom`. Signed update manifests and existing guest and runtime receipts remain compatible with the old release base, so the transfer does not force a payload refresh or strand older launchers.
 
 ## v0.0.11-preview - 2026-09-03

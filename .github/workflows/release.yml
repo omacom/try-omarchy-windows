@@ -12,12 +12,12 @@ on:
           - prepare
           - publish
       release_tag:
-        description: Release tag, for example v0.0.7-preview
+        description: Release tag, for example v0.0.12-preview or v1.0.0
         required: true
         type: string
 
 concurrency:
-  group: release-${{ inputs.release_tag }}
+  group: release
   cancel-in-progress: false
 
 permissions:
@@ -28,12 +28,12 @@ jobs:
     name: Validate request
     runs-on: ubuntu-latest
     steps:
-      - name: Require the default branch and a preview tag
+      - name: Require the default branch and a release tag
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           test "$GITHUB_REF" = refs/heads/master
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-preview$ ]]
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-preview)?$ ]]
 
   prepare:
     name: Build guest draft
@@ -216,6 +216,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ inputs.release_tag }}
+      LEGACY_UPDATE_BRIDGE_TAG: ${{ vars.LEGACY_UPDATE_BRIDGE_TAG }}
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
@@ -317,6 +318,28 @@ jobs:
             -launcher ../release/TryOmarchy.exe `
             -output ../release/update.json
 
+      - name: Prepare current and legacy update feeds
+        shell: pwsh
+        run: |
+          Copy-Item release/update.json release/update-v2.json
+          Copy-Item release/update.json.sig release/update-v2.json.sig
+          if ($env:RELEASE_TAG -notlike '*-preview') {
+            if ($env:LEGACY_UPDATE_BRIDGE_TAG -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-preview$') {
+              throw 'Set LEGACY_UPDATE_BRIDGE_TAG to a tested, published bridge preview before releasing stable builds'
+            }
+            $bridgeDraft = gh release view $env:LEGACY_UPDATE_BRIDGE_TAG --json isDraft --jq .isDraft
+            if ($LASTEXITCODE -ne 0 -or $bridgeDraft -ne 'false') { throw 'The bridge must be public' }
+            $newerThanBridge = python scripts/release/release-order.py $env:RELEASE_TAG $env:LEGACY_UPDATE_BRIDGE_TAG
+            if ($LASTEXITCODE -ne 0 -or $newerThanBridge -ne 'true') { throw 'Stable must be newer than the bridge' }
+            New-Item -ItemType Directory -Force bridge-metadata | Out-Null
+            gh release download $env:LEGACY_UPDATE_BRIDGE_TAG -p update-v2.json -p update-v2.json.sig -D bridge-metadata
+            if ($LASTEXITCODE -ne 0) { throw 'Could not download bridge metadata' }
+            go -C app run ./cmd/sign-update -verify-bridge ../bridge-metadata/update-v2.json -version $env:LEGACY_UPDATE_BRIDGE_TAG
+            if ($LASTEXITCODE -ne 0) { throw 'Bridge metadata verification failed' }
+            Copy-Item bridge-metadata/update-v2.json release/update.json
+            Copy-Item bridge-metadata/update-v2.json.sig release/update.json.sig
+          }
+
       - name: Upload launcher and release notes
         shell: pwsh
         run: |
@@ -326,6 +349,8 @@ jobs:
             release/TryOmarchy.exe.sha256 `
             release/update.json `
             release/update.json.sig `
+            release/update-v2.json `
+            release/update-v2.json.sig `
             --clobber
           gh release edit $env:RELEASE_TAG --target $env:GITHUB_SHA --title $env:RELEASE_TAG --notes-file release-notes.md
 
@@ -337,10 +362,24 @@ jobs:
         shell: pwsh
         run: scripts/release/verify-public.ps1 -Tag $env:RELEASE_TAG
 
-      - name: Mark release Latest
+      - name: Promote newer releases without replacing stable with preview
+        id: promote
         shell: pwsh
-        run: gh release edit $env:RELEASE_TAG --latest
+        run: |
+          $latest = gh release view --json tagName --jq .tagName
+          if ($LASTEXITCODE -ne 0) { throw 'Could not determine the current Latest release' }
+          $promote = python scripts/release/release-order.py $env:RELEASE_TAG $latest
+          if ($LASTEXITCODE -ne 0) { throw 'Could not compare release versions' }
+          if ($promote -eq 'true') {
+            gh release edit $env:RELEASE_TAG --latest
+            if ($LASTEXITCODE -ne 0) { throw 'Could not promote the release' }
+            'latest=true' >> $env:GITHUB_OUTPUT
+          } elseif ($env:RELEASE_TAG -like '*-preview') {
+            gh release edit $env:RELEASE_TAG --prerelease=true --latest=false
+            if ($LASTEXITCODE -ne 0) { throw 'Could not mark the preview release' }
+          }
 
       - name: Verify public Latest download
+        if: steps.promote.outputs.latest == 'true'
         shell: pwsh
         run: scripts/release/verify-public.ps1 -Tag $env:RELEASE_TAG -Latest
