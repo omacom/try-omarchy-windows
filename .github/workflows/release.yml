@@ -360,7 +360,9 @@ jobs:
 
       - name: Verify public tagged assets
         shell: pwsh
-        run: scripts/release/verify-public.ps1 -Tag $env:RELEASE_TAG
+        run: |
+          scripts/release/verify-public.ps1 -Tag $env:RELEASE_TAG
+          scripts/release/verify-public.ps1 -Tag $env:RELEASE_TAG -Repository tsouth89/try-omarchy-windows
 
       - name: Promote newer releases without replacing stable with preview
         id: promote
@@ -382,4 +384,6 @@ jobs:
       - name: Verify public Latest download
         if: steps.promote.outputs.latest == 'true'
         shell: pwsh
-        run: scripts/release/verify-public.ps1 -Tag $env:RELEASE_TAG -Latest
+        run: |
+          scripts/release/verify-public.ps1 -Tag $env:RELEASE_TAG -Latest
+          scripts/release/verify-public.ps1 -Tag $env:RELEASE_TAG -Latest -Repository tsouth89/try-omarchy-windows

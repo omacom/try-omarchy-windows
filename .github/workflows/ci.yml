@@ -60,6 +60,10 @@ jobs:
           go-version-file: app/go.mod
           cache-dependency-path: app/go.sum
 
+      - name: Test public release verification
+        shell: pwsh
+        run: scripts/release/test-verify-public.ps1
+
       - name: Test launcher on Windows
         working-directory: app
         run: go test ./...

@@ -98,8 +98,10 @@ Run the `Release` workflow again with phase `publish` and the same tag. It:
 - signs current update metadata with the protected Ed25519 update key;
 - verifies Authenticode before upload;
 - publishes without changing `Latest`;
-- verifies the public tagged launcher, checksum, manifest, and guest URL;
-- marks the release `Latest`, then verifies the `latest/download` path.
+- verifies the public tagged launcher, checksum, manifest, and guest URL through
+  both the current repository and the original repository redirect;
+- marks the release `Latest`, then verifies both repositories' `latest/download`
+  paths, including the legacy and current signed update feeds.
 
 If public verification fails, the release stays published but does not replace
 the previous `Latest` release.
