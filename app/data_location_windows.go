@@ -12,7 +12,15 @@ import (
 
 var procGetDriveTypeW = syscall.NewLazyDLL("kernel32.dll").NewProc("GetDriveTypeW")
 
-const driveRemote = 4
+const (
+	driveRemovable = 2
+	driveFixed     = 3
+	driveRAMDisk   = 6
+)
+
+func supportedLocalDriveType(driveType uintptr) bool {
+	return driveType == driveRemovable || driveType == driveFixed || driveType == driveRAMDisk
+}
 
 func dataLocationIsLocal(path string) bool {
 	volume := filepath.VolumeName(path)
@@ -24,7 +32,7 @@ func dataLocationIsLocal(path string) bool {
 		return false
 	}
 	driveType, _, _ := procGetDriveTypeW.Call(uintptr(unsafe.Pointer(root)))
-	return driveType != driveRemote
+	return supportedLocalDriveType(driveType)
 }
 
 // chooseFirstRunDataDirectory asks once, before any payload is downloaded.

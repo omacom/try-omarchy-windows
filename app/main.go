@@ -202,6 +202,9 @@ func main() {
 		if !proceed {
 			return
 		}
+		if !explicitFlags["dir"] && !pathsEqual(selected, defaultDir) && !dataLocationIsLocal(selected) {
+			fatal("The saved Try Omarchy data location is not available on a supported local drive:\n\n%s\n\nReconnect the drive or delete %s to choose another location.", selected, dataLocationPointerPath(defaultDir))
+		}
 		cfg.dir = selected
 		cfg.hostDir = cfg.dir
 		if *applyLauncherUpdateFlag || *applyLauncherRollbackFlag {

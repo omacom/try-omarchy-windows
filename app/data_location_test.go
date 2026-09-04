@@ -158,6 +158,12 @@ func TestDataDirectoryUnclaimed(t *testing.T) {
 	if empty, err := dataDirectoryUnclaimed(dir); err != nil || !empty {
 		t.Fatalf("empty directory = %v, %v", empty, err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, dataLocationPointerName+".part"), []byte("incomplete"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if empty, err := dataDirectoryUnclaimed(dir); err != nil || !empty {
+		t.Fatalf("directory with staged pointer = %v, %v", empty, err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "partial"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}

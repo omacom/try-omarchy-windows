@@ -185,7 +185,14 @@ func dataDirectoryUnclaimed(path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return len(entries) == 0, nil
+	for _, entry := range entries {
+		// A power loss between writing and renaming the location pointer must
+		// not make an otherwise new default directory look like an install.
+		if entry.Name() != dataLocationPointerName+".part" {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func ensureDataDirectoryWritable(path string) error {
