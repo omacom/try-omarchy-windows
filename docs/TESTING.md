@@ -50,6 +50,11 @@ personal details. Do not upload the guest disk or a full backup.
 Create a few identifiable files before each test and compare them afterwards.
 Use the copied guest for interruption and low-space tests.
 
+- [ ] A copied pre-transfer installation updates through its original signed
+  feed into the Omacom candidate. Record starting and target versions, release
+  URLs and redirects, signature verification, and preserved files. Force a
+  rollback and confirm the copied installation still boots. Local candidate
+  tests do not replace checking the public URLs after publication.
 - [ ] An existing guest upgrades without replacing its OS, account, or files.
 - [ ] Interrupt the first updated boot before readiness, then relaunch. Previous
   launcher and payloads return and the existing files remain readable.
