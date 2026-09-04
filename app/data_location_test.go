@@ -164,6 +164,14 @@ func TestDataDirectoryUnclaimed(t *testing.T) {
 	if empty, err := dataDirectoryUnclaimed(dir); err != nil || !empty {
 		t.Fatalf("directory with staged pointer = %v, %v", empty, err)
 	}
+	for _, name := range []string{"diagnostics", "portable-host"} {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if empty, err := dataDirectoryUnclaimed(dir); err != nil || !empty {
+		t.Fatalf("directory with support-only state = %v, %v", empty, err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "partial"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}

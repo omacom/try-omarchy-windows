@@ -185,10 +185,16 @@ func dataDirectoryUnclaimed(path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	ignored := map[string]bool{
+		dataLocationPointerName + ".part": true,
+		"diagnostics":                     true,
+		"portable-host":                   true,
+	}
 	for _, entry := range entries {
-		// A power loss between writing and renaming the location pointer must
-		// not make an otherwise new default directory look like an install.
-		if entry.Name() != dataLocationPointerName+".part" {
+		// Diagnostics can be requested before setup, and portable mode keeps
+		// host-only state here. Neither claims the standard install location.
+		// The staged pointer covers a power loss before its atomic rename.
+		if !ignored[entry.Name()] {
 			return false, nil
 		}
 	}
