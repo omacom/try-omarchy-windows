@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Features
+- New standard installs now ask whether to use the default Local AppData folder or a different local drive or folder before downloading the runtime and guest image. Alternate locations are checked for write access and free space, remembered across launches, and carried into Start-menu and Desktop shortcuts.
+
+### Fixes
+- Updated active download, update, issue, clone, and module links after the repository moved to `omacom`. Signed update manifests and existing guest and runtime receipts remain compatible with the old release base, so the transfer does not force a payload refresh or strand older launchers.
+
 ## v0.0.11-preview - 2026-09-03
 
 ### Features
@@ -59,7 +67,7 @@ Thanks to [majilesh](https://github.com/majilesh) for portable USB mode, [Tom Ba
 - Updated the guest image to nautilus 50.3 and fd 10.5.
 - Known limitation: Win+L still locks Windows instead of reaching Omarchy. Windows reserves that shortcut and no application can intercept it, so rebind the Omarchy action if you need it.
 
-Thanks to [Tom Ballard](https://github.com/tcballard) for resumable downloads in [PR #7](https://github.com/tsouth89/try-omarchy-windows/pull/7), and to everyone who reported Windows shortcuts leaking through while Omarchy was running.
+Thanks to [Tom Ballard](https://github.com/tcballard) for resumable downloads in [PR #7](https://github.com/omacom/try-omarchy-windows/pull/7), and to everyone who reported Windows shortcuts leaking through while Omarchy was running.
 
 ## v0.0.7-preview - 2026-08-30
 
@@ -78,7 +86,7 @@ Thanks to everyone testing Try Omarchy on real hardware and over remote sessions
 - Added an app compatibility guide covering Arch packages, VS Code, and current VM limitations.
 - Added an optional instant trial account that skips the first-boot form and lands directly on the desktop.
 
-Thanks to [Marx-Bray](https://github.com/Marx-Bray) for suggesting the launcher shortcuts in [issue #1](https://github.com/tsouth89/try-omarchy-windows/issues/1), and to everyone testing Try Omarchy across different Windows setups.
+Thanks to [Marx-Bray](https://github.com/Marx-Bray) for suggesting the launcher shortcuts in [issue #1](https://github.com/omacom/try-omarchy-windows/issues/1), and to everyone testing Try Omarchy across different Windows setups.
 
 ## v0.0.5-preview - 2026-08-29
 
@@ -88,7 +96,7 @@ Thanks to [Marx-Bray](https://github.com/Marx-Bray) for suggesting the launcher 
 - Prevented QEMU from trapping the Windows cursor when Try Omarchy is used over RDP.
 - Documented essential keys, uninstalling, compatibility expectations, and common questions.
 
-Thanks to [Tom Ballard](https://github.com/tcballard) for the release-manifest hardening and incomplete-install recovery in [PR #2](https://github.com/tsouth89/try-omarchy-windows/pull/2), and to everyone who tested the early previews and reported rough edges.
+Thanks to [Tom Ballard](https://github.com/tcballard) for the release-manifest hardening and incomplete-install recovery in [PR #2](https://github.com/omacom/try-omarchy-windows/pull/2), and to everyone who tested the early previews and reported rough edges.
 
 ## v0.0.4-preview - 2026-08-29
 
