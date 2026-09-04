@@ -4,7 +4,7 @@ The Windows app and the Mac app now live under Omacom. A stable Windows release
 still needs the checks below. A passing build does not establish hardware or
 upgrade reliability.
 
-## Work in review
+## Merged for release testing
 
 - [#34](https://github.com/omacom/try-omarchy-windows/pull/34): stable updates,
   including a bridge for installations that skip preview releases.
