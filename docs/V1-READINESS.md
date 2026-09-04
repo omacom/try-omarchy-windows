@@ -27,13 +27,13 @@ upgrade reliability.
   capacity after lowering the setting or rolling back the launcher (#15).
 - [ ] Restore a configuration export onto a fresh physical Omarchy install (#5).
   Confirm package and theme restoration and exclusion of VM-specific state.
-- [ ] Finish stopped-VM backup/restore and a clear reset flow before presenting
+- [ ] Finish stopped-VM backup/restore and a clear reset flow (#36) before presenting
   the guest as suitable for persistent work. Configuration export is not a VM
   backup.
 - [ ] Exercise sleep/resume, mixed-DPI resize, audio-device changes, and a long
   session. Record idle CPU and whether launch alone activates the microphone.
 - [ ] Agree release ownership, signing access and recovery, branding, download
-  location, support routing, and shared Mac/Windows behavior with maintainers.
+  location, support routing, and shared Mac/Windows behavior with maintainers (#37).
 - [ ] Update user documentation to describe the tested release, including how
   existing guests receive Omarchy OS updates separately from launcher updates.
 
