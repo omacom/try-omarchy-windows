@@ -107,19 +107,28 @@ func sameWindowsPath(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	aa, errA := filepath.Abs(a)
-	bb, errB := filepath.Abs(b)
-	return errA == nil && errB == nil && strings.EqualFold(filepath.Clean(aa), filepath.Clean(bb))
+	aa, okA := canonicalWindowsComparisonPath(a)
+	bb, okB := canonicalWindowsComparisonPath(b)
+	return okA && okB && aa == bb
+}
+
+func canonicalWindowsComparisonPath(path string) (string, bool) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	if canonical, err := filepath.EvalSymlinks(path); err == nil {
+		path = canonical
+	}
+	return strings.ToLower(filepath.Clean(path)), true
 }
 
 func pathWithinWindows(path, parent string) bool {
-	path, errPath := filepath.Abs(path)
-	parent, errParent := filepath.Abs(parent)
-	if errPath != nil || errParent != nil {
+	path, okPath := canonicalWindowsComparisonPath(path)
+	parent, okParent := canonicalWindowsComparisonPath(parent)
+	if !okPath || !okParent {
 		return false
 	}
-	path = strings.ToLower(filepath.Clean(path))
-	parent = strings.ToLower(filepath.Clean(parent))
 	rel, err := filepath.Rel(parent, path)
 	return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
 }
