@@ -1,38 +1,48 @@
 param(
     [Parameter(Mandatory = $true)][string]$Tag,
-    [switch]$Latest
+    [switch]$Latest,
+    [ValidateSet('omacom/try-omarchy-windows', 'tsouth89/try-omarchy-windows')]
+    [string]$Repository = 'omacom/try-omarchy-windows',
+    [ValidateRange(1, 18)][int]$Attempts = 18,
+    [ValidateRange(0, 60)][int]$RetryDelaySeconds = 10
 )
 
 $ErrorActionPreference = 'Stop'
-$repository = 'omacom/try-omarchy-windows'
 $releasePath = if ($Latest) { 'latest/download' } else { "download/$Tag" }
 $base = "https://github.com/$repository/releases/$releasePath"
 $work = Join-Path $env:RUNNER_TEMP "try-omarchy-public-$([guid]::NewGuid())"
 New-Item -ItemType Directory -Path $work | Out-Null
 
+function Get-PublicAsset([string]$Name, [int]$Attempt) {
+    $destination = Join-Path $work $Name
+    Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
+    curl.exe --fail --silent --show-error --location --connect-timeout 20 --max-time 120 --output $destination "$base/$($Name)?attempt=$Attempt"
+    return ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $destination -PathType Leaf))
+}
+
 try {
     $matched = $false
-    for ($attempt = 1; $attempt -le 18; $attempt++) {
-        curl.exe --fail --silent --show-error --location --output "$work\TryOmarchy.exe" "$base/TryOmarchy.exe?attempt=$attempt"
-        curl.exe --fail --silent --show-error --location --output "$work\TryOmarchy.exe.sha256" "$base/TryOmarchy.exe.sha256?attempt=$attempt"
-        $expected = ((Get-Content "$work\TryOmarchy.exe.sha256" -Raw).Trim() -split '\s+')[0]
-        $actual = (Get-FileHash "$work\TryOmarchy.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($actual -eq $expected) {
-            $matched = $true
-            break
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        $launcherOK = Get-PublicAsset 'TryOmarchy.exe' $attempt
+        $checksumOK = Get-PublicAsset 'TryOmarchy.exe.sha256' $attempt
+        if ($launcherOK -and $checksumOK) {
+            $expected = ((Get-Content "$work/TryOmarchy.exe.sha256" -Raw).Trim() -split '\s+')[0]
+            $actual = (Get-FileHash "$work/TryOmarchy.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($expected -cmatch '^[0-9a-f]{64}$' -and $actual -eq $expected) {
+                $matched = $true
+                break
+            }
         }
-        Start-Sleep -Seconds 10
+        Start-Sleep -Seconds $RetryDelaySeconds
     }
     if (-not $matched) { throw "$releasePath kept serving a mismatched launcher and checksum" }
 
     foreach ($feed in @('update.json', 'update-v2.json')) {
         $updateMatched = $false
         if (-not (Test-Path "release/$feed")) { throw "Missing local $feed" }
-        for ($attempt = 1; $attempt -le 18; $attempt++) {
-            curl.exe --fail --silent --show-error --location --output "$work\$feed" "$base/$($feed)?attempt=$attempt"
-            $metadataOK = $LASTEXITCODE -eq 0
-            curl.exe --fail --silent --show-error --location --output "$work\$feed.sig" "$base/$($feed).sig?attempt=$attempt"
-            $signatureOK = $LASTEXITCODE -eq 0
+        for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+            $metadataOK = Get-PublicAsset $feed $attempt
+            $signatureOK = Get-PublicAsset "$feed.sig" $attempt
             if ($metadataOK -and $signatureOK) {
                 $manifestMatches = (Get-FileHash "release/$feed").Hash -eq (Get-FileHash "$work\$feed").Hash
                 $signatureMatches = (Get-FileHash "release/$feed.sig").Hash -eq (Get-FileHash "$work\$feed.sig").Hash
@@ -41,7 +51,7 @@ try {
                     break
                 }
             }
-            Start-Sleep -Seconds 10
+            Start-Sleep -Seconds $RetryDelaySeconds
         }
         if (-not $updateMatched) { throw "$releasePath kept serving stale $feed metadata" }
     }
@@ -51,16 +61,19 @@ try {
     }
 
     if (-not $Latest) {
-        curl.exe --fail --silent --show-error --location --output "$work\SHA256SUMS" "$base/SHA256SUMS"
+        if (-not (Get-PublicAsset 'SHA256SUMS' 1)) {
+            throw 'Could not download public SHA256SUMS'
+        }
         $fixture = "app/testdata/SHA256SUMS.$Tag"
         if ((Get-FileHash $fixture -Algorithm SHA256).Hash -ne
             (Get-FileHash "$work\SHA256SUMS" -Algorithm SHA256).Hash) {
             throw 'Public SHA256SUMS does not match the source pin'
         }
-        curl.exe --fail --silent --show-error --location --head "$base/rootfs.ext4.zst" | Out-Null
+        curl.exe --fail --silent --show-error --location --connect-timeout 20 --max-time 120 --head "$base/rootfs.ext4.zst" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Public guest image is unavailable' }
     }
 } finally {
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 }
 
-Write-Output "Verified public $releasePath assets."
+Write-Output "Verified public $Repository $releasePath assets."
