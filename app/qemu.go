@@ -142,8 +142,9 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 	if err := checkSetupCancelled(); err != nil {
 		return err
 	}
-	if expandedMiB <= 0 || expandedMiB > (1<<63-1)/(1024*1024) {
-		return fmt.Errorf("invalid expanded disk size: %d MiB", expandedMiB)
+	expandedMiB, err := requestedDiskMiB(expandedMiB, cfg.diskGiB, cfg.portable)
+	if err != nil {
+		return err
 	}
 	expandedBytes := expandedMiB * 1024 * 1024
 	if cfg.fresh {

@@ -31,6 +31,7 @@ type config struct {
 	sshKey                   string
 	// Guest RAM chosen by the user (settings.json or -memory); 0 = automatic.
 	memOverrideMiB int
+	diskGiB        int
 	irqchipOff     bool
 }
 

@@ -19,6 +19,7 @@ import (
 // images, no payloads, nothing outside the data directory. Paths inside the
 // bundle mirror the data directory so a reader knows where each file lived.
 var diagnosticFiles = []string{
+	storageSettingsFilename,
 	"guest/" + installReceiptFilename,
 	"runtime/" + runtimeReceiptFilename,
 	updateStateFilename,
