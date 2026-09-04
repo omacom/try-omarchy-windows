@@ -5,8 +5,15 @@ package main
 import "testing"
 
 func TestDataLocationIsLocal(t *testing.T) {
-	if !dataLocationIsLocal(t.TempDir()) {
+	dir := t.TempDir()
+	if !dataLocationIsLocal(dir) {
 		t.Fatal("temporary directory was not recognized as local")
+	}
+	if supported, err := dataLocationSupportsSparseFiles(dir); err != nil || !supported {
+		t.Fatalf("temporary directory sparse support = %v, %v", supported, err)
+	}
+	if err := validateStandardDataDrive(dir); err != nil {
+		t.Fatalf("temporary directory was not accepted: %v", err)
 	}
 	if dataLocationIsLocal(`\\server\share\TryOmarchy`) {
 		t.Fatal("UNC location was recognized as local")

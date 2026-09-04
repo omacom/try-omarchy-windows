@@ -202,8 +202,10 @@ func main() {
 		if !proceed {
 			return
 		}
-		if !explicitFlags["dir"] && !pathsEqual(selected, defaultDir) && !dataLocationIsLocal(selected) {
-			fatal("The saved Try Omarchy data location is not available on a supported local drive:\n\n%s\n\nReconnect the drive or delete %s to choose another location.", selected, dataLocationPointerPath(defaultDir))
+		if !explicitFlags["dir"] && !pathsEqual(selected, defaultDir) {
+			if err := validateStandardDataDrive(selected); err != nil {
+				fatal("The saved Try Omarchy data location is unavailable or incompatible:\n\n%s\n\n%v\n\nReconnect the drive or delete %s to choose another location.", selected, err, dataLocationPointerPath(defaultDir))
+			}
 		}
 		cfg.dir = selected
 		cfg.hostDir = cfg.dir

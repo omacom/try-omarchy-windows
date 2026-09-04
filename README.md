@@ -94,10 +94,11 @@ New standard installs ask for a data location before downloading anything. The
 default is `%LOCALAPPDATA%\TryOmarchy`. Choosing another local drive or folder
 creates a `TryOmarchy` folder there and keeps a small
 `%LOCALAPPDATA%\TryOmarchy\data-location.json` pointer so direct launches can
-find it. Network locations are not supported for the virtual disk. Existing
+find it. Standard installs require an NTFS or ReFS local drive because the
+virtual disk uses sparse files. Network locations are not supported. Existing
 installs stay where they are, and an explicit `-dir PATH` still wins for that
-launch. Portable mode continues to use the `data` and `payload` folders beside
-the executable.
+launch. Portable mode continues to support exFAT through the `data` and
+`payload` folders beside the executable.
 
 ### Settings
 
