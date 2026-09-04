@@ -48,6 +48,7 @@ def main() -> None:
                 "baseTag": lock[name]["baseTag"],
                 "baseCommit": lock[name]["baseCommit"],
                 "license": lock[name]["license"],
+                "patches": lock[name].get("patches", []),
             }
             for name in ("qemu", "virglrenderer")
         },

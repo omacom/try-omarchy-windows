@@ -1,0 +1,112 @@
+From c4e8ee7acef5ea731d6c57c1a1a5108266cbbefb Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 01:05:18 -0400
+Subject: [PATCH] Open shared folders after the desktop starts
+
+---
+ .../factory-overlay/etc/initcpio/hooks/tryomarchy_compat  | 4 ++++
+ .../try-omarchy-share-link.service                        | 0
+ .../etc/systemd/user/try-omarchy-share-link.service       | 6 ++++--
+ guest/scripts/finalize-rootfs.sh                          | 4 ++--
+ guest/tests/verify.py                                     | 8 ++++++--
+ 5 files changed, 16 insertions(+), 6 deletions(-)
+ rename guest/factory-overlay/etc/systemd/user/{default.target.wants => graphical-session.target.wants}/try-omarchy-share-link.service (100%)
+
+diff --git a/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat b/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat
+index e097196..9ba0de3 100755
+--- a/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat
++++ b/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat
+@@ -16,6 +16,10 @@ run_latehook() {
+         echo "ERROR: Try Omarchy launcher integration update failed" >&2
+         return 1
+     fi
++    # Revision 3 moved the share helper to the graphical session. Tar overlays
++    # cannot express deletion, so remove the obsolete early-start link after
++    # its replacement has been extracted successfully.
++    rm -f "$root/etc/systemd/user/default.target.wants/try-omarchy-share-link.service"
+     # The launcher boots the release's external kernel. Persistent disks can
+     # still contain an older linux package, so carry this initramfs's matching
+     # module tree across before switch_root. A failed copy is retried next boot.
+diff --git a/guest/factory-overlay/etc/systemd/user/default.target.wants/try-omarchy-share-link.service b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/try-omarchy-share-link.service
+similarity index 100%
+rename from guest/factory-overlay/etc/systemd/user/default.target.wants/try-omarchy-share-link.service
+rename to guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/try-omarchy-share-link.service
+diff --git a/guest/factory-overlay/etc/systemd/user/try-omarchy-share-link.service b/guest/factory-overlay/etc/systemd/user/try-omarchy-share-link.service
+index 7347927..f8cf852 100644
+--- a/guest/factory-overlay/etc/systemd/user/try-omarchy-share-link.service
++++ b/guest/factory-overlay/etc/systemd/user/try-omarchy-share-link.service
+@@ -1,7 +1,9 @@
+ # Links the launcher's -Share folder into the home directory under its own
+-# name (see /usr/local/lib/try-omarchy/share-link). Runs once per login.
++# name (see /usr/local/lib/try-omarchy/share-link). Runs once the graphical
++# session is ready so the first attached share can open in Files.
+ [Unit]
+ Description=Link the Windows shared folder into the home directory (Try Omarchy)
++After=graphical-session.target
+ ConditionKernelCommandLine=|tryomarchy.sharename
+ ConditionPathExists=|%h/.local/state/try-omarchy/share-link
+ 
+@@ -10,4 +12,4 @@ Type=oneshot
+ ExecStart=/usr/local/lib/try-omarchy/share-link
+ 
+ [Install]
+-WantedBy=default.target
++WantedBy=graphical-session.target
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index e5b77fa..2ff28c9 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -59,7 +59,7 @@ compat_paths=(
+   etc/systemd/system/try-omarchy-sshd.service
+   etc/systemd/system/multi-user.target.wants/try-omarchy-sshd.service
+   etc/systemd/user/try-omarchy-share-link.service
+-  etc/systemd/user/default.target.wants/try-omarchy-share-link.service
++  etc/systemd/user/graphical-session.target.wants/try-omarchy-share-link.service
+   etc/systemd/user/try-omarchy-factory-update-notice.service
+   etc/systemd/user/graphical-session.target.wants/try-omarchy-factory-update-notice.service
+   usr/local/bin/try-omarchy-export
+@@ -76,7 +76,7 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ }
+ # Bump this revision whenever compat-overlay.tar changes in a way that must be
+ # applied to persistent disks created by an earlier launcher release.
+-compat_revision=2
++compat_revision=3
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 41be500..50ee629 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -233,8 +233,10 @@ def main() -> None:
+ 
+     share_link = read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/share-link")
+     share_unit = read(GUEST / "factory-overlay/etc/systemd/user/try-omarchy-share-link.service")
++    compat_hook = read(GUEST / "factory-overlay/etc/initcpio/hooks/tryomarchy_compat")
+     check(
+         "tryomarchy.sharename" in share_unit
++        and "After=graphical-session.target" in share_unit
+         and "ln -s" in share_link
+         and "rmdir" in share_link
+         and "gtk-3.0/bookmarks" in share_link
+@@ -242,13 +244,15 @@ def main() -> None:
+         and 'gio open "$mount_point"' in share_link
+         and "share-opened" in share_link
+         and "rm -rf" not in share_link
+-        and (GUEST / "factory-overlay/etc/systemd/user/default.target.wants/try-omarchy-share-link.service").is_symlink(),
++        and (GUEST / "factory-overlay/etc/systemd/user/graphical-session.target.wants/try-omarchy-share-link.service").is_symlink()
++        and not (GUEST / "factory-overlay/etc/systemd/user/default.target.wants/try-omarchy-share-link.service").exists()
++        and 'rm -f "$root/etc/systemd/user/default.target.wants/try-omarchy-share-link.service"' in compat_hook,
+         "the share link and Files bookmark preserve existing user entries",
+     )
+ 
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     check(
+-        "compat_revision=2" in finalize_rootfs
++        "compat_revision=3" in finalize_rootfs
+         and "compat_revision" in finalize_rootfs.split("compat-version")[0],
+         "launcher integration has an explicit revision for persistent-disk upgrades",
+     )
+-- 
+2.55.0
+

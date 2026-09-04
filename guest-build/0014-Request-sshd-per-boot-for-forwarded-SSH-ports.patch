@@ -1,0 +1,128 @@
+From 4264ad465ae10912822e940bcf71cc31a381e4a8 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 13:56:22 -0400
+Subject: [PATCH] Request sshd per boot for forwarded SSH ports
+
+The launcher forwards loopback ports into the guest and sets
+tryomarchy.sshd=1 whenever a TCP forward targets port 22. A oneshot unit
+gated on that kernel flag starts sshd for the boot and authorizes the
+launcher-supplied public key for the provisioned account. It never enables
+sshd across boots and never edits sshd_config; upstream's
+omarchy-setup-security-sshd stays the way to make SSH permanent or key-only.
+---
+ .../try-omarchy-sshd.service                  |  1 +
+ .../systemd/system/try-omarchy-sshd.service   | 14 ++++++
+ .../usr/local/lib/try-omarchy/request-sshd    | 45 +++++++++++++++++++
+ guest/tests/verify.py                         | 14 ++++++
+ 4 files changed, 74 insertions(+)
+ create mode 120000 guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-sshd.service
+ create mode 100644 guest/factory-overlay/etc/systemd/system/try-omarchy-sshd.service
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/request-sshd
+
+diff --git a/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-sshd.service b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-sshd.service
+new file mode 120000
+index 0000000..676f513
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-sshd.service
+@@ -0,0 +1 @@
++../try-omarchy-sshd.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/system/try-omarchy-sshd.service b/guest/factory-overlay/etc/systemd/system/try-omarchy-sshd.service
+new file mode 100644
+index 0000000..e80631c
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/try-omarchy-sshd.service
+@@ -0,0 +1,14 @@
++# Per-boot SSH request from the Try Omarchy launcher. Only boots whose kernel
++# command line carries tryomarchy.sshd=1 (a host port forwarded to guest port
++# 22) reach ExecStart; every other boot leaves sshd untouched and inactive.
++[Unit]
++Description=Start sshd for boots that forward a host port to guest port 22
++ConditionKernelCommandLine=tryomarchy.sshd=1
++After=network.target omarchy-provision-owner.service
++
++[Service]
++Type=oneshot
++ExecStart=/usr/local/lib/try-omarchy/request-sshd
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/request-sshd b/guest/factory-overlay/usr/local/lib/try-omarchy/request-sshd
+new file mode 100755
+index 0000000..53937e5
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/request-sshd
+@@ -0,0 +1,45 @@
++#!/bin/bash
++# Runs only on boots whose kernel command line carries tryomarchy.sshd=1,
++# which the launcher sets when a host port is forwarded to guest port 22.
++# Starts sshd for this boot and, when the launcher supplied a public key,
++# authorizes it for the provisioned account. It never enables sshd across
++# boots and never edits sshd_config; upstream's omarchy-setup-security-sshd
++# remains the way to make SSH permanent or key-only.
++set -euo pipefail
++
++key=""
++for word in $(</proc/cmdline); do
++  case $word in
++    tryomarchy.sshkey=*) key=${word#tryomarchy.sshkey=} ;;
++  esac
++done
++
++authorize_key() {
++  local encoded=$1 decoded account home group
++  decoded=$(printf '%s' "$encoded" | base64 -d 2>/dev/null) || decoded=""
++  if [[ ! $decoded =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\ [A-Za-z0-9+/=]+( [^[:cntrl:]]*)?$ ]] ||
++    ! ssh-keygen -l -f <(printf '%s\n' "$decoded") >/dev/null 2>&1; then
++    echo "ignoring a malformed public key on the kernel command line" >&2
++    return 0
++  fi
++  # The provisioned account is the first regular login user. Before first-boot
++  # setup has created one there is nobody to authorize yet; the next boot
++  # with the same key catches up.
++  account=$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /nologin|false/ { print $1; exit }')
++  if [[ -z $account ]]; then
++    echo "no provisioned account yet; key not authorized on this boot" >&2
++    return 0
++  fi
++  home=$(getent passwd "$account" | cut -d: -f6)
++  group=$(id -gn "$account")
++  [[ -d $home ]] || return 0
++  install -d -m 0700 -o "$account" -g "$group" "$home/.ssh"
++  [[ -f $home/.ssh/authorized_keys ]] || install -m 0600 -o "$account" -g "$group" /dev/null "$home/.ssh/authorized_keys"
++  if ! grep -qxF "$decoded" "$home/.ssh/authorized_keys"; then
++    printf '%s\n' "$decoded" >>"$home/.ssh/authorized_keys"
++    echo "authorized the launcher-supplied key for $account"
++  fi
++}
++
++[[ -z $key ]] || authorize_key "$key"
++systemctl start --no-block sshd.service
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 0160372..a304319 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -128,6 +128,20 @@ def main() -> None:
+         "the welcome service is limited to explicit instant-mode guests",
+     )
+ 
++    sshd_unit = read(GUEST / "factory-overlay/etc/systemd/system/try-omarchy-sshd.service")
++    sshd_request = read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/request-sshd")
++    check(
++        "ConditionKernelCommandLine=tryomarchy.sshd=1" in sshd_unit
++        and (GUEST / "factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-sshd.service").is_symlink(),
++        "sshd starts only on boots that explicitly request it",
++    )
++    check(
++        "systemctl start --no-block sshd.service" in sshd_request
++        and "systemctl enable" not in sshd_request
++        and "sshd_config" not in sshd_request.replace("never edits sshd_config", ""),
++        "the sshd request is per boot and leaves sshd configuration alone",
++    )
++
+     finalizer = read(GUEST / "scripts/finalize-rootfs.sh")
+     check("factory" in finalizer and "x86_64" in finalizer, "finalizer enforces the native factory contract")
+     check("systemd-growfs-root.service" in finalizer, "factory disk grows on first boot")
+-- 
+2.55.0
+

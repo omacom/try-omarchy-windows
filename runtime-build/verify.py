@@ -76,6 +76,15 @@ def main() -> None:
         for component in ("qemu", "virglrenderer"):
             if manifest["sources"][component]["commit"] != lock[component]["commit"]:
                 raise SystemExit(f"{component} manifest does not match the source lock")
+            patches = lock[component].get("patches", [])
+            if manifest["sources"][component].get("patches", []) != patches:
+                raise SystemExit(f"{component} manifest patches do not match the source lock")
+            for entry in patches:
+                shipped = f"provenance/{entry['file']}"
+                if shipped not in names:
+                    raise SystemExit(f"runtime provenance is missing {entry['file']}")
+                if bytes_sha256(runtime.read(shipped)) != entry["sha256"]:
+                    raise SystemExit(f"runtime provenance patch digest mismatch: {entry['file']}")
         described = set()
         for entry in manifest["files"]:
             name = entry["path"]
@@ -91,9 +100,34 @@ def main() -> None:
 
     with zipfile.ZipFile(source_path) as source:
         names = safe_names(source)
-        required_prefixes = ("qemu/", "virglrenderer/", "build-recipe/")
-        if any(not any(name.startswith(prefix) for name in names) for prefix in required_prefixes):
-            raise SystemExit("corresponding source archive is incomplete")
+        required_source_files = {
+            "qemu/COPYING",
+            "qemu/VERSION",
+            "qemu/include/qemu/osdep.h",
+            "virglrenderer/COPYING",
+            "virglrenderer/meson.build",
+            "build-recipe/archive.py",
+            "build-recipe/build.sh",
+            "build-recipe/sources.lock.json",
+            "build-recipe/verify.py",
+        }
+        missing = required_source_files - names
+        if missing:
+            raise SystemExit(
+                f"corresponding source archive is missing: {', '.join(sorted(missing))}"
+            )
+        source_lock = json.loads(source.read("build-recipe/sources.lock.json"))
+        if source_lock != expected_lock:
+            raise SystemExit("source archive lock differs from the build recipe")
+        for component in ("qemu", "virglrenderer"):
+            for entry in expected_lock[component].get("patches", []):
+                shipped = f"build-recipe/{entry['file']}"
+                if shipped not in names:
+                    raise SystemExit(f"source archive is missing {entry['file']}")
+                if bytes_sha256(source.read(shipped)) != entry["sha256"]:
+                    raise SystemExit(
+                        f"source archive patch digest mismatch: {entry['file']}"
+                    )
 
     sums = {}
     for line in (args.output / "SHA256SUMS").read_text(encoding="utf-8").splitlines():

@@ -1,0 +1,38 @@
+From caa77cd7660e07ded2deec71c1fdde942086039d Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 01:02:53 -0400
+Subject: [PATCH 09/10] Ship yay and the base-devel toolchain in the guest
+
+Upstream Omarchy's AUR entry points (omarchy-pkg-aur-add, omarchy-pkg-aur-install,
+omarchy-update-aur-pkgs) hard-code yay, and the trimmed factory transaction
+never included it or base-devel, so a stock-looking desktop failed with
+'yay: command not found' and had no 'which' either. Pull yay from the Omarchy
+repository the guest already trusts, the same source upstream's own package
+list uses, and add base-devel so AUR builds have their toolchain.
+---
+ guest/packages.txt | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/guest/packages.txt b/guest/packages.txt
+index 8fda564..fce0715 100644
+--- a/guest/packages.txt
++++ b/guest/packages.txt
+@@ -1,6 +1,7 @@
+ # x86_64 transaction for the real Quattro first-boot owner-provisioning flow.
+ archlinux-keyring
+ base
++base-devel
+ bash-completion
+ bat
+ btop
+@@ -77,6 +78,7 @@ xdg-desktop-portal-hyprland
+ xdg-user-dirs
+ xdg-utils
+ xorg-xwayland
++yay
+ zoxide
+ zram-generator
+ zstd
+-- 
+2.55.0
+

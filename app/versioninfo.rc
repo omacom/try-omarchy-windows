@@ -17,8 +17,8 @@
 1 ICON "icon.ico"
 
 1 VERSIONINFO
-FILEVERSION 0, 0, 8, 0
-PRODUCTVERSION 0, 0, 8, 0
+FILEVERSION 0, 0, 11, 0
+PRODUCTVERSION 0, 0, 11, 0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS 0x40004L
@@ -31,12 +31,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Brandon South"
             VALUE "FileDescription", "Try Omarchy"
-            VALUE "FileVersion", "v0.0.8-preview"
+            VALUE "FileVersion", "v0.0.11-preview"
             VALUE "InternalName", "TryOmarchy"
             VALUE "LegalCopyright", "Copyright (c) 2026 Brandon South"
             VALUE "OriginalFilename", "TryOmarchy.exe"
             VALUE "ProductName", "Try Omarchy"
-            VALUE "ProductVersion", "v0.0.8-preview"
+            VALUE "ProductVersion", "v0.0.11-preview"
         END
     END
     BLOCK "VarFileInfo"

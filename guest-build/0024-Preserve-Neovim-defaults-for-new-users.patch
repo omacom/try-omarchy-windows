@@ -1,0 +1,49 @@
+From cb443d3e31153783935a86383020b2860c577030 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 21:05:07 -0400
+Subject: [PATCH] Preserve Neovim defaults for new users
+
+---
+ guest/scripts/materialize-omarchy.sh | 6 ++++++
+ guest/tests/verify.py                | 8 ++++++++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
+index 1d886c0..7786cce 100755
+--- a/guest/scripts/materialize-omarchy.sh
++++ b/guest/scripts/materialize-omarchy.sh
+@@ -151,6 +151,12 @@ done < <(find "$source_dir/bin" -maxdepth 1 -type f | sort)
+ # Seed new users exactly like omarchy-settings does.
+ rm -rf "$root/etc/skel/.config"
+ copy_tree "$source_dir/config" "$root/etc/skel/.config"
++# omarchy-nvim owns its defaults separately from the main Omarchy source tree.
++# Reapply them after replacing .config so both normal and instant accounts get
++# the packaged editor setup through useradd's standard /etc/skel handling.
++nvim_config="$root/usr/share/omarchy-nvim/config"
++[[ -d $nvim_config ]] || fail "omarchy-nvim config not found: $nvim_config"
++copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"
+ install_file 0644 "$source_dir/default/bashrc" "$root/etc/skel/.bashrc"
+ mkdir -p "$root/etc/skel/.local/share/applications"
+ copy_contents "$source_dir/applications" "$root/etc/skel/.local/share/applications"
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index a232472..c9c3bad 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -73,6 +73,14 @@ def main() -> None:
+     configure = read(GUEST / "scripts/configure-rootfs.sh")
+     check("factory-overlay" in configure and "native-overlay" in configure, "rootfs receives only native factory overlays")
+     check("omarchy-provision-owner.service" in configure, "first boot uses upstream owner provisioning")
++    materialize = read(GUEST / "scripts/materialize-omarchy.sh")
++    check(
++        'nvim_config="$root/usr/share/omarchy-nvim/config"' in materialize
++        and 'copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"' in materialize
++        and materialize.index('copy_tree "$source_dir/config" "$root/etc/skel/.config"')
++        < materialize.index('copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"'),
++        "materialization preserves the package-owned Neovim config for new users",
++    )
+     zram_override = read(
+         GUEST
+         / "factory-overlay/etc/systemd/zram-generator.conf.d/99-try-omarchy.conf"
+-- 
+2.55.0
+

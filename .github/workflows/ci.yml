@@ -25,6 +25,7 @@ jobs:
       - name: Test release helpers
         run: |
           python3 -m py_compile scripts/release/*.py runtime-build/*.py
+          python3 -m unittest discover -s scripts/release -p 'test_*.py'
           python3 runtime-build/validate-lock.py
           bash -n runtime-build/*.sh
 
@@ -45,6 +46,23 @@ jobs:
 
       - name: Validate current release pin
         run: scripts/release/validate-pin.py "$(sed -n 's/.*releases\/download\/\([^\"]*\).*/\1/p' app/manifest.go)"
+
+  windows-launcher:
+    name: Windows launcher
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Test launcher on Windows
+        working-directory: app
+        run: go test ./...
 
   guest-contract:
     name: Guest contract

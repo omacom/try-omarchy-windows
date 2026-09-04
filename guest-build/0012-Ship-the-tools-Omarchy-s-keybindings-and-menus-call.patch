@@ -1,0 +1,92 @@
+From 4ff058d48aa37b3921620b5eba57769c5c946463 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 13:39:49 -0400
+Subject: [PATCH 12/13] Ship the tools Omarchy's keybindings and menus call
+
+Screen recording (ALT+PRINT, issue #28) failed because gpu-screen-recorder
+was never in the trimmed transaction, and the same trim left the screenshot
+editor (tensaku), OCR capture (tesseract), QR capture and sharing (zbar,
+qrencode), emoji and clipboard paste (wtype), updatedb after AUR installs
+(plocate), man pages, xdg-terminal-exec, the calculator, writer and video
+trimmer, Herdr, and the screen-share picker missing behind bound keys and
+menu entries. Ship them. The big optional apps (Docker, LibreOffice, OBS,
+Kdenlive, Obsidian, Aether, Cliamp) stay out of the image.
+---
+ guest/packages.txt | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/guest/packages.txt b/guest/packages.txt
+index fce0715..741b3b5 100644
+--- a/guest/packages.txt
++++ b/guest/packages.txt
+@@ -19,11 +19,14 @@ foot
+ fzf
+ git
+ gnome-keyring
++gpu-screen-recorder
+ grim
+ gum
+ gvfs
++herdr
+ hypridle
+ hyprland
++hyprland-preview-share-picker
+ hyprpicker
+ hyprsunset
+ imagemagick
+@@ -34,6 +37,7 @@ less
+ libnotify
+ libsecret
+ linux
++man-db
+ mesa
+ mkinitcpio
+ mpv
+@@ -42,13 +46,18 @@ neovim
+ networkmanager
+ noto-fonts
+ noto-fonts-emoji
++omacalc
++omacut
+ omarchy-keyring
++omawrite
+ pacman-contrib
+ pipewire
+ pipewire-alsa
+ pipewire-pulse
++plocate
+ polkit
+ python
++qrencode
+ qt6-wayland
+ quickshell
+ ripgrep
+@@ -61,6 +70,9 @@ starship
+ sudo
+ systemd
+ systemd-resolvconf
++tensaku
++tesseract
++tesseract-data-eng
+ tmux
+ ttf-jetbrains-mono-nerd
+ ttfx
+@@ -73,12 +85,15 @@ wayland
+ wireplumber
+ wl-clipboard
+ woff2-font-awesome
++wtype
+ xdg-desktop-portal-gtk
+ xdg-desktop-portal-hyprland
++xdg-terminal-exec
+ xdg-user-dirs
+ xdg-utils
+ xorg-xwayland
+ yay
++zbar
+ zoxide
+ zram-generator
+ zstd
+-- 
+2.55.0
+

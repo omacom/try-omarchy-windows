@@ -1,0 +1,292 @@
+From 3760455e26ec30f95a3c8de45d426f8a132c6abc Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 14:49:12 -0400
+Subject: [PATCH] Test the overlay scripts unprivileged with fake system tools
+
+share-link, request-sshd, try-omarchy-export and its restore.sh now have
+behavioral tests under guest/tests, run by guest/test and therefore by the
+guest-contract CI job. The scripts gained two testability seams: ownership
+changes only as root, and an override for the factory package list.
+---
+ .../usr/local/bin/try-omarchy-export          |   2 +-
+ .../usr/local/lib/try-omarchy/request-sshd    |   9 +-
+ guest/tests/test_overlay_scripts.py           | 233 ++++++++++++++++++
+ 3 files changed, 240 insertions(+), 4 deletions(-)
+ create mode 100644 guest/tests/test_overlay_scripts.py
+
+diff --git a/guest/factory-overlay/usr/local/bin/try-omarchy-export b/guest/factory-overlay/usr/local/bin/try-omarchy-export
+index cca469b..6520e4a 100755
+--- a/guest/factory-overlay/usr/local/bin/try-omarchy-export
++++ b/guest/factory-overlay/usr/local/bin/try-omarchy-export
+@@ -35,7 +35,7 @@ if [[ -z $destination ]]; then
+ fi
+ [[ -d $destination && -w $destination ]] || fail "destination is not a writable directory: $destination"
+ 
+-factory_lock=/usr/share/try-omarchy/packages.lock.txt
++factory_lock=${TRY_OMARCHY_FACTORY_LOCK:-/usr/share/try-omarchy/packages.lock.txt}
+ [[ -f $factory_lock ]] || fail "factory package list not found: $factory_lock"
+ 
+ stamp=$(date +%Y%m%d-%H%M%S)
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/request-sshd b/guest/factory-overlay/usr/local/lib/try-omarchy/request-sshd
+index 53937e5..6a16a8c 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/request-sshd
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/request-sshd
+@@ -31,10 +31,13 @@ authorize_key() {
+     return 0
+   fi
+   home=$(getent passwd "$account" | cut -d: -f6)
+-  group=$(id -gn "$account")
+   [[ -d $home ]] || return 0
+-  install -d -m 0700 -o "$account" -g "$group" "$home/.ssh"
+-  [[ -f $home/.ssh/authorized_keys ]] || install -m 0600 -o "$account" -g "$group" /dev/null "$home/.ssh/authorized_keys"
++  mkdir -p "$home/.ssh"
++  chmod 0700 "$home/.ssh"
++  [[ -f $home/.ssh/authorized_keys ]] || : >"$home/.ssh/authorized_keys"
++  chmod 0600 "$home/.ssh/authorized_keys"
++  # The unit runs as root; the contract tests run it unprivileged.
++  (( EUID != 0 )) || chown -R "$account:$(id -gn "$account")" "$home/.ssh"
+   if ! grep -qxF "$decoded" "$home/.ssh/authorized_keys"; then
+     printf '%s\n' "$decoded" >>"$home/.ssh/authorized_keys"
+     echo "authorized the launcher-supplied key for $account"
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+new file mode 100644
+index 0000000..8bc4fe3
+--- /dev/null
++++ b/guest/tests/test_overlay_scripts.py
+@@ -0,0 +1,233 @@
++"""Behavioral tests for the factory overlay scripts, run unprivileged with
++fake system tools on PATH. They pin what the guest does at login and at
++export time without needing a booted image."""
++
++from __future__ import annotations
++
++import base64
++import os
++import shutil
++import subprocess
++import tarfile
++import tempfile
++import unittest
++from pathlib import Path
++
++OVERLAY = Path(__file__).resolve().parents[1] / "factory-overlay"
++SHARE_LINK = OVERLAY / "usr/local/lib/try-omarchy/share-link"
++REQUEST_SSHD = OVERLAY / "usr/local/lib/try-omarchy/request-sshd"
++EXPORT = OVERLAY / "usr/local/bin/try-omarchy-export"
++
++def generated_key(directory: Path) -> str:
++    """A real key: the guest validates the blob with ssh-keygen, so a made-up
++    base64 body would be rejected as malformed."""
++    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "tester@windows", "-f", str(directory / "id")],
++                   check=True, capture_output=True)
++    return (directory / "id.pub").read_text().strip()
++
++
++def b64(value: str) -> str:
++    return base64.b64encode(value.encode()).decode()
++
++
++class OverlayCase(unittest.TestCase):
++    def setUp(self) -> None:
++        self.root = Path(tempfile.mkdtemp())
++        self.addCleanup(shutil.rmtree, self.root, True)
++        self.home = self.root / "home"
++        self.home.mkdir()
++        self.bin = self.root / "bin"
++        self.bin.mkdir()
++        self.log = self.root / "calls.log"
++        self.env = dict(os.environ, HOME=str(self.home), PATH=f"{self.bin}:{os.environ['PATH']}")
++
++    def fake(self, name: str, body: str) -> None:
++        path = self.bin / name
++        path.write_text("#!/bin/bash\n" + body + "\n")
++        path.chmod(0o755)
++
++    def run_script(self, script: Path, *args: str, cmdline: str | None = None, **extra: str) -> subprocess.CompletedProcess:
++        env = dict(self.env, **extra)
++        if cmdline is not None:
++            cmdline_file = self.root / "cmdline"
++            cmdline_file.write_text(cmdline + "\n")
++            env["TRY_OMARCHY_CMDLINE"] = str(cmdline_file)
++        return subprocess.run([str(script), *args], env=env, capture_output=True, text=True, timeout=60)
++
++
++class ShareLinkTests(OverlayCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.fake("mountpoint", 'exit 0')
++        self.state = self.home / ".local/state/try-omarchy/share-link"
++
++    def test_links_the_share_under_its_name_and_records_it(self) -> None:
++        result = self.run_script(SHARE_LINK, cmdline=f"root=/dev/vda tryomarchy.sharename={b64('Work')}")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        link = self.home / "Work"
++        self.assertTrue(link.is_symlink())
++        self.assertEqual(os.readlink(link), "/mnt/host")
++        self.assertEqual(self.state.read_text().strip(), str(link))
++
++    def test_removes_its_link_on_a_launch_without_a_share(self) -> None:
++        self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Work')}")
++        result = self.run_script(SHARE_LINK, cmdline="root=/dev/vda")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertFalse((self.home / "Work").exists())
++        self.assertFalse((self.home / "Work").is_symlink())
++        self.assertFalse(self.state.exists())
++
++    def test_never_replaces_a_folder_with_content(self) -> None:
++        (self.home / "Work").mkdir()
++        (self.home / "Work/mine.txt").write_text("keep")
++        result = self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Work')}")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertFalse((self.home / "Work").is_symlink())
++        self.assertEqual((self.home / "Work/mine.txt").read_text(), "keep")
++        self.assertIn("already exists with content", result.stdout)
++
++    def test_replaces_an_empty_folder(self) -> None:
++        (self.home / "Work").mkdir()
++        self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Work')}")
++        self.assertTrue((self.home / "Work").is_symlink())
++
++    def test_rejects_names_that_escape_the_home_directory(self) -> None:
++        for bad in ("../evil", "a/b", ".", "..", "", "x\x01y"):
++            result = self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64(bad)}")
++            self.assertEqual(result.returncode, 0, bad)
++            self.assertFalse(list(self.home.iterdir()), f"{bad!r} created {list(self.home.iterdir())}")
++
++    def test_does_nothing_when_the_share_is_not_mounted(self) -> None:
++        self.fake("mountpoint", "exit 1")
++        result = self.run_script(SHARE_LINK, cmdline=f"tryomarchy.sharename={b64('Work')}")
++        self.assertEqual(result.returncode, 0)
++        self.assertFalse((self.home / "Work").exists())
++
++
++class RequestSshdTests(OverlayCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.fake("systemctl", f'echo "systemctl $*" >>"{self.log}"')
++        passwd = f"tester:x:1000:1000::{self.home}:/bin/bash"
++        # getent passwd lists everyone; getent passwd NAME answers one entry.
++        self.fake("getent", f'if [[ $# -gt 1 ]]; then [[ $2 == tester ]] && echo "{passwd}"; exit; fi; '
++                            f'echo "root:x:0:0::/root:/bin/bash"; echo "nobody:x:65534:65534::/:/usr/bin/nologin"; echo "{passwd}"')
++        self.fake("id", "echo tester")
++        self.authorized = self.home / ".ssh/authorized_keys"
++        self.key = generated_key(self.root)
++
++    def run_request(self, cmdline: str) -> subprocess.CompletedProcess:
++        cmdline_file = self.root / "cmdline"
++        cmdline_file.write_text(cmdline + "\n")
++        # The script reads /proc/cmdline directly; bind it through a wrapper
++        # that substitutes the file, keeping the script itself free of hooks.
++        wrapper = self.root / "run"
++        wrapper.write_text(
++            "#!/bin/bash\nsed \"s|\\$(</proc/cmdline)|\\$(<$1)|\" " + str(REQUEST_SSHD) + " > \"$2\"; bash \"$2\"\n"
++        )
++        wrapper.chmod(0o755)
++        return subprocess.run([str(wrapper), str(cmdline_file), str(self.root / "patched")], env=self.env,
++                              capture_output=True, text=True, timeout=60)
++
++    def test_starts_sshd_for_the_boot_only(self) -> None:
++        result = self.run_request("root=/dev/vda tryomarchy.sshd=1")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(self.log.read_text().strip(), "systemctl start --no-block sshd.service")
++        self.assertFalse(self.authorized.exists())
++
++    def test_authorizes_the_supplied_key_once(self) -> None:
++        for _ in range(2):
++            result = self.run_request(f"tryomarchy.sshd=1 tryomarchy.sshkey={b64(self.key)}")
++            self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(self.authorized.read_text(), self.key + "\n")
++        self.assertEqual(oct(self.authorized.stat().st_mode & 0o777), "0o600")
++        self.assertEqual(oct((self.home / ".ssh").stat().st_mode & 0o777), "0o700")
++        self.assertNotIn("enable", self.log.read_text())
++
++    def test_ignores_a_malformed_key_but_still_starts_sshd(self) -> None:
++        for bad in ("not a key", "-----BEGIN OPENSSH PRIVATE KEY-----", "ssh-dss AAAA x", "ssh-ed25519 AAAA x\nssh-ed25519 BBBB y"):
++            self.log.write_text("")
++            result = self.run_request(f"tryomarchy.sshd=1 tryomarchy.sshkey={b64(bad)}")
++            self.assertEqual(result.returncode, 0, result.stderr)
++            self.assertFalse(self.authorized.exists(), bad)
++            self.assertIn("sshd.service", self.log.read_text())
++
++
++class ExportTests(OverlayCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.lock = self.root / "factory.lock"
++        self.lock.write_text("base 3-3\ngit 2.55.0-1\nomarchy 4.0.2-1\n")
++        self.fake("pacman", 'case "$1" in -Qqe) printf "base\\ngit\\ncowsay\\nomarchy\\nsome-aur-tool\\n";; -Qqm) printf "some-aur-tool\\n";; *) exit 1;; esac')
++        (self.home / ".config/hypr").mkdir(parents=True)
++        (self.home / ".config/hypr/monitors.conf").write_text("monitor=,preferred\n")
++        (self.home / ".config/chromium").mkdir()
++        (self.home / ".config/chromium/Cookies").write_text("secret")
++        (self.home / ".ssh").mkdir()
++        (self.home / ".ssh/id_ed25519").write_text("private")
++        (self.home / ".bashrc").write_text("export PS1=x\n")
++        (self.home / ".local/state/omarchy/current").mkdir(parents=True)
++        (self.home / ".local/state/omarchy/current/theme.name").write_text("tokyo-night\n")
++
++    def export(self) -> Path:
++        dest = self.root / "dest"
++        dest.mkdir()
++        result = self.run_script(EXPORT, str(dest), TRY_OMARCHY_FACTORY_LOCK=str(self.lock))
++        self.assertEqual(result.returncode, 0, result.stderr)
++        archives = list(dest.glob("omarchy-export-*.tar.gz"))
++        self.assertEqual(len(archives), 1)
++        return archives[0]
++
++    def test_archive_carries_config_theme_and_added_packages_but_no_secrets(self) -> None:
++        archive = self.export()
++        with tarfile.open(archive) as tar:
++            names = [m.name.split("/", 1)[1] for m in tar.getmembers() if "/" in m.name]
++            member = lambda name: tar.extractfile(next(m for m in tar.getmembers() if m.name.endswith("/" + name))).read().decode()
++            self.assertIn("home/.config/hypr/monitors.conf", names)
++            self.assertIn("home/.bashrc", names)
++            self.assertIn("restore.sh", names)
++            self.assertNotIn("home/.ssh/id_ed25519", names)
++            self.assertFalse(any(".ssh" in n for n in names), names)
++            self.assertFalse(any("chromium" in n for n in names), names)
++            self.assertEqual(member("theme").strip(), "tokyo-night")
++            self.assertEqual(member("packages/repo.txt").split(), ["cowsay"])
++            self.assertEqual(member("packages/aur.txt").split(), ["some-aur-tool"])
++            self.assertIn('"theme": "tokyo-night"', member("manifest.json"))
++
++    def test_export_on_a_factory_image_with_nothing_added(self) -> None:
++        self.fake("pacman", 'case "$1" in -Qqe) printf "base\\ngit\\nomarchy\\n";; -Qqm) exit 1;; *) exit 1;; esac')
++        archive = self.export()
++        with tarfile.open(archive) as tar:
++            repo = tar.extractfile(next(m for m in tar.getmembers() if m.name.endswith("/packages/repo.txt"))).read()
++            self.assertEqual(repo, b"")
++
++    def test_restore_merges_per_app_and_backs_up_what_it_replaces(self) -> None:
++        archive = self.export()
++        real = self.root / "real"
++        (real / ".config/keep").mkdir(parents=True)
++        (real / ".config/keep/k").write_text("keepme")
++        (real / ".config/hypr").mkdir()
++        (real / ".config/hypr/monitors.conf").write_text("OLD")
++        (real / ".bashrc").write_text("old")
++        for tool in ("sudo", "pacman", "yay", "omarchy-theme-set"):
++            self.fake(tool, f'echo "{tool} $*" >>"{self.log}"')
++        with tarfile.open(archive) as tar:
++            tar.extractall(real)
++        restore = next(real.glob("omarchy-export-*/restore.sh"))
++        result = subprocess.run(["bash", str(restore)], env=dict(self.env, HOME=str(real)), cwd=real,
++                                capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual((real / ".config/hypr/monitors.conf").read_text(), "monitor=,preferred\n")
++        self.assertEqual((real / ".config/keep/k").read_text(), "keepme")
++        self.assertEqual((real / ".bashrc").read_text(), "export PS1=x\n")
++        backups = sorted(p.relative_to(next((real / ".omarchy-restore-backup").iterdir())).as_posix()
++                         for p in (real / ".omarchy-restore-backup").rglob("*") if p.is_file())
++        self.assertEqual(backups, [".bashrc", ".config/hypr/monitors.conf"])
++        calls = self.log.read_text()
++        self.assertIn("sudo pacman -S --needed --noconfirm -", calls)
++        self.assertIn("yay -S --needed --noconfirm -", calls)
++        self.assertIn("omarchy-theme-set tokyo-night", calls)
++
++
++if __name__ == "__main__":
++    unittest.main()
+-- 
+2.55.0
+

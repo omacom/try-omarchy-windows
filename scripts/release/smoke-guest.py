@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import selectors
 import subprocess
 import sys
@@ -14,6 +15,53 @@ from pathlib import Path
 
 
 SUCCESS = b"TRYOMARCHY_SMOKE:omarchy:instant-trial"
+# Facts the built image must satisfy, checked from inside the booted guest
+# and reported on the serial console as TRYOMARCHY_FACT:<name>:<value>.
+FACT_CHECKS = {
+    "clang": "command -v clang >/dev/null 2>&1 && echo present || echo missing",
+    "yay": "pacman -Q yay >/dev/null 2>&1 && echo present || echo missing",
+    "omarchy-nvim": "pacman -Q omarchy-nvim >/dev/null 2>&1 && echo present || echo missing",
+    "nvim-config": "test -f ~/.config/nvim/init.lua && echo present || echo missing",
+    "recorder": "pacman -Q gpu-screen-recorder >/dev/null 2>&1 && echo present || echo missing",
+    "foreign": "pacman -Qmq 2>/dev/null | wc -l",
+    "sshd": "systemctl is-active sshd 2>/dev/null || true",
+    "omarchy-repo-signed": "grep -A2 '^\\[omarchy\\]' /etc/pacman.conf | grep -q TrustAll && echo no || echo yes",
+    "input-group": "id -nG | tr ' ' '\\n' | grep -qx input && echo yes || echo no",
+    "compat-version": "test \"$(cat /usr/share/try-omarchy/compat-version)\" = \"3:$(uname -r)\" && echo yes || echo no",
+    "kernel-modules": "test -f /usr/lib/modules/$(uname -r)/modules.dep.bin && echo yes || echo no",
+    "ready-service": "systemctl is-enabled try-omarchy-ready.service 2>/dev/null || true",
+}
+EXPECTED_FACTS = {
+    "clang": "present",
+    "yay": "present",
+    "omarchy-nvim": "present",
+    "nvim-config": "present",
+    "recorder": "present",
+    "foreign": "0",
+    "sshd": "inactive",
+    "omarchy-repo-signed": "yes",
+    "input-group": "no",
+    "compat-version": "yes",
+    "kernel-modules": "yes",
+    "ready-service": "enabled",
+}
+
+
+def parse_facts(transcript: bytes) -> dict[str, str]:
+    """Return the last real value printed for each smoke fact.
+
+    The serial console echoes the command before its output and may attach
+    terminal escape sequences to the first result, so matches can occur
+    anywhere. Echoed printf placeholders are not results.
+    """
+    facts = {}
+    for name, value in re.findall(
+        r"TRYOMARCHY_FACT:([A-Za-z0-9-]+):([^\s\x1b'\"\\]+)(?=\s|\x1b|$)",
+        transcript.decode("utf-8", errors="replace"),
+    ):
+        if "%" not in value:
+            facts[name] = value
+    return facts
 
 
 def main() -> None:
@@ -103,7 +151,12 @@ def main() -> None:
 
                 if SUCCESS in transcript:
                     process.wait(timeout=90)
+                    facts = parse_facts(bytes(transcript))
+                    wrong = {name: (facts.get(name), want) for name, want in EXPECTED_FACTS.items() if facts.get(name) != want}
+                    if wrong:
+                        raise SystemExit(f"instant guest booted but the image facts are wrong: {wrong}")
                     print("ok - instant guest reached a usable trial account")
+                    print("ok - image facts: " + ", ".join(f"{k}={facts[k]}" for k in sorted(facts)))
                     return
 
                 login_prompt = transcript.rfind(b"login:")
@@ -129,8 +182,12 @@ def main() -> None:
                 and not sent_command
                 and time.monotonic() - password_sent_at >= 3
             ):
+                checks = "; ".join(
+                    f"printf 'TRYOMARCHY_FACT:{name}:%s\\n' \"$({command})\"" for name, command in FACT_CHECKS.items()
+                )
                 process.stdin.write(
-                    b"printf 'TRYOMARCHY_SMOKE:%s:%s\\n' \"$(id -un)\" "
+                    (checks + "; ").encode()
+                    + b"printf 'TRYOMARCHY_SMOKE:%s:%s\\n' \"$(id -un)\" "
                     b"\"$(cat /var/lib/try-omarchy/provision-mode 2>/dev/null)\"; "
                     b"sudo systemctl poweroff\n"
                 )

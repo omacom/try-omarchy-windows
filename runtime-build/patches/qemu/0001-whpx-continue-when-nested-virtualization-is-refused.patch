@@ -1,0 +1,39 @@
+whpx: continue when the host refuses nested virtualization
+
+Applies on top of cmspam/winq-emu-qemu commit 2ce303cf (QEMU 11.0.0 base).
+
+whpx_accel_init() asks WHP for nested virtualization whenever the kernel
+irqchip is in use and the processor feature banks advertise
+NestedVirtSupport. Some hosts advertise it and then refuse the partition
+property with hr=0x80370302: Intel Core Ultra (Meteor Lake) laptops on
+Windows 11 23H2 and machines running the full Hyper-V feature set. The old
+code treated that as fatal, so Try Omarchy could not start at all on those
+machines (issue #19). The guest never needs nested virtualization, so log a
+warning and keep going with the kernel irqchip intact. Chainfire's binary
+patch for QEMU 11.0.0 defuses the same branch.
+
+diff --git a/target/i386/whpx/whpx-all.c b/target/i386/whpx/whpx-all.c
+index a437421..246755c 100644
+--- a/target/i386/whpx/whpx-all.c
++++ b/target/i386/whpx/whpx-all.c
+@@ -2322,10 +2322,16 @@ int whpx_accel_init(AccelState *as, MachineState *ms)
+             WHvPartitionPropertyCodeNestedVirtualization,
+             &prop,
+             sizeof(WHV_PARTITION_PROPERTY));
+-            if (FAILED(hr)) {
+-                error_report("WHPX: Failed to enable nested virtualization, hr=%08lx", hr);
+-                ret = -EINVAL;
+-                goto error;
++        if (FAILED(hr)) {
++            /*
++             * Some hosts advertise NestedVirtSupport but refuse to delegate
++             * it to a WHP partition (hr=0x80370302 on Meteor Lake laptops
++             * and on machines running the full Hyper-V feature set). The
++             * guest never needs nested virtualization, so keep the kernel
++             * irqchip and carry on without it instead of failing to start.
++             */
++            warn_report("WHPX: nested virtualization unavailable (hr=%08lx), "
++                        "continuing without it", hr);
+         }
+     }
+ 

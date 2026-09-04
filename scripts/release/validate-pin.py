@@ -13,6 +13,7 @@ TAG_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+-preview$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 REQUIRED = {
     "build-spec.json",
+    "guest-manifest.json",
     "initramfs-linux.img",
     "rootfs.ext4",
     "rootfs.ext4.zst",
@@ -32,7 +33,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("tag")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
-    parser.add_argument("--repository", default="tsouth89/try-omarchy-windows")
+    parser.add_argument("--repository", default="omacom/try-omarchy-windows")
     args = parser.parse_args()
 
     if not TAG_RE.fullmatch(args.tag):
@@ -73,7 +74,7 @@ def main() -> None:
 
     entries: dict[str, str] = {}
     for line_number, line in enumerate(data.decode("utf-8").splitlines(), 1):
-        match = re.fullmatch(r"([0-9a-f]{64})  ([^/\\]+)", line)
+        match = re.fullmatch(r"([0-9a-f]{64})  ([^/\\\s]+)", line)
         if not match:
             raise SystemExit(f"invalid manifest line {line_number}")
         digest, name = match.groups()

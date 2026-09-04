@@ -1,0 +1,147 @@
+From cbcaa9203b896fafe6898d1ac7172fc6afbaf9f7 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 14:41:04 -0400
+Subject: [PATCH] Link the shared folder into the home directory under its own
+ name
+
+The launcher names its -Share folder on the kernel command line
+(tryomarchy.sharename, base64). A per-login user unit links ~/<name> to
+/mnt/host, removes the link on launches that share nothing, and never
+replaces a real folder with content.
+---
+ .../try-omarchy-share-link.service            |  1 +
+ .../user/try-omarchy-share-link.service       | 13 ++++
+ .../usr/local/lib/try-omarchy/share-link      | 69 +++++++++++++++++++
+ guest/tests/verify.py                         | 11 +++
+ 4 files changed, 94 insertions(+)
+ create mode 120000 guest/factory-overlay/etc/systemd/user/default.target.wants/try-omarchy-share-link.service
+ create mode 100644 guest/factory-overlay/etc/systemd/user/try-omarchy-share-link.service
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/share-link
+
+diff --git a/guest/factory-overlay/etc/systemd/user/default.target.wants/try-omarchy-share-link.service b/guest/factory-overlay/etc/systemd/user/default.target.wants/try-omarchy-share-link.service
+new file mode 120000
+index 0000000..46ecef6
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/default.target.wants/try-omarchy-share-link.service
+@@ -0,0 +1 @@
++../try-omarchy-share-link.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/user/try-omarchy-share-link.service b/guest/factory-overlay/etc/systemd/user/try-omarchy-share-link.service
+new file mode 100644
+index 0000000..7347927
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/try-omarchy-share-link.service
+@@ -0,0 +1,13 @@
++# Links the launcher's -Share folder into the home directory under its own
++# name (see /usr/local/lib/try-omarchy/share-link). Runs once per login.
++[Unit]
++Description=Link the Windows shared folder into the home directory (Try Omarchy)
++ConditionKernelCommandLine=|tryomarchy.sharename
++ConditionPathExists=|%h/.local/state/try-omarchy/share-link
++
++[Service]
++Type=oneshot
++ExecStart=/usr/local/lib/try-omarchy/share-link
++
++[Install]
++WantedBy=default.target
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/share-link b/guest/factory-overlay/usr/local/lib/try-omarchy/share-link
+new file mode 100755
+index 0000000..0f2a063
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/share-link
+@@ -0,0 +1,69 @@
++#!/bin/bash
++# Runs in the user session (try-omarchy-share-link.service). The launcher
++# mounts its -Share folder at /mnt/host and names it on the kernel command
++# line (tryomarchy.sharename=<base64 folder name>). This links that folder
++# into the home directory under the same name, so C:\Users\me\Work shows up
++# as ~/Work, and removes the link again on boots that share nothing. Only a
++# link this script created, an empty directory, or a dangling link is ever
++# replaced; a real folder with content is left alone.
++set -euo pipefail
++
++cmdline_file=${TRY_OMARCHY_CMDLINE:-/proc/cmdline}
++state_dir="$HOME/.local/state/try-omarchy"
++state_file="$state_dir/share-link"
++mount_point=/mnt/host
++
++log() {
++  echo "share-link: $*"
++}
++
++# Drop the link from the previous session first; it is recreated below when
++# the share is still attached under the same name.
++if [[ -f $state_file ]]; then
++  previous=$(<"$state_file")
++  if [[ -n $previous && -L $previous && $(readlink "$previous") == "$mount_point" ]]; then
++    rm -f "$previous"
++    log "removed previous link $previous"
++  fi
++  rm -f "$state_file"
++fi
++
++encoded=""
++for word in $(<"$cmdline_file"); do
++  case $word in
++    tryomarchy.sharename=*) encoded=${word#tryomarchy.sharename=} ;;
++  esac
++done
++[[ -n $encoded ]] || exit 0
++
++name=$(printf '%s' "$encoded" | base64 -d 2>/dev/null) || name=""
++if [[ -z $name || $name == . || $name == .. || $name == */* || $name =~ [[:cntrl:]] || ${#name} -gt 255 ]]; then
++  log "ignoring an invalid share name on the kernel command line"
++  exit 0
++fi
++if ! mountpoint -q "$mount_point"; then
++  log "share requested but $mount_point is not mounted"
++  exit 0
++fi
++
++target="$HOME/$name"
++if [[ -L $target ]]; then
++  if [[ $(readlink "$target") != "$mount_point" && -e $target ]]; then
++    log "$target is a link to something else; leaving it alone"
++    exit 0
++  fi
++  rm -f "$target"
++elif [[ -d $target ]]; then
++  if ! rmdir "$target" 2>/dev/null; then
++    log "$target already exists with content; the share stays at $mount_point only"
++    exit 0
++  fi
++elif [[ -e $target ]]; then
++  log "$target exists and is not a folder; the share stays at $mount_point only"
++  exit 0
++fi
++
++ln -s "$mount_point" "$target"
++mkdir -p "$state_dir"
++printf '%s\n' "$target" >"$state_file"
++log "linked $target to the Windows share"
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 2159022..17e0495 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -152,6 +152,17 @@ def main() -> None:
+         "the export command carries configuration and added packages but no keys",
+     )
+ 
++    share_link = read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/share-link")
++    share_unit = read(GUEST / "factory-overlay/etc/systemd/user/try-omarchy-share-link.service")
++    check(
++        "tryomarchy.sharename" in share_unit
++        and "ln -s" in share_link
++        and "rmdir" in share_link
++        and "rm -rf" not in share_link
++        and (GUEST / "factory-overlay/etc/systemd/user/default.target.wants/try-omarchy-share-link.service").is_symlink(),
++        "the share link only ever replaces its own link or an empty directory",
++    )
++
+     finalizer = read(GUEST / "scripts/finalize-rootfs.sh")
+     check("factory" in finalizer and "x86_64" in finalizer, "finalizer enforces the native factory contract")
+     check("systemd-growfs-root.service" in finalizer, "factory disk grows on first boot")
+-- 
+2.55.0
+

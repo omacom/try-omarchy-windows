@@ -104,7 +104,8 @@ jobs:
             "$ARTIFACT_DIR/provenance.json" \
             "$ARTIFACT_DIR/rootfs.ext4.zst" \
             "$ARTIFACT_DIR/vmlinuz-linux" \
-            "$ARTIFACT_DIR/winq-emu-alpha10-portable.zip"
+            "$ARTIFACT_DIR/winq-emu-alpha10-portable.zip" \
+            "$ARTIFACT_DIR/winq-emu-alpha10-source.zip"
 
       - name: Record manifest pin
         shell: bash
@@ -231,7 +232,7 @@ jobs:
           go-version-file: app/go.mod
           cache-dependency-path: app/go.sum
 
-      - name: Validate source pin and draft manifest
+      - name: Validate source pin and draft payloads
         shell: pwsh
         run: |
           python scripts/release/validate-pin.py $env:RELEASE_TAG
@@ -244,6 +245,23 @@ jobs:
           }
           $draft = gh release view $env:RELEASE_TAG --json isDraft --jq .isDraft
           if ($draft -ne 'true') { throw "Release $env:RELEASE_TAG is not a draft" }
+          $assets = @(
+            'build-spec.json',
+            'guest-manifest.json',
+            'initramfs-linux.img',
+            'LICENSE.omarchy',
+            'packages.lock.txt',
+            'provenance.json',
+            'rootfs.ext4.zst',
+            'vmlinuz-linux',
+            'winq-emu-alpha10-portable.zip',
+            'winq-emu-alpha10-source.zip'
+          )
+          foreach ($asset in $assets) {
+            gh release download $env:RELEASE_TAG -p $asset -D release-manifest --clobber
+          }
+          python scripts/release/verify-release-assets.py `
+            release-manifest/SHA256SUMS release-manifest $assets
 
       - name: Test launcher
         working-directory: app
@@ -313,7 +331,7 @@ jobs:
 
       - name: Publish without changing Latest
         shell: pwsh
-        run: gh release edit $env:RELEASE_TAG --draft=false --latest=false
+        run: gh release edit $env:RELEASE_TAG --draft=false --prerelease=false --latest=false
 
       - name: Verify public tagged assets
         shell: pwsh

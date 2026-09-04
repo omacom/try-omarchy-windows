@@ -1,0 +1,918 @@
+From 1e7622a76d828553149589520a889f764e03045f Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 21:09:51 -0400
+Subject: [PATCH] Backport Omarchy notification fixes
+
+---
+ guest/README.md                               |   6 +
+ guest/build.sh                                |   1 +
+ .../omarchy/notification-hover-close.patch    |  37 ++++
+ .../omarchy/notification-screen-privacy.patch | 107 ++++++++++
+ guest/scripts/apply-omarchy-backports.py      | 195 ++++++++++++++++++
+ guest/scripts/write-provenance.py             |  54 ++++-
+ guest/spec.json                               |  42 +++-
+ guest/tests/test_apply_omarchy_backports.py   | 140 +++++++++++++
+ guest/tests/test_write_provenance.py          | 129 ++++++++++++
+ guest/tests/verify.py                         |  55 +++++
+ 10 files changed, 761 insertions(+), 5 deletions(-)
+ create mode 100644 guest/patches/omarchy/notification-hover-close.patch
+ create mode 100644 guest/patches/omarchy/notification-screen-privacy.patch
+ create mode 100755 guest/scripts/apply-omarchy-backports.py
+ create mode 100644 guest/tests/test_apply_omarchy_backports.py
+ create mode 100644 guest/tests/test_write_provenance.py
+
+diff --git a/guest/README.md b/guest/README.md
+index 9a40764..1f29e91 100644
+--- a/guest/README.md
++++ b/guest/README.md
+@@ -28,6 +28,12 @@ the requested transaction and `packages.lock.json` pins the full resolved x86_64
+ package set. Source repositories, commits, downloads, versions, and hashes are
+ reviewed inputs rather than floating build dependencies.
+ 
++The Omarchy shell includes two narrowly scoped fixes reviewed upstream after
++4.0.2: notification cards regain their hover-close control, and notification
++contents stay hidden while the session is locked or showing the screensaver.
++Each backport pins its patch plus the exact before and after file digests in
++`spec.json`, and the generated provenance identifies the modified shell tree.
++
+ The output includes the kernel, initramfs, raw and compressed ext4 image,
+ provenance, package inventory, licenses, manifest, and SHA-256 sums. Generated
+ output belongs under the repository's ignored `dist/` directory and must not be
+diff --git a/guest/build.sh b/guest/build.sh
+index 558573a..edb24fb 100755
+--- a/guest/build.sh
++++ b/guest/build.sh
+@@ -219,6 +219,7 @@ while [[ $staged_parent != "$root" ]]; do
+ done
+ 
+ "$guest_dir/scripts/materialize-omarchy.sh" --root "$root" --source "$source_dir" --spec "$spec"
++python3 "$guest_dir/scripts/apply-omarchy-backports.py" --root "$root" --spec "$spec"
+ "$guest_dir/scripts/configure-rootfs.sh" --root "$root" --spec "$spec"
+ "$guest_dir/scripts/register-omarchy-runtime.sh" \
+   --root "$root" \
+diff --git a/guest/patches/omarchy/notification-hover-close.patch b/guest/patches/omarchy/notification-hover-close.patch
+new file mode 100644
+index 0000000..dfe4efc
+--- /dev/null
++++ b/guest/patches/omarchy/notification-hover-close.patch
+@@ -0,0 +1,37 @@
++diff --git i/shell/plugins/notifications/components/NotificationCard.qml w/shell/plugins/notifications/components/NotificationCard.qml
++index 15adcfe..64e3870 100644
++--- i/shell/plugins/notifications/components/NotificationCard.qml
+++++ w/shell/plugins/notifications/components/NotificationCard.qml
++@@ -158,0 +159,2 @@ BorderSurface {
+++        // Keep the first line clear of the hover-revealed close button.
+++        Layout.rightMargin: Style.space(10)
++@@ -195,0 +198,29 @@ BorderSurface {
+++  // Hover-revealed close. Stacked after mainColumn so its MouseArea sits
+++  // above the full-card one and the click never reaches cardClicked.
+++  Item {
+++    anchors.top: parent.top
+++    anchors.right: parent.right
+++    anchors.topMargin: root.borderTop + Style.space(3)
+++    anchors.rightMargin: root.borderRight + Style.space(3)
+++    width: Style.space(18)
+++    height: Style.space(18)
+++    visible: opacity > 0
+++    opacity: root.hovered ? 1 : 0
+++
+++    Behavior on opacity { NumberAnimation { duration: 100 } }
+++
+++    Text {
+++      anchors.centerIn: parent
+++      text: "✕"
+++      color: closeArea.containsMouse ? Color.notifications.text : root.dimColor
+++      font.pixelSize: Math.round(Style.font.caption * 1.44)
+++    }
+++
+++    MouseArea {
+++      id: closeArea
+++      anchors.fill: parent
+++      hoverEnabled: true
+++      cursorShape: Qt.PointingHandCursor
+++      onClicked: root.closeRequested()
+++    }
+++  }
+diff --git a/guest/patches/omarchy/notification-screen-privacy.patch b/guest/patches/omarchy/notification-screen-privacy.patch
+new file mode 100644
+index 0000000..13037b6
+--- /dev/null
++++ b/guest/patches/omarchy/notification-screen-privacy.patch
+@@ -0,0 +1,107 @@
++diff --git i/shell/plugins/notifications/Service.qml w/shell/plugins/notifications/Service.qml
++index 0122310..72f10b2 100644
++--- i/shell/plugins/notifications/Service.qml
+++++ w/shell/plugins/notifications/Service.qml
++@@ -52,0 +53,13 @@ Item {
+++  // Notification surfaces live on the overlay layer, above the ordinary
+++  // fullscreen terminal used by the screensaver. Hide them while either the
+++  // screensaver or secure lock covers the session, and resume their remaining
+++  // lifetime only once the user can see them again. Startup remains private
+++  // until the idle service reconciles windows that predate a shell reload.
+++  readonly property var idleService: shell ? shell.firstPartyServiceFor("omarchy.idle") : null
+++  readonly property var lockService: shell ? shell.firstPartyServiceFor("omarchy.lock") : null
+++  readonly property bool screenObscured:
+++    !idleService
+++    || !idleService.screensaverStateKnown
+++    || idleService.screensaverWindowCount > 0
+++    || !lockService
+++    || lockService.locked
++@@ -959 +972 @@ Item {
++-      visible: popupModel.count > 0
+++      visible: popupModel.count > 0 && !service.screenObscured
++@@ -1015 +1028 @@ Item {
++-            readonly property bool ticking: cardSlot.lifetime > 0 && !card.hovered
+++            readonly property bool ticking: cardSlot.lifetime > 0 && !card.hovered && !service.screenObscured
++diff --git i/shell/plugins/services/idle/Service.qml w/shell/plugins/services/idle/Service.qml
++index 488f296..40d3b05 100644
++--- i/shell/plugins/services/idle/Service.qml
+++++ w/shell/plugins/services/idle/Service.qml
++@@ -37,0 +38,2 @@ Item {
+++  property bool screensaverStateKnown: false
+++  property var screensaverWindowsClosedDuringProbe: ({})
++@@ -117,0 +120,4 @@ Item {
+++  function normalizeWindowAddress(address) {
+++    var normalized = String(address || "").toLowerCase()
+++    return normalized.indexOf("0x") === 0 ? normalized.slice(2) : normalized
+++  }
++@@ -119 +126 @@ Item {
++-    var next = IdleModel.screensaverWindowsAfter(root.screensaverWindows, address, visible)
+++    var next = IdleModel.screensaverWindowsAfter(root.screensaverWindows, normalizeWindowAddress(address), visible)
++@@ -123,0 +130,37 @@ Item {
+++  function setScreensaverProbeClosed(address, closed) {
+++    var normalized = normalizeWindowAddress(address)
+++    if (!normalized) return
+++
+++    var next = ({})
+++    for (var existing in root.screensaverWindowsClosedDuringProbe) {
+++      if (existing !== normalized && root.screensaverWindowsClosedDuringProbe[existing]) next[existing] = true
+++    }
+++    if (closed) next[normalized] = true
+++    root.screensaverWindowsClosedDuringProbe = next
+++  }
+++  function reconcileScreensaverWindows(payload) {
+++    var clients
+++    try {
+++      clients = JSON.parse(String(payload || ""))
+++    } catch (error) {
+++      logEvent("screensaver-state-probe-invalid", error)
+++      screensaverStateProbeRetry.restart()
+++      return
+++    }
+++    if (!Array.isArray(clients)) {
+++      logEvent("screensaver-state-probe-invalid", "expected client array")
+++      screensaverStateProbeRetry.restart()
+++      return
+++    }
+++
+++    for (var index = 0; index < clients.length; index++) {
+++      var client = clients[index] || ({})
+++      if (String(client.class || "") !== root.screensaverClass) continue
+++      var address = normalizeWindowAddress(client.address)
+++      if (address && !root.screensaverWindowsClosedDuringProbe[address]) setScreensaverWindow(address, true)
+++    }
+++    root.screensaverWindowsClosedDuringProbe = ({})
+++    root.screensaverStateKnown = true
+++    logEvent("screensaver-state-ready", root.screensaverWindowCount + " window(s)")
+++  }
+++
++@@ -124,0 +170 @@ Item {
+++    if (!root.screensaverStateKnown) setScreensaverProbeClosed(address, false)
++@@ -152 +198,2 @@ Item {
++-      var address = String(close[0] || "")
+++      var address = normalizeWindowAddress(close[0])
+++      if (!root.screensaverStateKnown) setScreensaverProbeClosed(address, true)
++@@ -282,0 +328,6 @@ Item {
+++  Timer {
+++    id: screensaverStateProbeRetry
+++    interval: 2000
+++    repeat: false
+++    onTriggered: if (!root.screensaverStateKnown && !screensaverStateProbe.running) screensaverStateProbe.running = true
+++  }
++@@ -291,0 +346,14 @@ Item {
+++  Process {
+++    id: screensaverStateProbe
+++    command: ["hyprctl", "-j", "clients"]
+++    stdout: StdioCollector {
+++      waitForEnd: true
+++      onStreamFinished: root.reconcileScreensaverWindows(text)
+++    }
+++    onExited: function(exitCode, exitStatus) {
+++      if (!root.screensaverStateKnown) {
+++        root.logEvent("screensaver-state-probe-failed", "exitCode=" + exitCode + " status=" + exitStatus)
+++        screensaverStateProbeRetry.restart()
+++      }
+++    }
+++  }
++@@ -333,0 +402 @@ Item {
+++    screensaverStateProbe.running = true
+diff --git a/guest/scripts/apply-omarchy-backports.py b/guest/scripts/apply-omarchy-backports.py
+new file mode 100755
+index 0000000..841f49a
+--- /dev/null
++++ b/guest/scripts/apply-omarchy-backports.py
+@@ -0,0 +1,195 @@
++#!/usr/bin/env python3
++"""Apply reviewed backports to a staged, already-verified Omarchy tree."""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import os
++import shutil
++import subprocess
++import tempfile
++from pathlib import Path, PurePosixPath
++
++
++def fail(message: str) -> None:
++    raise SystemExit(f"apply-omarchy-backports: {message}")
++
++
++def sha256(path: Path) -> str:
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def contained_file(base: Path, relative: str, label: str) -> Path:
++    logical = PurePosixPath(relative)
++    if logical.is_absolute() or ".." in logical.parts or logical.as_posix() != relative:
++        fail(f"unsafe {label} path: {relative}")
++
++    candidate = base.joinpath(*logical.parts)
++    if candidate.is_symlink() or not candidate.is_file():
++        fail(f"{label} is not a regular file: {relative}")
++    try:
++        candidate.resolve().relative_to(base.resolve())
++    except ValueError:
++        fail(f"{label} escapes its root: {relative}")
++    return candidate
++
++
++def staged_target_file(root: Path, omarchy_root: Path, relative: str) -> Path:
++    logical = PurePosixPath(relative)
++    if logical.is_absolute() or ".." in logical.parts or logical.as_posix() != relative:
++        fail(f"unsafe target path: {relative}")
++
++    candidate = omarchy_root.joinpath(*logical.parts)
++    if candidate.is_symlink():
++        link = PurePosixPath(os.readlink(candidate))
++        if not link.is_absolute() or ".." in link.parts:
++            fail(f"target has an unsafe staged-root symlink: {relative}")
++        candidate = root.joinpath(*link.parts[1:])
++
++    if candidate.is_symlink() or not candidate.is_file():
++        fail(f"target is not a regular file: {relative}")
++    try:
++        candidate.resolve().relative_to(root.resolve())
++    except ValueError:
++        fail(f"target escapes the staged root: {relative}")
++    return candidate
++
++
++def require_digest(value: object, label: str) -> str:
++    rendered = str(value or "")
++    if len(rendered) != 64 or any(character not in "0123456789abcdef" for character in rendered):
++        fail(f"invalid {label}: {rendered}")
++    return rendered
++
++
++def verify_target(path: Path, target: dict, digest_key: str, backport_id: str) -> None:
++    if not isinstance(target, dict):
++        fail(f"backport {backport_id} has a non-object target")
++    relative = str(target.get("path", ""))
++    expected = require_digest(target.get(digest_key), f"{backport_id} {relative} {digest_key}")
++    actual = sha256(path)
++    if actual != expected:
++        fail(
++            f"backport {backport_id} target {relative} {digest_key} mismatch: "
++            f"expected {expected}, got {actual}"
++        )
++
++
++def apply_backport(spec_dir: Path, root: Path, omarchy_root: Path, backport: dict) -> None:
++    if not isinstance(backport, dict):
++        fail("backport metadata must contain JSON objects")
++    backport_id = str(backport.get("id", ""))
++    if not backport_id:
++        fail("backport id is required")
++
++    relative_patch = str(backport.get("patch", ""))
++    patch = contained_file(spec_dir, relative_patch, "patch")
++    expected_patch_digest = require_digest(
++        backport.get("patchSha256"), f"{backport_id} patchSha256"
++    )
++    actual_patch_digest = sha256(patch)
++    if actual_patch_digest != expected_patch_digest:
++        fail(
++            f"backport {backport_id} patch digest mismatch: "
++            f"expected {expected_patch_digest}, got {actual_patch_digest}"
++        )
++
++    targets = backport.get("targets")
++    if not isinstance(targets, list) or not targets:
++        fail(f"backport {backport_id} must declare at least one target")
++    target_paths: dict[str, Path] = {}
++    for target in targets:
++        if not isinstance(target, dict):
++            fail(f"backport {backport_id} has a non-object target")
++        relative = str(target.get("path", ""))
++        if relative in target_paths:
++            fail(f"backport {backport_id} repeats target: {relative}")
++        target_path = staged_target_file(root, omarchy_root, relative)
++        verify_target(target_path, target, "beforeSha256", backport_id)
++        target_paths[relative] = target_path
++
++    # Patch isolated regular-file copies so package-path symlinks such as
++    # /usr/share/omarchy/bin/* remain intact and no undeclared staged file can
++    # be changed by a reviewed patch.
++    with tempfile.TemporaryDirectory() as temporary:
++        patch_root = Path(temporary)
++        for relative, target_path in target_paths.items():
++            destination = patch_root.joinpath(*PurePosixPath(relative).parts)
++            destination.parent.mkdir(parents=True, exist_ok=True)
++            shutil.copy2(target_path, destination)
++
++        result = subprocess.run(
++            [
++                "git",
++                "apply",
++                "--no-index",
++                "--unidiff-zero",
++                "--whitespace=error",
++                str(patch),
++            ],
++            cwd=patch_root,
++            text=True,
++            stdout=subprocess.PIPE,
++            stderr=subprocess.PIPE,
++            check=False,
++        )
++        if result.returncode != 0:
++            detail = result.stderr.strip() or result.stdout.strip() or "git apply failed"
++            fail(f"backport {backport_id} did not apply: {detail}")
++
++        actual_paths = {
++            path.relative_to(patch_root).as_posix()
++            for path in patch_root.rglob("*")
++            if path.is_file() or path.is_symlink()
++        }
++        if actual_paths != set(target_paths):
++            fail(f"backport {backport_id} changed files outside its declared targets")
++
++        for target in targets:
++            relative = str(target["path"])
++            verify_target(
++                patch_root.joinpath(*PurePosixPath(relative).parts),
++                target,
++                "afterSha256",
++                backport_id,
++            )
++        for relative, target_path in target_paths.items():
++            shutil.copy2(
++                patch_root.joinpath(*PurePosixPath(relative).parts),
++                target_path,
++            )
++    print(f"Applied Omarchy backport {backport_id}")
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--root", required=True, type=Path)
++    parser.add_argument("--spec", required=True, type=Path)
++    args = parser.parse_args()
++
++    if not args.root.is_absolute() or args.root.resolve() == Path("/"):
++        fail("--root must be an absolute staged root")
++    spec = args.spec.resolve()
++    if not spec.is_file():
++        fail(f"spec not found: {spec}")
++    root = args.root.resolve()
++    omarchy_root = root / "usr/share/omarchy"
++    if not omarchy_root.is_dir():
++        fail(f"materialized Omarchy tree not found: {omarchy_root}")
++
++    try:
++        build_spec = json.loads(spec.read_text(encoding="utf-8"))
++        backports = build_spec["authenticity"]["backports"]
++    except (KeyError, json.JSONDecodeError) as error:
++        fail(f"could not read backport metadata: {error}")
++    if not isinstance(backports, list):
++        fail("authenticity.backports must be an array")
++
++    for backport in backports:
++        apply_backport(spec.parent, root, omarchy_root, backport)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/guest/scripts/write-provenance.py b/guest/scripts/write-provenance.py
+index 0fefa8e..3a791b8 100755
+--- a/guest/scripts/write-provenance.py
++++ b/guest/scripts/write-provenance.py
+@@ -7,7 +7,7 @@ import argparse
+ import hashlib
+ import json
+ import os
+-from pathlib import Path
++from pathlib import Path, PurePosixPath
+ 
+ 
+ def digest_path(path: Path) -> str:
+@@ -36,6 +36,31 @@ def digest_path(path: Path) -> str:
+     return digest.hexdigest()
+ 
+ 
++def digest_file(path: Path) -> str:
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def installed_target_file(root: Path, omarchy: Path, relative: str) -> Path:
++    logical = PurePosixPath(relative)
++    if logical.is_absolute() or ".." in logical.parts or logical.as_posix() != relative:
++        raise SystemExit(f"unsafe backport target path: {relative}")
++
++    installed = omarchy.joinpath(*logical.parts)
++    if installed.is_symlink():
++        link = PurePosixPath(os.readlink(installed))
++        if not link.is_absolute() or ".." in link.parts:
++            raise SystemExit(f"unsafe backport target symlink: {relative}")
++        installed = root.joinpath(*link.parts[1:])
++
++    if installed.is_symlink() or not installed.is_file():
++        raise SystemExit(f"missing installed backport target: {relative}")
++    try:
++        installed.resolve().relative_to(root.resolve())
++    except ValueError:
++        raise SystemExit(f"backport target escapes staged root: {relative}")
++    return installed
++
++
+ def main() -> None:
+     parser = argparse.ArgumentParser()
+     parser.add_argument("--root", required=True, type=Path)
+@@ -44,20 +69,41 @@ def main() -> None:
+     args = parser.parse_args()
+ 
+     spec = json.loads(args.spec.read_text())
+-    omarchy = args.root / "usr/share/omarchy"
++    root = args.root.resolve()
++    omarchy = root / "usr/share/omarchy"
++    authenticity = spec["authenticity"]
++    verbatim_trees = authenticity["verbatimRuntimeTrees"]
++    backported_trees = authenticity.get("backportedRuntimeTrees", [])
++    if set(verbatim_trees) & set(backported_trees):
++        raise SystemExit("runtime trees cannot be both verbatim and backported")
++
+     trees = {}
+-    for name in spec["authenticity"]["verbatimRuntimeTrees"]:
++    for name in verbatim_trees + backported_trees:
+         installed = omarchy / name
+         if not installed.exists():
+             raise SystemExit(f"missing installed authenticity tree: {installed}")
+         trees[name] = digest_path(installed)
+     trees["themes"] = digest_path(omarchy / "themes")
+ 
++    backports = authenticity.get("backports", [])
++    for backport in backports:
++        patch = args.spec.parent / backport["patch"]
++        patch_digest = digest_file(patch)
++        if patch_digest != backport["patchSha256"]:
++            raise SystemExit(f"backport patch digest mismatch: {backport['id']}")
++        for target in backport["targets"]:
++            installed = installed_target_file(root, omarchy, target["path"])
++            if digest_file(installed) != target["afterSha256"]:
++                raise SystemExit(f"backport target digest mismatch: {backport['id']} {target['path']}")
++
+     payload = {
+         "schemaVersion": 1,
+-        "claim": "Desktop runtime copied from the pinned Basecamp Omarchy source; web changes are user-level overrides.",
++        "claim": "Desktop runtime derived from pinned Basecamp Omarchy source plus the enumerated reviewed backports.",
+         "upstream": spec["upstream"],
+         "includedThemes": spec["themes"],
++        "verbatimRuntimeTrees": verbatim_trees,
++        "backportedRuntimeTrees": backported_trees,
++        "backports": backports,
+         "sha256Trees": trees,
+     }
+     source_digest = args.root / "usr/share/try-omarchy/upstream-tree.json"
+diff --git a/guest/spec.json b/guest/spec.json
+index 2f68213..a4f2d4a 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -79,9 +79,46 @@
+       "config",
+       "default",
+       "install",
+-      "migrations",
++      "migrations"
++    ],
++    "backportedRuntimeTrees": [
+       "shell"
+     ],
++    "backports": [
++      {
++        "id": "notification-hover-close",
++        "description": "Restore the upstream hover-revealed notification dismiss control omitted from v4.0.2.",
++        "reference": "https://github.com/basecamp/omarchy/commit/9b72edcc94513cba016f145b1ac4ffdaea54b577",
++        "patch": "patches/omarchy/notification-hover-close.patch",
++        "patchSha256": "d6f5bb507bf7bee10df310bf5fe5218ec3bf9ca7e134896ee3b8527ca4a85312",
++        "targets": [
++          {
++            "path": "shell/plugins/notifications/components/NotificationCard.qml",
++            "beforeSha256": "3f023446cfe26b9f70570d7088baab31e56ca374c4a206a7c098b09d36cdff3d",
++            "afterSha256": "7522c2f6453a5db357c80132da53e8aa6d2881519ade10818dca0ca6355e7d51"
++          }
++        ]
++      },
++      {
++        "id": "notification-screen-privacy",
++        "description": "Hide and pause notification popups while the screensaver or lock surface obscures the session.",
++        "reference": "https://github.com/basecamp/omarchy/pull/8247",
++        "patch": "patches/omarchy/notification-screen-privacy.patch",
++        "patchSha256": "7f2cc8ee87a2d0cd6e2daa0e58b2509bf3550b3cd98eb1f3764245d77891b47b",
++        "targets": [
++          {
++            "path": "shell/plugins/notifications/Service.qml",
++            "beforeSha256": "11665542e70df80ccd3c785a6143dee2daefd2082e4f75c740adc2c9947cf7c2",
++            "afterSha256": "e1f17b537e06c4e5d904f3c7ca0292ece330503f684430272d490fa78815bf04"
++          },
++          {
++            "path": "shell/plugins/services/idle/Service.qml",
++            "beforeSha256": "c61f91b55adf864e4ce571526644727b7a2e9f672964af8098b9fd9a4913eee2",
++            "afterSha256": "f83f871a4b4cdb71cebbe2d6e20517ceeb4e06cc9f35e18ec758344f97e6fa1c"
++          }
++        ]
++      }
++    ],
+     "requiredPaths": [
+       "LICENSE",
+       "bin/omarchy",
+@@ -102,6 +139,9 @@
+       "install/provisioning/omarchy-provision-owner.service",
+       "install/provisioning/setup-form.sh",
+       "install/user/all.sh",
++      "shell/plugins/notifications/components/NotificationCard.qml",
++      "shell/plugins/notifications/Service.qml",
++      "shell/plugins/services/idle/Service.qml",
+       "shell/shell.qml",
+       "themes/tokyo-night/colors.toml",
+       "version"
+diff --git a/guest/tests/test_apply_omarchy_backports.py b/guest/tests/test_apply_omarchy_backports.py
+new file mode 100644
+index 0000000..377f3ab
+--- /dev/null
++++ b/guest/tests/test_apply_omarchy_backports.py
+@@ -0,0 +1,140 @@
++from __future__ import annotations
++
++import hashlib
++import json
++import subprocess
++import tempfile
++import unittest
++from pathlib import Path
++
++
++GUEST = Path(__file__).resolve().parents[1]
++SCRIPT = GUEST / "scripts/apply-omarchy-backports.py"
++
++
++def digest(payload: bytes) -> str:
++    return hashlib.sha256(payload).hexdigest()
++
++
++class ApplyOmarchyBackportsTests(unittest.TestCase):
++    before = b"before\n"
++    after = b"after\n"
++    patch = b"""\
++diff --git a/example.txt b/example.txt
++--- a/example.txt
+++++ b/example.txt
++@@ -1 +1 @@
++-before
+++after
++"""
++
++    def fixture(self, temporary: str) -> tuple[Path, Path, Path]:
++        base = Path(temporary)
++        root = base / "root"
++        target = root / "usr/share/omarchy/example.txt"
++        target.parent.mkdir(parents=True)
++        target.write_bytes(self.before)
++        patch = base / "example.patch"
++        patch.write_bytes(self.patch)
++        spec = base / "spec.json"
++        spec.write_text(
++            json.dumps(
++                {
++                    "authenticity": {
++                        "backports": [
++                            {
++                                "id": "fixture",
++                                "patch": "example.patch",
++                                "patchSha256": digest(self.patch),
++                                "targets": [
++                                    {
++                                        "path": "example.txt",
++                                        "beforeSha256": digest(self.before),
++                                        "afterSha256": digest(self.after),
++                                    }
++                                ],
++                            }
++                        ]
++                    }
++                }
++            ),
++            encoding="utf-8",
++        )
++        return root, spec, target
++
++    def run_script(self, root: Path, spec: Path) -> subprocess.CompletedProcess[str]:
++        return subprocess.run(
++            ["python3", str(SCRIPT), "--root", str(root), "--spec", str(spec)],
++            text=True,
++            capture_output=True,
++            check=False,
++        )
++
++    def test_applies_only_to_the_declared_preimage(self) -> None:
++        with tempfile.TemporaryDirectory() as temporary:
++            root, spec, target = self.fixture(temporary)
++            first = self.run_script(root, spec)
++            self.assertEqual(first.returncode, 0, first.stderr)
++            self.assertEqual(target.read_bytes(), self.after)
++
++            second = self.run_script(root, spec)
++            self.assertNotEqual(second.returncode, 0)
++            self.assertIn("beforeSha256 mismatch", second.stderr)
++
++    def test_rejects_a_changed_patch(self) -> None:
++        with tempfile.TemporaryDirectory() as temporary:
++            root, spec, target = self.fixture(temporary)
++            (spec.parent / "example.patch").write_bytes(self.patch + b"\n")
++            result = self.run_script(root, spec)
++            self.assertNotEqual(result.returncode, 0)
++            self.assertIn("patch digest mismatch", result.stderr)
++            self.assertEqual(target.read_bytes(), self.before)
++
++    def test_rejects_a_target_outside_the_omarchy_tree(self) -> None:
++        with tempfile.TemporaryDirectory() as temporary:
++            root, spec, target = self.fixture(temporary)
++            payload = json.loads(spec.read_text(encoding="utf-8"))
++            payload["authenticity"]["backports"][0]["targets"][0]["path"] = "../example.txt"
++            spec.write_text(json.dumps(payload), encoding="utf-8")
++            result = self.run_script(root, spec)
++            self.assertNotEqual(result.returncode, 0)
++            self.assertIn("unsafe target path", result.stderr)
++            self.assertEqual(target.read_bytes(), self.before)
++
++    def test_patches_a_staged_root_command_without_replacing_its_symlink(self) -> None:
++        with tempfile.TemporaryDirectory() as temporary:
++            root, spec, target = self.fixture(temporary)
++            target.unlink()
++            target = root / "usr/share/omarchy/bin/example"
++            target.parent.mkdir()
++            command = root / "usr/bin/example"
++            command.parent.mkdir(parents=True)
++            command.write_bytes(self.before)
++            target.symlink_to("/usr/bin/example")
++
++            payload = json.loads(spec.read_text(encoding="utf-8"))
++            backport = payload["authenticity"]["backports"][0]
++            backport["targets"][0]["path"] = "bin/example"
++            patch_payload = self.patch.replace(b"example.txt", b"bin/example")
++            (spec.parent / "example.patch").write_bytes(patch_payload)
++            backport["patchSha256"] = digest(patch_payload)
++            spec.write_text(json.dumps(payload), encoding="utf-8")
++
++            result = self.run_script(root, spec)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            self.assertTrue(target.is_symlink())
++            self.assertEqual(target.readlink(), Path("/usr/bin/example"))
++            self.assertEqual(command.read_bytes(), self.after)
++
++    def test_rejects_a_staged_command_symlink_outside_the_root(self) -> None:
++        with tempfile.TemporaryDirectory() as temporary:
++            root, spec, target = self.fixture(temporary)
++            target.unlink()
++            target.symlink_to("/tmp/example")
++            result = self.run_script(root, spec)
++            self.assertNotEqual(result.returncode, 0)
++            self.assertIn("target is not a regular file", result.stderr)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/guest/tests/test_write_provenance.py b/guest/tests/test_write_provenance.py
+new file mode 100644
+index 0000000..17ab34c
+--- /dev/null
++++ b/guest/tests/test_write_provenance.py
+@@ -0,0 +1,129 @@
++from __future__ import annotations
++
++import hashlib
++import json
++import subprocess
++import tempfile
++import unittest
++from pathlib import Path
++
++
++GUEST = Path(__file__).resolve().parents[1]
++SCRIPT = GUEST / "scripts/write-provenance.py"
++
++
++def digest(payload: bytes) -> str:
++    return hashlib.sha256(payload).hexdigest()
++
++
++class WriteProvenanceTests(unittest.TestCase):
++    def fixture(self, temporary: str) -> tuple[Path, Path, Path, Path]:
++        base = Path(temporary)
++        root = base / "root"
++        omarchy = root / "usr/share/omarchy"
++        (omarchy / "bin").mkdir(parents=True)
++        (omarchy / "bin/example").write_bytes(b"verbatim\n")
++        target = omarchy / "shell/example.qml"
++        target.parent.mkdir()
++        target.write_bytes(b"patched\n")
++        (omarchy / "themes").mkdir()
++        (omarchy / "themes/example").write_bytes(b"theme\n")
++
++        patch = base / "example.patch"
++        patch.write_bytes(b"reviewed patch\n")
++        backport = {
++            "id": "fixture",
++            "description": "Fixture backport",
++            "reference": "https://example.test/backport",
++            "patch": "example.patch",
++            "patchSha256": digest(patch.read_bytes()),
++            "targets": [
++                {
++                    "path": "shell/example.qml",
++                    "beforeSha256": digest(b"upstream\n"),
++                    "afterSha256": digest(target.read_bytes()),
++                }
++            ],
++        }
++        spec = base / "spec.json"
++        spec.write_text(
++            json.dumps(
++                {
++                    "upstream": {"commit": "fixture"},
++                    "themes": ["example"],
++                    "authenticity": {
++                        "verbatimRuntimeTrees": ["bin"],
++                        "backportedRuntimeTrees": ["shell"],
++                        "backports": [backport],
++                    },
++                }
++            ),
++            encoding="utf-8",
++        )
++        return root, spec, target, base / "provenance.json"
++
++    def run_writer(self, root: Path, spec: Path, output: Path) -> subprocess.CompletedProcess[str]:
++        return subprocess.run(
++            [
++                "python3",
++                str(SCRIPT),
++                "--root",
++                str(root),
++                "--spec",
++                str(spec),
++                "--output",
++                str(output),
++            ],
++            text=True,
++            capture_output=True,
++            check=False,
++        )
++
++    def test_records_verbatim_trees_and_reviewed_backports_separately(self) -> None:
++        with tempfile.TemporaryDirectory() as temporary:
++            root, spec, _, output = self.fixture(temporary)
++            result = self.run_writer(root, spec, output)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            provenance = json.loads(output.read_text(encoding="utf-8"))
++            self.assertEqual(provenance["verbatimRuntimeTrees"], ["bin"])
++            self.assertEqual(provenance["backportedRuntimeTrees"], ["shell"])
++            self.assertEqual(provenance["backports"][0]["id"], "fixture")
++            self.assertIn("enumerated reviewed backports", provenance["claim"])
++            self.assertEqual(set(provenance["sha256Trees"]), {"bin", "shell", "themes"})
++
++    def test_rejects_an_installed_target_that_differs_from_the_postimage(self) -> None:
++        with tempfile.TemporaryDirectory() as temporary:
++            root, spec, target, output = self.fixture(temporary)
++            target.write_bytes(b"unexpected\n")
++            result = self.run_writer(root, spec, output)
++            self.assertNotEqual(result.returncode, 0)
++            self.assertIn("backport target digest mismatch", result.stderr)
++            self.assertFalse(output.exists())
++
++    def test_verifies_a_staged_root_command_through_its_package_path_symlink(self) -> None:
++        with tempfile.TemporaryDirectory() as temporary:
++            root, spec, _, output = self.fixture(temporary)
++            package_path = root / "usr/share/omarchy/bin/example"
++            package_path.unlink()
++            command = root / "usr/bin/example"
++            command.parent.mkdir(parents=True)
++            command.write_bytes(b"patched command\n")
++            package_path.symlink_to("/usr/bin/example")
++
++            payload = json.loads(spec.read_text(encoding="utf-8"))
++            payload["authenticity"]["backports"][0]["targets"].append(
++                {
++                    "path": "bin/example",
++                    "beforeSha256": digest(b"upstream command\n"),
++                    "afterSha256": digest(command.read_bytes()),
++                }
++            )
++            spec.write_text(json.dumps(payload), encoding="utf-8")
++
++            result = self.run_writer(root, spec, output)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            self.assertTrue(package_path.is_symlink())
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index c9c3bad..fee12fc 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -51,6 +51,46 @@ def main() -> None:
+     for path in spec["inputs"].values():
+         check((GUEST / path).is_file(), f"spec input exists: {path}")
+ 
++    authenticity = spec["authenticity"]
++    verbatim_trees = authenticity["verbatimRuntimeTrees"]
++    backported_trees = authenticity["backportedRuntimeTrees"]
++    check(
++        "shell" not in verbatim_trees
++        and backported_trees == ["shell"]
++        and not set(verbatim_trees) & set(backported_trees),
++        "the patched shell tree is separated from verbatim upstream runtime trees",
++    )
++    backports = authenticity["backports"]
++    check(
++        [backport.get("id") for backport in backports]
++        == ["notification-hover-close", "notification-screen-privacy"],
++        "Omarchy notification backports are explicitly ordered and identified",
++    )
++    for backport in backports:
++        patch_path = GUEST / backport["patch"]
++        check(patch_path.is_file(), f"backport patch exists: {backport['id']}")
++        check(
++            hashlib.sha256(patch_path.read_bytes()).hexdigest()
++            == backport["patchSha256"],
++            f"backport patch digest matches: {backport['id']}",
++        )
++        check(
++            backport.get("reference", "").startswith(
++                "https://github.com/basecamp/omarchy/"
++            ),
++            f"backport has an upstream review reference: {backport['id']}",
++        )
++        for target in backport["targets"]:
++            digests = (target.get("beforeSha256", ""), target.get("afterSha256", ""))
++            check(
++                all(
++                    len(digest) == 64
++                    and not set(digest) - set("0123456789abcdef")
++                    for digest in digests
++                ),
++                f"backport target digests are pinned: {backport['id']} {target['path']}",
++            )
++
+     package_text = (GUEST / spec["inputs"]["packages"]).read_bytes()
+     package_lock = json_file(GUEST / spec["inputs"]["packageLock"])
+     check(package_lock.get("architecture") == "x86_64", "package lock is x86_64")
+@@ -81,6 +121,21 @@ def main() -> None:
+         < materialize.index('copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"'),
+         "materialization preserves the package-owned Neovim config for new users",
+     )
++    build = read(GUEST / "build.sh")
++    check(
++        "apply-omarchy-backports.py" in build
++        and build.index("materialize-omarchy.sh")
++        < build.index("apply-omarchy-backports.py")
++        < build.index("configure-rootfs.sh"),
++        "reviewed Omarchy backports apply only to the verified staged source",
++    )
++    provenance_writer = read(GUEST / "scripts/write-provenance.py")
++    check(
++        "backportedRuntimeTrees" in provenance_writer
++        and '"backports": backports' in provenance_writer
++        and "enumerated reviewed backports" in provenance_writer,
++        "guest provenance distinguishes verbatim trees from reviewed backports",
++    )
+     zram_override = read(
+         GUEST
+         / "factory-overlay/etc/systemd/zram-generator.conf.d/99-try-omarchy.conf"
+-- 
+2.55.0
+

@@ -1,0 +1,48 @@
+From 0226fb2e8bd6d556cb1a13935273e47bc11d7c1c Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 2 Sep 2026 20:54:00 -0400
+Subject: [PATCH] Ship Omarchy's Neovim setup and clang
+
+---
+ guest/packages.txt    | 2 ++
+ guest/tests/verify.py | 4 ++++
+ 2 files changed, 6 insertions(+)
+
+diff --git a/guest/packages.txt b/guest/packages.txt
+index 741b3b5..6477b80 100644
+--- a/guest/packages.txt
++++ b/guest/packages.txt
+@@ -6,6 +6,7 @@ bash-completion
+ bat
+ btop
+ chromium
++clang
+ coreutils
+ dbus
+ desktop-file-utils
+@@ -49,6 +50,7 @@ noto-fonts-emoji
+ omacalc
+ omacut
+ omarchy-keyring
++omarchy-nvim
+ omawrite
+ pacman-contrib
+ pipewire
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index a490e4f..538c339 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -60,6 +60,10 @@ def main() -> None:
+     )
+     packages = package_lock.get("packages")
+     check(isinstance(packages, dict) and len(packages) > 100, "package transaction is fully locked")
++    check(
++        "clang" in packages and "omarchy-nvim" in packages and "base-devel" in packages,
++        "guest includes Omarchy's Neovim configuration and native build tools",
++    )
+ 
+     container = read(GUEST / "build-container.sh")
+     check("linux/amd64" in container and '"$guest_dir/Containerfile"' in container, "container builder targets AMD64")
+-- 
+2.55.0
+

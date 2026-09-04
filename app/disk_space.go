@@ -107,6 +107,20 @@ func estimatedSparseRootfsBytes(logicalBytes int64) (int64, error) {
 	return logicalBytes - logicalBytes/3, nil
 }
 
+func rootfsInstallBytes(logicalBytes int64, portable bool) (int64, error) {
+	if portable {
+		if logicalBytes <= 0 || logicalBytes > maxGuestArtifactBytes {
+			return 0, fmt.Errorf("invalid logical rootfs size")
+		}
+		// exFAT is a supported portable filesystem but does not implement the
+		// Windows sparse-file control. Budget the complete image so setup does
+		// not pass its preflight and then run out of space during the fallback
+		// full write.
+		return logicalBytes, nil
+	}
+	return estimatedSparseRootfsBytes(logicalBytes)
+}
+
 func requireDiskSpace(path string, required int64) error {
 	if required <= 0 {
 		return nil

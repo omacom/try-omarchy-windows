@@ -7,7 +7,7 @@ this core change.
 
 ## Host requirements
 
-- 64-bit Windows 11
+- 64-bit Windows 10 or 11
 - Intel VT-x or AMD-V/SVM enabled in firmware
 - Windows Hypervisor Platform (the launcher can enable it with UAC and one
   restart)
@@ -35,7 +35,8 @@ TryOmarchy-Portable/
 `-- data/                         created on first run
     |-- runtime/                  extracted WINQ-EMU
     |-- guest/rootfs.ext4         verified factory guest
-    `-- vm/disk.qcow2             persistent changes
+    |-- vm/disk.qcow2             persistent changes
+    `-- vm/disk.qcow2.backing-sha256
 ```
 
 The payload files must come from the release identified by `defaultReleaseURL`.
@@ -52,6 +53,11 @@ fast path on later launches.
 The QCOW2 backing path is relative, so Windows may assign a different drive
 letter on another PC. The Windows Hypervisor Platform restart marker stays in
 the host's local app-data directory rather than travelling with the USB.
+The digest beside the QCOW2 disk binds its persistent changes to the exact
+factory image. Replacing a portable payload without resetting its data is
+refused instead of silently running an overlay against the wrong backing
+image. Keep the old payload with its data, or use `-portable -fresh` to adopt a
+new payload.
 
 ## Running and reset
 
