@@ -180,6 +180,65 @@ func TestDataDirectoryUnclaimed(t *testing.T) {
 	}
 }
 
+func TestStandardDataDirectorySelectionRejectsForeignFiles(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), defaultDataDirectoryName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(dir, "keep-me.txt")
+	if err := os.WriteFile(foreign, []byte("not owned by Try Omarchy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if selectable, err := standardDataDirectorySelectable(dir); err != nil || selectable {
+		t.Fatalf("foreign directory selectable = %v, %v", selectable, err)
+	}
+	if err := cleanupCancelledSetup(dir, filepath.Join(t.TempDir(), "TryOmarchy.exe"), false); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(foreign); err != nil || string(data) != "not owned by Try Omarchy" {
+		t.Fatalf("foreign file after conservative cleanup = %q, %v", data, err)
+	}
+}
+
+func TestStandardDataDirectorySelectionAcceptsCompleteInstall(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), defaultDataDirectoryName)
+	for _, name := range []string{
+		filepath.Join("guest", "build-spec.json"),
+		filepath.Join("guest", "rootfs.ext4"),
+		filepath.Join("vm", "disk.raw"),
+	} {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if selectable, err := standardDataDirectorySelectable(dir); err != nil || !selectable {
+		t.Fatalf("complete install selectable = %v, %v", selectable, err)
+	}
+}
+
+func TestDataDirectoryEmpty(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	if empty, err := dataDirectoryEmpty(dir); err != nil || !empty {
+		t.Fatalf("missing directory empty = %v, %v", empty, err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if empty, err := dataDirectoryEmpty(dir); err != nil || !empty {
+		t.Fatalf("new directory empty = %v, %v", empty, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "existing"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if empty, err := dataDirectoryEmpty(dir); err != nil || empty {
+		t.Fatalf("populated directory empty = %v, %v", empty, err)
+	}
+}
+
 func TestEnsureDataDirectoryWritable(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "new", "data")
 	if err := ensureDataDirectoryWritable(dir); err != nil {

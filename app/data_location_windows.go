@@ -130,6 +130,15 @@ func chooseFirstRunDataDirectory(defaultDir string) (string, bool, error) {
 				errorBox("Try Omarchy cannot use that location.\n\n" + err.Error())
 				continue
 			}
+			selectable, err := standardDataDirectorySelectable(selected)
+			if err != nil {
+				errorBox("Try Omarchy cannot inspect that location.\n\n" + err.Error())
+				continue
+			}
+			if !selectable {
+				errorBox("That TryOmarchy folder is not empty and is not a complete Try Omarchy installation. Choose another parent folder or an empty TryOmarchy folder.")
+				continue
+			}
 			if err := ensureDataDirectoryWritable(selected); err != nil {
 				errorBox("Try Omarchy cannot write to that location.\n\n" + err.Error())
 				continue

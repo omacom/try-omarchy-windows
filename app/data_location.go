@@ -201,6 +201,25 @@ func dataDirectoryUnclaimed(path string) (bool, error) {
 	return true, nil
 }
 
+func dataDirectoryEmpty(path string) (bool, error) {
+	entries, err := os.ReadDir(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return len(entries) == 0, nil
+}
+
+func standardDataDirectorySelectable(path string) (bool, error) {
+	unclaimed, err := dataDirectoryUnclaimed(path)
+	if err != nil || unclaimed {
+		return unclaimed, err
+	}
+	return completeInstallExists(path, "disk.raw"), nil
+}
+
 func ensureDataDirectoryWritable(path string) error {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return err

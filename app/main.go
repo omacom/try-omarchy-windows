@@ -126,6 +126,7 @@ func finishSetupCancellation(cfg *config, err error) bool {
 
 func main() {
 	cfg := &config{}
+	removeStandardDataOnCancel := false
 	defaultDir := filepath.Join(os.Getenv("LOCALAPPDATA"), defaultDataDirectoryName)
 	flag.StringVar(&cfg.dir, "dir", defaultDir, "Try Omarchy data directory (virtual machine, runtime, and settings)")
 	flag.StringVar(&cfg.winqEmu, "winq", `C:\WINQ-EMU`, "WINQ-EMU install path (GPU mode)")
@@ -209,6 +210,10 @@ func main() {
 		}
 		cfg.dir = selected
 		cfg.hostDir = cfg.dir
+		removeStandardDataOnCancel, err = dataDirectoryEmpty(cfg.dir)
+		if err != nil {
+			fatal("Try Omarchy cannot inspect its data location: %v", err)
+		}
 		if *applyLauncherUpdateFlag || *applyLauncherRollbackFlag {
 			if err := applyLauncherUpdate(cfg.dir, *updateWaitPID, *updateRestartArgs, *applyLauncherRollbackFlag); err != nil {
 				errorBox("Try Omarchy could not finish applying its update.\n\n" + err.Error())
@@ -294,7 +299,7 @@ func main() {
 	}
 	completeAtStart := completeInstallExists(cfg.dir, filepath.Base(cfg.disk))
 	needsProvisioning := cfg.fresh || !completeAtStart
-	configureSetupCancellation(!completeAtStart)
+	configureSetupCancellation(!completeAtStart && (cfg.portable || removeStandardDataOnCancel))
 	if err := os.MkdirAll(cfg.vmDir, 0o755); err != nil {
 		fatal("Could not create the Omarchy data directory: %v", err)
 	}
