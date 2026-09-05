@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Features
+- Automatic rendering now remembers when this PC cannot run the GPU path and goes straight to CPU rendering on later launches, retrying after a runtime or display-driver change, after a week, or when GPU is chosen in the new Rendering setting. A pending runtime update on a PC that already runs on CPU rendering is kept instead of being rolled back and downloaded again on every launch.
+- Guest CPUs and RAM are sized to the machine: all logical processors but two (between two and eight) and a third of the RAM (4 to 8 GiB, up to 12 GiB with GPU rendering), with a Guest CPUs setting and `-cpus` to override.
+- Try Omarchy registers under Windows Apps & features and can be removed from there, from **Remove Try Omarchy** in Settings, or with `-uninstall`. Removal offers a full backup first and deletes only this installation's shortcuts, registry entry, saved location, and data folder.
+
+### Fixes
+- Restore now budgets free space from the backup's compressed size instead of the sparse files' nominal size, so a 10 GB backup no longer demands 33 GB free. Restored files keep the modification times their receipts recorded, so a restored copy does not re-download its image and runtime on first launch, and a restore from Settings no longer asks about shortcuts again.
+- New guest users no longer start with the "no gaps" and "single-window aspect ratio" Hyprland toggles switched on, which silently overrode gaps, border size, and rounding set in `~/.config/hypr/looknfeel.lua` (#32). Existing guests keep their current toggles; run `omarchy-hyprland-window-gaps-toggle` once to turn gaps back on.
+- The Settings text under the SSH key row is no longer painted over by the label above it, and messages logged before the session log opens, such as the restored-payload decision after an interrupted update, now appear at the top of the log.
+
 ## v0.0.12-preview - 2026-09-05
 
 ### Features

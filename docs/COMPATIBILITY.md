@@ -23,7 +23,7 @@ Try Omarchy runs the full x86_64 Arch Linux environment used by Omarchy. It is n
 - Host-folder sharing is not available with an external stock QEMU fallback.
 - Text clipboard sharing works in both directions. File clipboard and drag and
   drop are not implemented yet; use the shared folder for files.
-- The launcher boots its pinned kernel and initramfs from the release image. Ordinary package installation is supported, but replacing the guest kernel independently can leave it out of sync with those boot files.
+- The launcher boots its pinned kernel and initramfs from the release image, and the guest's pacman configuration holds the `linux` package so `pacman -Syu` and `omarchy-update` leave it alone. Kernel updates arrive with guest-image updates, which also carry the matching modules onto existing disks. Forcing a different kernel package into the guest leaves it out of sync with those boot files.
 - Configuration export and restore are available through `try-omarchy-export`; see [the migration guide](MIGRATION.md). Development builds also support [stopped-VM backup and restore](BACKUP.md) from Settings or command-line options. Reset can retain the old disk and offer a full backup first. Snapshots are not available yet.
 
 Compatibility varies with Windows, CPU, GPU, and driver combinations. When reporting a problem, include those details and whether Try Omarchy selected GPU or CPU rendering.
