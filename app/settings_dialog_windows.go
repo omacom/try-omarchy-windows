@@ -65,6 +65,7 @@ const (
 	settingsRenderAutoID = 2023
 	settingsRenderGPUID  = 2024
 	settingsRenderCPUID  = 2025
+	settingsCPUsID       = 2026
 	bsAutoradiobutton    = 0x0009
 	wsGroup              = 0x00020000
 	settingsRecoveryDone = 0x8010
@@ -94,7 +95,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	hInst, _, _ := procGetModuleHandleW.Call(0)
 	className, _ := syscall.UTF16PtrFromString("TryOmarchySettings")
 	var hwnd uintptr
-	var hFull, hMem, hDisk, hShare, hShareOn, hFwd, hKey uintptr
+	var hFull, hMem, hCPUs, hDisk, hShare, hShareOn, hFwd, hKey uintptr
 	var hRenderAuto, hRenderGPU, hRenderCPU uintptr
 
 	text := func(handle uintptr) string {
@@ -117,7 +118,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 			render = renderCPU
 		}
 		return settingsFromForm(checked == bstChecked, shareChecked == bstChecked,
-			text(hMem), text(hShare), text(hFwd), text(hKey), render)
+			text(hMem), text(hCPUs), text(hShare), text(hFwd), text(hKey), render)
 	}
 	browseFolder := func() {
 		if selected, ok := browseForFolder(hwnd, "Choose the Windows folder to share with Omarchy"); ok {
@@ -221,7 +222,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		return false
 	}
 
-	const clientW, clientH = 480, 616
+	const clientW, clientH = 480, 650
 	rect := [4]int32{0, 0, clientW, clientH}
 	style := uintptr(wsCaption | wsSysmenu)
 	procAdjustWindowRectEx.Call(uintptr(unsafe.Pointer(&rect[0])), style, 0, 0)
@@ -271,6 +272,10 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	mk("STATIC", "Guest memory (MiB)", left, y+3, labelW, 20, ssNoprefix, 0)
 	hMem = mk("EDIT", strconv.Itoa(current.MemoryMiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsMemID)
 	mk("STATIC", "0 = automatic", fieldX+112, y+3, fieldW-112, 20, ssNoprefix, 0)
+	y += 34
+	mk("STATIC", "Guest CPUs", left, y+3, labelW, 20, ssNoprefix, 0)
+	hCPUs = mk("EDIT", strconv.Itoa(current.CPUs), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsCPUsID)
+	mk("STATIC", fmt.Sprintf("0 = automatic (%d of %d)", pickGuestCPUs(runtime.NumCPU()), runtime.NumCPU()), fieldX+112, y+3, fieldW-112, 20, ssNoprefix, 0)
 	y += 34
 	mk("STATIC", "Disk capacity (GiB)", left, y+3, labelW, 20, ssNoprefix, 0)
 	hDisk = mk("EDIT", strconv.Itoa(storage.DiskGiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsDiskID)

@@ -20,11 +20,10 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 	// Guest RAM is sized to the machine (pickGuestMem + the memory ladder);
 	// hostmem for GPU blob resources scales with it.
 	mem := fmt.Sprintf("%dM", cfg.memMiB)
-	hostmem := "4G"
-	if cfg.memMiB < 3072 {
-		hostmem = "1G"
-	} else if cfg.memMiB < 4096 {
-		hostmem = "2G"
+	hostmem := gpuHostMem(cfg.memMiB, cfg.hostTotalMiB)
+	smp := fmt.Sprint(cfg.cpus)
+	if cfg.cpus <= 0 {
+		smp = fmt.Sprint(minimumAutoGuestCPUs)
 	}
 	machine := "q35,accel=whpx"
 	if cfg.irqchipOff {
@@ -32,7 +31,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 	}
 	if cfg.useGpu {
 		args = append(args,
-			"-machine", machine, "-cpu", "host", "-smp", "6", "-m", mem,
+			"-machine", machine, "-cpu", "host", "-smp", smp, "-m", mem,
 			"-device", "virtio-vga-gl,blob=on,hostmem="+hostmem+",venus=on",
 			// The guest cursor is visible in the QEMU profile. Forcing SDL's host
 			// cursor as well produces two pointers that separate during motion.
@@ -46,7 +45,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 	} else {
 		args = append(args,
 			"-machine", machine, "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes",
-			"-smp", "6", "-m", mem,
+			"-smp", smp, "-m", mem,
 			"-vga", "none", "-device", "virtio-gpu-pci,id=gpu0",
 			"-display", sdlDisplay(false, cfg.hostCursor),
 			"-serial", "file:"+filepath.Join(vm, "serial.log"),

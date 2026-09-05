@@ -33,6 +33,9 @@ type config struct {
 	memOverrideMiB int
 	diskGiB        int
 	irqchipOff     bool
+	cpuOverride    int
+	cpus           int
+	hostTotalMiB   int
 	// Rendering decision inputs, see render_probe.go.
 	renderMode    string
 	runtimeID     string
@@ -323,5 +326,18 @@ func TestBuildQemuArgsEscapesCommasInsidePaths(t *testing.T) {
 	}
 	if !strings.Contains(args, "local,path=/host/Work,,Notes,mount_tag=hostshare") {
 		t.Fatalf("share comma was not escaped: %s", args)
+	}
+}
+
+func TestBuildQemuArgsUsesTheChosenCPUCountAndHostMem(t *testing.T) {
+	cfg := &config{vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw", diskFormat: "raw",
+		memMiB: 8192, hostTotalMiB: 32768, cpus: 6, audio: "none", useGpu: true}
+	args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
+	if !strings.Contains(args, " -smp 6 -m 8192M ") || !strings.Contains(args, "hostmem=8G") {
+		t.Fatalf("cpu count or hostmem missing: %s", args)
+	}
+	cfg.cpus = 0
+	if args = strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " "); !strings.Contains(args, " -smp 2 ") {
+		t.Fatalf("unset cpu count should fall back to the minimum: %s", args)
 	}
 }

@@ -121,6 +121,7 @@ wins for that launch:
   "schemaVersion": 1,
   "fullscreen": false,
   "memoryMiB": 0,
+  "cpus": 0,
   "share": "",
   "shareDisabled": false,
   "sharedFolderPrompted": true,
@@ -131,7 +132,8 @@ wins for that launch:
 ```
 
 `fullscreen` is the Immersive mode (`-fullscreen`), `memoryMiB` overrides the
-automatic guest RAM sizing (`-memory`, 0 keeps it automatic), `share` remembers
+automatic guest RAM sizing (`-memory`, 0 keeps it automatic), `cpus` overrides
+the automatic vCPU count (`-cpus`, 0 keeps it automatic), `share` remembers
 the Windows folder shared into Omarchy (`-share`), `shareDisabled` turns that
 folder off without forgetting it, and `forwards` are loopback port
 forwards (`-forward`), and `sshKey` is the public key file to authorize when a
@@ -144,6 +146,10 @@ PC cannot run it, remembers that in `render-probe.json` so later launches go
 straight to CPU rendering instead of repeating the failed attempts. It retries
 the GPU path when the runtime or the display drivers change, and once a week.
 `gpu` retries every launch; `cpu` never tries it (`-nogpu` means the same).
+
+Automatic sizing gives the guest all logical processors but two, between two
+and eight, and a third of the machine's RAM between 4 and 8 GiB (up to 12 GiB
+with GPU rendering), reduced to what Windows can spare at launch.
 
 ### Disk capacity
 

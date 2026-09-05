@@ -3,6 +3,7 @@
 package main
 
 import (
+	"runtime"
 	"bufio"
 	"bytes"
 	"encoding/json"
@@ -50,34 +51,20 @@ type config struct {
 	memOverrideMiB int
 	diskGiB        int
 	irqchipOff     bool
+	// Guest vCPUs chosen by the user (settings.json or -cpus); 0 = automatic.
+	cpuOverride  int
+	cpus         int
+	hostTotalMiB int
 	// Rendering decision inputs, see render_probe.go.
 	renderMode    string
 	runtimeID     string
 	displayDriver string
 }
 
-// pickGuestMem sizes the guest to the machine instead of demanding a fixed
-// 4-6 GB (which dies with "cannot set up guest memory" on a busy 8 GB PC):
-// the mode's ideal, minus a ~2 GB cushion for Windows, floored at 1 GB.
-// Omarchy runs lean (zram in the image), so a small guest beats no guest;
-// truly starved machines get the clean message from the memory ladder.
+// pickGuestMem sizes the guest RAM to this machine; see resources.go.
 func pickGuestMem(gpu bool) int {
-	want := 4096
-	if gpu {
-		want = 6144
-	}
-	_, avail := availMemMiB()
-	if avail == 0 {
-		return want
-	}
-	m := avail - 2048
-	if m > want {
-		m = want
-	}
-	if m < 1024 {
-		m = 1024
-	}
-	return m
+	total, avail := availMemMiB()
+	return pickGuestMemMiB(gpu, total, avail)
 }
 
 // memoryStarved reports whether the current attempt's QEMU died because the
@@ -139,6 +126,7 @@ func main() {
 	flag.BoolVar(&cfg.fresh, "fresh", false, "start over and retain the previous writable disk for recovery")
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen (Immersive)")
 	flag.IntVar(&cfg.memOverrideMiB, "memory", 0, "guest RAM in MiB (default: sized to this PC)")
+	flag.IntVar(&cfg.cpuOverride, "cpus", 0, "guest CPUs (default: sized to this PC)")
 	flag.IntVar(&cfg.diskGiB, "disk-size", 0, "guest disk capacity in GiB (0: default; grows existing standard disks, never shrinks)")
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed (same as -render cpu)")
 	renderFlag := flag.String("render", "", "rendering path: auto (default), gpu, or cpu")
@@ -604,6 +592,12 @@ func main() {
 		// if Windows cannot actually provide that much.
 		cfg.memMiB = cfg.memOverrideMiB
 	}
+	cfg.hostTotalMiB, _ = availMemMiB()
+	cfg.cpus = pickGuestCPUs(runtime.NumCPU())
+	if cfg.cpuOverride != 0 {
+		cfg.cpus = cfg.cpuOverride
+	}
+	logf("resources: %d of %d logical processors, %d MiB guest RAM", cfg.cpus, runtime.NumCPU(), cfg.memMiB)
 	getUI().setStatus("Starting Omarchy...")
 	stopTray := startTray(cfg)
 	defer stopTray()
