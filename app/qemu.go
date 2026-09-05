@@ -147,6 +147,10 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 		return err
 	}
 	expandedBytes := expandedMiB * 1024 * 1024
+	if cfg.fresh && !cfg.portable {
+		_, err := resetStandardDisk(cfg, expandedMiB)
+		return err
+	}
 	if cfg.fresh {
 		if err := os.Remove(cfg.disk); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("discarding the existing disk: %w", err)

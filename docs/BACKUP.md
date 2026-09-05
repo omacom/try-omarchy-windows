@@ -1,11 +1,34 @@
 # VM backup and restore
 
-The development build supports full backups of stopped standard installs.
-Portable installs are not supported yet. These commands are separate from
+The development build supports backup, restore, and reset controls in Settings
+for stopped standard installs. Portable installs are not supported yet. These
+operations are separate from
 [configuration export](MIGRATION.md), which transfers your setup to a physical
 Omarchy installation.
 
-## Create a backup
+## Use Settings
+
+Open Settings and use **Back up**, **Restore**, or **Reset guest** under Backup
+and recovery. Close the Omarchy VM first. Recovery uses the settings already
+saved on disk; edits in the Settings window remain available after the operation.
+
+- **Back up** opens the Windows save dialog. Choose a new ZIP filename outside
+  the installation folder.
+- **Restore** asks for a backup and a parent folder, then creates a separate
+  restored installation. It adds **Start Omarchy** and **Settings** shortcuts
+  inside that new folder. Existing Windows shortcuts are unchanged.
+- **Reset guest** offers a full backup first, then asks for confirmation. A
+  failed or cancelled backup stops the reset. The factory disk is prepared
+  before the old disk is moved into a `vm/before-reset-*` folder. The next normal
+  launch starts first-run setup. Windows shared folders and launcher settings
+  are kept.
+
+Backup and restore show file progress and support cancellation. Reset retains
+only the previous writable disk, not a complete backup of its boot files and
+runtime. Keep a full backup before updating or removing the old installation.
+The retained disk continues using host space until you remove it yourself.
+
+## Create a backup from PowerShell
 
 Shut down Omarchy and close the launcher first. From PowerShell:
 
@@ -63,5 +86,5 @@ to read even when mostly empty.
 Automated tests cover copying, checksums, cancellation, disk locking, low space,
 and preservation of existing folders. A restored guest still needs a Windows
 boot test before release. Keep the original installation until you have checked
-the restored copy. A Settings workflow and backup-before-reset controls remain
-planned in #36.
+the restored copy. The Settings dialogs and a restored guest boot still need hands-on Windows
+validation before release (#36).

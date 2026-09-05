@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -29,34 +30,38 @@ var (
 )
 
 const (
-	wsCaption         = 0x00C00000
-	wsSysmenu         = 0x00080000
-	wsBorder          = 0x00800000
-	wsTabstop         = 0x00010000
-	wsVscroll         = 0x00200000
-	esAutohscroll     = 0x0080
-	esMultiline       = 0x0004
-	esAutovscroll     = 0x0040
-	bsAutocheckbox    = 0x0003
-	bsDefpushbutton   = 0x0001
-	bmGetcheck        = 0x00F0
-	bmSetcheck        = 0x00F1
-	bstChecked        = 1
-	idcArrow          = 32512
-	colorBtnface      = 15
-	defaultGuiFont    = 17
-	wmGettextlength   = 0x000E
-	wmGettext         = 0x000D
-	settingsSaveID    = 2001
-	settingsCancelID  = 2002
-	settingsBrowseID  = 2003
-	settingsFullID    = 2010
-	settingsMemID     = 2011
-	settingsShareID   = 2012
-	settingsFwdID     = 2013
-	settingsKeyID     = 2014
-	settingsShareOnID = 2015
-	settingsDiskID    = 2016
+	wsCaption            = 0x00C00000
+	wsSysmenu            = 0x00080000
+	wsBorder             = 0x00800000
+	wsTabstop            = 0x00010000
+	wsVscroll            = 0x00200000
+	esAutohscroll        = 0x0080
+	esMultiline          = 0x0004
+	esAutovscroll        = 0x0040
+	bsAutocheckbox       = 0x0003
+	bsDefpushbutton      = 0x0001
+	bmGetcheck           = 0x00F0
+	bmSetcheck           = 0x00F1
+	bstChecked           = 1
+	idcArrow             = 32512
+	colorBtnface         = 15
+	defaultGuiFont       = 17
+	wmGettextlength      = 0x000E
+	wmGettext            = 0x000D
+	settingsSaveID       = 2001
+	settingsCancelID     = 2002
+	settingsBrowseID     = 2003
+	settingsFullID       = 2010
+	settingsMemID        = 2011
+	settingsShareID      = 2012
+	settingsFwdID        = 2013
+	settingsKeyID        = 2014
+	settingsShareOnID    = 2015
+	settingsDiskID       = 2016
+	settingsBackupID     = 2020
+	settingsRestoreID    = 2021
+	settingsResetID      = 2022
+	settingsRecoveryDone = 0x8010
 )
 
 // runSettingsDialog shows the window and returns once it closes. saved is
@@ -102,6 +107,23 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		}
 	}
 
+	launchRecovery := func(action string) {
+		self, err := os.Executable()
+		if err != nil {
+			errorBox(err.Error())
+			return
+		}
+		cmd := exec.Command(self, "-dir", dataDir, "-recovery", action)
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+		if err = cmd.Start(); err != nil {
+			errorBox("Could not open recovery controls:\n\n" + err.Error())
+			return
+		}
+		procAllowSetForeground.Call(uintptr(cmd.Process.Pid))
+		procEnableWindow.Call(hwnd, 0)
+		go func() { _ = cmd.Wait(); procPostMessageW.Call(hwnd, settingsRecoveryDone, 0, 0) }()
+	}
+
 	wndProc := syscall.NewCallback(func(h, msg, wParam, lParam uintptr) uintptr {
 		switch msg {
 		case wmCommand:
@@ -139,7 +161,17 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 				procDestroyWindow.Call(h)
 			case settingsBrowseID:
 				browseFolder()
+			case settingsBackupID:
+				launchRecovery("backup")
+			case settingsRestoreID:
+				launchRecovery("restore")
+			case settingsResetID:
+				launchRecovery("reset")
 			}
+			return 0
+		case settingsRecoveryDone:
+			procEnableWindow.Call(h, 1)
+			procSetForegroundWindow.Call(h)
 			return 0
 		case wmClose:
 			procDestroyWindow.Call(h)
@@ -170,7 +202,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		return false
 	}
 
-	const clientW, clientH = 480, 488
+	const clientW, clientH = 480, 558
 	rect := [4]int32{0, 0, clientW, clientH}
 	style := uintptr(wsCaption | wsSysmenu)
 	procAdjustWindowRectEx.Call(uintptr(unsafe.Pointer(&rect[0])), style, 0, 0)
@@ -204,6 +236,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	y += 34
 	mk("STATIC", "Guest memory (MiB)", left, y+3, labelW, 20, ssNoprefix, 0)
 	hMem = mk("EDIT", strconv.Itoa(current.MemoryMiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsMemID)
+	mk("STATIC", "0 = automatic", fieldX+112, y+3, fieldW-112, 20, ssNoprefix, 0)
 	y += 34
 	mk("STATIC", "Disk capacity (GiB)", left, y+3, labelW, 20, ssNoprefix, 0)
 	hDisk = mk("EDIT", strconv.Itoa(storage.DiskGiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsDiskID)
@@ -247,6 +280,25 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	y += 36
 	mk("STATIC", "Changes apply the next time Omarchy starts.",
 		left, y, clientW-2*left, 36, ssNoprefix, 0)
+	y += 34
+	mk("STATIC", "Backup and recovery", left, y, clientW-2*left, 20, ssNoprefix, 0)
+	y += 24
+	for _, control := range []struct {
+		label string
+		id    uintptr
+		x     int32
+	}{{"Back up...", settingsBackupID, left}, {"Restore...", settingsRestoreID, left + 150}, {"Reset guest...", settingsResetID, left + 300}} {
+		button := mk("BUTTON", control.label, control.x, y, 140, 26, wsTabstop, control.id)
+		if portable {
+			procEnableWindow.Call(button, 0)
+		}
+	}
+	y += 30
+	help := "Close Omarchy first. Backups use saved settings. Restore creates a separate copy."
+	if portable {
+		help = "Backup and recovery controls are available for standard installs."
+	}
+	mk("STATIC", help, left, y, clientW-2*left, 34, ssNoprefix, 0)
 	mk("BUTTON", "Save", clientW-16-180, clientH-40, 84, 26, bsDefpushbutton|wsTabstop, settingsSaveID)
 	mk("BUTTON", "Cancel", clientW-16-84, clientH-40, 84, 26, wsTabstop, settingsCancelID)
 	// Settings is often opened from the tray while the maximized QEMU window

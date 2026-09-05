@@ -143,6 +143,7 @@ func main() {
 	var forwards forwardList
 	flag.Var(&forwards, "forward", "forward a Windows loopback port into Omarchy, as tcp:2222:22 or 8080:80 (repeatable)")
 	sshPort := flag.Int("ssh", 0, "forward this Windows loopback port to Omarchy's sshd and start sshd for the session")
+	recoveryAction := flag.String("recovery", "", "open backup, restore, or reset controls for a stopped standard install")
 	backupPath := flag.String("backup", "", "back up a stopped standard VM to a new ZIP file, then exit")
 	restorePath := flag.String("restore", "", "restore a trusted backup into a new folder selected with -dir, then exit")
 	openSettings := flag.Bool("settings", false, "open the settings window, then exit")
@@ -164,12 +165,18 @@ func main() {
 	updateWaitPID := flag.Int("update-wait-pid", 0, "internal: process to wait for before replacing the launcher")
 	updateRestartArgs := flag.String("update-restart-args", "", "internal: encoded launcher restart arguments")
 	flag.Parse()
-	maintenance := *backupPath != "" || *restorePath != ""
+	maintenance := *backupPath != "" || *restorePath != "" || *recoveryAction != ""
+	if *recoveryAction != "" && (*recoveryAction != "backup" && *recoveryAction != "restore" && *recoveryAction != "reset" || *backupPath != "" || *restorePath != "") {
+		fatal("Choose one recovery action: backup, restore, or reset.")
+	}
 	if maintenance && (*backupPath != "" && *restorePath != "" || cfg.portable || cfg.fresh || *openSettings || *diagnostics || *enableWhp || *applyLauncherUpdateFlag || *applyLauncherRollbackFlag) {
-		fatal("Use either -backup or -restore on a stopped standard install, without other maintenance options.")
+		fatal("Use one recovery action on a stopped standard install, without other maintenance options.")
 	}
 	explicitFlags := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicitFlags[f.Name] = true })
+	if explicitFlags["recovery"] && *recoveryAction == "" {
+		fatal("Choose a recovery action: backup, restore, or reset.")
+	}
 	if explicitFlags["backup"] && strings.TrimSpace(*backupPath) == "" || explicitFlags["restore"] && strings.TrimSpace(*restorePath) == "" {
 		fatal("Provide a backup filename with -backup or -restore.")
 	}
@@ -250,14 +257,22 @@ func main() {
 		}
 	}
 
+	if *recoveryAction != "" {
+		err := runRecoveryUI(cfg.dir, *recoveryAction)
+		reportRecoveryResult(err)
+		if err != nil && !errors.Is(err, errSetupCancelled) {
+			os.Exit(1)
+		}
+		return
+	}
 	if maintenance {
 		var err error
 		if *backupPath != "" {
-			getUI().setStatus("Creating VM backup. This may take a while...")
-			err = writeVMBackup(cfg.dir, *backupPath)
+			beginRecoveryProgress("Creating VM backup. This may take a while...")
+			err = writeVMBackupProgress(cfg.dir, *backupPath, recoveryProgress("Backing up"))
 		} else {
-			getUI().setStatus("Verifying and restoring VM backup...")
-			err = restoreVMBackup(*restorePath, cfg.dir)
+			beginRecoveryProgress("Verifying and restoring VM backup...")
+			err = restoreVMBackupProgress(*restorePath, cfg.dir, recoveryProgress("Restoring"))
 		}
 		uiDone()
 		if err != nil {
@@ -332,6 +347,15 @@ func main() {
 	if cfg.portable {
 		cfg.diskFormat = "qcow2"
 		cfg.disk = filepath.Join(cfg.vmDir, "disk.qcow2")
+	}
+	if cfg.fresh && !cfg.portable {
+		if _, err := os.Lstat(cfg.disk); err == nil {
+			proceed, err := confirmResetBackup(cfg.dir)
+			if err != nil || !proceed {
+				reportRecoveryResult(err)
+				return
+			}
+		}
 	}
 	payloadsRolledBack, err := rollbackPendingPayloadUpdates(cfg.dir)
 	if err != nil {
