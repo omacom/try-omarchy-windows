@@ -62,6 +62,11 @@ const (
 	settingsBackupID     = 2020
 	settingsRestoreID    = 2021
 	settingsResetID      = 2022
+	settingsRenderAutoID = 2023
+	settingsRenderGPUID  = 2024
+	settingsRenderCPUID  = 2025
+	bsAutoradiobutton    = 0x0009
+	wsGroup              = 0x00020000
 	settingsRecoveryDone = 0x8010
 )
 
@@ -90,6 +95,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	className, _ := syscall.UTF16PtrFromString("TryOmarchySettings")
 	var hwnd uintptr
 	var hFull, hMem, hDisk, hShare, hShareOn, hFwd, hKey uintptr
+	var hRenderAuto, hRenderGPU, hRenderCPU uintptr
 
 	text := func(handle uintptr) string {
 		n, _, _ := procSendMessageW.Call(handle, wmGettextlength, 0, 0)
@@ -104,8 +110,14 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	collect := func() (settings, error) {
 		checked, _, _ := procSendMessageW.Call(hFull, bmGetcheck, 0, 0)
 		shareChecked, _, _ := procSendMessageW.Call(hShareOn, bmGetcheck, 0, 0)
+		render := renderAuto
+		if r, _, _ := procSendMessageW.Call(hRenderGPU, bmGetcheck, 0, 0); r == bstChecked {
+			render = renderGPU
+		} else if r, _, _ := procSendMessageW.Call(hRenderCPU, bmGetcheck, 0, 0); r == bstChecked {
+			render = renderCPU
+		}
 		return settingsFromForm(checked == bstChecked, shareChecked == bstChecked,
-			text(hMem), text(hShare), text(hFwd), text(hKey))
+			text(hMem), text(hShare), text(hFwd), text(hKey), render)
 	}
 	browseFolder := func() {
 		if selected, ok := browseForFolder(hwnd, "Choose the Windows folder to share with Omarchy"); ok {
@@ -209,7 +221,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		return false
 	}
 
-	const clientW, clientH = 480, 558
+	const clientW, clientH = 480, 616
 	rect := [4]int32{0, 0, clientW, clientH}
 	style := uintptr(wsCaption | wsSysmenu)
 	procAdjustWindowRectEx.Call(uintptr(unsafe.Pointer(&rect[0])), style, 0, 0)
@@ -240,7 +252,22 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	if current.Fullscreen {
 		procSendMessageW.Call(hFull, bmSetcheck, bstChecked, 0)
 	}
-	y += 34
+	y += 30
+	mk("STATIC", "Rendering", left, y+3, labelW, 20, ssNoprefix, 0)
+	hRenderAuto = mk("BUTTON", "Automatic", fieldX, y, 90, 22, bsAutoradiobutton|wsGroup|wsTabstop, settingsRenderAutoID)
+	hRenderGPU = mk("BUTTON", "GPU", fieldX+96, y, 60, 22, bsAutoradiobutton, settingsRenderGPUID)
+	hRenderCPU = mk("BUTTON", "CPU", fieldX+162, y, 60, 22, bsAutoradiobutton, settingsRenderCPUID)
+	switch current.Render {
+	case renderGPU:
+		procSendMessageW.Call(hRenderGPU, bmSetcheck, bstChecked, 0)
+	case renderCPU:
+		procSendMessageW.Call(hRenderCPU, bmSetcheck, bstChecked, 0)
+	default:
+		procSendMessageW.Call(hRenderAuto, bmSetcheck, bstChecked, 0)
+	}
+	y += 24
+	mk("STATIC", "Automatic tries the GPU and remembers when this PC cannot use it. GPU retries every launch.", left, y, clientW-2*left, 20, ssNoprefix, 0)
+	y += 28
 	mk("STATIC", "Guest memory (MiB)", left, y+3, labelW, 20, ssNoprefix, 0)
 	hMem = mk("EDIT", strconv.Itoa(current.MemoryMiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsMemID)
 	mk("STATIC", "0 = automatic", fieldX+112, y+3, fieldW-112, 20, ssNoprefix, 0)
@@ -284,10 +311,12 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	y += 106
 	mk("STATIC", "SSH public key file\n(blank: your ~/.ssh/id_*.pub)", left, y+3, labelW, 40, ssNoprefix, 0)
 	hKey = mk("EDIT", current.SSHKey, fieldX, y, fieldW, 24, wsBorder|wsTabstop|esAutohscroll, settingsKeyID)
-	y += 36
+	// The two-line key label above is 40 px tall from y+3; start the next
+	// row below it or the label's second line paints over this text.
+	y += 50
 	mk("STATIC", "Changes apply the next time Omarchy starts.",
-		left, y, clientW-2*left, 36, ssNoprefix, 0)
-	y += 34
+		left, y, clientW-2*left, 20, ssNoprefix, 0)
+	y += 30
 	mk("STATIC", "Backup and recovery", left, y, clientW-2*left, 20, ssNoprefix, 0)
 	y += 24
 	for _, control := range []struct {

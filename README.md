@@ -125,7 +125,8 @@ wins for that launch:
   "shareDisabled": false,
   "sharedFolderPrompted": true,
   "forwards": ["tcp:2222:22"],
-  "sshKey": ""
+  "sshKey": "",
+  "render": "auto"
 }
 ```
 
@@ -134,8 +135,15 @@ automatic guest RAM sizing (`-memory`, 0 keeps it automatic), `share` remembers
 the Windows folder shared into Omarchy (`-share`), `shareDisabled` turns that
 folder off without forgetting it, and `forwards` are loopback port
 forwards (`-forward`), and `sshKey` is the public key file to authorize when a
-forward targets sshd (`-ssh-key`). Open Settings from the tray, the Start menu,
-or `TryOmarchy.exe -settings`. Changes apply on the next launch.
+forward targets sshd (`-ssh-key`), and `render` picks the rendering path
+(`-render`). Open Settings from the tray, the Start menu, or
+`TryOmarchy.exe -settings`. Changes apply on the next launch.
+
+`render` is `auto` by default: the launcher tries GPU rendering and, when this
+PC cannot run it, remembers that in `render-probe.json` so later launches go
+straight to CPU rendering instead of repeating the failed attempts. It retries
+the GPU path when the runtime or the display drivers change, and once a week.
+`gpu` retries every launch; `cpu` never tries it (`-nogpu` means the same).
 
 ### Disk capacity
 

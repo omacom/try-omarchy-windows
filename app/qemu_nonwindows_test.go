@@ -33,6 +33,10 @@ type config struct {
 	memOverrideMiB int
 	diskGiB        int
 	irqchipOff     bool
+	// Rendering decision inputs, see render_probe.go.
+	renderMode    string
+	runtimeID     string
+	displayDriver string
 }
 
 type progressUI struct{}
@@ -42,6 +46,7 @@ func (*progressUI) setStatus(string, ...any)         {}
 func (*progressUI) setProgress(current, total int64) {}
 func logf(string, ...any)                            {}
 func setSparse(*os.File) error                       { return nil }
+func displayDriverIdentity() string                  { return "" }
 func sparseCopy(dst, src *os.File, total int64, ui *progressUI) error {
 	_, err := io.Copy(dst, src)
 	return err

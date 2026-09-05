@@ -37,6 +37,10 @@ type settings struct {
 	// Public key file authorized for the Omarchy account when a forward
 	// targets sshd. Empty picks the usual ~/.ssh/id_*.pub.
 	SSHKey string `json:"sshKey"`
+	// Render picks the rendering path: "auto" (or empty) tries the GPU path
+	// and remembers when this machine cannot run it, "gpu" retries it every
+	// launch, "cpu" never tries it.
+	Render string `json:"render,omitempty"`
 }
 
 const (
@@ -122,6 +126,9 @@ func (s settings) validate() error {
 	if s.MemoryMiB != 0 && (s.MemoryMiB < minimumGuestMemoryMiB || s.MemoryMiB > maximumGuestMemoryMiB) {
 		return fmt.Errorf("memoryMiB must be 0 (automatic) or between %d and %d", minimumGuestMemoryMiB, maximumGuestMemoryMiB)
 	}
+	if _, err := parseRenderMode(s.Render); err != nil {
+		return err
+	}
 	var l forwardList
 	for _, f := range s.Forwards {
 		if err := l.Set(f); err != nil {
@@ -134,14 +141,23 @@ func (s settings) validate() error {
 // settingsFromForm converts the Win32 controls into the persisted model. It
 // stays outside the window procedure so all input and file validation is
 // covered by the platform-independent test suite.
-func settingsFromForm(fullscreen, shareEnabled bool, memory, share, forwards, sshKey string) (settings, error) {
+func settingsFromForm(fullscreen, shareEnabled bool, memory, share, forwards, sshKey, render string) (settings, error) {
 	s := settings{
-		Fullscreen: fullscreen, Share: strings.TrimSpace(share),
+		Fullscreen: fullscreen, Share: strings.TrimSpace(share), Render: strings.TrimSpace(render),
 		ShareDisabled: !shareEnabled, SharedFolderPrompted: true,
 		SSHKey: strings.TrimSpace(sshKey),
 	}
 	if s.Share == "" {
 		s.ShareDisabled = false
+	}
+	mode, err := parseRenderMode(render)
+	if err != nil {
+		return s, err
+	}
+	if mode != renderAuto {
+		s.Render = mode
+	} else {
+		s.Render = ""
 	}
 	memory = strings.TrimSpace(memory)
 	if memory != "" {
@@ -199,6 +215,13 @@ func applySettings(cfg *config, s settings, explicit map[string]bool, forwards *
 	}
 	if !explicit["ssh-key"] {
 		*sshKeyPath = s.SSHKey
+	}
+	if !explicit["render"] {
+		mode, err := parseRenderMode(s.Render)
+		if err != nil {
+			return err
+		}
+		cfg.renderMode = mode
 	}
 	return nil
 }

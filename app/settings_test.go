@@ -106,12 +106,12 @@ func TestSettingsFromFormParsesAndValidatesEveryRow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := settingsFromForm(true, true, " 6144 ", ` C:\Users\me\Work `, " tcp:2222:22\r\n\r\n udp:5000:5000 ", " "+keyPath+" ")
+	s, err := settingsFromForm(true, true, " 6144 ", ` C:\Users\me\Work `, " tcp:2222:22\r\n\r\n udp:5000:5000 ", " "+keyPath+" ", " GPU ")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !s.Fullscreen || !s.SharedFolderPrompted || s.ShareDisabled || s.MemoryMiB != 6144 || s.Share != `C:\Users\me\Work` || s.SSHKey != keyPath ||
-		strings.Join(s.Forwards, ",") != "tcp:2222:22,udp:5000:5000" {
+		strings.Join(s.Forwards, ",") != "tcp:2222:22,udp:5000:5000" || s.Render != renderGPU {
 		t.Fatalf("form parsed incorrectly: %+v", s)
 	}
 
@@ -121,9 +121,15 @@ func TestSettingsFromFormParsesAndValidatesEveryRow(t *testing.T) {
 		"forward":      {"0", "tcp:22", ""},
 		"key":          {"0", "tcp:2222:22", filepath.Join(dir, "missing.pub")},
 	} {
-		if _, err := settingsFromForm(false, false, input[0], "", input[1], input[2]); err == nil {
+		if _, err := settingsFromForm(false, false, input[0], "", input[1], input[2], ""); err == nil {
 			t.Fatalf("%s input accepted", name)
 		}
+	}
+	if _, err := settingsFromForm(false, false, "0", "", "", "", "software"); err == nil {
+		t.Fatal("unknown render mode accepted")
+	}
+	if s, err := settingsFromForm(false, false, "0", "", "", "", " auto "); err != nil || s.Render != "" {
+		t.Fatalf("automatic rendering should be stored as the empty default, got %q %v", s.Render, err)
 	}
 }
 
@@ -155,7 +161,7 @@ func TestSharedFolderOfferAndEnableState(t *testing.T) {
 		t.Fatalf("disabled share = %q", got)
 	}
 
-	s, err := settingsFromForm(false, false, "0", `C:\Users\me\Work`, "", "")
+	s, err := settingsFromForm(false, false, "0", `C:\Users\me\Work`, "", "", "")
 	if err != nil || !s.ShareDisabled || s.activeShare() != "" || !s.SharedFolderPrompted {
 		t.Fatalf("disabled form state = %+v, %v", s, err)
 	}

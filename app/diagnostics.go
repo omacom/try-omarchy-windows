@@ -24,6 +24,7 @@ var diagnosticFiles = []string{
 	"runtime/" + runtimeReceiptFilename,
 	updateStateFilename,
 	payloadUpdateStateFilename,
+	renderProbeFilename,
 	"vm/shell.log",
 	"vm/qemu-stderr.log",
 	"vm/qemu.log",
@@ -237,6 +238,10 @@ func launcherFacts(cfg *config) map[string]string {
 		"launcher.version":  currentVersion,
 		"launcher.portable": fmt.Sprint(cfg.portable),
 		"launcher.noGpu":    fmt.Sprint(cfg.noGpu),
+		"launcher.render":   cfg.renderMode,
+		"launcher.useGpu":   fmt.Sprint(cfg.useGpu),
+		"runtime.id":        cfg.runtimeID,
+		"display.drivers":   cfg.displayDriver,
 		"time":              time.Now().Format(time.RFC3339),
 	}
 	for k, v := range hostFacts() {
