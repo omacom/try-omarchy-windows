@@ -1,0 +1,62 @@
+From 67d72c4b8fd5c296a96d8fadeb17023e7959771f Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 5 Sep 2026 12:37:18 -0400
+Subject: [PATCH] Skip the fcitx5 unit on disks without the binary
+
+Persistent disks created before fcitx5 shipped keep the unit enabled with no binary, so it retries every two seconds for the whole session. A drop-in in the compat overlay adds ConditionPathExists=/usr/bin/fcitx5, so the unit is skipped cleanly until the package is installed and runs normally on new images. Integration revision 10.
+---
+ .../user/omarchy-fcitx5.service.d/10-try-omarchy.conf        | 5 +++++
+ guest/scripts/finalize-rootfs.sh                             | 3 ++-
+ guest/tests/verify.py                                        | 3 ++-
+ 3 files changed, 9 insertions(+), 2 deletions(-)
+ create mode 100644 guest/factory-overlay/etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf
+
+diff --git a/guest/factory-overlay/etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf b/guest/factory-overlay/etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf
+new file mode 100644
+index 0000000..5805df0
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf
+@@ -0,0 +1,5 @@
++# Disks created before fcitx5 shipped in the image have the unit enabled but
++# no binary, and Restart=always then retries every two seconds for the whole
++# session. Skip cleanly until the package is installed.
++[Unit]
++ConditionPathExists=/usr/bin/fcitx5
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index b2e0cc8..0159324 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -55,6 +55,7 @@ update-desktop-database /usr/share/applications || true
+ # attempting a full package upgrade.
+ compat_paths=(
+   etc/systemd/user/clipboard-bridge.service
++  etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf
+   etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service
+   usr/local/bin/clipboard-bridge
+   etc/systemd/system/try-omarchy-ready.service
+@@ -85,7 +86,7 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ }
+ # Bump this revision whenever compat-overlay.tar changes in a way that must be
+ # applied to persistent disks created by an earlier launcher release.
+-compat_revision=9
++compat_revision=10
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 10461e0..9e70fcb 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -257,7 +257,8 @@ def main() -> None:
+ 
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     check(
+-        "compat_revision=9" in finalize_rootfs
++        "compat_revision=10" in finalize_rootfs
++        and "etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/agent" in finalize_rootfs
+         and "compat_revision" in finalize_rootfs.split("compat-version")[0]
+         and "usr/local/lib/try-omarchy/apply-host-locale" in finalize_rootfs
+-- 
+2.55.0
+
