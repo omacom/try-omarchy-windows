@@ -92,6 +92,19 @@ func downloadVerifiedWithOptions(client *http.Client, url, dest, wantSum string,
 		}
 		attempt++
 	}
+	// A previous run may have finished transferring before it was interrupted
+	// during verification or publication. Recover that file even if the server
+	// is currently unavailable. Hash only once, after retries, so incomplete
+	// multi-gigabyte downloads do not get rehashed on every network failure.
+	if size, err := partialFileSize(dest + ".part"); err == nil && size > 0 {
+		ok, err := verifyAndCommitPart(dest+".part", dest, wantSum, progress)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+	}
 	return fmt.Errorf("download failed after %d attempts: %w", opts.maxAttempts, lastErr)
 }
 
@@ -126,6 +139,17 @@ func downloadAttempt(client *http.Client, url, dest, wantSum string, progress do
 	total := resp.ContentLength
 	switch resp.StatusCode {
 	case http.StatusOK:
+		// A complete cached transfer needs verification, not another download,
+		// even when the server ignores Range. A wrong hash still restarts below.
+		if offset > 0 && offset == resp.ContentLength {
+			ok, err := verifyAndCommitPart(tmp, dest, wantSum, progress)
+			if err != nil {
+				return false, false, err
+			}
+			if ok {
+				return false, false, nil
+			}
+		}
 		// The server ignored Range. Restart safely using this full response.
 		offset = 0
 	case http.StatusPartialContent:
@@ -346,10 +370,17 @@ func copyDownloadBody(body io.ReadCloser, dst io.Writer, offset, total int64, pr
 		}
 		n, readErr := body.Read(buf)
 		if n > 0 {
-			if _, err := dst.Write(buf[:n]); err != nil {
+			if total >= 0 && int64(n) > total-offset-written {
+				return written, false, fmt.Errorf("download exceeded its expected size")
+			}
+			count, err := dst.Write(buf[:n])
+			written += int64(count)
+			if err != nil {
 				return written, false, err
 			}
-			written += int64(n)
+			if count != n {
+				return written, false, io.ErrShortWrite
+			}
 			if activity != nil {
 				select {
 				case activity <- struct{}{}:

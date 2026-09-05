@@ -289,9 +289,8 @@ func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 	os.RemoveAll(tmp)
 	if err := unzipTree(zipPath, tmp, ui); err != nil {
 		os.RemoveAll(tmp)
-		if removeZip {
-			os.Remove(zipPath)
-		}
+		// Keep the verified archive after cancellation, low space, or a file
+		// lock. The next attempt rechecks its hash and can unpack it locally.
 		return "", fmt.Errorf("unpacking %s: %w", runtimeZip, err)
 	}
 	if err := writeRuntimeReceipt(tmp, release, sumsSHA256, archiveSHA); err != nil {
