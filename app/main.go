@@ -149,6 +149,7 @@ func main() {
 	recoveryAction := flag.String("recovery", "", "open backup, restore, reset, or uninstall controls for a stopped standard install")
 	uninstall := flag.Bool("uninstall", false, "remove this Try Omarchy installation: shortcuts, the Apps & features entry, and the data folder")
 	uninstallFinish := flag.Bool("uninstall-finish", false, "internal: delete the data folder after the launcher inside it exits")
+	reclaim := flag.Bool("reclaim", false, "ask the running Omarchy to zero its free space so the disk file shrinks after shutdown, then exit")
 	backupPath := flag.String("backup", "", "back up a stopped standard VM to a new ZIP file, then exit")
 	restorePath := flag.String("restore", "", "restore a trusted backup into a new folder selected with -dir, then exit")
 	openSettings := flag.Bool("settings", false, "open the settings window, then exit")
@@ -205,6 +206,9 @@ func main() {
 	// code (see setup.go); it must not touch the single-instance port.
 	if *enableWhp {
 		os.Exit(runDismEnable())
+	}
+	if *reclaim {
+		os.Exit(sendLifecycleCommand("reclaim"))
 	}
 	if *uninstallFinish {
 		if !explicitFlags["dir"] {
@@ -648,6 +652,7 @@ func main() {
 	}
 	cmdline += fmt.Sprintf(" video=%dx%d", conW, conH)
 
+	reclaimDir.Store(&cfg.dir)
 	go runGuestAgent()
 	go runWinKeyHook()
 	go runWinKeyQmp()
@@ -664,6 +669,7 @@ func main() {
 	if finishSetupCancellation(cfg, checkSetupCancelled()) {
 		return
 	}
+	compactAfterShutdown(cfg)
 	logf("---- exiting ----")
 }
 
@@ -929,6 +935,8 @@ func runLifecycleListener() {
 				case "ready":
 					logf("guest userspace announced ready")
 					guestReady.Store(true)
+				case "reclaim":
+					requestReclaim()
 				}
 			}(c)
 		}
@@ -977,6 +985,10 @@ func recordRenderResult(cfg *config) {
 // sleep, so the guest clock can be corrected right away.
 var hostResumed = make(chan struct{}, 1)
 
+// theAgent is the running launcher's guest agent channel; nil until it is
+// listening.
+var theAgent atomic.Pointer[guestAgent]
+
 func runGuestAgent() {
 	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", agentPort))
 	if err != nil {
@@ -984,5 +996,65 @@ func runGuestAgent() {
 		return
 	}
 	logf("agent: listening on %d", agentPort)
-	newGuestAgent().run(l, hostResumed)
+	a := newGuestAgent()
+	theAgent.Store(a)
+	a.run(l, hostResumed)
+}
+
+// requestReclaim asks the guest to zero its free space so disk.raw can be
+// compacted after shutdown. Used by the tray, and by "-reclaim" through the
+// lifecycle port.
+// reclaimDir is the data directory whose Windows drive bounds a reclaim pass.
+var reclaimDir atomic.Pointer[string]
+
+func requestReclaim() bool {
+	dir := reclaimDir.Load()
+	a := theAgent.Load()
+	if dir == nil || a == nil {
+		return false
+	}
+	free, err := diskFreeBytes(*dir)
+	if err != nil {
+		logf("reclaim: %v", err)
+		return false
+	}
+	budget := reclaimBudgetMiB(free)
+	if budget == 0 {
+		logf("reclaim: the Windows drive has too little free space for a pass (%s free)", formatGiB(free))
+		return false
+	}
+	if !a.requestZeroFill(budget) {
+		logf("reclaim: no guest agent connected; the guest needs the current image update")
+		return false
+	}
+	return true
+}
+
+// compactAfterShutdown runs once the guest has powered off, when the disk is
+// closed, and only when the guest reported a zero-fill during this session.
+func compactAfterShutdown(cfg *config) {
+	a := theAgent.Load()
+	if a == nil || !a.compactPending() || cfg.diskFormat != "raw" {
+		return
+	}
+	getUI().setStatus("Reclaiming disk space...")
+	logf("compact: scanning %s", cfg.disk)
+	reclaimed, err := compactDisk(cfg.disk, nil)
+	if err != nil {
+		logf("compact: %v", err)
+		return
+	}
+	logf("compact: %s of zero blocks turned back into holes", formatGiB(reclaimed))
+}
+
+// sendLifecycleCommand hands one line to the running launcher on loopback.
+func sendLifecycleCommand(command string) int {
+	c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", lifecyclePort), 3*time.Second)
+	if err != nil {
+		errorBox("Try Omarchy is not running.")
+		return 1
+	}
+	defer c.Close()
+	c.Write([]byte(command + "\n"))
+	return 0
 }

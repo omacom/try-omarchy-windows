@@ -50,6 +50,7 @@ func (*progressUI) setProgress(current, total int64) {}
 func logf(string, ...any)                            {}
 func setSparse(*os.File) error                       { return nil }
 func displayDriverIdentity() string                  { return "" }
+func punchHole(*os.File, int64, int64) error         { return nil }
 func sparseCopy(dst, src *os.File, total int64, ui *progressUI) error {
 	_, err := io.Copy(dst, src)
 	return err

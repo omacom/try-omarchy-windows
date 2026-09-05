@@ -170,6 +170,13 @@ Capacity is a limit, not space reserved on Windows. The sparse disk uses host
 storage as you add files. Settings shows the current capacity and free space on
 the Windows drive. Keep important files backed up outside the guest.
 
+Deleting files inside Omarchy does not shrink the disk file by itself. Use
+**Reclaim disk space** in the tray menu (or `TryOmarchy.exe -reclaim` while
+Omarchy is running): Omarchy writes zeros over its free space, up to what the
+Windows drive can spare beyond a 4 GiB reserve and at most 8 GiB per pass,
+and the disk file shrinks the next time Omarchy shuts down. Run it again for
+another pass if a lot was deleted.
+
 This preference is saved separately in `storage.json` so older launchers can
 still read their settings after rollback. An explicit `-disk-size` applies only
 to that launch. Portable QCOW2 disks keep their existing capacity.

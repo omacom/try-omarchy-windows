@@ -47,20 +47,21 @@ var (
 )
 
 const (
-	mbIconError    = 0x10
-	whKeyboardLL   = 13
-	wmKeydown      = 0x100
-	wmSyskeydown   = 0x104
-	vkLwin         = 0x5B
-	vkRwin         = 0x5C
-	qsAllinput     = 0x04FF
-	pmRemove       = 1
-	cfUnicodetext  = 13
-	cfDib          = 8
-	cfDibV5        = 17
-	gmemMoveable   = 2
-	fsctlSetSparse = 0x900C4
-	maxTitle       = 256
+	mbIconError      = 0x10
+	whKeyboardLL     = 13
+	wmKeydown        = 0x100
+	wmSyskeydown     = 0x104
+	vkLwin           = 0x5B
+	vkRwin           = 0x5C
+	qsAllinput       = 0x04FF
+	pmRemove         = 1
+	cfUnicodetext    = 13
+	cfDib            = 8
+	cfDibV5          = 17
+	gmemMoveable     = 2
+	fsctlSetSparse   = 0x900C4
+	fsctlSetZeroData = 0x980C8
+	maxTitle         = 256
 )
 
 type msgStruct struct {
@@ -443,4 +444,18 @@ func globalCopy(data []byte) uintptr {
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(p)), len(data)), data)
 	procGlobalUnlock.Call(h)
 	return h
+}
+
+// punchHole deallocates a zero range of a sparse file so it stops costing
+// space on the Windows drive. Reads of the range still return zeros.
+func punchHole(f *os.File, offset, length int64) error {
+	var zeroData struct{ fileOffset, beyondFinalZero int64 }
+	zeroData.fileOffset, zeroData.beyondFinalZero = offset, offset+length
+	var returned uint32
+	r, _, err := procDeviceIoControl.Call(f.Fd(), fsctlSetZeroData, uintptr(unsafe.Pointer(&zeroData)), unsafe.Sizeof(zeroData), 0, 0,
+		uintptr(unsafe.Pointer(&returned)), 0)
+	if r == 0 {
+		return err
+	}
+	return nil
 }

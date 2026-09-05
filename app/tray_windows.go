@@ -34,6 +34,7 @@ const (
 	trayCommandSettings = 3003
 	trayCommandDiagnose = 3004
 	trayCommandShutdown = 3005
+	trayCommandReclaim  = 3006
 
 	nimAdd                = 0
 	nimDelete             = 2
@@ -211,6 +212,7 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 		appendItem(mfSeparator, 0, "")
 		appendItem(mfString, trayCommandSettings, "Settings...")
 		appendItem(mfString, trayCommandDiagnose, "Create diagnostics...")
+		appendItem(mfString, trayCommandReclaim, "Reclaim disk space...")
 		appendItem(mfSeparator, 0, "")
 		appendItem(mfString, trayCommandShutdown, "Shut down Omarchy...")
 
@@ -232,6 +234,12 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 			launchControl("-settings", &settingsOpen)
 		case trayCommandDiagnose:
 			launchControl("-diagnostics", &diagnosticsOpen)
+		case trayCommandReclaim:
+			if msgBox("Give deleted Omarchy files' space back to Windows?\n\nOmarchy will write zeros over its free space now, which takes a few minutes and briefly fills its disk. The disk file on Windows shrinks the next time Omarchy shuts down.", mbYesNo|mbIconQuestion|mbDefbutton2) == idYes {
+				if !requestReclaim() {
+					infoBox("Omarchy is not ready for this yet. It needs the current guest update, a moment after startup, and at least 4 GiB free on the Windows drive; try again shortly.")
+				}
+			}
 		case trayCommandShutdown:
 			if qemuHwnd.Load() == 0 {
 				infoBox("Omarchy is still starting. You can shut it down once its window opens.")

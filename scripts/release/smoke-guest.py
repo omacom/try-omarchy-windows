@@ -27,7 +27,7 @@ FACT_CHECKS = {
     "sshd": "systemctl is-active sshd 2>/dev/null || true",
     "omarchy-repo-signed": "grep -A2 '^\\[omarchy\\]' /etc/pacman.conf | grep -q TrustAll && echo no || echo yes",
     "input-group": "id -nG | tr ' ' '\\n' | grep -qx input && echo yes || echo no",
-    "compat-version": "test \"$(cat /usr/share/try-omarchy/compat-version)\" = \"8:$(uname -r)\" && echo yes || echo no",
+    "compat-version": "test \"$(cat /usr/share/try-omarchy/compat-version)\" = \"9:$(uname -r)\" && echo yes || echo no",
     "kernel-modules": "test -f /usr/lib/modules/$(uname -r)/modules.dep.bin && echo yes || echo no",
     "ready-service": "systemctl is-enabled try-omarchy-ready.service 2>/dev/null || true",
 }
