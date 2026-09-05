@@ -144,12 +144,12 @@ forward targets sshd (`-ssh-key`), and `render` picks the rendering path
 `render` is `auto` by default: the launcher tries GPU rendering and, when this
 PC cannot run it, remembers that in `render-probe.json` so later launches go
 straight to CPU rendering instead of repeating the failed attempts. It retries
-the GPU path when the runtime or the display drivers change, and once a week.
+the GPU path when the runtime or the display drivers change, and once a day.
 `gpu` retries every launch; `cpu` never tries it (`-nogpu` means the same).
 
 Automatic sizing gives the guest all logical processors but two, between two
-and eight, and a third of the machine's RAM between 4 and 8 GiB (up to 12 GiB
-with GPU rendering), reduced to what Windows can spare at launch.
+and eight, and a third of the machine's RAM between 4 and 8 GiB (6 GiB with GPU
+rendering, the same as before), reduced to what Windows can spare at launch.
 
 The guest follows the Windows time zone and default keyboard layout. Each is
 applied inside Omarchy when it changes on the Windows side, so a layout or
@@ -170,12 +170,12 @@ Capacity is a limit, not space reserved on Windows. The sparse disk uses host
 storage as you add files. Settings shows the current capacity and free space on
 the Windows drive. Keep important files backed up outside the guest.
 
-Deleting files inside Omarchy does not shrink the disk file by itself. Use
-**Reclaim disk space** in the tray menu (or `TryOmarchy.exe -reclaim` while
-Omarchy is running): Omarchy writes zeros over its free space, up to what the
-Windows drive can spare beyond a 4 GiB reserve and at most 8 GiB per pass,
-and the disk file shrinks the next time Omarchy shuts down. Run it again for
-another pass if a lot was deleted.
+Deleting files inside Omarchy does not shrink the disk file by itself. While
+Omarchy is running, `TryOmarchy.exe -reclaim` asks it to write zeros over its
+free space, up to what the Windows drive can spare beyond a 4 GiB reserve and
+at most 8 GiB per pass, and the disk file shrinks the next time Omarchy shuts
+down. Run it again for another pass if a lot was deleted. A tray entry for
+this is coming once it has been exercised on more machines.
 
 This preference is saved separately in `storage.json` so older launchers can
 still read their settings after rollback. An explicit `-disk-size` applies only

@@ -89,7 +89,7 @@ func (a *guestAgent) sendTime(reason string) bool {
 		return false
 	}
 	line := fmt.Sprintf("time %d\n", a.now().Unix())
-	a.conn.SetWriteDeadline(a.now().Add(3 * time.Second))
+	a.conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 	if _, err := a.conn.Write([]byte(line)); err != nil {
 		a.conn.Close()
 		a.conn = nil
@@ -148,7 +148,7 @@ func (a *guestAgent) requestZeroFill(budgetMiB int64) bool {
 	if a.conn == nil {
 		return false
 	}
-	a.conn.SetWriteDeadline(a.now().Add(3 * time.Second))
+	a.conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 	if _, err := a.conn.Write([]byte(fmt.Sprintf("zero-fill %d\n", budgetMiB))); err != nil {
 		a.conn.Close()
 		a.conn = nil
