@@ -145,18 +145,34 @@ func runWinKeyQmp() {
 // when the window first appears, and stamps our icon over QEMU's on the
 // window + taskbar (the SDL window belongs to qemu-system-*.exe, so without
 // this the taskbar shows the QEMU logo - the last piece of QEMU chrome).
-func runTitleEnforcer(fullscreen bool) {
+// It also remembers where the user leaves the window: the placement is saved
+// whenever it changes and restored, in place of the maximized default, on
+// the next windowed launch if that spot is still on a connected display.
+func runTitleEnforcer(dir string, fullscreen bool) {
 	hInst, _, _ := procGetModuleHandleW.Call(0)
 	appIcon, _, _ := procLoadIconW.Call(hInst, 1) // the embedded Omarchy .ico
 	lastPid := uint32(0)
 	maximize := false
+	var restore, last *windowPlacement
+	if !fullscreen {
+		restore = rememberedWindow(dir)
+		last = restore
+	}
 	for {
 		if pid := qemuPid.Load(); pid != 0 {
 			if pid != lastPid {
 				lastPid = pid
 				maximize = !fullscreen
 			}
-			enforceTitle(pid, &maximize, appIcon)
+			enforceTitle(pid, &maximize, appIcon, restore)
+			if hwnd := qemuHwnd.Load(); hwnd != 0 && !fullscreen && !maximize {
+				if now := capturePlacement(hwnd); now != nil && !now.sameAs(last) {
+					now.SavedAt = time.Now()
+					if err := saveWindowPlacement(dir, *now); err == nil {
+						last = now
+					}
+				}
+			}
 		} else {
 			lastPid = 0
 			qemuHwnd.Store(0)
