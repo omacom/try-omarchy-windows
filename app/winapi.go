@@ -53,6 +53,7 @@ const (
 	wmSyskeydown     = 0x104
 	vkLwin           = 0x5B
 	vkRwin           = 0x5C
+	vkSnapshot       = 0x2C
 	qsAllinput       = 0x04FF
 	pmRemove         = 1
 	cfUnicodetext    = 13
