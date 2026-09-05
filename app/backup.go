@@ -1,7 +1,6 @@
 package main
 
 import (
-	"time"
 	"archive/zip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const backupManifestName = "backup.json"

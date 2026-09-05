@@ -3,7 +3,6 @@
 package main
 
 import (
-	"runtime"
 	"bufio"
 	"bytes"
 	"encoding/json"
@@ -15,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -144,7 +144,9 @@ func main() {
 	var forwards forwardList
 	flag.Var(&forwards, "forward", "forward a Windows loopback port into Omarchy, as tcp:2222:22 or 8080:80 (repeatable)")
 	sshPort := flag.Int("ssh", 0, "forward this Windows loopback port to Omarchy's sshd and start sshd for the session")
-	recoveryAction := flag.String("recovery", "", "open backup, restore, or reset controls for a stopped standard install")
+	recoveryAction := flag.String("recovery", "", "open backup, restore, reset, or uninstall controls for a stopped standard install")
+	uninstall := flag.Bool("uninstall", false, "remove this Try Omarchy installation: shortcuts, the Apps & features entry, and the data folder")
+	uninstallFinish := flag.Bool("uninstall-finish", false, "internal: delete the data folder after the launcher inside it exits")
 	backupPath := flag.String("backup", "", "back up a stopped standard VM to a new ZIP file, then exit")
 	restorePath := flag.String("restore", "", "restore a trusted backup into a new folder selected with -dir, then exit")
 	openSettings := flag.Bool("settings", false, "open the settings window, then exit")
@@ -166,8 +168,14 @@ func main() {
 	updateWaitPID := flag.Int("update-wait-pid", 0, "internal: process to wait for before replacing the launcher")
 	updateRestartArgs := flag.String("update-restart-args", "", "internal: encoded launcher restart arguments")
 	flag.Parse()
+	if *uninstall {
+		if *recoveryAction != "" && *recoveryAction != "uninstall" {
+			fatal("Choose one recovery action: backup, restore, reset, or uninstall.")
+		}
+		*recoveryAction = "uninstall"
+	}
 	maintenance := *backupPath != "" || *restorePath != "" || *recoveryAction != ""
-	if *recoveryAction != "" && (*recoveryAction != "backup" && *recoveryAction != "restore" && *recoveryAction != "reset" || *backupPath != "" || *restorePath != "") {
+	if *recoveryAction != "" && (*recoveryAction != "backup" && *recoveryAction != "restore" && *recoveryAction != "reset" && *recoveryAction != "uninstall" || *backupPath != "" || *restorePath != "") {
 		fatal("Choose one recovery action: backup, restore, or reset.")
 	}
 	if maintenance && (*backupPath != "" && *restorePath != "" || cfg.portable || cfg.fresh || *openSettings || *diagnostics || *enableWhp || *applyLauncherUpdateFlag || *applyLauncherRollbackFlag) {
@@ -195,6 +203,12 @@ func main() {
 	// code (see setup.go); it must not touch the single-instance port.
 	if *enableWhp {
 		os.Exit(runDismEnable())
+	}
+	if *uninstallFinish {
+		if !explicitFlags["dir"] {
+			os.Exit(2)
+		}
+		os.Exit(finishUninstall(cfg.dir, *updateWaitPID))
 	}
 	// Bind before the first-run location prompt. Two quick launches must not
 	// race each other through the folder choice or write the same pointer and

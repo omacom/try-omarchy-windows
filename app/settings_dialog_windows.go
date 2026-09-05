@@ -66,6 +66,7 @@ const (
 	settingsRenderGPUID  = 2024
 	settingsRenderCPUID  = 2025
 	settingsCPUsID       = 2026
+	settingsUninstallID  = 2027
 	bsAutoradiobutton    = 0x0009
 	wsGroup              = 0x00020000
 	settingsRecoveryDone = 0x8010
@@ -187,6 +188,8 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 				launchRecovery("restore")
 			case settingsResetID:
 				launchRecovery("reset")
+			case settingsUninstallID:
+				launchRecovery("uninstall")
 			}
 			return 0
 		case settingsRecoveryDone:
@@ -222,7 +225,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		return false
 	}
 
-	const clientW, clientH = 480, 650
+	const clientW, clientH = 480, 682
 	rect := [4]int32{0, 0, clientW, clientH}
 	style := uintptr(wsCaption | wsSysmenu)
 	procAdjustWindowRectEx.Call(uintptr(unsafe.Pointer(&rect[0])), style, 0, 0)
@@ -339,7 +342,13 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	if portable {
 		help = "Backup and recovery controls are available for standard installs."
 	}
-	mk("STATIC", help, left, y, clientW-2*left, 34, ssNoprefix, 0)
+	mk("STATIC", help, left, y, clientW-2*left, 20, ssNoprefix, 0)
+	y += 26
+	uninstallButton := mk("BUTTON", "Remove Try Omarchy...", left, y, 160, 26, wsTabstop, settingsUninstallID)
+	if portable {
+		procEnableWindow.Call(uninstallButton, 0)
+	}
+	mk("STATIC", "Deletes this installation after offering a backup.", left+170, y+5, clientW-2*left-170, 20, ssNoprefix, 0)
 	mk("BUTTON", "Save", clientW-16-180, clientH-40, 84, 26, bsDefpushbutton|wsTabstop, settingsSaveID)
 	mk("BUTTON", "Cancel", clientW-16-84, clientH-40, 84, 26, wsTabstop, settingsCancelID)
 	// Settings is often opened from the tray while the maximized QEMU window

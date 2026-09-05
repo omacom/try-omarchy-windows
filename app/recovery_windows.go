@@ -82,6 +82,8 @@ func runRecoveryUI(dir, action string) error {
 		}
 	case "reset":
 		return resetFromSettings(dir)
+	case "uninstall":
+		return runUninstall(dir)
 	default:
 		return fmt.Errorf("unknown recovery action")
 	}

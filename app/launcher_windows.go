@@ -187,6 +187,9 @@ func offerLauncherShortcuts(dir string) {
 	if err := ensureSettingsShortcutForExistingInstall(target, installDir); err != nil {
 		logf("settings shortcut: %v", err)
 	}
+	if err := registerUninstallEntry(target, installDir); err != nil {
+		logf("apps & features entry: %v", err)
+	}
 	if shortcutOfferRecorded(installDir) {
 		return
 	}
