@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,7 +76,7 @@ func loadSettings(path string) (settings, error) {
 	if err != nil {
 		return s, err
 	}
-	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&s); err != nil {
 		return s, fmt.Errorf("%s: %v", path, err)
