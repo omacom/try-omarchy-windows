@@ -151,6 +151,13 @@ Automatic sizing gives the guest all logical processors but two, between two
 and eight, and a third of the machine's RAM between 4 and 8 GiB (up to 12 GiB
 with GPU rendering), reduced to what Windows can spare at launch.
 
+The guest follows the Windows time zone and default keyboard layout. Each is
+applied inside Omarchy when it changes on the Windows side, so a layout or
+zone chosen inside the guest stays until Windows changes. `-timezone` and
+`-keyboard` override this for a launch: `keep` leaves the guest alone, or give
+an IANA zone such as `Europe/Berlin` and an XKB layout such as `de` or
+`us:intl`.
+
 ### Disk capacity
 
 Open Settings and set **Disk capacity (GiB)**, or launch with `-disk-size 64`.

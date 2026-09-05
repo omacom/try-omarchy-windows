@@ -138,6 +138,8 @@ func main() {
 	flag.IntVar(&cfg.diskGiB, "disk-size", 0, "guest disk capacity in GiB (0: default; grows existing standard disks, never shrinks)")
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed (same as -render cpu)")
 	renderFlag := flag.String("render", "", "rendering path: auto (default), gpu, or cpu")
+	timeZoneFlag := flag.String("timezone", "", "guest time zone: blank follows Windows, keep leaves the guest alone, or an IANA name such as Europe/Berlin")
+	keyboardFlag := flag.String("keyboard", "", "guest keyboard layout: blank follows Windows, keep leaves the guest alone, or an XKB layout such as de or us:intl")
 	flag.BoolVar(&cfg.hostCursor, "host-cursor", false, "force the legacy Windows cursor over the guest")
 	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the trial account")
 	flag.BoolVar(&cfg.portable, "portable", false, "run entirely from data and payload folders beside the executable")
@@ -591,6 +593,11 @@ func main() {
 	}
 	cmdline += sshCmdline(cfg.forwards, cfg.sshKey)
 	cmdline += shareCmdline(cfg.share)
+	zone, layout, variant := hostLocale(*timeZoneFlag, *keyboardFlag)
+	if words := hostLocaleCmdline(zone, layout, variant); words != "" {
+		cmdline += words
+		logf("guest follows Windows locale:%s", words)
+	}
 
 	if err := prepareDisk(cfg, spec.Runtime.Storage.ExpandedSizeMiB); err != nil {
 		if finishSetupCancellation(cfg, err) {

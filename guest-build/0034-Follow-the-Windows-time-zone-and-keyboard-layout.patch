@@ -1,0 +1,234 @@
+From b681c6813b25996c4f377c1f4fac81a201fc9f54 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 5 Sep 2026 04:06:59 -0400
+Subject: [PATCH] Follow the Windows time zone and keyboard layout
+
+The launcher passes tryomarchy.tz=Area/City and tryomarchy.kb=layout[:variant] on the kernel command line. A sysinit service applies each value when it differs from the one applied last, so a change made inside the guest survives until Windows itself changes. The time zone becomes the /etc/localtime link; the keyboard layout goes into /etc/vconsole.conf as XKBLAYOUT and XKBVARIANT, which Omarchy's Hyprland input config already reads. The service ships in the compat overlay so existing disks gain it; the integration revision moves to 6.
+---
+ .../try-omarchy-host-locale.service           |  1 +
+ .../system/try-omarchy-host-locale.service    | 12 ++++
+ .../local/lib/try-omarchy/apply-host-locale   | 64 +++++++++++++++++++
+ guest/scripts/finalize-rootfs.sh              |  5 +-
+ guest/tests/test_overlay_scripts.py           | 58 +++++++++++++++++
+ guest/tests/verify.py                         |  4 +-
+ 6 files changed, 142 insertions(+), 2 deletions(-)
+ create mode 120000 guest/factory-overlay/etc/systemd/system/sysinit.target.wants/try-omarchy-host-locale.service
+ create mode 100644 guest/factory-overlay/etc/systemd/system/try-omarchy-host-locale.service
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/apply-host-locale
+
+diff --git a/guest/factory-overlay/etc/systemd/system/sysinit.target.wants/try-omarchy-host-locale.service b/guest/factory-overlay/etc/systemd/system/sysinit.target.wants/try-omarchy-host-locale.service
+new file mode 120000
+index 0000000..4b031e7
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/sysinit.target.wants/try-omarchy-host-locale.service
+@@ -0,0 +1 @@
++../try-omarchy-host-locale.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/system/try-omarchy-host-locale.service b/guest/factory-overlay/etc/systemd/system/try-omarchy-host-locale.service
+new file mode 100644
+index 0000000..9b9ff68
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/try-omarchy-host-locale.service
+@@ -0,0 +1,12 @@
++[Unit]
++Description=Follow the Windows time zone and keyboard layout reported by Try Omarchy
++DefaultDependencies=no
++After=local-fs.target
++Before=sysinit.target display-manager.service systemd-vconsole-setup.service
++
++[Service]
++Type=oneshot
++ExecStart=/usr/local/lib/try-omarchy/apply-host-locale
++
++[Install]
++WantedBy=sysinit.target
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/apply-host-locale b/guest/factory-overlay/usr/local/lib/try-omarchy/apply-host-locale
+new file mode 100755
+index 0000000..dc75a59
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/apply-host-locale
+@@ -0,0 +1,64 @@
++#!/bin/bash
++# Follows the Windows time zone and keyboard layout the launcher reports on
++# the kernel command line (tryomarchy.tz=Area/City, tryomarchy.kb=layout or
++# layout:variant). Each value is applied when it differs from the one applied
++# last, so a change made inside the guest survives until Windows itself
++# changes. Omarchy's Hyprland input config reads XKBLAYOUT and XKBVARIANT
++# from /etc/vconsole.conf, so writing that file is enough for the desktop.
++set -euo pipefail
++
++cmdline_file=${TRY_OMARCHY_CMDLINE:-/proc/cmdline}
++state_dir=${TRY_OMARCHY_STATE_DIR:-/var/lib/try-omarchy}
++zoneinfo=${TRY_OMARCHY_ZONEINFO:-/usr/share/zoneinfo}
++localtime=${TRY_OMARCHY_LOCALTIME:-/etc/localtime}
++vconsole=${TRY_OMARCHY_VCONSOLE:-/etc/vconsole.conf}
++
++zone=""
++keyboard=""
++for word in $(<"$cmdline_file"); do
++  case $word in
++    tryomarchy.tz=*) zone=${word#tryomarchy.tz=} ;;
++    tryomarchy.kb=*) keyboard=${word#tryomarchy.kb=} ;;
++  esac
++done
++
++mkdir -p "$state_dir"
++
++apply_zone() {
++  local zone=$1 marker="$state_dir/host-timezone"
++  [[ $zone =~ ^[A-Za-z][A-Za-z0-9_+./-]{0,63}$ && $zone != *..* ]] || { echo "ignoring an invalid time zone on the kernel command line" >&2; return 0; }
++  [[ "$(cat "$marker" 2>/dev/null || true)" != "$zone" ]] || return 0
++  if [[ ! -f $zoneinfo/$zone ]]; then
++    echo "time zone $zone is not installed in the guest" >&2
++    return 0
++  fi
++  ln -sfn "$zoneinfo/$zone" "$localtime"
++  printf '%s\n' "$zone" >"$marker"
++  echo "time zone set to $zone from Windows"
++}
++
++apply_keyboard() {
++  local spec=$1 marker="$state_dir/host-keyboard" layout variant
++  layout=${spec%%:*}
++  variant=""
++  [[ $spec == *:* ]] && variant=${spec#*:}
++  [[ $layout =~ ^[a-z]{2,8}$ && $variant =~ ^[A-Za-z0-9_-]{0,32}$ ]] || { echo "ignoring an invalid keyboard layout on the kernel command line" >&2; return 0; }
++  [[ "$(cat "$marker" 2>/dev/null || true)" != "$spec" ]] || return 0
++  local tmp
++  tmp=$(mktemp "$(dirname "$vconsole")/.vconsole.XXXXXX")
++  if [[ -f $vconsole ]]; then
++    grep -v '^XKBLAYOUT=\|^XKBVARIANT=' "$vconsole" >"$tmp" || true
++  fi
++  printf 'XKBLAYOUT=%s\n' "$layout" >>"$tmp"
++  if [[ -n $variant ]]; then
++    printf 'XKBVARIANT=%s\n' "$variant" >>"$tmp"
++  fi
++  chmod 0644 "$tmp"
++  mv -f "$tmp" "$vconsole"
++  printf '%s\n' "$spec" >"$marker"
++  echo "keyboard layout set to $spec from Windows"
++}
++
++[[ -z $zone ]] || apply_zone "$zone"
++[[ -z $keyboard ]] || apply_keyboard "$keyboard"
++exit 0
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 3040870..a1de599 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -61,11 +61,14 @@ compat_paths=(
+   etc/systemd/system/multi-user.target.wants/try-omarchy-ready.service
+   etc/systemd/system/try-omarchy-sshd.service
+   etc/systemd/system/multi-user.target.wants/try-omarchy-sshd.service
++  etc/systemd/system/try-omarchy-host-locale.service
++  etc/systemd/system/sysinit.target.wants/try-omarchy-host-locale.service
+   etc/systemd/user/try-omarchy-share-link.service
+   etc/systemd/user/graphical-session.target.wants/try-omarchy-share-link.service
+   etc/systemd/user/try-omarchy-factory-update-notice.service
+   etc/systemd/user/graphical-session.target.wants/try-omarchy-factory-update-notice.service
+   usr/local/bin/try-omarchy-export
++  usr/local/lib/try-omarchy/apply-host-locale
+   usr/local/lib/try-omarchy/guest-ready
+   usr/local/lib/try-omarchy/request-sshd
+   usr/local/lib/try-omarchy/share-link
+@@ -79,7 +82,7 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ }
+ # Bump this revision whenever compat-overlay.tar changes in a way that must be
+ # applied to persistent disks created by an earlier launcher release.
+-compat_revision=5
++compat_revision=6
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index e5cc93f..8cd7a11 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -17,6 +17,7 @@ from pathlib import Path
+ OVERLAY = Path(__file__).resolve().parents[1] / "factory-overlay"
+ SHARE_LINK = OVERLAY / "usr/local/lib/try-omarchy/share-link"
+ REQUEST_SSHD = OVERLAY / "usr/local/lib/try-omarchy/request-sshd"
++HOST_LOCALE = OVERLAY / "usr/local/lib/try-omarchy/apply-host-locale"
+ EXPORT = OVERLAY / "usr/local/bin/try-omarchy-export"
+ 
+ def generated_key(directory: Path) -> str:
+@@ -322,3 +323,60 @@ class ExportTests(OverlayCase):
+ 
+ if __name__ == "__main__":
+     unittest.main()
++
++
++class HostLocaleTests(OverlayCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.state = self.root / "state"
++        self.zoneinfo = self.root / "zoneinfo"
++        (self.zoneinfo / "America").mkdir(parents=True)
++        (self.zoneinfo / "America/New_York").write_text("TZif")
++        (self.zoneinfo / "Europe").mkdir()
++        (self.zoneinfo / "Europe/Berlin").write_text("TZif")
++        self.localtime = self.root / "localtime"
++        self.localtime.symlink_to(self.zoneinfo / "UTC")
++        self.vconsole = self.root / "vconsole.conf"
++        self.vconsole.write_text("KEYMAP=us\n")
++
++    def apply(self, cmdline: str) -> subprocess.CompletedProcess:
++        return self.run_script(HOST_LOCALE, cmdline=cmdline, TRY_OMARCHY_STATE_DIR=str(self.state),
++                               TRY_OMARCHY_ZONEINFO=str(self.zoneinfo), TRY_OMARCHY_LOCALTIME=str(self.localtime),
++                               TRY_OMARCHY_VCONSOLE=str(self.vconsole))
++
++    def test_applies_zone_and_keyboard_from_the_command_line(self) -> None:
++        result = self.apply("root=/dev/vda tryomarchy.tz=America/New_York tryomarchy.kb=de:nodeadkeys quiet")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(os.readlink(self.localtime), str(self.zoneinfo / "America/New_York"))
++        self.assertEqual(self.vconsole.read_text(), "KEYMAP=us\nXKBLAYOUT=de\nXKBVARIANT=nodeadkeys\n")
++        self.assertEqual((self.state / "host-timezone").read_text().strip(), "America/New_York")
++        self.assertEqual((self.state / "host-keyboard").read_text().strip(), "de:nodeadkeys")
++
++    def test_guest_changes_survive_until_windows_changes(self) -> None:
++        self.apply("tryomarchy.tz=America/New_York tryomarchy.kb=de")
++        self.localtime.unlink()
++        self.localtime.symlink_to(self.zoneinfo / "Europe/Berlin")
++        self.vconsole.write_text("KEYMAP=us\nXKBLAYOUT=fr\n")
++        self.apply("tryomarchy.tz=America/New_York tryomarchy.kb=de")
++        self.assertEqual(os.readlink(self.localtime), str(self.zoneinfo / "Europe/Berlin"))
++        self.assertEqual(self.vconsole.read_text(), "KEYMAP=us\nXKBLAYOUT=fr\n")
++        self.apply("tryomarchy.tz=Europe/Berlin tryomarchy.kb=us:intl")
++        self.assertEqual(os.readlink(self.localtime), str(self.zoneinfo / "Europe/Berlin"))
++        self.assertEqual(self.vconsole.read_text(), "KEYMAP=us\nXKBLAYOUT=us\nXKBVARIANT=intl\n")
++
++    def test_rejects_unsafe_values_and_missing_zones(self) -> None:
++        result = self.apply("tryomarchy.tz=../../etc/passwd tryomarchy.kb=us;id")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertIn("invalid", result.stderr)
++        self.assertEqual(os.readlink(self.localtime), str(self.zoneinfo / "UTC"))
++        self.assertEqual(self.vconsole.read_text(), "KEYMAP=us\n")
++        result = self.apply("tryomarchy.tz=Mars/Olympus")
++        self.assertEqual(result.returncode, 0)
++        self.assertIn("not installed", result.stderr)
++        self.assertEqual(os.readlink(self.localtime), str(self.zoneinfo / "UTC"))
++
++    def test_no_parameters_change_nothing(self) -> None:
++        result = self.apply("root=/dev/vda quiet")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(self.vconsole.read_text(), "KEYMAP=us\n")
++        self.assertFalse((self.state / "host-timezone").exists())
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index dbf1fa0..979a092 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -257,8 +257,10 @@ def main() -> None:
+ 
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     check(
+-        "compat_revision=5" in finalize_rootfs
++        "compat_revision=6" in finalize_rootfs
+         and "compat_revision" in finalize_rootfs.split("compat-version")[0]
++        and "usr/local/lib/try-omarchy/apply-host-locale" in finalize_rootfs
++        and "etc/systemd/system/sysinit.target.wants/try-omarchy-host-locale.service" in finalize_rootfs
+         and "usr/local/bin/clipboard-bridge" in finalize_rootfs
+         and "etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service" in finalize_rootfs,
+         "launcher integration has an explicit revision for persistent-disk upgrades",
+-- 
+2.55.0
+

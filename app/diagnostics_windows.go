@@ -27,6 +27,8 @@ func hostFacts() map[string]string {
 	if r, _, _ := syscall.NewLazyDLL("ntdll.dll").NewProc("RtlGetVersion").Call(uintptr(unsafe.Pointer(&v))); r == 0 {
 		facts["host.windows"] = fmt.Sprintf("%d.%d.%d", v.major, v.minor, v.build)
 	}
+	facts["host.timeZone"] = hostTimeZoneKey()
+	facts["host.keyboardLayout"] = hostKeyboardLayoutID()
 	total, avail := availMemMiB()
 	facts["host.memoryTotalMiB"] = fmt.Sprint(total)
 	facts["host.memoryAvailableMiB"] = fmt.Sprint(avail)

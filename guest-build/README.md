@@ -54,6 +54,10 @@ Windows VM tests unless noted in the release checklist):
   directory under its own name at login, pins it in the Files sidebar, and
   opens each newly selected share once so users can find it immediately; it
   removes only those managed entries on launches that share nothing
+- `tryomarchy.tz=` and `tryomarchy.kb=` (set by the launcher from the Windows
+  time zone and default input language) are applied at boot by a sysinit
+  service when they change, so the guest clock and Hyprland's keyboard layout
+  follow Windows without overriding a choice made inside the guest
 - New users start with no Hyprland toggles switched on. The builder used to
   copy every toggle template into the user's toggle state, which turned "no
   gaps" and "single-window aspect ratio" on permanently and overrode the gaps,
