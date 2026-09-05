@@ -204,7 +204,7 @@ ssh -p 2222 <omarchy-user>@127.0.0.1
 The same alias works for `scp`, Git, and VS Code Remote SSH. Other services
 use `-forward tcp:8080:80` or `-forward udp:5000:5000` (repeatable); the guest
 service must listen on its network interface, not only on its own localhost.
-From Omarchy, `10.0.2.2:<port>` reaches a service on Windows without any
+From Omarchy, `windows.host:<port>` (10.0.2.2) reaches a service on Windows without any
 mapping. Key-only or permanent SSH is Omarchy's own choice: run
 `omarchy-setup-security-sshd` inside the guest. A fresh disk (`-fresh`) gets a
 new host key, so remove the old `[127.0.0.1]:2222` entry from `known_hosts`

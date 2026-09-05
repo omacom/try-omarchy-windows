@@ -1,0 +1,26 @@
+From dd56e00386abf00831b7db0c00c0396908a727e3 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 5 Sep 2026 07:41:17 -0400
+Subject: [PATCH] Name the Windows host windows.host inside the guest
+
+10.0.2.2 is the Windows side under QEMU user networking, where the launcher and any service the user runs on Windows are reachable. A hosts entry gives it a name people can type.
+---
+ guest/scripts/configure-rootfs.sh | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/guest/scripts/configure-rootfs.sh b/guest/scripts/configure-rootfs.sh
+index 1081385..410c196 100755
+--- a/guest/scripts/configure-rootfs.sh
++++ b/guest/scripts/configure-rootfs.sh
+@@ -73,6 +73,8 @@ cat >"$root/etc/hosts" <<EOF
+ 127.0.0.1 localhost
+ ::1 localhost
+ 127.0.1.1 $hostname
++# The Windows host under QEMU user networking; the launcher listens there.
++10.0.2.2 windows.host
+ EOF
+ printf 'en_US.UTF-8 UTF-8\n' >"$root/etc/locale.gen"
+ printf 'LANG=en_US.UTF-8\n' >"$root/etc/locale.conf"
+-- 
+2.55.0
+

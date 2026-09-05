@@ -49,6 +49,36 @@ personal details. Do not upload the guest disk or a full backup.
 - [ ] At least one hour of use without the launcher exiting or input forwarding
   stopping. Report idle CPU after five minutes without animation.
 - [ ] RDP and VNC sessions, including Ctrl+Alt+G as the input fallback.
+- [ ] Image clipboard: a Windows screenshot pastes into an Omarchy app, and an
+  image copied in Omarchy pastes into a Windows app. Text keeps working after.
+- [ ] The guest clock matches Windows after a sleep and resume, and the desktop
+  keyboard layout and time zone match the Windows ones on a non-US machine,
+  including AltGr and dead keys.
+- [ ] Close the VM window at a moved, non-maximized size; the next launch opens
+  it there. Unplug the monitor it was on; the next launch opens maximized.
+- [ ] Reclaim disk space from the tray after deleting a large file in Omarchy;
+  after shutdown the disk file is smaller and Windows free space never fell
+  below 4 GiB during the pass. Repeat with Settings showing the new size.
+- [ ] Settings: Rendering set to CPU and back to Automatic takes effect on the
+  next launch; Guest CPUs shows the automatic choice for this PC.
+- [ ] Remove Try Omarchy from Apps & features on a copied install; the folder,
+  its shortcuts, and its entry are gone and the original install still runs.
+
+## Hardware matrix facts to record
+
+The nested test VM cannot answer these; every physical report should.
+
+- GPU vendor, driver version, and whether the desktop came up on GPU or CPU
+  rendering (`render-probe.json` in the data folder records the result).
+- Idle CPU of `qemu-system-x86_64w.exe` in Task Manager five minutes after the
+  desktop settles, with and without a video playing.
+- Whether the Windows microphone indicator lights at launch before any app
+  records, and whether it lights when one does.
+- Display scaling in use, and whether text in Omarchy is crisp at 125 percent
+  and above; whether moving the window between monitors with different
+  scaling leaves it usable.
+- Whether audio follows a headphone plug-in mid-session.
+- Whether the guest browses with the machine's VPN connected.
 
 ## Data and update recovery
 
