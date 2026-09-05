@@ -151,15 +151,8 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 		_, err := resetStandardDisk(cfg, expandedMiB)
 		return err
 	}
-	if cfg.fresh {
-		if err := os.Remove(cfg.disk); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("discarding the existing disk: %w", err)
-		}
-		if cfg.portable {
-			if err := os.Remove(portableBackingStatePath(cfg.disk)); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("discarding the portable disk identity: %w", err)
-			}
-		}
+	if cfg.fresh && cfg.portable {
+		return resetPortableDisk(cfg, expandedBytes)
 	}
 	if cfg.portable {
 		return preparePortableDisk(cfg, expandedBytes)
