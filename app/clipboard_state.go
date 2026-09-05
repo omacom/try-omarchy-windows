@@ -18,18 +18,18 @@ type clipboardSyncState struct {
 	lastSeen string
 }
 
-func (s *clipboardSyncState) shouldAcceptGuest(text string) bool {
-	return clipboardTextAllowed(text) && text != s.lastSeen
+func (s *clipboardSyncState) shouldAcceptGuest(item clipItem) bool {
+	return item.allowed() && item.key() != s.lastSeen
 }
 
-func (s *clipboardSyncState) markGuestAccepted(text string) {
-	s.lastSeen = text
+func (s *clipboardSyncState) markGuestAccepted(item clipItem) {
+	s.lastSeen = item.key()
 }
 
-func (s *clipboardSyncState) shouldSendHost(text string) bool {
-	return clipboardTextAllowed(text) && text != s.lastSeen
+func (s *clipboardSyncState) shouldSendHost(item clipItem) bool {
+	return item.allowed() && item.key() != s.lastSeen
 }
 
-func (s *clipboardSyncState) markHostSent(text string) {
-	s.lastSeen = text
+func (s *clipboardSyncState) markHostSent(item clipItem) {
+	s.lastSeen = item.key()
 }

@@ -34,6 +34,8 @@ var (
 	procEmptyClipboard           = user32.NewProc("EmptyClipboard")
 	procGetClipboardData         = user32.NewProc("GetClipboardData")
 	procSetClipboardData         = user32.NewProc("SetClipboardData")
+	procGetClipboardSequenceNum  = user32.NewProc("GetClipboardSequenceNumber")
+	procRegisterClipboardFormatW = user32.NewProc("RegisterClipboardFormatW")
 	procIsClipboardFormatAvail   = user32.NewProc("IsClipboardFormatAvailable")
 	procSystemParametersInfoW    = user32.NewProc("SystemParametersInfoW")
 	procGlobalAlloc              = kernel32.NewProc("GlobalAlloc")
@@ -54,6 +56,8 @@ const (
 	qsAllinput     = 0x04FF
 	pmRemove       = 1
 	cfUnicodetext  = 13
+	cfDib          = 8
+	cfDibV5        = 17
 	gmemMoveable   = 2
 	fsctlSetSparse = 0x900C4
 	maxTitle       = 256
@@ -319,4 +323,124 @@ func openClipboard() bool {
 		time.Sleep(25 * time.Millisecond)
 	}
 	return false
+}
+
+// pngClipboardFormat is the registered "PNG" format browsers and image
+// editors use beside CF_DIB. Registering an existing name returns its id.
+var pngClipboardFormat = func() uintptr {
+	name, _ := syscall.UTF16PtrFromString("PNG")
+	id, _, _ := procRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(name)))
+	return id
+}()
+
+func clipboardSequence() uint32 {
+	seq, _, _ := procGetClipboardSequenceNum.Call()
+	return uint32(seq)
+}
+
+// clipboardGetItem reads the Windows clipboard as text when text is offered,
+// otherwise as a PNG image from the registered PNG format or a DIB.
+func clipboardGetItem() (clipItem, bool) {
+	if text, ok := clipboardGetText(); ok {
+		return textItem(text), true
+	}
+	if r, _, _ := procIsClipboardFormatAvail.Call(cfUnicodetext); r != 0 {
+		return clipItem{}, false
+	}
+	hasPNG, _, _ := procIsClipboardFormatAvail.Call(pngClipboardFormat)
+	hasDIB, _, _ := procIsClipboardFormatAvail.Call(cfDib)
+	if hasPNG == 0 && hasDIB == 0 {
+		return clipItem{}, false
+	}
+	if !openClipboard() {
+		return clipItem{}, false
+	}
+	defer procCloseClipboard.Call()
+	if hasPNG != 0 {
+		if data, ok := clipboardGlobalBytes(pngClipboardFormat, maxClipboardImageBytes); ok {
+			item := pngItem(data)
+			return item, item.allowed()
+		}
+	}
+	format := uintptr(cfDibV5)
+	if r, _, _ := procIsClipboardFormatAvail.Call(cfDibV5); r == 0 {
+		format = cfDib
+	}
+	dib, ok := clipboardGlobalBytes(format, 4*maxDIBSide*maxDIBSide+dibV5HeaderSize+1024)
+	if !ok {
+		return clipItem{}, false
+	}
+	data, err := dibToPNG(dib)
+	if err != nil {
+		return clipItem{}, false
+	}
+	item := pngItem(data)
+	return item, item.allowed()
+}
+
+// clipboardGlobalBytes copies a clipboard handle's memory; the clipboard
+// must already be open.
+func clipboardGlobalBytes(format uintptr, limit int) ([]byte, bool) {
+	h, _, _ := procGetClipboardData.Call(format)
+	if h == 0 {
+		return nil, false
+	}
+	size, _, _ := procGlobalSize.Call(h)
+	if size == 0 || int(size) > limit {
+		return nil, false
+	}
+	p, _, _ := procGlobalLock.Call(h)
+	if p == 0 {
+		return nil, false
+	}
+	defer procGlobalUnlock.Call(h)
+	return append([]byte(nil), unsafe.Slice((*byte)(unsafe.Pointer(p)), int(size))...), true
+}
+
+func clipboardSetItem(item clipItem) bool {
+	if item.Kind == clipText {
+		return clipboardSetText(string(item.Data))
+	}
+	dib, err := pngToDIB(item.Data)
+	if err != nil {
+		return false
+	}
+	hDib := globalCopy(dib)
+	hPNG := globalCopy(item.Data)
+	if hDib == 0 || hPNG == 0 {
+		procGlobalFree.Call(hDib)
+		procGlobalFree.Call(hPNG)
+		return false
+	}
+	if !openClipboard() {
+		procGlobalFree.Call(hDib)
+		procGlobalFree.Call(hPNG)
+		return false
+	}
+	defer procCloseClipboard.Call()
+	procEmptyClipboard.Call()
+	if r, _, _ := procSetClipboardData.Call(cfDib, hDib); r == 0 {
+		procGlobalFree.Call(hDib)
+		procGlobalFree.Call(hPNG)
+		return false
+	}
+	if r, _, _ := procSetClipboardData.Call(pngClipboardFormat, hPNG); r == 0 {
+		procGlobalFree.Call(hPNG)
+	}
+	return true
+}
+
+func globalCopy(data []byte) uintptr {
+	h, _, _ := procGlobalAlloc.Call(gmemMoveable, uintptr(len(data)))
+	if h == 0 {
+		return 0
+	}
+	p, _, _ := procGlobalLock.Call(h)
+	if p == 0 {
+		procGlobalFree.Call(h)
+		return 0
+	}
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(p)), len(data)), data)
+	procGlobalUnlock.Call(h)
+	return h
 }

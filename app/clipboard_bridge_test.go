@@ -11,9 +11,9 @@ import (
 
 func TestClipboardCanCopyPreviouslyReceivedTextAgain(t *testing.T) {
 	var state clipboardSyncState
-	state.markGuestAccepted("first")
-	state.markHostSent("second")
-	if !state.shouldSendHost("first") {
+	state.markGuestAccepted(textItem("first"))
+	state.markHostSent(textItem("second"))
+	if !state.shouldSendHost(textItem("first")) {
 		t.Fatal("recopied text was suppressed")
 	}
 }
@@ -31,10 +31,10 @@ func TestClipboardRejectsUnrepresentableWindowsText(t *testing.T) {
 
 func TestClipboardFailedGuestWriteCanRetry(t *testing.T) {
 	calls := 0
-	b := &clipBridge{setText: func(string) bool { calls++; return calls > 1 }}
-	b.acceptGuestText("retry me")
-	b.acceptGuestText("retry me")
-	b.acceptGuestText("retry me")
+	b := &clipBridge{setHost: func(clipItem) bool { calls++; return calls > 1 }}
+	b.acceptGuestItem(textItem("retry me"))
+	b.acceptGuestItem(textItem("retry me"))
+	b.acceptGuestItem(textItem("retry me"))
 	if calls != 2 {
 		t.Fatalf("got %d writes", calls)
 	}
@@ -43,9 +43,9 @@ func TestClipboardFailedGuestWriteCanRetry(t *testing.T) {
 func TestClipboardFailedHostWriteCanRetry(t *testing.T) {
 	host, guest := net.Pipe()
 	guest.Close()
-	b := &clipBridge{pullConn: host, getText: func() (string, bool) { return "retry me", true }}
+	b := &clipBridge{pullConn: host, getHost: func() (clipItem, bool) { return textItem("retry me"), true }}
 	b.sendCurrentHost(host)
-	if b.pullConn != nil || !b.state.shouldSendHost("retry me") {
+	if b.pullConn != nil || !b.state.shouldSendHost(textItem("retry me")) {
 		t.Fatal("failed write consumed clipboard")
 	}
 	host, guest = net.Pipe()
@@ -60,7 +60,7 @@ func TestClipboardFailedHostWriteCanRetry(t *testing.T) {
 		t.Fatalf("got %q, %v", line, err)
 	}
 	<-done
-	if b.state.shouldSendHost("retry me") {
+	if b.state.shouldSendHost(textItem("retry me")) {
 		t.Fatal("successful delivery not recorded")
 	}
 }
@@ -72,7 +72,7 @@ func TestClipboardReconnectReceivesCurrentHostText(t *testing.T) {
 	}
 	defer listener.Close()
 	const value = "current clipboard\n\n"
-	b := &clipBridge{getText: func() (string, bool) { return value, true }}
+	b := &clipBridge{getHost: func() (clipItem, bool) { return textItem(value), true }}
 	done := make(chan struct{})
 	go func() { b.acceptPull(listener); close(done) }()
 	for i := 0; i < 2; i++ {
@@ -97,13 +97,13 @@ func TestClipboardReconnectReceivesCurrentHostText(t *testing.T) {
 func TestClipboardGuestWriteAndHostPollAreSerialized(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	current := "old host text"
-	b := &clipBridge{setText: func(s string) bool { close(entered); <-release; current = s; return true }, getText: func() (string, bool) { return current, true }}
+	b := &clipBridge{setHost: func(i clipItem) bool { close(entered); <-release; current = string(i.Data); return true }, getHost: func() (clipItem, bool) { return textItem(current), true }}
 	host, guest := net.Pipe()
 	defer host.Close()
 	defer guest.Close()
 	b.pullConn = host
 	accepted, polled := make(chan struct{}), make(chan struct{})
-	go func() { b.acceptGuestText("guest text"); close(accepted) }()
+	go func() { b.acceptGuestItem(textItem("guest text")); close(accepted) }()
 	<-entered
 	go func() { b.sendCurrentHost(host); close(polled) }()
 	close(release)
@@ -122,7 +122,7 @@ func TestClipboardPushPreservesTextAndRejectsMalformedFrames(t *testing.T) {
 	}
 	defer listener.Close()
 	got := make(chan string, 8)
-	b := &clipBridge{setText: func(s string) bool { got <- s; return true }}
+	b := &clipBridge{setHost: func(i clipItem) bool { got <- string(i.Data); return true }}
 	done := make(chan struct{})
 	go func() { b.acceptPush(listener); close(done) }()
 	for _, frame := range []string{"not base64\n", base64.StdEncoding.EncodeToString([]byte("no terminator")), base64.StdEncoding.EncodeToString([]byte("a\x00b")) + "\n", base64.StdEncoding.EncodeToString([]byte("valid\n\n")) + "\n"} {
@@ -149,7 +149,7 @@ func TestClipboardSkipsOversizedHostBeforeEncoding(t *testing.T) {
 	host, guest := net.Pipe()
 	defer host.Close()
 	defer guest.Close()
-	b := &clipBridge{pullConn: host, getText: func() (string, bool) { return strings.Repeat("x", maxClipboardTextBytes+1), true }}
+	b := &clipBridge{pullConn: host, getHost: func() (clipItem, bool) { return textItem(strings.Repeat("x", maxClipboardTextBytes+1)), true }}
 	b.sendCurrentHost(host)
 	if b.state.lastSeen != "" {
 		t.Fatal("oversized text recorded")
