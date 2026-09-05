@@ -342,3 +342,14 @@ func TestBuildQemuArgsUsesTheChosenCPUCountAndHostMem(t *testing.T) {
 		t.Fatalf("unset cpu count should fall back to the minimum: %s", args)
 	}
 }
+
+func TestBuildQemuArgsTellsTheGuestTheRenderingPath(t *testing.T) {
+	cfg := &config{vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw", diskFormat: "raw", memMiB: 4096, audio: "none", useGpu: true}
+	if args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " "); !strings.Contains(args, "root=/dev/vda tryomarchy.render=gpu ") {
+		t.Fatalf("gpu marker missing: %s", args)
+	}
+	cfg.useGpu = false
+	if args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " "); !strings.Contains(args, "tryomarchy.render=cpu ") {
+		t.Fatalf("cpu marker missing: %s", args)
+	}
+}
