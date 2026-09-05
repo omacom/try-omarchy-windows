@@ -8,7 +8,7 @@ import (
 )
 
 func runClipboardBridge() {
-	b := &clipBridge{getText: clipboardGetText, setText: clipboardSetText}
+	b := &clipBridge{getHost: clipboardGetItem, setHost: clipboardSetItem, sequence: clipboardSequence}
 	// These listeners double as the single-instance check: a second copy of
 	// the app (or a leftover QEMU on our QMP ports) must fail loudly, not
 	// die 30 seconds later with an inscrutable QEMU port error.

@@ -38,7 +38,8 @@ Windows VM tests unless noted in the release checklist):
 - Autologin stays permanent: a drop-in disarms upstream's one-boot autologin
   cleanup after provisioning (the VM window is the auth boundary here)
 - Clipboard bridge baked in: /usr/local/bin/clipboard-bridge + a systemd user
-  unit enabled for all users (host side lives in scripts/clipboard-bridge.ps1)
+  unit enabled for all users; carries text and PNG images both ways (host side
+  is the launcher's clipboard bridge)
 - /mnt/host automounts the launcher's `-share` folder (virtio-9p, condition-guarded
   so boots without a share stay clean)
 - An explicit `tryomarchy.instant=1` kernel flag creates and finalizes a local
