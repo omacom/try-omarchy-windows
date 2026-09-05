@@ -1,0 +1,136 @@
+From 005043dfa11f9eb545c55eb80de04c1e900ca024 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 5 Sep 2026 07:32:09 -0400
+Subject: [PATCH] Let the guest agent zero-fill free space on request
+
+The launcher sends zero-fill; the agent writes zeros over the root filesystem's free space minus a 512 MiB reserve, deletes them, and replies zero-fill done or failed. Freed blocks are zero afterwards, so the launcher can punch holes through disk.raw once the guest is off. Integration revision 9.
+---
+ .../usr/local/lib/try-omarchy/agent           | 40 ++++++++++++++++++-
+ guest/scripts/finalize-rootfs.sh              |  2 +-
+ guest/tests/test_overlay_scripts.py           | 26 +++++++++++-
+ guest/tests/verify.py                         |  2 +-
+ 4 files changed, 66 insertions(+), 4 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/agent b/guest/factory-overlay/usr/local/lib/try-omarchy/agent
+index 80a7d93..b3dc207 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/agent
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/agent
+@@ -10,12 +10,50 @@ set -u
+ host=${TRY_OMARCHY_AGENT_HOST:-10.0.2.2}
+ port=${TRY_OMARCHY_AGENT_PORT:-4451}
+ set_time=${TRY_OMARCHY_SET_TIME:-date -s}
+-version=1
++fill_dir=${TRY_OMARCHY_FILL_DIR:-/var/tmp}
++version=2
+ max_drift=2
++# Space left free while zero-filling, so running programs keep working.
++fill_reserve_mib=512
++
++reply() {
++  # The network loop keeps the channel on fd 3; the test entry point has none.
++  if [[ -e /dev/fd/3 ]]; then printf '%s\n' "$1" >&3; else printf '%s\n' "$1"; fi
++}
++
++# zero_fill writes zeros over the free space of the root filesystem, minus a
++# reserve, then deletes them. Freed blocks are zero afterwards, so the Windows
++# launcher can turn them back into holes in disk.raw once the guest is off.
++zero_fill() {
++  local budget_mib=$1 avail_mib count fill_file
++  [[ $budget_mib =~ ^[0-9]{1,7}$ ]] || { reply "zero-fill failed bad budget"; return 0; }
++  avail_mib=$(df --output=avail -m "$fill_dir" 2>/dev/null | tail -1 | tr -d ' ')
++  [[ $avail_mib =~ ^[0-9]+$ ]] || { reply "zero-fill failed no free space figure"; return 0; }
++  if ((avail_mib <= fill_reserve_mib)); then
++    reply "zero-fill failed less than ${fill_reserve_mib} MiB free"
++    return 0
++  fi
++  count=$((avail_mib - fill_reserve_mib))
++  ((count > budget_mib)) && count=$budget_mib
++  fill_file="$fill_dir/try-omarchy-zero-fill"
++  rm -f "$fill_file"
++  if dd if=/dev/zero of="$fill_file" bs=1M count="$count" status=none 2>/dev/null; then
++    sync
++    rm -f "$fill_file"
++    sync
++    reply "zero-fill done"
++  else
++    rm -f "$fill_file"
++    reply "zero-fill failed writing zeros"
++  fi
++}
+ 
+ handle() {
+   local line=$1 target now drift
+   case $line in
++    zero-fill\ *)
++      zero_fill "${line#zero-fill }"
++      ;;
+     time\ *)
+       target=${line#time }
+       [[ $target =~ ^[0-9]{9,11}$ ]] || return 0
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 483cc9b..b2e0cc8 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -85,7 +85,7 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ }
+ # Bump this revision whenever compat-overlay.tar changes in a way that must be
+ # applied to persistent disks created by an earlier launcher release.
+-compat_revision=8
++compat_revision=9
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index a71d3fc..4d01bf2 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -401,8 +401,32 @@ class AgentTests(OverlayCase):
+         self.assertEqual(self.calls(), "date -s @1788609600\n")
+         self.assertIn("stepped by -90 s", result.stdout)
+ 
++    def test_zero_fill_writes_and_removes_zeros_then_reports(self) -> None:
++        fill_dir = self.root / "fill"
++        fill_dir.mkdir()
++        self.fake("df", 'echo "Avail"; echo " 2048"')
++        self.fake("dd", 'echo "dd $@" >> "$CALLS"; touch "$FILL/try-omarchy-zero-fill"')
++        self.fake("sync", "true")
++        result = subprocess.run([str(AGENT), "--handle"], input="zero-fill 1000\n",
++                                env=dict(self.env, CALLS=str(self.log), FILL=str(fill_dir), TRY_OMARCHY_FILL_DIR=str(fill_dir)),
++                                capture_output=True, text=True, timeout=30)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertIn("count=1000", self.calls())
++        self.assertFalse((fill_dir / "try-omarchy-zero-fill").exists())
++        self.assertEqual(result.stdout.strip(), "zero-fill done")
++
++    def test_zero_fill_refuses_when_the_disk_is_nearly_full(self) -> None:
++        self.fake("df", 'echo "Avail"; echo " 300"')
++        self.fake("dd", 'echo "dd $@" >> "$CALLS"')
++        result = subprocess.run([str(AGENT), "--handle"], input="zero-fill 8192\n",
++                                env=dict(self.env, CALLS=str(self.log), TRY_OMARCHY_FILL_DIR=str(self.root)),
++                                capture_output=True, text=True, timeout=30)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(self.calls(), "")
++        self.assertIn("zero-fill failed", result.stdout)
++
+     def test_ignores_malformed_messages(self) -> None:
+-        for message in ["time now", "time 1788609600; reboot", "reboot", "time 12"]:
++        for message in ["time now", "time 1788609600; reboot", "reboot", "time 12", "zero-fill", "zero-fill lots"]:
+             result = self.handle(message, now=1)
+             self.assertEqual(result.returncode, 0, result.stderr)
+             self.assertEqual(self.calls(), "", message)
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 0c91d5d..f4ea02b 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -257,7 +257,7 @@ def main() -> None:
+ 
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     check(
+-        "compat_revision=8" in finalize_rootfs
++        "compat_revision=9" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/agent" in finalize_rootfs
+         and "compat_revision" in finalize_rootfs.split("compat-version")[0]
+         and "usr/local/lib/try-omarchy/apply-host-locale" in finalize_rootfs
+-- 
+2.55.0
+
