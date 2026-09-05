@@ -53,7 +53,7 @@ func TestResetRetainsPreviousDiskAndPublishesFactory(t *testing.T) {
 }
 
 func TestResetFailuresPreserveOriginal(t *testing.T) {
-	for _, mode := range []string{"missing-factory", "low-space", "cancelled", "locked", "pending-update", "invalid-size"} {
+	for _, mode := range []string{"missing-factory", "low-space", "cancelled", "locked", "pending-update", "invalid-size", "oversized-factory"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg := resetFixture(t)
 			size := int64(1)
@@ -78,6 +78,10 @@ func TestResetFailuresPreserveOriginal(t *testing.T) {
 				}
 			case "invalid-size":
 				size = -1
+			case "oversized-factory":
+				if err := os.WriteFile(filepath.Join(cfg.guestDir, "rootfs.ext4"), make([]byte, 2<<20), 0600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			_, err := resetStandardDisk(cfg, size)
 			if err == nil {

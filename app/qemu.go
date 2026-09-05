@@ -254,6 +254,9 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 	if err != nil {
 		return err
 	}
+	if !st.Mode().IsRegular() || st.Size() > expandedBytes {
+		return fmt.Errorf("factory image does not fit the requested disk capacity")
+	}
 	if err := sparseCopy(dst, src, st.Size(), ui); err != nil {
 		return err
 	}
