@@ -78,6 +78,11 @@ Use the copied guest for interruption and low-space tests.
 - [ ] Configuration export restores the selected theme, personal configuration,
   and added packages on a separate fresh Omarchy installation.
 
+- [ ] In portable mode, reset with `-portable -fresh`, reach a new guest, and
+  verify that `vm/before-reset-*` retains the previous QCOW2 disk and identity.
+  With Omarchy closed and the matching original factory payload restored,
+  returning that retained pair to `vm` should recover the previous guest.
+
 ## Coverage
 
 Track results for Intel and AMD CPUs, integrated and discrete Intel/AMD/NVIDIA

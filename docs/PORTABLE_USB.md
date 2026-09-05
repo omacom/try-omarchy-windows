@@ -70,3 +70,10 @@ TryOmarchy.exe -portable
 Shut Omarchy down from its system menu and wait for the QEMU window to close
 before ejecting the drive. To reset only the writable guest state, start with
 `-portable -fresh`; the authenticated factory image and payload remain intact.
+
+Development builds prepare the replacement before moving the previous disk and
+its `.backing-sha256` file into `vm/before-reset-*`. A failed reset rolls those
+files back when possible. If Windows prevents rollback, the error identifies
+the retained folder. Keep both files and the matching original factory payload
+for recovery. A retained QCOW2 disk must be returned to the `vm` folder before
+use because its factory path is relative to that folder.
