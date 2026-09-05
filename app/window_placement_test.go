@@ -27,9 +27,9 @@ func TestWindowPlacementUsableOnlyOnAPresentDisplay(t *testing.T) {
 	primary := screenRect{0, 0, 1920, 1080}
 	second := screenRect{1920, 0, 3840, 1080}
 	cases := []struct {
-		name  string
-		p     *windowPlacement
-		mons  []screenRect
+		name   string
+		p      *windowPlacement
+		mons   []screenRect
 		usable bool
 	}{
 		{"nil", nil, []screenRect{primary}, false},
