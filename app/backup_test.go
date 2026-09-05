@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -275,4 +276,53 @@ func TestBackupAndRestoreReportCompleteProgress(t *testing.T) {
 	check(func(report backupProgress) error {
 		return restoreVMBackupProgress(archive, filepath.Join(filepath.Dir(dir), "progress-restore"), report)
 	})
+}
+
+func TestVMRestoreBudgetsCompressedSizeAndRestampsReceipts(t *testing.T) {
+	dir, archive := backupFixture(t)
+	spec := filepath.Join(dir, "guest", "build-spec.json")
+	info, err := os.Stat(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := int64(1700000000123456700)
+	sum := strings.Repeat("ab", 32)
+	receipt := `{"version":1,"release":"r","manifestSHA256":"` + sum + `","files":{"build-spec.json":{"sha256":"` + sum + `","size":` + strconv.FormatInt(info.Size(), 10) + `,"modTimeUnixNano":` + strconv.FormatInt(stamp, 10) + `}}}`
+	if err := os.WriteFile(filepath.Join(dir, "guest", installReceiptFilename), []byte(receipt), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeVMBackup(dir, archive); err != nil {
+		t.Fatal(err)
+	}
+	z, err := zip.OpenReader(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, files, err := readVMBackup(z)
+	z.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nominal int64
+	for _, entry := range manifest.Files {
+		nominal += entry.Size
+	}
+	estimate := restoreSpaceEstimate(manifest, files)
+	if estimate >= nominal+diskSpaceReserve || estimate <= diskSpaceReserve {
+		t.Fatalf("estimate %d should sit between the reserve and the nominal %d", estimate, nominal)
+	}
+	previous := diskFreeBytes
+	t.Cleanup(func() { diskFreeBytes = previous })
+	diskFreeBytes = func(string) (int64, error) { return estimate, nil }
+	destination := filepath.Join(filepath.Dir(dir), "restored")
+	if err := restoreVMBackup(archive, destination); err != nil {
+		t.Fatalf("restore with compressed-size budget failed: %v", err)
+	}
+	restored, err := os.Stat(filepath.Join(destination, "guest", "build-spec.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ModTime().UnixNano() != stamp {
+		t.Fatalf("receipt time not restored: got %d, want %d", restored.ModTime().UnixNano(), stamp)
+	}
 }
