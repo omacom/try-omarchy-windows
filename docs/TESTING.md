@@ -29,7 +29,11 @@ personal details. Do not upload the guest disk or a full backup.
 
 ## Everyday use
 
-- [ ] Fresh install at the default location and another local drive.
+- [ ] Fresh install at the default location and another local drive. Use the
+  Windows folder picker for install location and sharing, including a long path.
+- [ ] On a copied install, confirm that malformed preferences offer repair,
+  declining leaves them unchanged, and accepting preserves the original file
+  before restoring defaults without changing guest files.
 - [ ] Cancel a download, relaunch, and finish setup without a broken install.
 - [ ] Instant account and personalized account both reach the desktop.
 - [ ] GPU rendering, then CPU fallback, both reach the desktop.
