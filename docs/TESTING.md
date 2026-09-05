@@ -56,7 +56,7 @@ personal details. Do not upload the guest disk or a full backup.
   including AltGr and dead keys.
 - [ ] Close the VM window at a moved, non-maximized size; the next launch opens
   it there. Unplug the monitor it was on; the next launch opens maximized.
-- [ ] Reclaim disk space from the tray after deleting a large file in Omarchy;
+- [ ] `TryOmarchy.exe -reclaim` after deleting a large file in Omarchy;
   after shutdown the disk file is smaller and Windows free space never fell
   below 4 GiB during the pass. Repeat with Settings showing the new size.
 - [ ] Settings: Rendering set to CPU and back to Automatic takes effect on the

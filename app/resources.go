@@ -17,7 +17,9 @@ const (
 	minimumAutoGuestMemMiB = 4096
 	maximumAutoGuestMemMiB = 8192
 	gpuGuestMemExtraMiB    = 2048
-	maximumAutoGPUMemMiB   = 12288
+	// The GPU path keeps the ceiling v0.0.12 shipped with until a larger
+	// guest and blob memory have been tried on physical graphics hardware.
+	maximumAutoGPUMemMiB = 6144
 	// Windows keeps this much of what is available; the guest takes the rest.
 	hostMemReserveMiB = 2048
 	guestMemFloorMiB  = 1024
@@ -78,16 +80,16 @@ func pickGuestMemMiB(gpu bool, totalMiB, availMiB int) int {
 }
 
 // gpuHostMem sizes the host-side memory virtio-gpu can map for blob
-// resources. It scales with the guest and, on machines with plenty of RAM,
-// grows so large displays with many windows do not run out.
+// resources. It follows the guest size as it always has; growing it to 8 GiB
+// on large machines waits for a physical GPU run (hostTotalMiB is kept for
+// that change).
 func gpuHostMem(memMiB, hostTotalMiB int) string {
+	_ = hostTotalMiB
 	switch {
 	case memMiB < 3072:
 		return "1G"
 	case memMiB < 4096:
 		return "2G"
-	case memMiB >= 8192 && hostTotalMiB >= 32768:
-		return "8G"
 	}
 	return "4G"
 }

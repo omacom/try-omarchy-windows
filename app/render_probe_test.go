@@ -46,7 +46,7 @@ func TestStartWithGPUSkipsOnlyAMatchingRecentCPUResult(t *testing.T) {
 		{"runtime changed", renderAuto, cpu, "rt2", "drv1", true, ""},
 		{"driver changed", renderAuto, cpu, "rt1", "drv2", true, ""},
 		{"gpu result", renderAuto, &renderProbe{Result: renderGPU, RuntimeID: "rt1", DisplayDriver: "drv1", RecordedAt: now}, "rt1", "drv1", true, ""},
-		{"stale cpu result", renderAuto, &renderProbe{Result: renderCPU, RuntimeID: "rt1", DisplayDriver: "drv1", RecordedAt: now.Add(-8 * 24 * time.Hour)}, "rt1", "drv1", true, ""},
+		{"stale cpu result", renderAuto, &renderProbe{Result: renderCPU, RuntimeID: "rt1", DisplayDriver: "drv1", RecordedAt: now.Add(-25 * time.Hour)}, "rt1", "drv1", true, ""},
 		{"future timestamp", renderAuto, &renderProbe{Result: renderCPU, RuntimeID: "rt1", DisplayDriver: "drv1", RecordedAt: now.Add(48 * time.Hour)}, "rt1", "drv1", true, ""},
 		{"empty runtime id never matches", renderAuto, &renderProbe{Result: renderCPU, RecordedAt: now}, "", "", true, ""},
 		{"forced gpu", renderGPU, cpu, "rt1", "drv1", true, "GPU rendering chosen"},

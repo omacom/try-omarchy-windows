@@ -22,10 +22,10 @@ func TestPickGuestMemScalesWithTheMachine(t *testing.T) {
 		{"8 GB laptop busy", false, 8192, 5000, 2952},
 		{"8 GB laptop idle", false, 8192, 7000, 4096},
 		{"16 GB laptop", false, 16384, 12000, 5461},
-		{"16 GB laptop gpu", true, 16384, 12000, 7509},
+		{"16 GB laptop gpu", true, 16384, 12000, 6144},
 		{"32 GB desktop", false, 32768, 28000, 8192},
-		{"32 GB desktop gpu", true, 32768, 28000, 10240},
-		{"64 GB workstation gpu", true, 65536, 60000, 10240},
+		{"32 GB desktop gpu", true, 32768, 28000, 6144},
+		{"64 GB workstation gpu", true, 65536, 60000, 6144},
 		{"starved", false, 8192, 1500, 1024},
 	}
 	for _, c := range cases {
@@ -39,7 +39,7 @@ func TestGPUHostMemFollowsGuestAndHost(t *testing.T) {
 	for _, c := range []struct {
 		mem, total int
 		want       string
-	}{{2048, 8192, "1G"}, {3072, 8192, "2G"}, {4096, 16384, "4G"}, {8192, 16384, "4G"}, {8192, 32768, "8G"}, {10240, 65536, "8G"}} {
+	}{{2048, 8192, "1G"}, {3072, 8192, "2G"}, {4096, 16384, "4G"}, {8192, 16384, "4G"}, {8192, 32768, "4G"}, {10240, 65536, "4G"}} {
 		if got := gpuHostMem(c.mem, c.total); got != c.want {
 			t.Errorf("mem %d total %d: got %s, want %s", c.mem, c.total, got, c.want)
 		}

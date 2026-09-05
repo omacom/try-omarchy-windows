@@ -334,7 +334,7 @@ func TestBuildQemuArgsUsesTheChosenCPUCountAndHostMem(t *testing.T) {
 	cfg := &config{vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw", diskFormat: "raw",
 		memMiB: 8192, hostTotalMiB: 32768, cpus: 6, audio: "none", useGpu: true}
 	args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
-	if !strings.Contains(args, " -smp 6 -m 8192M ") || !strings.Contains(args, "hostmem=8G") {
+	if !strings.Contains(args, " -smp 6 -m 8192M ") || !strings.Contains(args, "hostmem=4G") {
 		t.Fatalf("cpu count or hostmem missing: %s", args)
 	}
 	cfg.cpus = 0

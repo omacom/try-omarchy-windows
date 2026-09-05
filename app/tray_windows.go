@@ -212,7 +212,9 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 		appendItem(mfSeparator, 0, "")
 		appendItem(mfString, trayCommandSettings, "Settings...")
 		appendItem(mfString, trayCommandDiagnose, "Create diagnostics...")
-		appendItem(mfString, trayCommandReclaim, "Reclaim disk space...")
+		// Reclaim stays reachable through -reclaim only until a physical run
+		// has watched the disk file grow and shrink; then this line returns.
+		// appendItem(mfString, trayCommandReclaim, "Reclaim disk space...")
 		appendItem(mfSeparator, 0, "")
 		appendItem(mfString, trayCommandShutdown, "Shut down Omarchy...")
 

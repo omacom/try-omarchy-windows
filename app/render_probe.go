@@ -24,8 +24,10 @@ const renderProbeFilename = "render-probe.json"
 
 // renderProbeRetryAfter bounds how long a remembered CPU result is trusted.
 // Drivers and remote sessions change without touching the two identities
-// below, so the GPU path gets a fresh chance periodically.
-const renderProbeRetryAfter = 7 * 24 * time.Hour
+// below, so the GPU path gets a fresh chance every day: one failed attempt
+// costs a few seconds, a week on llvmpipe after a transient failure costs
+// the user the product.
+const renderProbeRetryAfter = 24 * time.Hour
 
 type renderProbe struct {
 	Schema int `json:"schema"`
