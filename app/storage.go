@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -57,7 +58,7 @@ func loadStorageSettings(dir string) (storageSettings, error) {
 		return defaults, fmt.Errorf("storage preferences are too large")
 	}
 	var settings storageSettings
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&settings); err != nil {
 		return defaults, err
