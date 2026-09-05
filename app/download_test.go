@@ -342,7 +342,7 @@ func TestDownloadVerifiedCancelsBlockedBodyAndCleansPartial(t *testing.T) {
 		}, nil
 	})}
 	root := t.TempDir()
-	dest := filepath.Join(root, "payload.bin")
+	dest := filepath.Join(root, runtimeZip)
 	result := make(chan error, 1)
 	go func() {
 		result <- downloadVerifiedWithOptions(client, "https://example.invalid/payload", dest,
@@ -532,5 +532,123 @@ func TestParseContentRange(t *testing.T) {
 		if _, _, _, ok := parseContentRange(value); ok {
 			t.Errorf("accepted invalid Content-Range %q", value)
 		}
+	}
+}
+
+func TestDownloadRecoversCompleteCacheWhenServerUnavailable(t *testing.T) {
+	configureSetupCancellation(false)
+	payload := []byte("complete authenticated payload")
+	for _, offline := range []bool{false, true} {
+		t.Run(strconv.FormatBool(offline), func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				if offline {
+					return nil, errors.New("network unavailable")
+				}
+				return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("busy")), Header: make(http.Header)}, nil
+			})}
+			runTestDownload(t, client, "https://example.invalid/payload", payload, func(dest string) {
+				if err := os.WriteFile(dest+".part", payload, 0600); err != nil {
+					t.Fatal(err)
+				}
+			})
+		})
+	}
+}
+
+func TestDownloadLeavesIncompleteCacheWhenServerUnavailable(t *testing.T) {
+	configureSetupCancellation(false)
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("network unavailable") })}
+	dest := filepath.Join(t.TempDir(), "payload")
+	if err := os.WriteFile(dest+".part", []byte("prefix"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err := downloadVerifiedWithOptions(client, "https://example.invalid/payload", dest, testSHA256([]byte("prefix and remainder")), nil, fastDownloadOptions())
+	if err == nil {
+		t.Fatal("incomplete cache accepted")
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatal("incomplete payload published")
+	}
+	data, err := os.ReadFile(dest + ".part")
+	if err != nil || string(data) != "prefix" {
+		t.Fatalf("partial lost: %q %v", data, err)
+	}
+}
+
+type unreadDownloadBody struct{ t *testing.T }
+
+func (b unreadDownloadBody) Read([]byte) (int, error) {
+	b.t.Error("complete cache was downloaded again")
+	return 0, io.EOF
+}
+func (unreadDownloadBody) Close() error { return nil }
+
+func TestDownloadChecksCompleteCacheWhenRangeIgnored(t *testing.T) {
+	payload := []byte("already here")
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, ContentLength: int64(len(payload)), Body: unreadDownloadBody{t}, Header: make(http.Header)}, nil
+	})}
+	runTestDownload(t, client, "https://example.invalid/payload", payload, func(dest string) {
+		if err := os.WriteFile(dest+".part", payload, 0600); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestDownloadReplacesWrongSameSizeCache(t *testing.T) {
+	payload := []byte("right")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Header().Set("Content-Length", "5"); w.Write(payload) }))
+	defer server.Close()
+	runTestDownload(t, server.Client(), server.URL, payload, func(dest string) {
+		if err := os.WriteFile(dest+".part", []byte("wrong"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+type shortDownloadWriter struct{}
+
+func (shortDownloadWriter) Write(p []byte) (int, error) { return len(p) - 1, nil }
+
+func TestDownloadReportsShortDiskWrite(t *testing.T) {
+	configureSetupCancellation(false)
+	written, retry, err := copyDownloadBody(io.NopCloser(strings.NewReader("payload")), shortDownloadWriter{}, 0, 7, nil, 0)
+	if !errors.Is(err, io.ErrShortWrite) || retry || written != 6 {
+		t.Fatalf("got %d %t %v", written, retry, err)
+	}
+}
+
+func TestDownloadDoesNotWritePastAnnouncedSize(t *testing.T) {
+	configureSetupCancellation(false)
+	var dst strings.Builder
+	written, retry, err := copyDownloadBody(io.NopCloser(strings.NewReader("too many bytes")), &dst, 4, 7, nil, 0)
+	if err == nil || retry || written != 0 || dst.Len() != 0 {
+		t.Fatalf("got %d %t %v with %q written", written, retry, err, dst.String())
+	}
+}
+
+func TestDownloadCacheRecoveryHonorsCancellation(t *testing.T) {
+	configureSetupCancellation(false)
+	t.Cleanup(func() { configureSetupCancellation(false) })
+	payload := []byte("complete payload")
+	dest := filepath.Join(t.TempDir(), "payload")
+	if err := os.WriteFile(dest+".part", payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("offline") })}
+	err := downloadVerifiedWithOptions(client, "https://example.invalid/payload", dest, testSHA256(payload), func(phase string, done, total int64) {
+		if phase == downloadPhaseVerify {
+			requestSetupCancel()
+		}
+	}, fastDownloadOptions())
+	if !errors.Is(err, errSetupCancelled) {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatal("cancelled recovery published a file")
+	}
+	data, err := os.ReadFile(dest + ".part")
+	if err != nil || string(data) != string(payload) {
+		t.Fatalf("cached transfer lost: %q %v", data, err)
 	}
 }

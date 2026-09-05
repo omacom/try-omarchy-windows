@@ -30,8 +30,6 @@ import (
 //     Existing installs (C:\WINQ-EMU, stock QEMU from the old bootstrap)
 //     still win, so nothing already set up changes behavior.
 
-const runtimeZip = "winq-emu-alpha10-portable.zip"
-
 const (
 	legacyRuntimeRelease  = "https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.6-preview"
 	legacyRuntimeManifest = "83f4a9cda6ee621c1e3ed756282aed18ca4dc719524d269ea6bbb76ff102229a"
@@ -289,9 +287,8 @@ func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 	os.RemoveAll(tmp)
 	if err := unzipTree(zipPath, tmp, ui); err != nil {
 		os.RemoveAll(tmp)
-		if removeZip {
-			os.Remove(zipPath)
-		}
+		// Keep the verified archive after cancellation, low space, or a file
+		// lock. The next attempt rechecks its hash and can unpack it locally.
 		return "", fmt.Errorf("unpacking %s: %w", runtimeZip, err)
 	}
 	if err := writeRuntimeReceipt(tmp, release, sumsSHA256, archiveSHA); err != nil {

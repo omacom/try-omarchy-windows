@@ -1,0 +1,175 @@
+From f3749f22552fdfa08037603c576e74401c3e490d Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Fri, 4 Sep 2026 22:00:04 -0400
+Subject: [PATCH] Serialize guest clipboard delivery state
+
+---
+ .../usr/local/bin/clipboard-bridge            | 23 ++++--
+ guest/scripts/finalize-rootfs.sh              |  2 +-
+ guest/tests/test_clipboard.py                 | 78 +++++++++++++++++++
+ guest/tests/verify.py                         |  2 +-
+ 4 files changed, 96 insertions(+), 9 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/local/bin/clipboard-bridge b/guest/factory-overlay/usr/local/bin/clipboard-bridge
+index 2cc7698..749aa7d 100755
+--- a/guest/factory-overlay/usr/local/bin/clipboard-bridge
++++ b/guest/factory-overlay/usr/local/bin/clipboard-bridge
+@@ -14,15 +14,28 @@ mkdir -p "$STATE"
+ 
+ # wl-paste supplies the selected text on stdin. Keeping it in a file preserves
+ # trailing newlines and avoids a second clipboard read after the selection moves.
+-if [ "${1:-}" = --push ]; then
++if [ "${1:-}" = --push ] || [ "${1:-}" = --receive ]; then
+   outgoing=$(mktemp "$STATE/outgoing.XXXXXX") || exit 1
+   trap 'rm -f "$outgoing"' EXIT
+   head -c 8388609 > "$outgoing" || exit 1
+   size=$(wc -c < "$outgoing")
+   [ "$size" -gt 0 ] && [ "$size" -le 8388608 ] || exit 0
++  # Serialize both directions, including delivery. A completed push must not
++  # overwrite the state of a newer host value received while it was sending.
++  exec 9> "$STATE/lock"
++  flock -x 9 || exit 1
+   sha=$(sha256sum < "$outgoing" | cut -d' ' -f1)
++  if [ "$1" = --receive ]; then
++    printf '%s\n' "$sha" > "$STATE/last_content"
++    # wl-copy forks a clipboard owner. It must not inherit the lock descriptor.
++    if ! wl-copy < "$outgoing" 9>&-; then
++      rm -f "$STATE/last_content"
++      exit 1
++    fi
++    exit 0
++  fi
+   [ "$sha" = "$(cat "$STATE/last_content" 2>/dev/null)" ] && exit 0
+-  if { base64 -w0 < "$outgoing"; echo; } | socat -u - TCP:$HOST:$PUSH_PORT,connect-timeout=3 2>/dev/null; then
++  if { base64 -w0 < "$outgoing"; echo; } | timeout 10s socat -u - TCP:$HOST:$PUSH_PORT,connect-timeout=3 2>/dev/null 9>&-; then
+     printf '%s\n' "$sha" > "$STATE/last_content"
+   else
+     exit 1
+@@ -75,11 +88,7 @@ while :; do
+       socat -u TCP:$HOST:$PULL_PORT,connect-timeout=3 - 2>/dev/null | while IFS= read -r line; do
+         line=${line%"$(printf '\r')"}
+         printf '%s' "$line" | base64 -d > "$STATE/incoming" 2>/dev/null || continue
+-        sha256sum < "$STATE/incoming" | cut -d' ' -f1 > "$STATE/last_content"
+-        if ! wl-copy < "$STATE/incoming"; then
+-          rm -f "$STATE/last_content"
+-          break
+-        fi
++        "$0" --receive < "$STATE/incoming" || break
+       done
+       sleep 2
+     done
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index f342eaa..3040870 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -79,7 +79,7 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ }
+ # Bump this revision whenever compat-overlay.tar changes in a way that must be
+ # applied to persistent disks created by an earlier launcher release.
+-compat_revision=4
++compat_revision=5
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+diff --git a/guest/tests/test_clipboard.py b/guest/tests/test_clipboard.py
+index 2ae5994..777e13d 100644
+--- a/guest/tests/test_clipboard.py
++++ b/guest/tests/test_clipboard.py
+@@ -57,3 +57,81 @@ class ClipboardTests(unittest.TestCase):
+         self.assertEqual(self.push(b'x' * (8388608 + 1)).returncode, 0)
+         self.assertFalse(self.capture.exists())
+         self.assertEqual(list((self.root / 'try-omarchy-clipboard').glob('outgoing.*')), [])
++
++    def receive(self, data):
++        return subprocess.run(['sh', str(BRIDGE), '--receive'], input=data,
++                              env=self.env, capture_output=True, timeout=10)
++
++    def test_receive_does_not_pass_lock_to_clipboard_owner(self):
++        copy = self.bin / 'wl-copy'
++        copy.write_text('#!/bin/sh\nif [ -e /proc/self/fd/9 ]; then exit 1; fi\ncat > "$CAPTURE"\n')
++        copy.chmod(0o755)
++        self.assertEqual(self.receive(b'host text\n\n').returncode, 0)
++        self.assertEqual(self.capture.read_bytes(), b'host text\n\n')
++        self.assertEqual(self.push(b'host text\n\n').returncode, 0)
++        self.assertEqual(self.capture.read_bytes(), b'host text\n\n')
++
++    def test_failed_receive_allows_retry(self):
++        copy = self.bin / 'wl-copy'
++        copy.write_text('#!/bin/sh\ncat > /dev/null\nexit 1\n')
++        copy.chmod(0o755)
++        self.assertNotEqual(self.receive(b'host text').returncode, 0)
++        self.assertFalse((self.root / 'try-omarchy-clipboard/last_content').exists())
++
++    def test_push_completion_cannot_overwrite_newer_receive(self):
++        import time
++        started, release, received = (self.root / n for n in ('started', 'release', 'received'))
++        self.env.update(STARTED=str(started), RELEASE=str(release), RECEIVED=str(received))
++        self.socat('cat >> "$CAPTURE"\ntouch "$STARTED"\nwhile [ ! -e "$RELEASE" ]; do sleep 0.01; done')
++        copy = self.bin / 'wl-copy'
++        copy.write_text('#!/bin/sh\ncat > "$RECEIVED"\n')
++        copy.chmod(0o755)
++        push = subprocess.Popen(['sh', str(BRIDGE), '--push'], stdin=subprocess.PIPE,
++                                env=self.env, start_new_session=True)
++        pull = None
++        try:
++            push.stdin.write(b'A')
++            push.stdin.close()
++            deadline = time.monotonic() + 3
++            while not started.exists() and time.monotonic() < deadline:
++                time.sleep(0.01)
++            self.assertTrue(started.exists(), 'push never started')
++            pull = subprocess.Popen(['sh', str(BRIDGE), '--receive'], stdin=subprocess.PIPE,
++                                    env=self.env, start_new_session=True)
++            pull.stdin.write(b'B')
++            pull.stdin.close()
++            # Wait until receive has consumed its input, then release the slow
++            # send. Both operations must finish with B as the current state.
++            deadline = time.monotonic() + 3
++            state = self.root / 'try-omarchy-clipboard'
++            while len(list(state.glob('outgoing.*'))) < 2 and time.monotonic() < deadline:
++                time.sleep(0.01)
++            self.assertEqual(len(list(state.glob('outgoing.*'))), 2)
++            release.touch()
++            self.assertEqual(push.wait(timeout=3), 0)
++            self.assertEqual(pull.wait(timeout=3), 0)
++            self.assertEqual(received.read_bytes(), b'B')
++            self.assertEqual((state / 'last_content').read_text().strip(), hashlib.sha256(b'B').hexdigest())
++            self.socat('cat >> "$CAPTURE"')
++            self.assertEqual(self.push(b'A').returncode, 0)
++            self.assertEqual(self.capture.read_bytes(), (base64.b64encode(b'A') + b'\n') * 2)
++        finally:
++            release.touch()
++            for process in (push, pull):
++                if process is not None:
++                    try:
++                        process.wait(timeout=3)
++                    except subprocess.TimeoutExpired:
++                        import signal
++                        os.killpg(process.pid, signal.SIGKILL)
++                        process.wait()
++
++    def test_send_timeout_does_not_consume_text(self):
++        timeout = self.bin / 'timeout'
++        timeout.write_text('#!/bin/sh\ncat > /dev/null\nexit 124\n')
++        timeout.chmod(0o755)
++        self.assertEqual(self.push(b'retry after timeout').returncode, 1)
++        self.assertFalse((self.root / 'try-omarchy-clipboard/last_content').exists())
++        timeout.unlink()
++        self.assertEqual(self.push(b'retry after timeout').returncode, 0)
++        self.assertEqual(self.capture.read_bytes(), base64.b64encode(b'retry after timeout') + b'\n')
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 758596d..3db8c06 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -252,7 +252,7 @@ def main() -> None:
+ 
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     check(
+-        "compat_revision=4" in finalize_rootfs
++        "compat_revision=5" in finalize_rootfs
+         and "compat_revision" in finalize_rootfs.split("compat-version")[0]
+         and "usr/local/bin/clipboard-bridge" in finalize_rootfs
+         and "etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service" in finalize_rootfs,
+-- 
+2.55.0
+

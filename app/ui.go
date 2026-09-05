@@ -116,15 +116,16 @@ type setupPromptResult struct {
 }
 
 type progressUI struct {
-	status    atomic.Value // string
-	account   atomic.Value // string
-	cur       atomic.Int64
-	total     atomic.Int64
-	done      atomic.Bool
-	canceling atomic.Bool
-	available atomic.Bool
-	ready     chan struct{}
-	prompts   chan setupPromptRequest
+	status        atomic.Value // string
+	cancelMessage atomic.Value // string
+	account       atomic.Value // string
+	cur           atomic.Int64
+	total         atomic.Int64
+	done          atomic.Bool
+	canceling     atomic.Bool
+	available     atomic.Bool
+	ready         chan struct{}
+	prompts       chan setupPromptRequest
 }
 
 // THE app has ONE splash (launch-UX requirement: it appears at launch and
@@ -200,7 +201,11 @@ func (ui *progressUI) confirmCancel(hCancel uintptr) bool {
 	if ui.canceling.Load() {
 		return true
 	}
-	if msgBox("Cancel Try Omarchy setup?\n\nUnfinished setup files will be removed. An existing working installation will be kept.", mbYesNo|mbIconQuestion|mbDefbutton2) != idYes {
+	message := "Cancel Try Omarchy setup?\n\nUnfinished setup files will be removed. An existing working installation will be kept."
+	if custom, ok := ui.cancelMessage.Load().(string); ok {
+		message = custom
+	}
+	if msgBox(message, mbYesNo|mbIconQuestion|mbDefbutton2) != idYes {
 		return false
 	}
 	if !ui.canceling.CompareAndSwap(false, true) {
@@ -507,7 +512,7 @@ func (ui *progressUI) run() {
 	hLabelTerminal = mk("Terminal", 150, 310, 90, 20, 0, 0)
 	hKeyW = mk("SUPER+W", 280, 310, 86, 20, 0, 0)
 	hLabelClose = mk("Close window", 368, 310, 100, 20, 0, 0)
-	hCancel = mk("CANCEL SETUP", 380, 342, 100, 20, ssNotify, cancelControlID)
+	hCancel = mk("CANCEL", 380, 342, 100, 20, ssNotify, cancelControlID)
 	hPromptTitle = mk("", 40, 168, windowW-80, 24, 0, 0)
 	hPromptBody = mk("", 40, 200, windowW-80, 22, 0, 0)
 	hPromptOption1 = mk("", 40, 238, windowW-80, 24, ssNotify, promptOption1ID)

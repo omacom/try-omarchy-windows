@@ -12,6 +12,37 @@ export XDG_RUNTIME_DIR STATE
 umask 077
 mkdir -p "$STATE"
 
+# wl-paste supplies the selected text on stdin. Keeping it in a file preserves
+# trailing newlines and avoids a second clipboard read after the selection moves.
+if [ "${1:-}" = --push ] || [ "${1:-}" = --receive ]; then
+  outgoing=$(mktemp "$STATE/outgoing.XXXXXX") || exit 1
+  trap 'rm -f "$outgoing"' EXIT
+  head -c 8388609 > "$outgoing" || exit 1
+  size=$(wc -c < "$outgoing")
+  [ "$size" -gt 0 ] && [ "$size" -le 8388608 ] || exit 0
+  # Serialize both directions, including delivery. A completed push must not
+  # overwrite the state of a newer host value received while it was sending.
+  exec 9> "$STATE/lock"
+  flock -x 9 || exit 1
+  sha=$(sha256sum < "$outgoing" | cut -d' ' -f1)
+  if [ "$1" = --receive ]; then
+    printf '%s\n' "$sha" > "$STATE/last_content"
+    # wl-copy forks a clipboard owner. It must not inherit the lock descriptor.
+    if ! wl-copy < "$outgoing" 9>&-; then
+      rm -f "$STATE/last_content"
+      exit 1
+    fi
+    exit 0
+  fi
+  [ "$sha" = "$(cat "$STATE/last_content" 2>/dev/null)" ] && exit 0
+  if { base64 -w0 < "$outgoing"; echo; } | timeout 10s socat -u - TCP:$HOST:$PUSH_PORT,connect-timeout=3 2>/dev/null 9>&-; then
+    printf '%s\n' "$sha" > "$STATE/last_content"
+  else
+    exit 1
+  fi
+  exit 0
+fi
+
 find_wayland() {
   if [ -n "${WAYLAND_DISPLAY:-}" ] && [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; then
     export WAYLAND_DISPLAY
@@ -57,8 +88,7 @@ while :; do
       socat -u TCP:$HOST:$PULL_PORT,connect-timeout=3 - 2>/dev/null | while IFS= read -r line; do
         line=${line%"$(printf '\r')"}
         printf '%s' "$line" | base64 -d > "$STATE/incoming" 2>/dev/null || continue
-        sha256sum < "$STATE/incoming" | cut -d' ' -f1 > "$STATE/last_set"
-        wl-copy < "$STATE/incoming" || break
+        "$0" --receive < "$STATE/incoming" || break
       done
       sleep 2
     done
@@ -67,16 +97,8 @@ while :; do
 
   # guest -> host. wl-paste exits when its Wayland connection disappears, so
   # the outer loop can discover the replacement socket and restart both sides.
-  wl-paste --no-newline --watch sh -c '
-    cur=$(wl-paste --no-newline 2>/dev/null) || exit 0
-    [ -z "$cur" ] && exit 0
-    sha=$(printf "%s" "$cur" | sha256sum | cut -d" " -f1)
-    [ "$sha" = "$(cat "$STATE/last_set" 2>/dev/null)" ] && exit 0
-    [ "$sha" = "$(cat "$STATE/last_sent" 2>/dev/null)" ] && exit 0
-    echo "$sha" > "$STATE/last_sent"
-    { printf "%s" "$cur" | base64 -w0; echo; } | socat -u - TCP:10.0.2.2:4448,connect-timeout=3 2>/dev/null
-  ' || true
+  wl-paste --type text --watch "$0" --push || true
 
 	cleanup
-	sleep 2
+  sleep 2
 done

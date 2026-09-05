@@ -29,14 +29,19 @@ personal details. Do not upload the guest disk or a full backup.
 
 ## Everyday use
 
-- [ ] Fresh install at the default location and another local drive.
+- [ ] Fresh install at the default location and another local drive. Use the
+  Windows folder picker for install location and sharing, including a long path.
+- [ ] On a copied install, confirm that malformed preferences offer repair,
+  declining leaves them unchanged, and accepting preserves the original file
+  before restoring defaults without changing guest files.
 - [ ] Cancel a download, relaunch, and finish setup without a broken install.
 - [ ] Instant account and personalized account both reach the desktop.
 - [ ] GPU rendering, then CPU fallback, both reach the desktop.
 - [ ] Keyboard and Windows key work only in the intended window; host shortcuts
   still work after switching away. Windows handles Win+L itself.
-- [ ] Text clipboard works in both directions; shared files can be read and
-  written from both sides.
+- [ ] Text clipboard works in both directions, including Unicode, trailing
+  newlines, copying an earlier value again, and reconnecting after a guest reboot.
+- [ ] Shared files can be read and written from both sides.
 - [ ] Audio playback, device switching, and video work. Note microphone activity
   at idle and when an app starts and stops recording.
 - [ ] Resize, fullscreen, and movement between monitors with different scaling.
@@ -62,10 +67,21 @@ Use the copied guest for interruption and low-space tests.
   on its next update check. Test direct stable install and stable-to-stable too.
 - [ ] Grow the disk, verify capacity inside Omarchy with `df -h /`, and check the
   files. Lowering the preference and rolling back the launcher never shrink it.
+- [ ] From Settings, back up a stopped VM, cancel an operation, and restore a
+  separate copy. Verify its Start Omarchy and Settings shortcuts point to that
+  copy, then boot it and compare the guest files.
+- [ ] Reset from Settings after taking a backup. Confirm first-run setup on the
+  next launch and that the previous disk is retained under `vm/before-reset-*`.
+  Check keyboard navigation, file pickers, progress, and scaling of the controls.
 - [ ] Low host free space produces a useful error and leaves the existing guest
   usable after space is freed.
 - [ ] Configuration export restores the selected theme, personal configuration,
   and added packages on a separate fresh Omarchy installation.
+
+- [ ] In portable mode, reset with `-portable -fresh`, reach a new guest, and
+  verify that `vm/before-reset-*` retains the previous QCOW2 disk and identity.
+  With Omarchy closed and the matching original factory payload restored,
+  returning that retained pair to `vm` should recover the previous guest.
 
 ## Coverage
 

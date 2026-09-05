@@ -119,7 +119,7 @@ func finishSetupCancellation(cfg *config, err error) bool {
 	}
 	executable, _ := os.Executable()
 	if cleanupErr := cleanupCancelledSetup(cfg.dir, executable, cancelRemovesAll.Load()); cleanupErr != nil {
-		errorBox(fmt.Sprintf("Setup was cancelled, but some temporary files could not be removed:\n\n%v\n\nYou can safely delete %s manually.", cleanupErr, cfg.dir))
+		errorBox(fmt.Sprintf("Setup was cancelled, but some temporary files could not be removed:\n\n%v\n\nOmarchy data folder: %s\n\nKeep this folder. Close Try Omarchy and try again.", cleanupErr, cfg.dir))
 	}
 	uiDone()
 	return true
@@ -127,12 +127,12 @@ func finishSetupCancellation(cfg *config, err error) bool {
 
 func main() {
 	cfg := &config{}
-	removeStandardDataOnCancel := false
+	removeDataOnCancel := false
 	defaultDir := filepath.Join(os.Getenv("LOCALAPPDATA"), defaultDataDirectoryName)
 	flag.StringVar(&cfg.dir, "dir", defaultDir, "Try Omarchy data directory (virtual machine, runtime, and settings)")
 	flag.StringVar(&cfg.winqEmu, "winq", `C:\WINQ-EMU`, "WINQ-EMU install path (GPU mode)")
 	flag.StringVar(&cfg.share, "share", "", "Windows folder shared into Omarchy at /mnt/host and as ~/<folder name>")
-	flag.BoolVar(&cfg.fresh, "fresh", false, "discard the writable disk and start over")
+	flag.BoolVar(&cfg.fresh, "fresh", false, "start over and retain the previous writable disk for recovery")
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen (Immersive)")
 	flag.IntVar(&cfg.memOverrideMiB, "memory", 0, "guest RAM in MiB (default: sized to this PC)")
 	flag.IntVar(&cfg.diskGiB, "disk-size", 0, "guest disk capacity in GiB (0: default; grows existing standard disks, never shrinks)")
@@ -143,6 +143,7 @@ func main() {
 	var forwards forwardList
 	flag.Var(&forwards, "forward", "forward a Windows loopback port into Omarchy, as tcp:2222:22 or 8080:80 (repeatable)")
 	sshPort := flag.Int("ssh", 0, "forward this Windows loopback port to Omarchy's sshd and start sshd for the session")
+	recoveryAction := flag.String("recovery", "", "open backup, restore, or reset controls for a stopped standard install")
 	backupPath := flag.String("backup", "", "back up a stopped standard VM to a new ZIP file, then exit")
 	restorePath := flag.String("restore", "", "restore a trusted backup into a new folder selected with -dir, then exit")
 	openSettings := flag.Bool("settings", false, "open the settings window, then exit")
@@ -164,12 +165,18 @@ func main() {
 	updateWaitPID := flag.Int("update-wait-pid", 0, "internal: process to wait for before replacing the launcher")
 	updateRestartArgs := flag.String("update-restart-args", "", "internal: encoded launcher restart arguments")
 	flag.Parse()
-	maintenance := *backupPath != "" || *restorePath != ""
+	maintenance := *backupPath != "" || *restorePath != "" || *recoveryAction != ""
+	if *recoveryAction != "" && (*recoveryAction != "backup" && *recoveryAction != "restore" && *recoveryAction != "reset" || *backupPath != "" || *restorePath != "") {
+		fatal("Choose one recovery action: backup, restore, or reset.")
+	}
 	if maintenance && (*backupPath != "" && *restorePath != "" || cfg.portable || cfg.fresh || *openSettings || *diagnostics || *enableWhp || *applyLauncherUpdateFlag || *applyLauncherRollbackFlag) {
-		fatal("Use either -backup or -restore on a stopped standard install, without other maintenance options.")
+		fatal("Use one recovery action on a stopped standard install, without other maintenance options.")
 	}
 	explicitFlags := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicitFlags[f.Name] = true })
+	if explicitFlags["recovery"] && *recoveryAction == "" {
+		fatal("Choose a recovery action: backup, restore, or reset.")
+	}
 	if explicitFlags["backup"] && strings.TrimSpace(*backupPath) == "" || explicitFlags["restore"] && strings.TrimSpace(*restorePath) == "" {
 		fatal("Provide a backup filename with -backup or -restore.")
 	}
@@ -203,6 +210,10 @@ func main() {
 		root := filepath.Dir(self)
 		cfg.dir = filepath.Join(root, "data")
 		cfg.payloadDir = filepath.Join(root, "payload")
+		removeDataOnCancel, err = dataDirectoryEmpty(cfg.dir)
+		if err != nil {
+			fatal("Try Omarchy cannot inspect its portable data location: %v", err)
+		}
 		// WHP is a property of this Windows host, so its restart marker must
 		// not travel to another PC with the USB.
 		cfg.hostDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "TryOmarchy", "portable-host")
@@ -224,7 +235,7 @@ func main() {
 		}
 		cfg.dir = selected
 		cfg.hostDir = cfg.dir
-		removeStandardDataOnCancel, err = dataDirectoryEmpty(cfg.dir)
+		removeDataOnCancel, err = dataDirectoryEmpty(cfg.dir)
 		if err != nil {
 			fatal("Try Omarchy cannot inspect its data location: %v", err)
 		}
@@ -250,16 +261,27 @@ func main() {
 		}
 	}
 
+	if *recoveryAction != "" {
+		err := runRecoveryUI(cfg.dir, *recoveryAction)
+		reportRecoveryResult(err)
+		if err != nil && !errors.Is(err, errSetupCancelled) {
+			os.Exit(1)
+		}
+		return
+	}
 	if maintenance {
 		var err error
 		if *backupPath != "" {
-			getUI().setStatus("Creating VM backup. This may take a while...")
-			err = writeVMBackup(cfg.dir, *backupPath)
+			beginRecoveryProgress("Creating VM backup. This may take a while...")
+			err = writeVMBackupProgress(cfg.dir, *backupPath, recoveryProgress("Backing up"))
 		} else {
-			getUI().setStatus("Verifying and restoring VM backup...")
-			err = restoreVMBackup(*restorePath, cfg.dir)
+			beginRecoveryProgress("Verifying and restoring VM backup...")
+			err = restoreVMBackupProgress(*restorePath, cfg.dir, recoveryProgress("Restoring"))
 		}
 		uiDone()
+		if errors.Is(err, errSetupCancelled) {
+			return
+		}
 		if err != nil {
 			errorBox("Try Omarchy could not finish the backup or restore.\n\n" + err.Error())
 			os.Exit(1)
@@ -294,8 +316,12 @@ func main() {
 	// settings.json holds the rows the settings window edits; explicit flags
 	// win for this launch only.
 	settingsFile := settingsPath(cfg.dir)
-	userSettings, err := loadSettings(settingsFile)
+	userSettings, err := loadSettingsWithRepair(settingsFile)
 	if err != nil {
+		if errors.Is(err, errSetupCancelled) {
+			uiDone()
+			return
+		}
 		fatal("Try Omarchy cannot read its settings: %v\n\nFix or delete the file and open Try Omarchy again.", err)
 	}
 	if err := applySettings(cfg, userSettings, explicitFlags, &forwards, sshKeyPath); err != nil {
@@ -305,8 +331,12 @@ func main() {
 		fatal("-memory must be between %d and %d MiB.", minimumGuestMemoryMiB, maximumGuestMemoryMiB)
 	}
 	if !explicitFlags["disk-size"] {
-		storage, err := loadStorageSettings(cfg.dir)
+		storage, err := loadStorageWithRepair(cfg.dir)
 		if err != nil {
+			if errors.Is(err, errSetupCancelled) {
+				uiDone()
+				return
+			}
 			fatal("Cannot read storage preferences: %v", err)
 		}
 		cfg.diskGiB = storage.DiskGiB
@@ -333,6 +363,15 @@ func main() {
 		cfg.diskFormat = "qcow2"
 		cfg.disk = filepath.Join(cfg.vmDir, "disk.qcow2")
 	}
+	if cfg.fresh && !cfg.portable {
+		if _, err := os.Lstat(cfg.disk); err == nil {
+			proceed, err := confirmResetBackup(cfg.dir)
+			if err != nil || !proceed {
+				reportRecoveryResult(err)
+				return
+			}
+		}
+	}
 	payloadsRolledBack, err := rollbackPendingPayloadUpdates(cfg.dir)
 	if err != nil {
 		fatal("Could not recover the previous Omarchy files after an interrupted update: %v", err)
@@ -345,7 +384,7 @@ func main() {
 	}
 	completeAtStart := completeInstallExists(cfg.dir, filepath.Base(cfg.disk))
 	needsProvisioning := cfg.fresh || !completeAtStart
-	configureSetupCancellation(!completeAtStart && (cfg.portable || removeStandardDataOnCancel))
+	configureSetupCancellation(!completeAtStart && removeDataOnCancel)
 	if err := os.MkdirAll(cfg.vmDir, 0o755); err != nil {
 		fatal("Could not create the Omarchy data directory: %v", err)
 	}
