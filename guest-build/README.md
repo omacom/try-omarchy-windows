@@ -54,6 +54,10 @@ Windows VM tests unless noted in the release checklist):
   directory under its own name at login, pins it in the Files sidebar, and
   opens each newly selected share once so users can find it immediately; it
   removes only those managed entries on launches that share nothing
+- New users start with no Hyprland toggles switched on. The builder used to
+  copy every toggle template into the user's toggle state, which turned "no
+  gaps" and "single-window aspect ratio" on permanently and overrode the gaps,
+  border, and rounding set in looknfeel.lua (#32)
 - Overlay scripts have unprivileged behavioral tests under guest/tests
 - The initramfs carries those launcher-integration files onto persistent disks
   created by older releases and reports userspace readiness before the Windows

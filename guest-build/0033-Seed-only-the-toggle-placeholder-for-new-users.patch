@@ -1,0 +1,50 @@
+From 6dc03449e4f184ee377380d9d8e31c92000d5849 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 5 Sep 2026 03:53:26 -0400
+Subject: [PATCH] Seed only the toggle placeholder for new users
+
+materialize-omarchy.sh copied every template from default/hypr/toggles into each new user's toggle state. A file there means the toggle is on and it loads after the user's looknfeel.lua, so window-no-gaps and single-window-aspect-ratio were permanently switched on and overrode gaps, border size, and rounding for everyone (omacom/try-omarchy-windows#32). Seed only flags.lua, which keeps the directory present, matching what omarchy-hyprland-toggle expects.
+---
+ guest/scripts/materialize-omarchy.sh | 8 +++++++-
+ guest/tests/verify.py                | 5 +++++
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
+index 7786cce..3754203 100755
+--- a/guest/scripts/materialize-omarchy.sh
++++ b/guest/scripts/materialize-omarchy.sh
+@@ -160,8 +160,14 @@ copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"
+ install_file 0644 "$source_dir/default/bashrc" "$root/etc/skel/.bashrc"
+ mkdir -p "$root/etc/skel/.local/share/applications"
+ copy_contents "$source_dir/applications" "$root/etc/skel/.local/share/applications"
++# A file in the toggle state directory means that toggle is switched on
++# (omarchy-hyprland-toggle copies a template in to enable it), and everything
++# there loads after the user's looknfeel.lua. Seed only the placeholder that
++# keeps the directory present; copying every template turned "no gaps" and
++# "single-window aspect ratio" on for every user and silently overrode their
++# gaps, border, and rounding settings.
+ mkdir -p "$root/etc/skel/.local/state/omarchy/toggles/hypr"
+-copy_contents "$source_dir/default/hypr/toggles" "$root/etc/skel/.local/state/omarchy/toggles/hypr"
++install_file 0644 "$source_dir/default/hypr/toggles/flags.lua" "$root/etc/skel/.local/state/omarchy/toggles/hypr/flags.lua"
+ 
+ if [[ -d $source_dir/default/nautilus-python/extensions ]]; then
+   copy_tree "$source_dir/default/nautilus-python/extensions" "$root/etc/skel/.local/share/nautilus-python/extensions"
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 3db8c06..dbf1fa0 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -114,6 +114,11 @@ def main() -> None:
+     check("factory-overlay" in configure and "native-overlay" in configure, "rootfs receives only native factory overlays")
+     check("omarchy-provision-owner.service" in configure, "first boot uses upstream owner provisioning")
+     materialize = read(GUEST / "scripts/materialize-omarchy.sh")
++    check(
++        'install_file 0644 "$source_dir/default/hypr/toggles/flags.lua" "$root/etc/skel/.local/state/omarchy/toggles/hypr/flags.lua"' in materialize
++        and 'copy_contents "$source_dir/default/hypr/toggles"' not in materialize,
++        "new users start with no Hyprland toggles switched on (only the flags.lua placeholder)",
++    )
+     check(
+         'nvim_config="$root/usr/share/omarchy-nvim/config"' in materialize
+         and 'copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"' in materialize
+-- 
+2.55.0
+
