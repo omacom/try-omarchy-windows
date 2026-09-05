@@ -69,8 +69,13 @@ Windows VM tests unless noted in the release checklist):
   launcher commits a guest-image update. Its explicit integration revision is
   bumped whenever those files must be reapplied without a kernel version change
 
-If Arch has moved since the lock was written, refresh it first and review the diff:
+If Arch has moved since the lock was written, refresh it first and review the diff.
+`scripts/release/refresh-guest-lock.sh` does the whole dance: it checks out the
+locked source, applies the patches, resolves the lock in Docker, and writes the
+next numbered `Refresh-the-guest-package-lock` patch here when anything changed.
+The `Refresh guest lock` workflow runs it every Monday and opens a pull request
+with the package changes; `--check` reports drift without writing a patch.
 
 ```bash
-sudo bash guest/build-container.sh --refresh-package-lock guest/packages.lock.json
+scripts/release/refresh-guest-lock.sh
 ```
