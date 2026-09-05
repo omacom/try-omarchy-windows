@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.12-preview - 2026-09-04
+## v0.0.12-preview - 2026-09-05
 
 ### Features
 - Added backup, restore, and reset controls to Settings for stopped standard installs, plus `-backup` and `-restore` command-line options. Backups include the guest disk, boot files, bundled runtime, and settings, and every file is checksum-verified during restore. Restore creates a separate installation with its own launch and Settings shortcuts, so existing installations and backups are never replaced.
@@ -18,7 +18,7 @@
 - Portable reset now prepares the new disk before retaining the old disk and its backing identity in a recovery folder, and rolls back if publication fails. Recovery data also survives a cancelled setup after an interrupted reset.
 - Updated active download, update, issue, clone, and module links after the repository moved to `omacom`. Signed update manifests and existing guest and runtime receipts remain compatible with the old release base, so the transfer does not force a payload refresh or strand older launchers.
 
-Thanks to [7Wdev](https://github.com/7Wdev) for requesting install-location and disk controls.
+Thanks to [tcballard](https://github.com/tcballard) for the official Omarchy mark in the app branding, [7Wdev](https://github.com/7Wdev) for requesting install-location and disk controls, and [Sperum](https://github.com/Sperum) for the backup request behind the new backup and restore controls.
 
 ## v0.0.11-preview - 2026-09-03
 
