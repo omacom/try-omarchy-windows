@@ -35,23 +35,26 @@ const (
 	trayCommandDiagnose = 3004
 	trayCommandShutdown = 3005
 
-	nimAdd          = 0
-	nimDelete       = 2
-	nimSetVersion   = 4
-	nifMessage      = 0x1
-	nifIcon         = 0x2
-	nifTip          = 0x4
-	nifShowTip      = 0x80
-	notifyVersion   = 4
-	mfString        = 0
-	mfGray          = 0x1
-	mfSeparator     = 0x800
-	tpmRightButton  = 0x2
-	tpmReturnCmd    = 0x100
-	wmContextMenu   = 0x007B
-	wmNull          = 0x0000
-	wmLButtonDblClk = 0x0203
-	wmRButtonUp     = 0x0205
+	nimAdd                = 0
+	nimDelete             = 2
+	nimSetVersion         = 4
+	nifMessage            = 0x1
+	nifIcon               = 0x2
+	nifTip                = 0x4
+	nifShowTip            = 0x80
+	notifyVersion         = 4
+	mfString              = 0
+	mfGray                = 0x1
+	mfSeparator           = 0x800
+	tpmRightButton        = 0x2
+	tpmReturnCmd          = 0x100
+	wmContextMenu         = 0x007B
+	wmPowerbroadcast      = 0x0218
+	pbtApmResumeSuspend   = 0x0007
+	pbtApmResumeAutomatic = 0x0012
+	wmNull                = 0x0000
+	wmLButtonDblClk       = 0x0203
+	wmRButtonUp           = 0x0205
 )
 
 type trayGUID struct {
@@ -256,6 +259,15 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 				showMenu()
 			}
 			return 0
+		case wmPowerbroadcast:
+			if wParam == pbtApmResumeAutomatic || wParam == pbtApmResumeSuspend {
+				logf("windows resumed from sleep")
+				select {
+				case hostResumed <- struct{}{}:
+				default:
+				}
+			}
+			return 1
 		case trayStopMessage:
 			procDestroyWindow.Call(window)
 			return 0

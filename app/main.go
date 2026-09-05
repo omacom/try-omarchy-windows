@@ -648,6 +648,7 @@ func main() {
 	}
 	cmdline += fmt.Sprintf(" video=%dx%d", conW, conH)
 
+	go runGuestAgent()
 	go runWinKeyHook()
 	go runWinKeyQmp()
 	go runTitleEnforcer(cfg.dir, cfg.fullscreen)
@@ -970,4 +971,18 @@ func recordRenderResult(cfg *config) {
 	if err := saveRenderProbe(cfg.dir, probe); err != nil {
 		logf("could not record the rendering result: %v", err)
 	}
+}
+
+// hostResumed is signalled by the tray window when Windows resumes from
+// sleep, so the guest clock can be corrected right away.
+var hostResumed = make(chan struct{}, 1)
+
+func runGuestAgent() {
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", agentPort))
+	if err != nil {
+		logf("agent: port %d unavailable, guest clock sync disabled: %v", agentPort, err)
+		return
+	}
+	logf("agent: listening on %d", agentPort)
+	newGuestAgent().run(l, hostResumed)
 }

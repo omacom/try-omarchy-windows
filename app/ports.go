@@ -9,4 +9,5 @@ const (
 	clipPushPort  = 4448
 	clipPullPort  = 4449
 	lifecyclePort = 4450
+	agentPort     = 4451
 )
