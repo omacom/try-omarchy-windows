@@ -119,7 +119,7 @@ func finishSetupCancellation(cfg *config, err error) bool {
 	}
 	executable, _ := os.Executable()
 	if cleanupErr := cleanupCancelledSetup(cfg.dir, executable, cancelRemovesAll.Load()); cleanupErr != nil {
-		errorBox(fmt.Sprintf("Setup was cancelled, but some temporary files could not be removed:\n\n%v\n\nYou can safely delete %s manually.", cleanupErr, cfg.dir))
+		errorBox(fmt.Sprintf("Setup was cancelled, but some temporary files could not be removed:\n\n%v\n\nOmarchy data folder: %s\n\nKeep this folder. Close Try Omarchy and try again.", cleanupErr, cfg.dir))
 	}
 	uiDone()
 	return true
@@ -127,7 +127,7 @@ func finishSetupCancellation(cfg *config, err error) bool {
 
 func main() {
 	cfg := &config{}
-	removeStandardDataOnCancel := false
+	removeDataOnCancel := false
 	defaultDir := filepath.Join(os.Getenv("LOCALAPPDATA"), defaultDataDirectoryName)
 	flag.StringVar(&cfg.dir, "dir", defaultDir, "Try Omarchy data directory (virtual machine, runtime, and settings)")
 	flag.StringVar(&cfg.winqEmu, "winq", `C:\WINQ-EMU`, "WINQ-EMU install path (GPU mode)")
@@ -210,6 +210,10 @@ func main() {
 		root := filepath.Dir(self)
 		cfg.dir = filepath.Join(root, "data")
 		cfg.payloadDir = filepath.Join(root, "payload")
+		removeDataOnCancel, err = dataDirectoryEmpty(cfg.dir)
+		if err != nil {
+			fatal("Try Omarchy cannot inspect its portable data location: %v", err)
+		}
 		// WHP is a property of this Windows host, so its restart marker must
 		// not travel to another PC with the USB.
 		cfg.hostDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "TryOmarchy", "portable-host")
@@ -231,7 +235,7 @@ func main() {
 		}
 		cfg.dir = selected
 		cfg.hostDir = cfg.dir
-		removeStandardDataOnCancel, err = dataDirectoryEmpty(cfg.dir)
+		removeDataOnCancel, err = dataDirectoryEmpty(cfg.dir)
 		if err != nil {
 			fatal("Try Omarchy cannot inspect its data location: %v", err)
 		}
@@ -380,7 +384,7 @@ func main() {
 	}
 	completeAtStart := completeInstallExists(cfg.dir, filepath.Base(cfg.disk))
 	needsProvisioning := cfg.fresh || !completeAtStart
-	configureSetupCancellation(!completeAtStart && (cfg.portable || removeStandardDataOnCancel))
+	configureSetupCancellation(!completeAtStart && removeDataOnCancel)
 	if err := os.MkdirAll(cfg.vmDir, 0o755); err != nil {
 		fatal("Could not create the Omarchy data directory: %v", err)
 	}
