@@ -24,6 +24,6 @@ Try Omarchy runs the full x86_64 Arch Linux environment used by Omarchy. It is n
 - Text clipboard sharing works in both directions. File clipboard and drag and
   drop are not implemented yet; use the shared folder for files.
 - The launcher boots its pinned kernel and initramfs from the release image. Ordinary package installation is supported, but replacing the guest kernel independently can leave it out of sync with those boot files.
-- Configuration export and restore are available through `try-omarchy-export`; see [the migration guide](MIGRATION.md). Full VM backups and snapshots are not built in yet. Back up important work outside the guest.
+- Configuration export and restore are available through `try-omarchy-export`; see [the migration guide](MIGRATION.md). Development builds also support [stopped-VM backup and restore](BACKUP.md) through command-line options. Snapshots and backup controls in Settings are not available yet.
 
 Compatibility varies with Windows, CPU, GPU, and driver combinations. When reporting a problem, include those details and whether Try Omarchy selected GPU or CPU rendering.

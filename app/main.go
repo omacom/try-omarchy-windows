@@ -143,6 +143,8 @@ func main() {
 	var forwards forwardList
 	flag.Var(&forwards, "forward", "forward a Windows loopback port into Omarchy, as tcp:2222:22 or 8080:80 (repeatable)")
 	sshPort := flag.Int("ssh", 0, "forward this Windows loopback port to Omarchy's sshd and start sshd for the session")
+	backupPath := flag.String("backup", "", "back up a stopped standard VM to a new ZIP file, then exit")
+	restorePath := flag.String("restore", "", "restore a trusted backup into a new folder selected with -dir, then exit")
 	openSettings := flag.Bool("settings", false, "open the settings window, then exit")
 	diagnostics := flag.Bool("diagnostics", false, "write a zip of logs, settings, and machine facts for a bug report, then exit")
 	sshKeyPath := flag.String("ssh-key", "", "public key to authorize for the Omarchy account (default: your ~/.ssh/id_*.pub when -ssh is used)")
@@ -162,8 +164,18 @@ func main() {
 	updateWaitPID := flag.Int("update-wait-pid", 0, "internal: process to wait for before replacing the launcher")
 	updateRestartArgs := flag.String("update-restart-args", "", "internal: encoded launcher restart arguments")
 	flag.Parse()
+	maintenance := *backupPath != "" || *restorePath != ""
+	if maintenance && (*backupPath != "" && *restorePath != "" || cfg.portable || cfg.fresh || *openSettings || *diagnostics || *enableWhp || *applyLauncherUpdateFlag || *applyLauncherRollbackFlag) {
+		fatal("Use either -backup or -restore on a stopped standard install, without other maintenance options.")
+	}
 	explicitFlags := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicitFlags[f.Name] = true })
+	if explicitFlags["backup"] && strings.TrimSpace(*backupPath) == "" || explicitFlags["restore"] && strings.TrimSpace(*restorePath) == "" {
+		fatal("Provide a backup filename with -backup or -restore.")
+	}
+	if *restorePath != "" && !explicitFlags["dir"] {
+		fatal("Use -dir with a new data folder when restoring. Existing installations are never replaced.")
+	}
 	if strings.TrimSpace(*runtimeRelease) == "" {
 		*runtimeRelease = *release
 	}
@@ -195,7 +207,7 @@ func main() {
 		// not travel to another PC with the USB.
 		cfg.hostDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "TryOmarchy", "portable-host")
 	} else {
-		promptForLocation := !*diagnostics && !*applyLauncherUpdateFlag && !*applyLauncherRollbackFlag
+		promptForLocation := !maintenance && !*diagnostics && !*applyLauncherUpdateFlag && !*applyLauncherRollbackFlag
 		selected, proceed, err := resolveStandardDataDirectory(
 			defaultDir, cfg.dir, explicitFlags["dir"], promptForLocation, chooseFirstRunDataDirectory,
 		)
@@ -225,7 +237,7 @@ func main() {
 		}
 		// Settings and diagnostics may be opened from the running app's tray.
 		// They must not inspect or roll back an update owned by that parent.
-		if !*openSettings && !*diagnostics {
+		if !maintenance && !*openSettings && !*diagnostics {
 			restartArgs, err := encodeRestartArgs(os.Args[1:])
 			if err != nil {
 				fatal("Could not preserve launcher arguments for updates: %v", err)
@@ -236,6 +248,28 @@ func main() {
 				return
 			}
 		}
+	}
+
+	if maintenance {
+		var err error
+		if *backupPath != "" {
+			getUI().setStatus("Creating VM backup. This may take a while...")
+			err = writeVMBackup(cfg.dir, *backupPath)
+		} else {
+			getUI().setStatus("Verifying and restoring VM backup...")
+			err = restoreVMBackup(*restorePath, cfg.dir)
+		}
+		uiDone()
+		if err != nil {
+			errorBox("Try Omarchy could not finish the backup or restore.\n\n" + err.Error())
+			os.Exit(1)
+		}
+		if *backupPath != "" {
+			infoBox("Backup saved to:\n\n" + *backupPath + "\n\nIt contains your guest files and settings. Keep it private. Shared Windows folders are not included.")
+		} else {
+			infoBox("Backup restored to:\n\n" + cfg.dir + "\n\nStart Try Omarchy with -dir pointing to this folder. Your original installation was not changed.")
+		}
+		return
 	}
 
 	// Runs before settings load on purpose: a damaged settings.json is one of

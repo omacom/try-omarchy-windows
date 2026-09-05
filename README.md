@@ -208,6 +208,12 @@ out of this core Windows change so they can be reviewed separately.
 
 Or skip the app and drive QEMU from PowerShell: `scripts\bootstrap.ps1` then `scripts\launch-omarchy.ps1` (elevated).
 
+## VM backups
+
+Development builds support `-backup` for stopped standard installs and `-restore`
+into a separate data folder. See the [backup guide](docs/BACKUP.md) for usage,
+storage requirements, and current limitations.
+
 ## FAQ
 
 ### Isn't this just QEMU in disguise?
