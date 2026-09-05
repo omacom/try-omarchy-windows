@@ -275,6 +275,9 @@ func main() {
 			err = restoreVMBackupProgress(*restorePath, cfg.dir, recoveryProgress("Restoring"))
 		}
 		uiDone()
+		if errors.Is(err, errSetupCancelled) {
+			return
+		}
 		if err != nil {
 			errorBox("Try Omarchy could not finish the backup or restore.\n\n" + err.Error())
 			os.Exit(1)
@@ -309,8 +312,12 @@ func main() {
 	// settings.json holds the rows the settings window edits; explicit flags
 	// win for this launch only.
 	settingsFile := settingsPath(cfg.dir)
-	userSettings, err := loadSettings(settingsFile)
+	userSettings, err := loadSettingsWithRepair(settingsFile)
 	if err != nil {
+		if errors.Is(err, errSetupCancelled) {
+			uiDone()
+			return
+		}
 		fatal("Try Omarchy cannot read its settings: %v\n\nFix or delete the file and open Try Omarchy again.", err)
 	}
 	if err := applySettings(cfg, userSettings, explicitFlags, &forwards, sshKeyPath); err != nil {
@@ -320,8 +327,12 @@ func main() {
 		fatal("-memory must be between %d and %d MiB.", minimumGuestMemoryMiB, maximumGuestMemoryMiB)
 	}
 	if !explicitFlags["disk-size"] {
-		storage, err := loadStorageSettings(cfg.dir)
+		storage, err := loadStorageWithRepair(cfg.dir)
 		if err != nil {
+			if errors.Is(err, errSetupCancelled) {
+				uiDone()
+				return
+			}
 			fatal("Cannot read storage preferences: %v", err)
 		}
 		cfg.diskGiB = storage.DiskGiB

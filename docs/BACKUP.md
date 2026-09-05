@@ -28,6 +28,15 @@ only the previous writable disk, not a complete backup of its boot files and
 runtime. Keep a full backup before updating or removing the old installation.
 The retained disk continues using host space until you remove it yourself.
 
+## Repair unreadable preferences
+
+If a preferences file cannot be read, the launcher or Settings offers to restore
+that file's defaults. Choose No to leave it unchanged. Choose Yes to keep a copy
+under `preferences-before-repair-*` in the data folder before saving defaults.
+Guest files, disk capacity already allocated, and Windows shortcuts are untouched.
+Repairing launcher settings leaves shared folders and port forwarding disabled
+until you configure them again.
+
 ## Create a backup from PowerShell
 
 Shut down Omarchy and close the launcher first. From PowerShell:

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -68,14 +69,20 @@ const (
 // true when the file was written.
 func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	runtime.LockOSThread()
-	current, err := loadSettings(path)
+	current, err := loadSettingsWithRepair(path)
 	if err != nil {
+		if errors.Is(err, errSetupCancelled) {
+			return false
+		}
 		errorBox("Try Omarchy cannot read its settings:\n\n" + err.Error() + "\n\nFix or delete the file, then open the settings again.")
 		return false
 	}
 
-	storage, err := loadStorageSettings(dataDir)
+	storage, err := loadStorageWithRepair(dataDir)
 	if err != nil {
+		if errors.Is(err, errSetupCancelled) {
+			return false
+		}
 		errorBox("Try Omarchy cannot read its storage preferences:\n\n" + err.Error())
 		return false
 	}
