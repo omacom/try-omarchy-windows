@@ -187,3 +187,30 @@ func TestCancelDoesNotFollowGuestFolderLink(t *testing.T) {
 		t.Fatalf("external file changed: %q %v", data, err)
 	}
 }
+
+func TestCancelPreservesPortableRecoveryAfterInterruptedReset(t *testing.T) {
+	root := t.TempDir()
+	retained := filepath.Join(root, "vm", "before-reset-example", "disk.qcow2")
+	if err := os.MkdirAll(filepath.Dir(retained), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(retained, []byte("previous personal files"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// An interrupted publication can leave no active disk. That does not make
+	// the nonempty data directory disposable on the next portable launch.
+	if completeInstallExists(root, "disk.qcow2") {
+		t.Fatal("fixture unexpectedly complete")
+	}
+	removeAll, err := dataDirectoryEmpty(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanupCancelledSetup(root, "", removeAll); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(retained)
+	if err != nil || string(data) != "previous personal files" {
+		t.Fatalf("retained disk changed: %q %v", data, err)
+	}
+}
