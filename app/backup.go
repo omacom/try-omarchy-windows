@@ -1,6 +1,7 @@
 package main
 
 import (
+	"time"
 	"archive/zip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -291,7 +292,7 @@ func restoreVMBackupProgress(source, destination string, report backupProgress) 
 	for _, entry := range manifest.Files {
 		total += entry.Size
 	}
-	if err = requireDiskSpace(filepath.Dir(destination), total+diskSpaceReserve); err != nil {
+	if err = requireDiskSpace(filepath.Dir(destination), restoreSpaceEstimate(manifest, files)); err != nil {
 		return err
 	}
 	staging, err := os.MkdirTemp(filepath.Dir(destination), ".try-omarchy-restore-*")
@@ -309,11 +310,74 @@ func restoreVMBackupProgress(source, destination string, report backupProgress) 
 			return err
 		}
 	}
+	if err = restampReceiptTimes(staging); err != nil {
+		return err
+	}
 	// The main launcher uses Windows, where Rename cannot replace a directory.
 	if _, err = os.Lstat(destination); !os.IsNotExist(err) {
 		return fmt.Errorf("restore destination appeared during copying")
 	}
 	return os.Rename(staging, destination)
+}
+
+// restoreSpaceEstimate budgets a restore from the archive's compressed size
+// rather than the files' nominal size. The guest disk and rootfs are sparse:
+// their zero runs deflate to almost nothing and are restored as holes, while
+// the guest's already-compressed data stays close to its stored size. Budgeting
+// the nominal size instead refused a 10 GB backup on a drive with 30 GB free.
+// The margin covers text that deflates well; a drive that is still short fails
+// the copy with a disk-full error before anything is published.
+func restoreSpaceEstimate(manifest backupManifest, files map[string]*zip.File) int64 {
+	var compressed int64
+	for _, entry := range manifest.Files {
+		if f := files[entry.Name]; f != nil {
+			compressed += int64(f.CompressedSize64)
+		}
+	}
+	return compressed + compressed/4 + diskSpaceReserve
+}
+
+// restampReceiptTimes gives restored guest and runtime files the modification
+// times their install receipts recorded. The receipts compare those times on
+// every launch, so without this a restored copy re-downloaded its image and
+// runtime on first launch even though every byte had just been verified.
+func restampReceiptTimes(root string) error {
+	guest := filepath.Join(root, "guest")
+	if data, err := os.ReadFile(filepath.Join(guest, installReceiptFilename)); err == nil && len(data) <= maxInstallReceiptBytes {
+		var receipt installReceipt
+		if json.Unmarshal(data, &receipt) == nil {
+			for name, entry := range receipt.Files {
+				if err := restampFile(filepath.Join(guest, name), entry); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	runtime := filepath.Join(root, "runtime")
+	if data, err := os.ReadFile(filepath.Join(runtime, runtimeReceiptFilename)); err == nil && len(data) <= maxInstallReceiptBytes {
+		var receipt runtimeReceipt
+		if json.Unmarshal(data, &receipt) == nil {
+			if err := restampFile(filepath.Join(runtime, "bin", "qemu-system-x86_64w.exe"), receipt.Executable); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func restampFile(path string, entry verifiedArtifact) error {
+	if entry.ModTimeUnixNano == 0 || strings.Contains(filepath.ToSlash(filepath.Clean("/"+path)), "/../") {
+		return nil
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != entry.Size {
+		return nil
+	}
+	when := time.Unix(0, entry.ModTimeUnixNano)
+	if err := os.Chtimes(path, when, when); err != nil {
+		return fmt.Errorf("restoring file time of %s: %w", filepath.Base(path), err)
+	}
+	return nil
 }
 
 func restoreBackupFile(z *zip.File, target string, entry backupEntry, processed *int64, total int64, report backupProgress) error {

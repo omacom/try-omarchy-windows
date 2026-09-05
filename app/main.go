@@ -85,9 +85,17 @@ type buildSpec struct {
 
 var logFile *os.File
 
+// earlyLog holds lines written before shell.log is opened (update recovery,
+// settings, the restored-payload decision) so they land at the top of the
+// session's log instead of vanishing.
+var earlyLog []string
+
 func logf(format string, a ...any) {
+	line := fmt.Sprintf("%s %s", time.Now().Format("15:04:05"), fmt.Sprintf(format, a...))
 	if logFile != nil {
-		fmt.Fprintf(logFile, "%s %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, a...))
+		fmt.Fprintln(logFile, line)
+	} else if len(earlyLog) < 200 {
+		earlyLog = append(earlyLog, line)
 	}
 }
 
@@ -397,6 +405,10 @@ func main() {
 	}
 	logFile, _ = os.OpenFile(filepath.Join(cfg.vmDir, "shell.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if logFile != nil {
+		for _, line := range earlyLog {
+			fmt.Fprintln(logFile, line)
+		}
+		earlyLog = nil
 		// A windowsgui process has no console: an unhandled panic (any
 		// goroutine) writes its trace to stderr and vanishes. It happened - the
 		// shell died silently mid-session leaving QEMU orphaned. Route stderr

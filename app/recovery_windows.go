@@ -73,6 +73,11 @@ func runRecoveryUI(dir, action string) error {
 		if err := createRestoredLaunchers(destination); err != nil {
 			infoBox("Your data was restored to:\n\n" + destination + "\n\nThe startup shortcuts could not be created: " + err.Error() + "\n\nYou can start this copy with -dir pointing to its folder.")
 		} else {
+			// The restored copy has its shortcuts; the first launch must not
+			// offer them again.
+			if err := recordShortcutOffer(destination); err != nil {
+				logf("could not record the shortcut offer for %s: %v", destination, err)
+			}
 			infoBox("Restored to:\n\n" + destination + "\n\nOpen Start Omarchy in that folder to use this copy, or Settings to review it first. Your original installation and shortcuts are unchanged.")
 		}
 	case "reset":
