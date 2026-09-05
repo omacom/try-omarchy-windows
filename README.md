@@ -249,7 +249,15 @@ The local trial account is named `omarchy` and its lock-screen password is `omar
 
 ### How do I remove Try Omarchy?
 
-Delete the data folder you chose during setup. That removes the launcher, runtime, image, and writable virtual disk. If you used an alternate location, also delete `%LOCALAPPDATA%\TryOmarchy\data-location.json`. If you created Windows shortcuts, remove them from the Start menu or Desktop like any other shortcut. The original downloaded `TryOmarchy.exe` can be deleted separately.
+Close Omarchy, then use **Remove Try Omarchy** in Settings, the Try Omarchy
+entry in Windows Apps & features, or `TryOmarchy.exe -uninstall`. It offers a
+full backup first, then removes the shortcuts, the Apps & features entry, the
+saved data location, and the data folder with the launcher, runtime, image,
+and writable virtual disk. Windows shared folders and the original downloaded
+`TryOmarchy.exe` are kept; delete those by hand if you no longer want them.
+
+Removing the data folder by hand still works; the Apps & features entry then
+stays until you remove it from there.
 
 ### I have the full Hyper-V feature set installed. Will it conflict?
 

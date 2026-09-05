@@ -14,6 +14,7 @@ import (
 var (
 	user32   = syscall.NewLazyDLL("user32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
+	advapi32 = syscall.NewLazyDLL("advapi32.dll")
 
 	procMessageBoxW              = user32.NewProc("MessageBoxW")
 	procSetWindowsHookExW        = user32.NewProc("SetWindowsHookExW")
