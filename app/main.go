@@ -634,11 +634,16 @@ func main() {
 	// Launch-UX contract (NOTES.md): guest console sized to the window it will
 	// actually get, so the picture fills it from the first frame.
 	conW, conH := screenSize(cfg.fullscreen)
+	if !cfg.fullscreen {
+		if p := rememberedWindow(cfg.dir); p != nil && !p.Maximized {
+			conW, conH = p.consoleSize()
+		}
+	}
 	cmdline += fmt.Sprintf(" video=%dx%d", conW, conH)
 
 	go runWinKeyHook()
 	go runWinKeyQmp()
-	go runTitleEnforcer(cfg.fullscreen)
+	go runTitleEnforcer(cfg.dir, cfg.fullscreen)
 	go runCursorReleaseGuard()
 	go runCloseGuard()
 	runClipboardBridge()

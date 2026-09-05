@@ -201,6 +201,9 @@ var (
 	enumTitleMaximize *bool
 	enumTitleIcon     uintptr
 	enumTitleCallback = syscall.NewCallback(enumTitleProc)
+	// enumTitleRestore is the remembered placement for this launch; nil keeps
+	// the maximized default.
+	enumTitleRestore *windowPlacement
 )
 
 func enumTitleProc(hwnd, _ uintptr) uintptr {
@@ -216,8 +219,10 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	uiDone()             // the VM window is on screen: the splash's job is over
 	if *enumTitleMaximize {
 		*enumTitleMaximize = false
-		const swMaximize = 3
-		procShowWindow.Call(hwnd, swMaximize)
+		if enumTitleRestore == nil || !applyPlacement(hwnd, enumTitleRestore) {
+			const swMaximize = 3
+			procShowWindow.Call(hwnd, swMaximize)
+		}
 		setTaskbarIdentity(hwnd) // once per window: our taskbar icon + name
 	}
 	if enumTitleIcon != 0 {
@@ -234,8 +239,8 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	return 1
 }
 
-func enforceTitle(pid uint32, maximize *bool, appIcon uintptr) {
-	enumTitlePid, enumTitleMaximize, enumTitleIcon = pid, maximize, appIcon
+func enforceTitle(pid uint32, maximize *bool, appIcon uintptr, restore *windowPlacement) {
+	enumTitlePid, enumTitleMaximize, enumTitleIcon, enumTitleRestore = pid, maximize, appIcon, restore
 	procEnumWindows.Call(enumTitleCallback, 0)
 }
 
