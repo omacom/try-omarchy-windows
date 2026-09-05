@@ -210,8 +210,8 @@ Or skip the app and drive QEMU from PowerShell: `scripts\bootstrap.ps1` then `sc
 
 ## VM backups
 
-Development builds include backup, restore, and reset controls in Settings for
-stopped standard installs. Restore creates a separate copy. Command-line options
+Backup, restore, and reset controls are available in Settings for stopped
+standard installs. Restore creates a separate copy. Command-line options
 are also available. See the [backup guide](docs/BACKUP.md) for usage,
 storage requirements, and current limitations.
 

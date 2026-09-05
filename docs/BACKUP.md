@@ -1,7 +1,7 @@
 # VM backup and restore
 
-The development build supports backup, restore, and reset controls in Settings
-for stopped standard installs. Portable installs are not supported yet. These
+Try Omarchy provides backup, restore, and reset controls in Settings for
+stopped standard installs. Portable installs are not supported yet. These
 operations are separate from
 [configuration export](MIGRATION.md), which transfers your setup to a physical
 Omarchy installation.
