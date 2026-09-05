@@ -24,6 +24,8 @@ type settings struct {
 	Fullscreen bool `json:"fullscreen"`
 	// Guest RAM in MiB. 0 sizes it to the machine automatically.
 	MemoryMiB int `json:"memoryMiB"`
+	// Guest CPUs. 0 sizes them to the machine automatically.
+	CPUs int `json:"cpus,omitempty"`
 	// Windows folder shared into Omarchy. Empty means no share.
 	Share string `json:"share"`
 	// ShareDisabled remembers a chosen folder while preventing it from being
@@ -126,6 +128,9 @@ func (s settings) validate() error {
 	if s.MemoryMiB != 0 && (s.MemoryMiB < minimumGuestMemoryMiB || s.MemoryMiB > maximumGuestMemoryMiB) {
 		return fmt.Errorf("memoryMiB must be 0 (automatic) or between %d and %d", minimumGuestMemoryMiB, maximumGuestMemoryMiB)
 	}
+	if s.CPUs != 0 && (s.CPUs < minimumGuestCPUs || s.CPUs > maximumGuestCPUs) {
+		return fmt.Errorf("cpus must be 0 (automatic) or between %d and %d", minimumGuestCPUs, maximumGuestCPUs)
+	}
 	if _, err := parseRenderMode(s.Render); err != nil {
 		return err
 	}
@@ -141,7 +146,7 @@ func (s settings) validate() error {
 // settingsFromForm converts the Win32 controls into the persisted model. It
 // stays outside the window procedure so all input and file validation is
 // covered by the platform-independent test suite.
-func settingsFromForm(fullscreen, shareEnabled bool, memory, share, forwards, sshKey, render string) (settings, error) {
+func settingsFromForm(fullscreen, shareEnabled bool, memory, cpus, share, forwards, sshKey, render string) (settings, error) {
 	s := settings{
 		Fullscreen: fullscreen, Share: strings.TrimSpace(share), Render: strings.TrimSpace(render),
 		ShareDisabled: !shareEnabled, SharedFolderPrompted: true,
@@ -166,6 +171,14 @@ func settingsFromForm(fullscreen, shareEnabled bool, memory, share, forwards, ss
 			return s, fmt.Errorf("guest memory must be a number of MiB, or 0 for automatic")
 		}
 		s.MemoryMiB = n
+	}
+	cpus = strings.TrimSpace(cpus)
+	if cpus != "" {
+		n, err := strconv.Atoi(cpus)
+		if err != nil {
+			return s, fmt.Errorf("guest CPUs must be a number, or 0 for automatic")
+		}
+		s.CPUs = n
 	}
 	for _, line := range strings.Split(strings.ReplaceAll(forwards, "\r\n", "\n"), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
@@ -201,6 +214,9 @@ func applySettings(cfg *config, s settings, explicit map[string]bool, forwards *
 	}
 	if !explicit["memory"] {
 		cfg.memOverrideMiB = s.MemoryMiB
+	}
+	if !explicit["cpus"] {
+		cfg.cpuOverride = s.CPUs
 	}
 	if !explicit["share"] {
 		cfg.share = s.activeShare()
