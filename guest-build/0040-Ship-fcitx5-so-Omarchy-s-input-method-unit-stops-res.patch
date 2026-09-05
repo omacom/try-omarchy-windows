@@ -1,0 +1,74 @@
+From 2fb46c9412d95195fdc4f9725ffda92929d6a972 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 5 Sep 2026 12:21:17 -0400
+Subject: [PATCH] Ship fcitx5 so Omarchy's input method unit stops restarting
+
+Upstream Omarchy enables omarchy-fcitx5.service for every user with Restart=always, and the image did not carry fcitx5, so the unit failed and restarted every two seconds for the life of every session and the CapsLock compose sequences never worked. Add fcitx5 with its GTK and Qt modules and lock them.
+---
+ guest/packages.lock.json | 8 +++++++-
+ guest/packages.txt       | 3 +++
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index e9735e8..f96d957 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -64,6 +64,7 @@
+     "duktape": "2.7.0-7",
+     "e2fsprogs": "1.47.4-1",
+     "elfutils": "0.196-1",
++    "enchant": "2.8.19-1",
+     "exempi": "2.6.6-3",
+     "exiv2": "0.28.9-1",
+     "expat": "2.8.4-1",
+@@ -71,6 +72,9 @@
+     "fakeroot": "1:1.37.2-3",
+     "fastfetch": "2.68.1-1",
+     "fcft": "3.3.3-1",
++    "fcitx5": "5.1.21-1",
++    "fcitx5-gtk": "5.1.7-1",
++    "fcitx5-qt": "5.1.14-2",
+     "fd": "10.5.0-3",
+     "ffmpeg": "2:9.0.1-4",
+     "fftw": "3.3.11-1",
+@@ -614,6 +618,7 @@
+     "wtype": "0.4-2",
+     "x264": "3:0.165.r3222.b35605a-2",
+     "x265": "4.3-1",
++    "xcb-imdkit": "1.0.9-1",
+     "xcb-proto": "1.17.0-4",
+     "xcb-util": "0.4.1-2",
+     "xcb-util-cursor": "0.1.6-1",
+@@ -644,6 +649,7 @@
+     "xxhash": "0.8.3-1",
+     "xz": "5.8.3-1",
+     "yay": "13.0.1-1",
++    "yoga": "3.2.1-1",
+     "yyjson": "0.12.0-1",
+     "zbar": "0.23.93-7",
+     "zeromq": "4.3.5-3",
+@@ -655,6 +661,6 @@
+     "zram-generator": "1.2.1-1",
+     "zstd": "1.5.7-3"
+   },
+-  "requestedFileSha256": "2612845972c32d1a263493b6b0a5fd3e61fdd8c891b7b0573d5b878d31930333",
++  "requestedFileSha256": "409de4b3d70eccf788b17c4dfb23279179d2d989c21e558ddc50cee18c8c71ca",
+   "schemaVersion": 1
+ }
+diff --git a/guest/packages.txt b/guest/packages.txt
+index 6477b80..e4c4c39 100644
+--- a/guest/packages.txt
++++ b/guest/packages.txt
+@@ -14,6 +14,9 @@ dua-cli
+ e2fsprogs
+ eza
+ fastfetch
++fcitx5
++fcitx5-gtk
++fcitx5-qt
+ fd
+ fontconfig
+ foot
+-- 
+2.55.0
+
