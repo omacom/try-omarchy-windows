@@ -55,6 +55,10 @@ func requiredBackupFiles(files map[string]bool) error {
 // Backup and restore are called while the launcher holds its lifecycle lock.
 // Holding the disk itself exclusively also catches an orphaned QEMU process.
 func writeVMBackup(dir, destination string) error {
+	return writeVMBackupProgress(dir, destination, nil)
+}
+
+func writeVMBackupProgress(dir, destination string, report backupProgress) error {
 	root, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return err
@@ -142,6 +146,7 @@ func writeVMBackup(dir, destination string) error {
 	defer os.Remove(f.Name())
 	defer f.Close()
 	zw := zip.NewWriter(f)
+	var processed int64
 	for i := range entries {
 		entry := &entries[i]
 		source := disk
@@ -158,7 +163,7 @@ func writeVMBackup(dir, destination string) error {
 		h := sha256.New()
 		var n int64
 		if e == nil {
-			n, e = io.Copy(io.MultiWriter(writer, h), setupReader{io.LimitReader(source, entry.Size+1)})
+			n, e = io.Copy(io.MultiWriter(writer, h), setupReader{&backupProgressReader{source: io.LimitReader(source, entry.Size+1), processed: &processed, total: total, name: entry.Name, report: report}})
 		}
 		if source != disk {
 			source.Close()
@@ -266,6 +271,10 @@ func (w backupSparseWriter) Write(p []byte) (int, error) {
 // Restore only publishes into a new directory. Existing installations are never
 // renamed or deleted, including when validation, copying, or publication fails.
 func restoreVMBackup(source, destination string) error {
+	return restoreVMBackupProgress(source, destination, nil)
+}
+
+func restoreVMBackupProgress(source, destination string, report backupProgress) error {
 	if _, err := os.Lstat(destination); !os.IsNotExist(err) {
 		return fmt.Errorf("restore requires a new data folder; the existing folder was not changed")
 	}
@@ -290,12 +299,13 @@ func restoreVMBackup(source, destination string) error {
 		return err
 	}
 	defer os.RemoveAll(staging)
+	var processed int64
 	for _, entry := range manifest.Files {
 		target := filepath.Join(staging, filepath.FromSlash(entry.Name))
 		if err = os.MkdirAll(filepath.Dir(target), 0700); err != nil {
 			return err
 		}
-		if err = restoreBackupFile(files[entry.Name], target, entry); err != nil {
+		if err = restoreBackupFile(files[entry.Name], target, entry, &processed, total, report); err != nil {
 			return err
 		}
 	}
@@ -306,7 +316,7 @@ func restoreVMBackup(source, destination string) error {
 	return os.Rename(staging, destination)
 }
 
-func restoreBackupFile(z *zip.File, target string, entry backupEntry) error {
+func restoreBackupFile(z *zip.File, target string, entry backupEntry, processed *int64, total int64, report backupProgress) error {
 	r, err := z.Open()
 	if err != nil {
 		return err
@@ -321,7 +331,7 @@ func restoreBackupFile(z *zip.File, target string, entry backupEntry) error {
 		return fmt.Errorf("restore needs sparse-file support: %w", err)
 	}
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(backupSparseWriter{f}, h), setupReader{io.LimitReader(r, entry.Size+1)})
+	n, err := io.Copy(io.MultiWriter(backupSparseWriter{f}, h), setupReader{&backupProgressReader{source: io.LimitReader(r, entry.Size+1), processed: processed, total: total, name: entry.Name, report: report}})
 	if err != nil {
 		return err
 	}
@@ -335,4 +345,23 @@ func restoreBackupFile(z *zip.File, target string, entry backupEntry) error {
 		return err
 	}
 	return f.Close()
+}
+
+// Progress is optional so archive tests and noninteractive callers never create UI.
+type backupProgress func(current, total int64, name string)
+type backupProgressReader struct {
+	source    io.Reader
+	processed *int64
+	total     int64
+	name      string
+	report    backupProgress
+}
+
+func (r *backupProgressReader) Read(p []byte) (int, error) {
+	n, err := r.source.Read(p)
+	*r.processed += int64(n)
+	if r.report != nil && n > 0 {
+		r.report(*r.processed, r.total, r.name)
+	}
+	return n, err
 }

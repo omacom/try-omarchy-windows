@@ -147,6 +147,10 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 		return err
 	}
 	expandedBytes := expandedMiB * 1024 * 1024
+	if cfg.fresh && !cfg.portable {
+		_, err := resetStandardDisk(cfg, expandedMiB)
+		return err
+	}
 	if cfg.fresh {
 		if err := os.Remove(cfg.disk); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("discarding the existing disk: %w", err)
@@ -249,6 +253,9 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 	st, err := src.Stat()
 	if err != nil {
 		return err
+	}
+	if !st.Mode().IsRegular() || st.Size() > expandedBytes {
+		return fmt.Errorf("factory image does not fit the requested disk capacity")
 	}
 	if err := sparseCopy(dst, src, st.Size(), ui); err != nil {
 		return err

@@ -253,3 +253,26 @@ func TestVMRestoreRejectsIncompleteAndUnsupportedArchives(t *testing.T) {
 		t.Fatal("backed up missing kernel")
 	}
 }
+
+func TestBackupAndRestoreReportCompleteProgress(t *testing.T) {
+	dir, archive := backupFixture(t)
+	check := func(run func(backupProgress) error) {
+		var last, total int64
+		err := run(func(current, maximum int64, name string) {
+			if current < last || current > maximum || name == "" {
+				t.Errorf("invalid progress: %d/%d for %q", current, maximum, name)
+			}
+			last, total = current, maximum
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total == 0 || last != total {
+			t.Fatalf("incomplete progress: %d/%d", last, total)
+		}
+	}
+	check(func(report backupProgress) error { return writeVMBackupProgress(dir, archive, report) })
+	check(func(report backupProgress) error {
+		return restoreVMBackupProgress(archive, filepath.Join(filepath.Dir(dir), "progress-restore"), report)
+	})
+}
