@@ -51,11 +51,18 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 			"-serial", "file:"+filepath.Join(vm, "serial.log"),
 		)
 	}
+	// The guest tunes its desktop to the rendering path: on llvmpipe every
+	// animation frame is CPU time, so the image turns animations off unless
+	// the user's own config turns them back on.
+	render := "gpu"
+	if !cfg.useGpu {
+		render = "cpu"
+	}
 	args = append(args,
 		"-drive", "file="+qemuOptionValue(cfg.disk)+",format="+cfg.diskFormat+",if=virtio",
 		"-kernel", filepath.Join(cfg.guestDir, "vmlinuz-linux"),
 		"-initrd", filepath.Join(cfg.guestDir, "initramfs-linux.img"),
-		"-append", cmdline,
+		"-append", cmdline+" tryomarchy.render="+render,
 		"-device", "virtio-keyboard-pci", "-device", "virtio-tablet-pci",
 		"-device", "virtio-net-pci,netdev=n0", "-netdev", netdevArg(cfg.forwards),
 		"-device", "virtio-rng-pci",

@@ -1,0 +1,46 @@
+From 7a146d9cd1c0387e1b5db05da1350f83429263ca Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 5 Sep 2026 07:44:47 -0400
+Subject: [PATCH] Start with animations off on CPU rendering
+
+The launcher reports the rendering path as tryomarchy.render=cpu or gpu. On llvmpipe every animation frame is CPU time the desktop feels, so the QEMU profile turns Hyprland animations off for that case; looknfeel.lua loads later and an explicit choice there still wins.
+---
+ guest/fragments/hypr-monitors-qemu.append.lua | 7 +++++++
+ guest/tests/verify.py                         | 5 +++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/guest/fragments/hypr-monitors-qemu.append.lua b/guest/fragments/hypr-monitors-qemu.append.lua
+index 2230448..a4c1b3c 100644
+--- a/guest/fragments/hypr-monitors-qemu.append.lua
++++ b/guest/fragments/hypr-monitors-qemu.append.lua
+@@ -32,4 +32,11 @@ if omarchy_kernel_option_enabled("omarchy.qemu=1") then
+   hl.config({ cursor = { invisible = false } })
+   o.exec_on_start("/usr/local/bin/omarchy-native-display-sync")
+ end
++
++-- On CPU rendering (llvmpipe) every animation frame is CPU time the desktop
++-- feels. Start with animations off; looknfeel.lua loads after this file, so
++-- an explicit choice there still wins.
++if omarchy_kernel_option_enabled("tryomarchy.render=cpu") then
++  hl.config({ animations = { enabled = false } })
++end
+ -- END OMARCHY QEMU PROFILE
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index f4ea02b..10461e0 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -328,6 +328,11 @@ def main() -> None:
+         in monitor_fragment,
+         "QEMU profile starts native display sync",
+     )
++    check(
++        'omarchy_kernel_option_enabled("tryomarchy.render=cpu")' in monitor_fragment
++        and "animations = { enabled = false }" in monitor_fragment,
++        "QEMU profile turns animations off on CPU rendering",
++    )
+     with tempfile.TemporaryDirectory() as temporary:
+         temporary_path = Path(temporary)
+         fake_bin = temporary_path / "bin"
+-- 
+2.55.0
+
