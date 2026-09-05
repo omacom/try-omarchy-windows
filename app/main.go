@@ -50,6 +50,10 @@ type config struct {
 	memOverrideMiB int
 	diskGiB        int
 	irqchipOff     bool
+	// Rendering decision inputs, see render_probe.go.
+	renderMode    string
+	runtimeID     string
+	displayDriver string
 }
 
 // pickGuestMem sizes the guest to the machine instead of demanding a fixed
@@ -136,7 +140,8 @@ func main() {
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen (Immersive)")
 	flag.IntVar(&cfg.memOverrideMiB, "memory", 0, "guest RAM in MiB (default: sized to this PC)")
 	flag.IntVar(&cfg.diskGiB, "disk-size", 0, "guest disk capacity in GiB (0: default; grows existing standard disks, never shrinks)")
-	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed")
+	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed (same as -render cpu)")
+	renderFlag := flag.String("render", "", "rendering path: auto (default), gpu, or cpu")
 	flag.BoolVar(&cfg.hostCursor, "host-cursor", false, "force the legacy Windows cursor over the guest")
 	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the trial account")
 	flag.BoolVar(&cfg.portable, "portable", false, "run entirely from data and payload folders beside the executable")
@@ -327,6 +332,17 @@ func main() {
 	if err := applySettings(cfg, userSettings, explicitFlags, &forwards, sshKeyPath); err != nil {
 		fatal("Try Omarchy cannot use its settings: %v", err)
 	}
+	if explicitFlags["render"] {
+		mode, err := parseRenderMode(*renderFlag)
+		if err != nil {
+			fatal("%v", err)
+		}
+		cfg.renderMode = mode
+	}
+	if cfg.noGpu {
+		cfg.renderMode = renderCPU
+	}
+	cfg.noGpu = cfg.renderMode == renderCPU
 	if cfg.memOverrideMiB != 0 && (cfg.memOverrideMiB < minimumGuestMemoryMiB || cfg.memOverrideMiB > maximumGuestMemoryMiB) {
 		fatal("-memory must be between %d and %d MiB.", minimumGuestMemoryMiB, maximumGuestMemoryMiB)
 	}
@@ -502,8 +518,18 @@ func main() {
 	}
 	if gpuRoot != "" {
 		cfg.qemu = filepath.Join(gpuRoot, "bin", qemuExe)
-		cfg.useGpu = !cfg.noGpu
 		cfg.supportsSharing = true
+		cfg.runtimeID = runtimeIdentity(gpuRoot)
+		cfg.displayDriver = displayDriverIdentity()
+		probe, err := loadRenderProbe(cfg.dir)
+		if err != nil {
+			logf("ignoring %s: %v", renderProbeFilename, err)
+		}
+		var reason string
+		cfg.useGpu, reason = startWithGPU(cfg.renderMode, probe, cfg.runtimeID, cfg.displayDriver, time.Now())
+		if reason != "" {
+			logf("rendering: %s", reason)
+		}
 	} else {
 		cfg.qemu = stockQemu
 	}
@@ -700,10 +726,21 @@ func supervise(cfg *config, cmdline string) bool {
 				// Broken host GL (remote sessions, ancient drivers) kills the
 				// gl=on display the same way; same binary, CPU args, still up.
 				if cfg.useGpu {
+					if probe, _ := loadRenderProbe(cfg.dir); keepUpdatedRuntimeOnCPU(probe) {
+						// GPU mode never ran here, so the failure is the
+						// machine's graphics stack, not the new runtime: keep
+						// the update and let the CPU boot commit it.
+						logf("QEMU exited at startup - GPU rendering also failed before the runtime update, keeping the updated runtime and falling back to CPU rendering")
+						cfg.useGpu = false
+						break probe
+					}
 					if rolledBack, rollbackErr := rollbackPendingRuntimeUpdate(cfg.dir); rollbackErr != nil {
 						logf("runtime update rollback failed: %v", rollbackErr)
 					} else if rolledBack {
 						logf("updated runtime failed to start - restored previous runtime")
+						// The probe record must describe the runtime that
+						// actually boots, which is the restored one now.
+						cfg.runtimeID = runtimeIdentity(filepath.Dir(filepath.Dir(cfg.qemu)))
 						break probe
 					}
 					logf("QEMU exited at startup - falling back to CPU rendering")
@@ -754,6 +791,7 @@ func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
 		if guestReady.Swap(false) {
 			commitLauncherUpdate(cfg.dir)
 			commitPayloadUpdates(cfg.dir)
+			recordRenderResult(cfg)
 		}
 		select {
 		case <-exited:
@@ -880,5 +918,24 @@ func waitExit(exited <-chan error, grace time.Duration, cfg *config) bool {
 		}
 		<-exited
 		return true
+	}
+}
+
+// recordRenderResult remembers which rendering path reached userspace with
+// the current runtime and drivers, so the next launch can skip attempts that
+// this machine cannot pass. A CPU result written while GPU was never tried
+// (settings say CPU) must not later be mistaken for a probe failure, so only
+// automatic and forced-GPU launches record CPU.
+func recordRenderResult(cfg *config) {
+	if cfg.runtimeID == "" || (cfg.renderMode == renderCPU && !cfg.useGpu) {
+		return
+	}
+	result := renderCPU
+	if cfg.useGpu {
+		result = renderGPU
+	}
+	probe := renderProbe{Result: result, RuntimeID: cfg.runtimeID, DisplayDriver: cfg.displayDriver, RecordedAt: time.Now()}
+	if err := saveRenderProbe(cfg.dir, probe); err != nil {
+		logf("could not record the rendering result: %v", err)
 	}
 }
