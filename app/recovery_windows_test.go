@@ -39,7 +39,8 @@ func TestRestoredShortcutsTargetOnlyRestoredFolder(t *testing.T) {
 	for _, link := range links {
 		// Windows Shell can expand 8.3 paths from the runner's temporary directory.
 		// Compare file identity instead of treating equivalent paths as different.
-		for actual, expected := range map[string]string{link.Target: filepath.Join(dir, stableLauncherName), link.Directory: dir} {
+		for _, pair := range [][2]string{{link.Target, filepath.Join(dir, stableLauncherName)}, {link.Directory, dir}} {
+			actual, expected := pair[0], pair[1]
 			got, err := os.Stat(actual)
 			if err != nil {
 				t.Fatalf("shortcut %s: %v", actual, err)
