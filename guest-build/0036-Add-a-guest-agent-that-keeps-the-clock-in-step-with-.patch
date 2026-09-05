@@ -1,0 +1,186 @@
+From e15a588453bda28518f7a92d76393b80067dd507 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 5 Sep 2026 07:23:28 -0400
+Subject: [PATCH] Add a guest agent that keeps the clock in step with Windows
+
+The agent connects out to the launcher at 10.0.2.2:4451 like the clipboard bridge, announces itself, and applies time messages: when the guest clock differs from the host's by more than two seconds it is stepped. The launcher sends the time on connect, periodically, and after Windows resumes from sleep. Ships in the compat overlay; integration revision 8.
+---
+ .../try-omarchy-agent.service                 |  1 +
+ .../systemd/system/try-omarchy-agent.service  | 13 +++++
+ .../usr/local/lib/try-omarchy/agent           | 49 +++++++++++++++++++
+ guest/scripts/finalize-rootfs.sh              |  5 +-
+ guest/tests/test_overlay_scripts.py           | 26 ++++++++++
+ guest/tests/verify.py                         |  3 +-
+ 6 files changed, 95 insertions(+), 2 deletions(-)
+ create mode 120000 guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-agent.service
+ create mode 100644 guest/factory-overlay/etc/systemd/system/try-omarchy-agent.service
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/agent
+
+diff --git a/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-agent.service b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-agent.service
+new file mode 120000
+index 0000000..0d5a72a
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-agent.service
+@@ -0,0 +1 @@
++../try-omarchy-agent.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/system/try-omarchy-agent.service b/guest/factory-overlay/etc/systemd/system/try-omarchy-agent.service
+new file mode 100644
+index 0000000..00500fe
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/try-omarchy-agent.service
+@@ -0,0 +1,13 @@
++[Unit]
++Description=Try Omarchy guest agent (clock sync with the Windows launcher)
++After=network-online.target NetworkManager.service
++Wants=network-online.target
++
++[Service]
++Type=simple
++ExecStart=/usr/local/lib/try-omarchy/agent
++Restart=always
++RestartSec=5
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/agent b/guest/factory-overlay/usr/local/lib/try-omarchy/agent
+new file mode 100755
+index 0000000..80a7d93
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/agent
+@@ -0,0 +1,49 @@
++#!/bin/bash
++# Guest agent: keeps a line-based channel open to the Windows launcher at
++# 10.0.2.2:4451 (QEMU user networking) and applies the small things only the
++# host knows. Today that is the clock: the launcher sends "time <unix>" on
++# connect, periodically, and after Windows resumes from sleep, and the guest
++# steps its clock when it has drifted by more than two seconds. Reconnects
++# forever, quietly, since the launcher may not be listening on every boot.
++set -u
++
++host=${TRY_OMARCHY_AGENT_HOST:-10.0.2.2}
++port=${TRY_OMARCHY_AGENT_PORT:-4451}
++set_time=${TRY_OMARCHY_SET_TIME:-date -s}
++version=1
++max_drift=2
++
++handle() {
++  local line=$1 target now drift
++  case $line in
++    time\ *)
++      target=${line#time }
++      [[ $target =~ ^[0-9]{9,11}$ ]] || return 0
++      now=$(date +%s)
++      drift=$((now - target))
++      if ((drift > max_drift || drift < -max_drift)); then
++        if $set_time "@$target" >/dev/null 2>&1; then
++          echo "clock stepped by $((-drift)) s to follow Windows"
++        else
++          echo "could not set the clock" >&2
++        fi
++      fi
++      ;;
++  esac
++}
++
++if [[ ${1:-} == --handle ]]; then
++  # Test entry point: apply one message from stdin without a network.
++  while IFS= read -r line; do handle "$line"; done
++  exit 0
++fi
++
++while :; do
++  exec 3<>"/dev/tcp/$host/$port" 2>/dev/null || { sleep 10; continue; }
++  printf 'hello %s\n' "$version" >&3
++  while IFS= read -r line <&3; do
++    handle "${line%$'\r'}"
++  done
++  exec 3>&-
++  sleep 5
++done
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index dc06c45..483cc9b 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -63,11 +63,14 @@ compat_paths=(
+   etc/systemd/system/multi-user.target.wants/try-omarchy-sshd.service
+   etc/systemd/system/try-omarchy-host-locale.service
+   etc/systemd/system/sysinit.target.wants/try-omarchy-host-locale.service
++  etc/systemd/system/try-omarchy-agent.service
++  etc/systemd/system/multi-user.target.wants/try-omarchy-agent.service
+   etc/systemd/user/try-omarchy-share-link.service
+   etc/systemd/user/graphical-session.target.wants/try-omarchy-share-link.service
+   etc/systemd/user/try-omarchy-factory-update-notice.service
+   etc/systemd/user/graphical-session.target.wants/try-omarchy-factory-update-notice.service
+   usr/local/bin/try-omarchy-export
++  usr/local/lib/try-omarchy/agent
+   usr/local/lib/try-omarchy/apply-host-locale
+   usr/local/lib/try-omarchy/guest-ready
+   usr/local/lib/try-omarchy/request-sshd
+@@ -82,7 +85,7 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ }
+ # Bump this revision whenever compat-overlay.tar changes in a way that must be
+ # applied to persistent disks created by an earlier launcher release.
+-compat_revision=7
++compat_revision=8
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index 8cd7a11..a71d3fc 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -18,6 +18,7 @@ OVERLAY = Path(__file__).resolve().parents[1] / "factory-overlay"
+ SHARE_LINK = OVERLAY / "usr/local/lib/try-omarchy/share-link"
+ REQUEST_SSHD = OVERLAY / "usr/local/lib/try-omarchy/request-sshd"
+ HOST_LOCALE = OVERLAY / "usr/local/lib/try-omarchy/apply-host-locale"
++AGENT = OVERLAY / "usr/local/lib/try-omarchy/agent"
+ EXPORT = OVERLAY / "usr/local/bin/try-omarchy-export"
+ 
+ def generated_key(directory: Path) -> str:
+@@ -380,3 +381,28 @@ class HostLocaleTests(OverlayCase):
+         self.assertEqual(result.returncode, 0, result.stderr)
+         self.assertEqual(self.vconsole.read_text(), "KEYMAP=us\n")
+         self.assertFalse((self.state / "host-timezone").exists())
++
++
++class AgentTests(OverlayCase):
++    def handle(self, message: str, now: int) -> subprocess.CompletedProcess:
++        self.fake("date", f'if [ "$1" = +%s ]; then echo {now}; else echo "date $@" >> "$CALLS"; fi')
++        return subprocess.run([str(AGENT), "--handle"], input=message + "\n", env=dict(self.env, CALLS=str(self.log)),
++                              capture_output=True, text=True, timeout=30)
++
++    def calls(self) -> str:
++        return self.log.read_text() if self.log.exists() else ""
++
++    def test_steps_the_clock_only_past_two_seconds_of_drift(self) -> None:
++        result = self.handle("time 1788609600", now=1788609601)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(self.calls(), "")
++        result = self.handle("time 1788609600", now=1788609690)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(self.calls(), "date -s @1788609600\n")
++        self.assertIn("stepped by -90 s", result.stdout)
++
++    def test_ignores_malformed_messages(self) -> None:
++        for message in ["time now", "time 1788609600; reboot", "reboot", "time 12"]:
++            result = self.handle(message, now=1)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            self.assertEqual(self.calls(), "", message)
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 65f1e73..0c91d5d 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -257,7 +257,8 @@ def main() -> None:
+ 
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     check(
+-        "compat_revision=7" in finalize_rootfs
++        "compat_revision=8" in finalize_rootfs
++        and "usr/local/lib/try-omarchy/agent" in finalize_rootfs
+         and "compat_revision" in finalize_rootfs.split("compat-version")[0]
+         and "usr/local/lib/try-omarchy/apply-host-locale" in finalize_rootfs
+         and "etc/systemd/system/sysinit.target.wants/try-omarchy-host-locale.service" in finalize_rootfs
+-- 
+2.55.0
+

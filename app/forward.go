@@ -84,8 +84,8 @@ func (l *forwardList) Set(value string) error {
 }
 
 func (l *forwardList) add(f portForward) error {
-	if f.proto == "tcp" && f.hostPort >= qmpToolsPort && f.hostPort <= lifecyclePort {
-		return fmt.Errorf("windows TCP port %d is reserved by Try Omarchy; choose a port outside %d-%d", f.hostPort, qmpToolsPort, lifecyclePort)
+	if f.proto == "tcp" && f.hostPort >= qmpToolsPort && f.hostPort <= agentPort {
+		return fmt.Errorf("windows TCP port %d is reserved by Try Omarchy; choose a port outside %d-%d", f.hostPort, qmpToolsPort, agentPort)
 	}
 	for _, existing := range *l {
 		if existing.proto == f.proto && existing.hostPort == f.hostPort {
