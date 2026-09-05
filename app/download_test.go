@@ -342,7 +342,7 @@ func TestDownloadVerifiedCancelsBlockedBodyAndCleansPartial(t *testing.T) {
 		}, nil
 	})}
 	root := t.TempDir()
-	dest := filepath.Join(root, "payload.bin")
+	dest := filepath.Join(root, runtimeZip)
 	result := make(chan error, 1)
 	go func() {
 		result <- downloadVerifiedWithOptions(client, "https://example.invalid/payload", dest,

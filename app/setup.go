@@ -30,8 +30,6 @@ import (
 //     Existing installs (C:\WINQ-EMU, stock QEMU from the old bootstrap)
 //     still win, so nothing already set up changes behavior.
 
-const runtimeZip = "winq-emu-alpha10-portable.zip"
-
 const (
 	legacyRuntimeRelease  = "https://github.com/tsouth89/try-omarchy-windows/releases/download/v0.0.6-preview"
 	legacyRuntimeManifest = "83f4a9cda6ee621c1e3ed756282aed18ca4dc719524d269ea6bbb76ff102229a"

@@ -133,3 +133,57 @@ func TestCompleteInstallDetection(t *testing.T) {
 		t.Fatal("complete portable installation was not detected")
 	}
 }
+
+func TestCancelPreservesUnrelatedPartialFiles(t *testing.T) {
+	root := t.TempDir()
+	paths := []string{"notes.part", "guest/personal.part", "vm/project.part", "Shared/movie.part", "vm/before-reset-example/disk.qcow2.part"}
+	for _, name := range paths {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("keep me"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{runtimeZip + ".part", "guest/rootfs.ext4.zst.part", "guest.next/vmlinuz-linux.part", "vm/disk.qcow2.part"} {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("staging"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cleanupCancelledSetup(root, "", false); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range paths {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+		if err != nil || string(data) != "keep me" {
+			t.Fatalf("unrelated file %s changed: %q %v", name, data, err)
+		}
+	}
+	for _, name := range []string{runtimeZip + ".part", "guest/rootfs.ext4.zst.part", "guest.next/vmlinuz-linux.part", "vm/disk.qcow2.part"} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(name))); !os.IsNotExist(err) {
+			t.Fatalf("staging file %s remains: %v", name, err)
+		}
+	}
+}
+
+func TestCancelDoesNotFollowGuestFolderLink(t *testing.T) {
+	root, external := t.TempDir(), t.TempDir()
+	path := filepath.Join(external, "rootfs.ext4.part")
+	if err := os.WriteFile(path, []byte("external file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(root, "guest")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := cleanupCancelledSetup(root, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "external file" {
+		t.Fatalf("external file changed: %q %v", data, err)
+	}
+}

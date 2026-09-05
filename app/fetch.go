@@ -19,11 +19,6 @@ import (
 // GitHub release on first launch (with a progress window), verifies it against
 // the authenticated SHA256SUMS, and decompresses the rootfs.
 
-var (
-	downloadedGuestArtifacts = []string{"guest-manifest.json", "build-spec.json", "vmlinuz-linux", "initramfs-linux.img"}
-	installedGuestArtifacts  = []string{"build-spec.json", "vmlinuz-linux", "initramfs-linux.img", "rootfs.ext4"}
-)
-
 func ensureGuest(cfg *config, release, sumsSHA256 string) error {
 	ready, err := installReceiptMatches(cfg.guestDir, release, sumsSHA256, installedGuestArtifacts)
 	if err != nil {
