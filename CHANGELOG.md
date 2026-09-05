@@ -1,14 +1,24 @@
 # Changelog
 
-## Unreleased
+## v0.0.12-preview - 2026-09-04
 
 ### Features
+- Added backup, restore, and reset controls to Settings for stopped standard installs, plus `-backup` and `-restore` command-line options. Backups include the guest disk, boot files, bundled runtime, and settings, and every file is checksum-verified during restore. Restore creates a separate installation with its own launch and Settings shortcuts, so existing installations and backups are never replaced.
+- Reset now offers a full backup first, prepares the new disk before moving the old one, and keeps the previous disk in a recovery folder. A failed or cancelled backup stops the reset.
 - Added disk-capacity controls for standard installs, with in-place growth, current capacity and Windows free-space information. Lowering the setting never shrinks an existing disk.
 - New standard installs now ask whether to use the default Local AppData folder or a different local drive or folder before downloading the runtime and guest image. Alternate locations are checked for write access and free space, remembered across launches, and carried into Start-menu and Desktop shortcuts.
+- Install locations and shared folders are now chosen with the Windows folder picker. Unreadable preferences prompt an optional repair that preserves the original file and leaves guest files untouched.
+- The app icon, setup splash, and VM window now use the official Omarchy mark.
 
 ### Fixes
 - Added stable-release update support, including a bridge for older preview launchers and recovery-state compatibility. Stable installs stay on stable releases.
+- Fixed clipboard sharing after reconnects and when copying an earlier value again. Guest copies keep trailing newlines, failed sends are retried, and overlapping transfers no longer suppress a later copy. Existing guest disks receive the updated bridge with this release's guest payload.
+- Interrupted setup can reuse a completed download after a server outage or an ignored resume request, with the checksum verified before use. Failed runtime extraction keeps the verified archive for the next attempt, and short disk writes or oversized responses are detected.
+- Cancelling setup on an existing installation now removes only launcher staging files. Unrelated `.part` files, shared folders, retained recovery data, and linked guest folders are left alone.
+- Portable reset now prepares the new disk before retaining the old disk and its backing identity in a recovery folder, and rolls back if publication fails. Recovery data also survives a cancelled setup after an interrupted reset.
 - Updated active download, update, issue, clone, and module links after the repository moved to `omacom`. Signed update manifests and existing guest and runtime receipts remain compatible with the old release base, so the transfer does not force a payload refresh or strand older launchers.
+
+Thanks to [7Wdev](https://github.com/7Wdev) for requesting install-location and disk controls.
 
 ## v0.0.11-preview - 2026-09-03
 
