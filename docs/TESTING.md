@@ -39,8 +39,9 @@ personal details. Do not upload the guest disk or a full backup.
 - [ ] GPU rendering, then CPU fallback, both reach the desktop.
 - [ ] Keyboard and Windows key work only in the intended window; host shortcuts
   still work after switching away. Windows handles Win+L itself.
-- [ ] Text clipboard works in both directions; shared files can be read and
-  written from both sides.
+- [ ] Text clipboard works in both directions, including Unicode, trailing
+  newlines, copying an earlier value again, and reconnecting after a guest reboot.
+- [ ] Shared files can be read and written from both sides.
 - [ ] Audio playback, device switching, and video work. Note microphone activity
   at idle and when an app starts and stops recording.
 - [ ] Resize, fullscreen, and movement between monitors with different scaling.

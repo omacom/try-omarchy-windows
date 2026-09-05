@@ -1,0 +1,181 @@
+From 13441b027aa4a3ac3bdf1ed1b60e220b941fb71b Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Fri, 4 Sep 2026 21:43:50 -0400
+Subject: [PATCH] Preserve clipboard text and retry failed transfers
+
+---
+ .../usr/local/bin/clipboard-bridge            | 35 +++++++----
+ guest/scripts/finalize-rootfs.sh              |  5 +-
+ guest/tests/test_clipboard.py                 | 59 +++++++++++++++++++
+ guest/tests/verify.py                         |  6 +-
+ 4 files changed, 91 insertions(+), 14 deletions(-)
+ create mode 100644 guest/tests/test_clipboard.py
+
+diff --git a/guest/factory-overlay/usr/local/bin/clipboard-bridge b/guest/factory-overlay/usr/local/bin/clipboard-bridge
+index 0acdb78..2cc7698 100755
+--- a/guest/factory-overlay/usr/local/bin/clipboard-bridge
++++ b/guest/factory-overlay/usr/local/bin/clipboard-bridge
+@@ -12,6 +12,24 @@ export XDG_RUNTIME_DIR STATE
+ umask 077
+ mkdir -p "$STATE"
+ 
++# wl-paste supplies the selected text on stdin. Keeping it in a file preserves
++# trailing newlines and avoids a second clipboard read after the selection moves.
++if [ "${1:-}" = --push ]; then
++  outgoing=$(mktemp "$STATE/outgoing.XXXXXX") || exit 1
++  trap 'rm -f "$outgoing"' EXIT
++  head -c 8388609 > "$outgoing" || exit 1
++  size=$(wc -c < "$outgoing")
++  [ "$size" -gt 0 ] && [ "$size" -le 8388608 ] || exit 0
++  sha=$(sha256sum < "$outgoing" | cut -d' ' -f1)
++  [ "$sha" = "$(cat "$STATE/last_content" 2>/dev/null)" ] && exit 0
++  if { base64 -w0 < "$outgoing"; echo; } | socat -u - TCP:$HOST:$PUSH_PORT,connect-timeout=3 2>/dev/null; then
++    printf '%s\n' "$sha" > "$STATE/last_content"
++  else
++    exit 1
++  fi
++  exit 0
++fi
++
+ find_wayland() {
+   if [ -n "${WAYLAND_DISPLAY:-}" ] && [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; then
+     export WAYLAND_DISPLAY
+@@ -57,8 +75,11 @@ while :; do
+       socat -u TCP:$HOST:$PULL_PORT,connect-timeout=3 - 2>/dev/null | while IFS= read -r line; do
+         line=${line%"$(printf '\r')"}
+         printf '%s' "$line" | base64 -d > "$STATE/incoming" 2>/dev/null || continue
+-        sha256sum < "$STATE/incoming" | cut -d' ' -f1 > "$STATE/last_set"
+-        wl-copy < "$STATE/incoming" || break
++        sha256sum < "$STATE/incoming" | cut -d' ' -f1 > "$STATE/last_content"
++        if ! wl-copy < "$STATE/incoming"; then
++          rm -f "$STATE/last_content"
++          break
++        fi
+       done
+       sleep 2
+     done
+@@ -67,15 +88,7 @@ while :; do
+ 
+   # guest -> host. wl-paste exits when its Wayland connection disappears, so
+   # the outer loop can discover the replacement socket and restart both sides.
+-  wl-paste --no-newline --watch sh -c '
+-    cur=$(wl-paste --no-newline 2>/dev/null) || exit 0
+-    [ -z "$cur" ] && exit 0
+-    sha=$(printf "%s" "$cur" | sha256sum | cut -d" " -f1)
+-    [ "$sha" = "$(cat "$STATE/last_set" 2>/dev/null)" ] && exit 0
+-    [ "$sha" = "$(cat "$STATE/last_sent" 2>/dev/null)" ] && exit 0
+-    echo "$sha" > "$STATE/last_sent"
+-    { printf "%s" "$cur" | base64 -w0; echo; } | socat -u - TCP:10.0.2.2:4448,connect-timeout=3 2>/dev/null
+-  ' || true
++  wl-paste --type text --watch "$0" --push || true
+ 
+ 	cleanup
+   sleep 2
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 2ff28c9..f342eaa 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -54,6 +54,9 @@ update-desktop-database /usr/share/applications || true
+ # export, lifecycle, and readiness behavior without touching user data or
+ # attempting a full package upgrade.
+ compat_paths=(
++  etc/systemd/user/clipboard-bridge.service
++  etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service
++  usr/local/bin/clipboard-bridge
+   etc/systemd/system/try-omarchy-ready.service
+   etc/systemd/system/multi-user.target.wants/try-omarchy-ready.service
+   etc/systemd/system/try-omarchy-sshd.service
+@@ -76,7 +79,7 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ }
+ # Bump this revision whenever compat-overlay.tar changes in a way that must be
+ # applied to persistent disks created by an earlier launcher release.
+-compat_revision=3
++compat_revision=4
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+diff --git a/guest/tests/test_clipboard.py b/guest/tests/test_clipboard.py
+new file mode 100644
+index 0000000..2ae5994
+--- /dev/null
++++ b/guest/tests/test_clipboard.py
+@@ -0,0 +1,59 @@
++import base64
++import hashlib
++import os
++from pathlib import Path
++import subprocess
++import tempfile
++import unittest
++
++BRIDGE = Path(__file__).resolve().parents[1] / 'factory-overlay/usr/local/bin/clipboard-bridge'
++
++
++class ClipboardTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.root = Path(self.tmp.name)
++        self.bin = self.root / 'bin'
++        self.bin.mkdir()
++        self.capture = self.root / 'capture'
++        self.env = dict(os.environ, XDG_RUNTIME_DIR=str(self.root),
++                        PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
++                        CAPTURE=str(self.capture))
++        self.socat('cat >> "$CAPTURE"')
++
++    def socat(self, body):
++        path = self.bin / 'socat'
++        path.write_text('#!/bin/sh\n' + body + '\n')
++        path.chmod(0o755)
++
++    def push(self, data):
++        return subprocess.run(['sh', str(BRIDGE), '--push'], input=data,
++                              env=self.env, capture_output=True, timeout=10)
++
++    def test_preserves_unicode_and_trailing_newlines(self):
++        data = 'こんにちは\n\n'.encode()
++        self.assertEqual(self.push(data).returncode, 0)
++        self.assertEqual(self.capture.read_bytes(), base64.b64encode(data) + b'\n')
++        self.assertEqual(self.push(data).returncode, 0)
++        self.assertEqual(self.capture.read_bytes(), base64.b64encode(data) + b'\n')
++
++    def test_failed_send_can_be_retried(self):
++        self.socat('cat > /dev/null; exit 1')
++        self.assertNotEqual(self.push(b'retry').returncode, 0)
++        self.socat('cat >> "$CAPTURE"')
++        self.assertEqual(self.push(b'retry').returncode, 0)
++        self.assertEqual(self.capture.read_bytes(), base64.b64encode(b'retry') + b'\n')
++
++    def test_previous_text_can_be_copied_after_host_change(self):
++        self.push(b'first')
++        state = self.root / 'try-omarchy-clipboard/last_content'
++        state.write_text(hashlib.sha256(b'host change').hexdigest() + '\n')
++        self.push(b'first')
++        self.assertEqual(self.capture.read_bytes(), (base64.b64encode(b'first') + b'\n') * 2)
++
++    def test_empty_and_oversized_text_are_ignored(self):
++        self.assertEqual(self.push(b'').returncode, 0)
++        self.assertEqual(self.push(b'x' * (8388608 + 1)).returncode, 0)
++        self.assertFalse(self.capture.exists())
++        self.assertEqual(list((self.root / 'try-omarchy-clipboard').glob('outgoing.*')), [])
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 50ee629..758596d 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -252,8 +252,10 @@ def main() -> None:
+ 
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     check(
+-        "compat_revision=3" in finalize_rootfs
+-        and "compat_revision" in finalize_rootfs.split("compat-version")[0],
++        "compat_revision=4" in finalize_rootfs
++        and "compat_revision" in finalize_rootfs.split("compat-version")[0]
++        and "usr/local/bin/clipboard-bridge" in finalize_rootfs
++        and "etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service" in finalize_rootfs,
+         "launcher integration has an explicit revision for persistent-disk upgrades",
+     )
+ 
+-- 
+2.55.0
+
