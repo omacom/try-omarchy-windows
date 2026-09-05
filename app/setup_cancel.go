@@ -106,18 +106,51 @@ func cleanupCancelledSetup(dir, executable string, removeAll bool) error {
 	if removeAll {
 		return removeInstallExceptExecutable(dir, executable)
 	}
-	return filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			if os.IsNotExist(walkErr) {
-				return nil
+	// Restrict cleanup to the launcher's own staging files. A recursive *.part
+	// sweep also removes unrelated downloads and files in shared folders.
+	guestFiles := append([]string{}, downloadedGuestArtifacts...)
+	guestFiles = append(guestFiles, "rootfs.ext4", "rootfs.ext4.zst", installReceiptFilename)
+	groups := []struct {
+		folder string
+		files  []string
+	}{
+		{"", []string{runtimeZip, dataLocationPointerName}},
+		{"guest", guestFiles},
+		{"guest.next", guestFiles},
+		{"vm", []string{"disk.raw", "disk.qcow2", "disk.qcow2" + portableBackingStateSuffix}},
+	}
+	for _, group := range groups {
+		folder := filepath.Join(dir, group.folder)
+		if group.folder != "" {
+			info, err := os.Lstat(folder)
+			if os.IsNotExist(err) {
+				continue
 			}
-			return walkErr
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				continue
+			}
 		}
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".part") {
-			return nil
+		for _, name := range group.files {
+			path := filepath.Join(folder, name+".part")
+			info, err := os.Lstat(path)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				continue
+			}
+			if err := os.Remove(path); err != nil {
+				return err
+			}
 		}
-		return os.Remove(path)
-	})
+	}
+	return nil
 }
 
 func removeInstallExceptExecutable(dir, executable string) error {
