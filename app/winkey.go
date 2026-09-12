@@ -178,9 +178,10 @@ func runWinKeyQmp() {
 // It also remembers where the user leaves the window: the placement is saved
 // whenever it changes and restored, in place of the maximized default, on
 // the next windowed launch if that spot is still on a connected display.
-func runTitleEnforcer(dir string, fullscreen bool) {
+func runTitleEnforcer(dir string, fullscreen, borderless bool) {
 	hInst, _, _ := procGetModuleHandleW.Call(0)
 	appIcon, _, _ := procLoadIconW.Call(hInst, 1) // the embedded Omarchy .ico
+	enumTitleBorderless = borderless
 	for {
 		if pid := qemuPid.Load(); pid != 0 {
 			enforceDisplayWindows(pid, dir, fullscreen, appIcon)

@@ -22,6 +22,8 @@ type settings struct {
 	SchemaVersion int `json:"schemaVersion"`
 	// Immersive: open fullscreen instead of in a window.
 	Fullscreen bool `json:"fullscreen"`
+	// Borderless: open without window decorations in the desktop work area.
+	Borderless bool `json:"borderless,omitempty"`
 	// Guest RAM in MiB. 0 sizes it to the machine automatically.
 	MemoryMiB int `json:"memoryMiB"`
 	// Guest CPUs. 0 sizes them to the machine automatically.
@@ -131,6 +133,9 @@ func (s settings) validate() error {
 	if s.Displays < 0 || s.Displays > maximumGuestDisplays {
 		return fmt.Errorf("displays must be between 1 and %d", maximumGuestDisplays)
 	}
+	if s.Fullscreen && s.Borderless {
+		return errors.New("fullscreen and borderless cannot both be enabled")
+	}
 	if s.MemoryMiB != 0 && (s.MemoryMiB < minimumGuestMemoryMiB || s.MemoryMiB > maximumGuestMemoryMiB) {
 		return fmt.Errorf("memoryMiB must be 0 (automatic) or between %d and %d", minimumGuestMemoryMiB, maximumGuestMemoryMiB)
 	}
@@ -152,9 +157,9 @@ func (s settings) validate() error {
 // settingsFromForm converts the Win32 controls into the persisted model. It
 // stays outside the window procedure so all input and file validation is
 // covered by the platform-independent test suite.
-func settingsFromForm(fullscreen, shareEnabled bool, memory, cpus, share, forwards, sshKey, render string) (settings, error) {
+func settingsFromForm(fullscreen, borderless, shareEnabled bool, memory, cpus, share, forwards, sshKey, render string) (settings, error) {
 	s := settings{
-		Fullscreen: fullscreen, Share: strings.TrimSpace(share), Render: strings.TrimSpace(render),
+		Fullscreen: fullscreen, Borderless: borderless, Share: strings.TrimSpace(share), Render: strings.TrimSpace(render),
 		ShareDisabled: !shareEnabled, SharedFolderPrompted: true,
 		SSHKey: strings.TrimSpace(sshKey),
 	}
@@ -226,6 +231,21 @@ func applySettings(cfg *config, s settings, explicit map[string]bool, forwards *
 	}
 	if !explicit["fullscreen"] {
 		cfg.fullscreen = s.Fullscreen
+	}
+	if !explicit["borderless"] {
+		cfg.borderless = s.Borderless
+	}
+	if cfg.fullscreen && cfg.borderless {
+		switch {
+		case explicit["fullscreen"] && explicit["borderless"]:
+			return errors.New("-fullscreen and -borderless cannot be used together")
+		case explicit["fullscreen"]:
+			cfg.borderless = false
+		case explicit["borderless"]:
+			cfg.fullscreen = false
+		default:
+			return errors.New("fullscreen and borderless cannot both be enabled")
+		}
 	}
 	if !explicit["memory"] {
 		cfg.memOverrideMiB = s.MemoryMiB

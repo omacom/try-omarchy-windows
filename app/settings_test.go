@@ -16,8 +16,10 @@ func TestLoadSettingsMissingFileIsDefaults(t *testing.T) {
 
 func TestSettingsRoundTrip(t *testing.T) {
 	path := settingsPath(filepath.Join(t.TempDir(), "TryOmarchy"))
-	in := settings{Fullscreen: true, MemoryMiB: 6144, Share: `C:\Users\me\Work`, SharedFolderPrompted: true,
-		Forwards: []string{"tcp:2222:22", "udp:5000:5000"}, SSHKey: `C:\Users\me\.ssh\work.pub`}
+	in := settings{
+		Borderless: true, MemoryMiB: 6144, Share: `C:\Users\me\Work`, SharedFolderPrompted: true,
+		Forwards: []string{"tcp:2222:22", "udp:5000:5000"}, SSHKey: `C:\Users\me\.ssh\work.pub`,
+	}
 	if err := saveSettings(path, in); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +31,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	in.SchemaVersion = settingsSchemaVersion
-	if out.SchemaVersion != in.SchemaVersion || out.Fullscreen != in.Fullscreen || out.MemoryMiB != in.MemoryMiB ||
+	if out.SchemaVersion != in.SchemaVersion || out.Fullscreen != in.Fullscreen || out.Borderless != in.Borderless || out.MemoryMiB != in.MemoryMiB ||
 		out.Share != in.Share || out.ShareDisabled != in.ShareDisabled || out.SharedFolderPrompted != in.SharedFolderPrompted ||
 		out.SSHKey != in.SSHKey || strings.Join(out.Forwards, ",") != strings.Join(in.Forwards, ",") {
 		t.Fatalf("round trip changed settings: %+v vs %+v", out, in)
@@ -58,8 +60,10 @@ func TestLoadSettingsRejectsDamageInsteadOfIgnoringIt(t *testing.T) {
 }
 
 func TestApplySettingsLetsExplicitFlagsWin(t *testing.T) {
-	file := settings{Fullscreen: true, MemoryMiB: 4096, Share: `D:\Share`,
-		Forwards: []string{"tcp:2222:22"}, SSHKey: `D:\key.pub`}
+	file := settings{
+		Borderless: true, MemoryMiB: 4096, Share: `D:\Share`,
+		Forwards: []string{"tcp:2222:22"}, SSHKey: `D:\key.pub`,
+	}
 
 	// Nothing on the command line: the file decides every row.
 	cfg := &config{}
@@ -68,20 +72,30 @@ func TestApplySettingsLetsExplicitFlagsWin(t *testing.T) {
 	if err := applySettings(cfg, file, map[string]bool{}, &forwards, &keyPath); err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.fullscreen || cfg.memOverrideMiB != 4096 || cfg.share != `D:\Share` || keyPath != `D:\key.pub` || forwards.String() != "tcp:2222:22" {
+	if !cfg.borderless || cfg.memOverrideMiB != 4096 || cfg.share != `D:\Share` || keyPath != `D:\key.pub` || forwards.String() != "tcp:2222:22" {
 		t.Fatalf("file not applied: %+v forwards=%s key=%s", cfg, forwards.String(), keyPath)
 	}
 
 	// Explicit flags keep their values; an explicit -ssh replaces the list.
-	cfg = &config{fullscreen: false, memOverrideMiB: 0, share: ""}
+	cfg = &config{fullscreen: false, borderless: false, memOverrideMiB: 0, share: ""}
 	forwards = forwardList{{"tcp", 2299, 22, ""}}
 	keyPath = ""
-	explicit := map[string]bool{"fullscreen": true, "memory": true, "share": true, "ssh": true, "ssh-key": true}
+	explicit := map[string]bool{"borderless": true, "memory": true, "share": true, "ssh": true, "ssh-key": true}
 	if err := applySettings(cfg, file, explicit, &forwards, &keyPath); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.fullscreen || cfg.memOverrideMiB != 0 || cfg.share != "" || keyPath != "" || forwards.String() != "tcp:2299:22" {
+	if cfg.borderless || cfg.memOverrideMiB != 0 || cfg.share != "" || keyPath != "" || forwards.String() != "tcp:2299:22" {
 		t.Fatalf("explicit flags overridden: %+v forwards=%s key=%s", cfg, forwards.String(), keyPath)
+	}
+
+	// An explicit display mode replaces the other mode saved in the file.
+	cfg = &config{fullscreen: true}
+	if err := applySettings(cfg, file, map[string]bool{"fullscreen": true}, &forwards, &keyPath); err != nil || !cfg.fullscreen || cfg.borderless {
+		t.Fatalf("explicit fullscreen did not override borderless settings: %+v %v", cfg, err)
+	}
+	cfg = &config{borderless: true}
+	if err := applySettings(cfg, settings{Fullscreen: true}, map[string]bool{"borderless": true}, &forwards, &keyPath); err != nil || cfg.fullscreen || !cfg.borderless {
+		t.Fatalf("explicit borderless did not override fullscreen settings: %+v %v", cfg, err)
 	}
 }
 
@@ -106,7 +120,7 @@ func TestSettingsFromFormParsesAndValidatesEveryRow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := settingsFromForm(true, true, " 6144 ", " 4 ", ` C:\Users\me\Work `, " tcp:2222:22\r\n\r\n udp:5000:5000 ", " "+keyPath+" ", " GPU ")
+	s, err := settingsFromForm(true, false, true, " 6144 ", " 4 ", ` C:\Users\me\Work `, " tcp:2222:22\r\n\r\n udp:5000:5000 ", " "+keyPath+" ", " GPU ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,19 +135,19 @@ func TestSettingsFromFormParsesAndValidatesEveryRow(t *testing.T) {
 		"forward":      {"0", "tcp:22", ""},
 		"key":          {"0", "tcp:2222:22", filepath.Join(dir, "missing.pub")},
 	} {
-		if _, err := settingsFromForm(false, false, input[0], "", "", input[1], input[2], ""); err == nil {
+		if _, err := settingsFromForm(false, false, false, input[0], "", "", input[1], input[2], ""); err == nil {
 			t.Fatalf("%s input accepted", name)
 		}
 	}
 	for _, cpus := range []string{"many", "0x4", "65", "-1"} {
-		if _, err := settingsFromForm(false, false, "0", cpus, "", "", "", ""); err == nil {
+		if _, err := settingsFromForm(false, false, false, "0", cpus, "", "", "", ""); err == nil {
 			t.Fatalf("cpus %q accepted", cpus)
 		}
 	}
-	if _, err := settingsFromForm(false, false, "0", "", "", "", "", "software"); err == nil {
+	if _, err := settingsFromForm(false, false, false, "0", "", "", "", "", "software"); err == nil {
 		t.Fatal("unknown render mode accepted")
 	}
-	if s, err := settingsFromForm(false, false, "0", "", "", "", "", " auto "); err != nil || s.Render != "" {
+	if s, err := settingsFromForm(false, false, false, "0", "", "", "", "", " auto "); err != nil || s.Render != "" {
 		t.Fatalf("automatic rendering should be stored as the empty default, got %q %v", s.Render, err)
 	}
 }
@@ -166,7 +180,7 @@ func TestSharedFolderOfferAndEnableState(t *testing.T) {
 		t.Fatalf("disabled share = %q", got)
 	}
 
-	s, err := settingsFromForm(false, false, "0", "", `C:\Users\me\Work`, "", "", "")
+	s, err := settingsFromForm(false, false, false, "0", "", `C:\Users\me\Work`, "", "", "")
 	if err != nil || !s.ShareDisabled || s.activeShare() != "" || !s.SharedFolderPrompted {
 		t.Fatalf("disabled form state = %+v, %v", s, err)
 	}

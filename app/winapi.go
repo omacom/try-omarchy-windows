@@ -32,6 +32,8 @@ var (
 	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
 	procGetWindowTextW           = user32.NewProc("GetWindowTextW")
 	procSetWindowTextW           = user32.NewProc("SetWindowTextW")
+	procGetWindowLongPtrW        = user32.NewProc("GetWindowLongPtrW")
+	procSetWindowLongPtrW        = user32.NewProc("SetWindowLongPtrW")
 	procOpenClipboard            = user32.NewProc("OpenClipboard")
 	procCloseClipboard           = user32.NewProc("CloseClipboard")
 	procEmptyClipboard           = user32.NewProc("EmptyClipboard")
@@ -50,22 +52,26 @@ var (
 )
 
 const (
-	mbIconError      = 0x10
-	whKeyboardLL     = 13
-	wmKeydown        = 0x100
-	wmSyskeydown     = 0x104
-	vkLwin           = 0x5B
-	vkRwin           = 0x5C
-	vkSnapshot       = 0x2C
-	qsAllinput       = 0x04FF
-	pmRemove         = 1
-	cfUnicodetext    = 13
-	cfDib            = 8
-	cfDibV5          = 17
-	gmemMoveable     = 2
-	fsctlSetSparse   = 0x900C4
-	fsctlSetZeroData = 0x980C8
-	maxTitle         = 256
+	mbIconError              = 0x10
+	whKeyboardLL             = 13
+	wmKeydown                = 0x100
+	wmSyskeydown             = 0x104
+	vkLwin                   = 0x5B
+	vkRwin                   = 0x5C
+	vkSnapshot               = 0x2C
+	qsAllinput               = 0x04FF
+	pmRemove                 = 1
+	cfUnicodetext            = 13
+	cfDib                    = 8
+	cfDibV5                  = 17
+	gmemMoveable             = 2
+	fsctlSetSparse           = 0x900C4
+	fsctlSetZeroData         = 0x980C8
+	maxTitle                 = 256
+	gwlpStyle        uintptr = ^uintptr(15)
+	swpNoZorder              = 0x0004
+	swpFramechanged          = 0x0020
+	qemuWindowFrame          = 0x00CF0000 // caption, resize frame, system menu, min/max buttons
 )
 
 type msgStruct struct {
@@ -149,10 +155,9 @@ func sparseCopy(dst *os.File, src *os.File, total int64, ui *progressUI) error {
 }
 
 // screenSize returns the primary screen bounds (fullscreen) or the desktop
-// work area minus window chrome (windowed) - the guest console is sized to
-// match so the picture fills the window from the first frame (launch-UX
-// contract in NOTES.md).
-func screenSize(fullscreen bool) (int, int) {
+// work area (borderless/windowed). A framed window loses its title bar, so
+// the guest console is sized to match from the first frame.
+func screenSize(fullscreen, borderless bool) (int, int) {
 	if fullscreen {
 		w, _, _ := procGetSystemMetrics.Call(smCxscreen)
 		h, _, _ := procGetSystemMetrics.Call(smCyscreen)
@@ -163,7 +168,12 @@ func screenSize(fullscreen bool) (int, int) {
 	if ret, _, _ := procSystemParametersInfoW.Call(spiGetworkarea, 0, uintptr(unsafe.Pointer(&r)), 0); ret == 0 {
 		return 1280, 800
 	}
-	return int(r.right - r.left), int(r.bottom-r.top) - 31 // minus title bar
+	height := int(r.bottom - r.top)
+	if !borderless {
+		captionHeight, _, _ := procGetSystemMetrics.Call(smCycaption)
+		height -= int(captionHeight)
+	}
+	return int(r.right - r.left), height
 }
 
 func foregroundPid() uint32 {
@@ -215,6 +225,7 @@ var (
 	enumTitleIcon            uintptr
 	enumTitleDir             string
 	enumTitleFullscreen      bool
+	enumTitleBorderless      bool
 	enumTitleWindows         = map[uintptr]*displayWindowState{}
 	enumTitleSeen            = map[uintptr]bool{}
 	enumTitleMonitors        []screenRect
@@ -242,6 +253,9 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		return 1
 	}
 	enumTitleSeen[hwnd] = true
+	if enumTitleBorderless {
+		makeBorderless(hwnd)
+	}
 	var buf [maxTitle]uint16
 	procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), maxTitle)
 	title := syscall.UTF16ToString(buf[:])
@@ -310,6 +324,15 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		}
 	}
 	return 1
+}
+
+func makeBorderless(hwnd uintptr) {
+	style, _, _ := procGetWindowLongPtrW.Call(hwnd, uintptr(gwlpStyle))
+	if style&uintptr(qemuWindowFrame) == 0 {
+		return
+	}
+	procSetWindowLongPtrW.Call(hwnd, uintptr(gwlpStyle), style&^uintptr(qemuWindowFrame))
+	procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, swpNoSize|swpNoMove|swpNoZorder|swpFramechanged)
 }
 
 func enforceDisplayWindows(pid uint32, dir string, fullscreen bool, icon uintptr) {

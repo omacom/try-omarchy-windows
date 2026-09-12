@@ -18,6 +18,7 @@ type config struct {
 	dir, hostDir, payloadDir    string
 	winqEmu, share              string
 	fresh, fullscreen, noGpu    bool
+	borderless                  bool
 	hostCursor                  bool
 	lanPublic                   bool
 	instant, portable           bool
@@ -213,8 +214,10 @@ func TestPrepareDiskGrowsCompleteOlderDiskWithoutReplacingIt(t *testing.T) {
 
 func TestBuildQemuArgsKeepsKernelIrqchipUnlessRefused(t *testing.T) {
 	for _, gpu := range []bool{true, false} {
-		cfg := &config{vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw",
-			diskFormat: "raw", memMiB: 4096, audio: "none", useGpu: gpu}
+		cfg := &config{
+			vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw",
+			diskFormat: "raw", memMiB: 4096, audio: "none", useGpu: gpu,
+		}
 		args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
 		if !strings.Contains(args, "-machine q35,accel=whpx -cpu") {
 			t.Fatalf("gpu=%v: default machine missing: %s", gpu, args)
@@ -335,8 +338,10 @@ func TestBuildQemuArgsEscapesCommasInsidePaths(t *testing.T) {
 }
 
 func TestBuildQemuArgsUsesTheChosenCPUCountAndHostMem(t *testing.T) {
-	cfg := &config{vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw", diskFormat: "raw",
-		memMiB: 8192, hostTotalMiB: 32768, cpus: 6, audio: "none", useGpu: true}
+	cfg := &config{
+		vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw", diskFormat: "raw",
+		memMiB: 8192, hostTotalMiB: 32768, cpus: 6, audio: "none", useGpu: true,
+	}
 	args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
 	if !strings.Contains(args, " -smp 6 -m 8192M ") || !strings.Contains(args, "hostmem=4294967296") {
 		t.Fatalf("cpu count or hostmem missing: %s", args)

@@ -78,6 +78,7 @@ const (
 	swpShowWindow     = 0x0040
 	smCxscreen        = 0
 	smCyscreen        = 1
+	smCycaption       = 4
 	iccProgress       = 0x20
 	transparentBkMode = 1
 	cancelControlID   = 1001

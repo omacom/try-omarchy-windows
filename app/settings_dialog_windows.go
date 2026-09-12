@@ -53,6 +53,8 @@ const (
 	settingsCancelID      = 2002
 	settingsBrowseID      = 2003
 	settingsFullID        = 2010
+	settingsWindowID      = 2017
+	settingsBorderlessID  = 2018
 	settingsMemID         = 2011
 	settingsShareID       = 2012
 	settingsFwdID         = 2013
@@ -129,7 +131,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	className, _ := syscall.UTF16PtrFromString("TryOmarchySettings")
 	var hwnd uintptr
 	var scroll settingsScroll
-	var hFull, hMem, hCPUs, hDisk, hShare, hShareOn, hFwd, hKey uintptr
+	var hWindow, hFull, hBorderless, hMem, hCPUs, hDisk, hShare, hShareOn, hFwd, hKey uintptr
 	var hRenderAuto, hRenderGPU, hRenderCPU, hDisplays, hLANPublic uintptr
 
 	text := func(handle uintptr) string {
@@ -143,7 +145,8 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		procSendMessageW.Call(handle, wmSettext, 0, uintptr(unsafe.Pointer(t)))
 	}
 	collect := func() (settings, error) {
-		checked, _, _ := procSendMessageW.Call(hFull, bmGetcheck, 0, 0)
+		fullscreen, _, _ := procSendMessageW.Call(hFull, bmGetcheck, 0, 0)
+		borderless, _, _ := procSendMessageW.Call(hBorderless, bmGetcheck, 0, 0)
 		shareChecked, _, _ := procSendMessageW.Call(hShareOn, bmGetcheck, 0, 0)
 		render := renderAuto
 		if r, _, _ := procSendMessageW.Call(hRenderGPU, bmGetcheck, 0, 0); r == bstChecked {
@@ -151,7 +154,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		} else if r, _, _ := procSendMessageW.Call(hRenderCPU, bmGetcheck, 0, 0); r == bstChecked {
 			render = renderCPU
 		}
-		s, err := settingsFromForm(checked == bstChecked, shareChecked == bstChecked,
+		s, err := settingsFromForm(fullscreen == bstChecked, borderless == bstChecked, shareChecked == bstChecked,
 			text(hMem), text(hCPUs), text(hShare), text(hFwd), text(hKey), render)
 		if err != nil {
 			return s, err
@@ -332,8 +335,10 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	}
 	cursor, _, _ := procLoadCursorW.Call(0, idcArrow)
 	icon, _, _ := procLoadIconW.Call(hInst, 1)
-	wc := wndclassex{size: uint32(unsafe.Sizeof(wndclassex{})), wndProc: wndProc, inst: hInst,
-		icon: icon, cursor: cursor, brush: colorBtnface + 1, className: className, iconSm: icon}
+	wc := wndclassex{
+		size: uint32(unsafe.Sizeof(wndclassex{})), wndProc: wndProc, inst: hInst,
+		icon: icon, cursor: cursor, brush: colorBtnface + 1, className: className, iconSm: icon,
+	}
 	if atom, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); atom == 0 {
 		logf("settings: RegisterClassExW failed: %v", err)
 		return false
@@ -379,9 +384,16 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	}
 	const left, labelW, fieldX, fieldW = 16, 150, 170, 294
 	y := int32(16)
-	hFull = mk("BUTTON", "Open fullscreen (Immersive)", left, y, 300, 22, bsAutocheckbox|wsTabstop, settingsFullID)
+	mk("STATIC", "Window mode", left, y+3, labelW, 20, ssNoprefix, 0)
+	hWindow = mk("BUTTON", "Windowed", fieldX, y, 90, 22, bsAutoradiobutton|wsGroup|wsTabstop, settingsWindowID)
+	hFull = mk("BUTTON", "Fullscreen", fieldX+96, y, 90, 22, bsAutoradiobutton, settingsFullID)
+	hBorderless = mk("BUTTON", "Borderless", fieldX+192, y, 90, 22, bsAutoradiobutton, settingsBorderlessID)
 	if current.Fullscreen {
 		procSendMessageW.Call(hFull, bmSetcheck, bstChecked, 0)
+	} else if current.Borderless {
+		procSendMessageW.Call(hBorderless, bmSetcheck, bstChecked, 0)
+	} else {
+		procSendMessageW.Call(hWindow, bmSetcheck, bstChecked, 0)
 	}
 	y += 30
 	mk("STATIC", "Guest displays", left, y+3, labelW, 20, ssNoprefix, 0)
@@ -498,7 +510,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	procSetWindowPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0, swpNoSize|swpNoMove|swpShowWindow)
 	procSetForegroundWindow.Call(hwnd)
 	procSetWindowPos.Call(hwnd, hwndNotTopmost, 0, 0, 0, 0, swpNoSize|swpNoMove|swpShowWindow)
-	procSetFocus.Call(hFull)
+	procSetFocus.Call(hWindow)
 
 	var m msgStruct
 	for {

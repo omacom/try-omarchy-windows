@@ -33,6 +33,7 @@ type config struct {
 	dir, hostDir, payloadDir    string
 	winqEmu, share              string
 	fresh, fullscreen, noGpu    bool
+	borderless                  bool
 	hostCursor                  bool
 	lanPublic                   bool
 	instant, portable           bool
@@ -138,6 +139,7 @@ func main() {
 	flag.BoolVar(&cfg.fresh, "fresh", false, "start over and retain the previous writable disk for recovery")
 	flag.IntVar(&cfg.displays, "displays", 1, "number of guest displays (1 to 16)")
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen (Immersive)")
+	flag.BoolVar(&cfg.borderless, "borderless", false, "start borderless in the desktop work area")
 	flag.IntVar(&cfg.memOverrideMiB, "memory", 0, "guest RAM in MiB (default: sized to this PC)")
 	flag.IntVar(&cfg.cpuOverride, "cpus", 0, "guest CPUs (default: sized to this PC)")
 	flag.IntVar(&cfg.diskGiB, "disk-size", 0, "guest disk capacity in GiB (0: default; grows existing disks, never shrinks)")
@@ -704,8 +706,8 @@ func main() {
 	os.Setenv("SDL_GRAB_KEYBOARD", "0")
 	// Launch-UX contract (NOTES.md): guest console sized to the window it will
 	// actually get, so the picture fills it from the first frame.
-	conW, conH := screenSize(cfg.fullscreen)
-	if !cfg.fullscreen {
+	conW, conH := screenSize(cfg.fullscreen, cfg.borderless)
+	if !cfg.fullscreen && !cfg.borderless {
 		if p := rememberedWindow(cfg.dir); p != nil && !p.Maximized {
 			conW, conH = p.consoleSize()
 		}
@@ -718,7 +720,7 @@ func main() {
 	go runGuestAgent()
 	go runWinKeyHook()
 	go runWinKeyQmp()
-	go runTitleEnforcer(cfg.dir, cfg.fullscreen)
+	go runTitleEnforcer(cfg.dir, cfg.fullscreen, cfg.borderless)
 	go runCursorReleaseGuard()
 	go runCloseGuard()
 	runClipboardBridge()
