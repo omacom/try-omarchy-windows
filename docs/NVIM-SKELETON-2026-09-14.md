@@ -86,11 +86,26 @@ The booted disk was the pre-fix `issue116-candidate` image
 `3537945357c088af347fc02c22c0febb8187c374f140ed4c2fbb988eaf8d50e6`); it was not
 rebuilt, so this run demonstrates detection of the defect, not the repair.
 
+## Factory build and boot
+
+[CI run 34916278355](https://github.com/omacom/try-omarchy-windows/actions/runs/34916278355)
+passed on branch commit `b75045b`, including the launcher and guest contract
+jobs, the full locked factory build, and the headless instant-account boot. The
+smoke reports the corrected facts:
+
+```text
+TRYOMARCHY_FACT:nvim-theme-skel:yes
+TRYOMARCHY_FACT:nvim-theme-user:yes
+TRYOMARCHY_FACT:omarchy-nvim-files:yes
+```
+
+All previous facts also pass, including `compat-version=yes` for revision 22,
+`package-database=clean`, `runtime-package=4.0.3-4` and the Vulkan environment.
+
 ## Remaining validation
 
-The fix needs a new factory build and boot to prove the corrected skeleton and
-the revision-22 delivery. That build requires root and Docker and is left to CI,
-which builds the guest and runs `smoke-guest.py`; the existing-guest path is
-exercised by `smoke-guest-upgrade.py` against the rebuilt candidate. Until that
-run is recorded here, treat the change as a reviewed patch series with unprivileged
-contract coverage, not release acceptance. The published v18 assets are unchanged.
+The revision-22 delivery still needs a boot of an older persistent disk, which
+`smoke-guest-upgrade.py` exercises against the rebuilt candidate. That run needs
+the guest artifacts plus KVM and is not part of the build job. Until it is
+recorded, the existing-guest repair rests on the overlay membership and catch-up
+contract tests, not an old-disk boot. The published v18 assets are unchanged.
