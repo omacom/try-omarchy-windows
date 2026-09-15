@@ -94,8 +94,8 @@ rebuilt, so this run demonstrates detection of the defect, not the repair.
 
 ## Factory build and boot
 
-[CI run 34916278355](https://github.com/omacom/try-omarchy-windows/actions/runs/34916278355)
-passed on branch commit `b75045b`, including the launcher and guest contract
+[CI run 34922457869](https://github.com/omacom/try-omarchy-windows/actions/runs/34922457869)
+passed on branch commit `3005d89`, including the launcher and guest contract
 jobs, the full locked factory build, and the headless instant-account boot. The
 smoke reports the corrected facts:
 
@@ -113,14 +113,16 @@ All previous facts also pass, including `compat-version=yes` for revision 22,
 `smoke-guest-upgrade.py` seeded a disposable copy of the checksum-verified
 v0.0.18 image, then booted the rebuilt candidate and ran the normal updater. All
 five phases passed: seed, upgrade, reboot, boot the old external image, and
-return to the candidate. The strengthened fixtures now assert the skeleton
-repair directly:
+return to the candidate. The strengthened fixtures assert the exact relative
+target on the existing disk and in the instant account's home:
 
 ```text
 :: Updating Try Omarchy launcher integration
+try-omarchy-runtime: 2011 total files, 0 missing files
 omarchy-nvim: 10014 total files, 0 missing files
-+ [[ -L /etc/skel/.config/nvim/lua/plugins/theme.lua ]]
-+ [[ -L /home/omarchy/.config/nvim/lua/plugins/theme.lua ]]
++ expected_theme_link=../../../../.local/state/omarchy/current/theme/neovim.lua
+++ readlink /etc/skel/.config/nvim/lua/plugins/theme.lua
+++ readlink /home/omarchy/.config/nvim/lua/plugins/theme.lua
 ```
 
 The revision-22 overlay put the link back on the existing disk and `catch-up`
@@ -133,13 +135,14 @@ Local evidence: `/home/bts/Projects/try-omarchy-evidence/issue119-upgrade`.
 
 | Log | SHA256 |
 | --- | --- |
-| 01-seed.log | `1f5c37a2bb42d6d16dcb0aedf1a5decbd11a0516d427209e464ffc718e5875f3` |
-| 02-upgrade.log | `da3b02248d0cd77ad8e15cbd9995ebbb361b0be42e4b32fca278fb976d8be713` |
-| 03-reboot.log | `fd3f86a11422aa73e0c10ca7da4b63b5a3761f7be44cff62861e771f38b93660` |
-| 04-old-image.log | `7554aca2cc8816a27ed60432fffb6aa9e2991f2d544892ccafcda07baf078084` |
-| 05-return-to-candidate.log | `850070b10d73faa0d9dd2d3683abb4d8d05b2df6a9ccdb5e919411a22d2a253c` |
+| 01-seed.log | `f8f321ff43bd5de1465cb4520d0715870c2dfe39f590f6b4a2416bcc2a6d1caa` |
+| 02-upgrade.log | `f32d10697b23ed72a437f40b1e1bc28d83c30371a9db9fe637506f5bc79dd146` |
+| 03-reboot.log | `b4ee062d93f06c31360e6fafdfac35cc00623aefeeb207163f5429d04c0bd791` |
+| 04-old-image.log | `d221f77c31566721abcb740d59cf76b099b6ee4cdd69e007dfcefc3d80ff56e7` |
+| 05-return-to-candidate.log | `0d0985b8c104cb96a6e04f794e3c7a685d4a19efd559d615818277b98f85dc77` |
 
-Candidate artifacts came from CI run 34916278355 (guest-manifest data and
-SHA256SUMS verified before the run). This is headless Linux/KVM evidence, not
-new physical Windows acceptance. The v1 hardware gates in
-[V1-READINESS.md](V1-READINESS.md) remain open.
+Candidate artifacts came from CI run 34922457869 (guest-manifest data and
+SHA256SUMS verified before the run; decompressed rootfs SHA256
+`fbff55d881ddfeea2679aa80ba578ef17427dd41ecf3dd6d55f33123698a3c01`). This is
+headless Linux/KVM evidence, not new physical Windows acceptance. The v1
+hardware gates in [V1-READINESS.md](V1-READINESS.md) remain open.
