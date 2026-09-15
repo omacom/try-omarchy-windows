@@ -51,7 +51,7 @@ jobs:
         run: GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-H windowsgui -s -w" -o ../TryOmarchy.exe .
 
       - name: Validate current release pin
-        run: scripts/release/validate-pin.py "$(sed -n 's/.*releases\/download\/\([^\"]*\).*/\1/p' app/manifest.go)"
+        run: scripts/release/validate-pin.py --require-public "$(sed -n 's/.*releases\/download\/\([^\"]*\).*/\1/p' app/manifest.go)"
 
   windows-launcher:
     name: Windows launcher
