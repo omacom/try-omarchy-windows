@@ -15,6 +15,9 @@ func rejectMoveLink(path string, info os.FileInfo) error {
 	}
 	return nil
 }
+func rejectAncestorLink(path string, info os.FileInfo) error {
+	return rejectMoveLink(path, info)
+}
 func publishMoveFile(from, to string) error {
 	if err := os.Rename(from, to); err != nil {
 		return err
