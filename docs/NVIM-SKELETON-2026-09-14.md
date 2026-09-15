@@ -49,8 +49,8 @@ compatibility-21 candidate confirms the link is absent from
 
 - `materialize-omarchy.sh` stashes the package's `/etc/skel/.config/nvim` before
   replacing `.config` and restores it afterward, so the packaged skeleton,
-  symlink included, survives. The package-directory copy remains as a fallback
-  for layouts without a skeleton.
+  symlink included, survives. It fails the build if the package skeleton is
+  absent, rather than falling back to the package directory that lacks the link.
 - `finalize-rootfs.sh` adds `etc/skel/.config/nvim/lua/plugins/theme.lua` to the
   compatibility overlay and bumps the revision to 22. Existing persistent disks
   regain the file when the launcher integration update runs.
