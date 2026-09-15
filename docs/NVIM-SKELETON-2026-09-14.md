@@ -102,10 +102,38 @@ TRYOMARCHY_FACT:omarchy-nvim-files:yes
 All previous facts also pass, including `compat-version=yes` for revision 22,
 `package-database=clean`, `runtime-package=4.0.3-4` and the Vulkan environment.
 
-## Remaining validation
+## Existing-guest delivery
 
-The revision-22 delivery still needs a boot of an older persistent disk, which
-`smoke-guest-upgrade.py` exercises against the rebuilt candidate. That run needs
-the guest artifacts plus KVM and is not part of the build job. Until it is
-recorded, the existing-guest repair rests on the overlay membership and catch-up
-contract tests, not an old-disk boot. The published v18 assets are unchanged.
+`smoke-guest-upgrade.py` seeded a disposable copy of the checksum-verified
+v0.0.18 image, then booted the rebuilt candidate and ran the normal updater. All
+five phases passed: seed, upgrade, reboot, boot the old external image, and
+return to the candidate. The strengthened fixtures now assert the skeleton
+repair directly:
+
+```text
+:: Updating Try Omarchy launcher integration
+omarchy-nvim: 10014 total files, 0 missing files
++ [[ -L /etc/skel/.config/nvim/lua/plugins/theme.lua ]]
++ [[ -L /home/omarchy/.config/nvim/lua/plugins/theme.lua ]]
+```
+
+The revision-22 overlay put the link back on the existing disk and `catch-up`
+restored the instant account's link. Database consistency, runtime `4.0.3-4`,
+exclusive helper ownership, helper hashes, user files, installed packages and
+the old-image rollback all still pass, so the delivery does not regress the
+existing upgrade path. The published v18 assets are unchanged.
+
+Local evidence: `/home/bts/Projects/try-omarchy-evidence/issue119-upgrade`.
+
+| Log | SHA256 |
+| --- | --- |
+| 01-seed.log | `1f5c37a2bb42d6d16dcb0aedf1a5decbd11a0516d427209e464ffc718e5875f3` |
+| 02-upgrade.log | `da3b02248d0cd77ad8e15cbd9995ebbb361b0be42e4b32fca278fb976d8be713` |
+| 03-reboot.log | `fd3f86a11422aa73e0c10ca7da4b63b5a3761f7be44cff62861e771f38b93660` |
+| 04-old-image.log | `7554aca2cc8816a27ed60432fffb6aa9e2991f2d544892ccafcda07baf078084` |
+| 05-return-to-candidate.log | `850070b10d73faa0d9dd2d3683abb4d8d05b2df6a9ccdb5e919411a22d2a253c` |
+
+Candidate artifacts came from CI run 34916278355 (guest-manifest data and
+SHA256SUMS verified before the run). This is headless Linux/KVM evidence, not
+new physical Windows acceptance. The v1 hardware gates in
+[V1-READINESS.md](V1-READINESS.md) remain open.
