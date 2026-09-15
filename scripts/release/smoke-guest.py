@@ -118,21 +118,21 @@ def main() -> None:
         EXPECTED_FACTS["file-transfer"] = "present"
         FACT_CHECKS["file-transfer-window"] = "test -x /usr/local/bin/file-transfer-window && desktop-file-validate /usr/share/applications/try-omarchy-file-transfers.desktop && python -c \"import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk, Gdk\" >/dev/null 2>&1 && echo present || echo missing"
         EXPECTED_FACTS["file-transfer-window"] = "present"
-    if args.compat_revision >= 21:
-        # omarchy-nvim seeds its Neovim config through /etc/skel, including a
-        # relative theme.lua symlink to the active theme's generated neovim.lua.
-        # The 4.0.3 factory builder replaced that skeleton and dropped the
-        # symlink, leaving new accounts without the Omarchy colorscheme.
+    if args.compat_revision >= 22:
+        # Revision 22 restores the Neovim theme link the 4.0.3 factory builder
+        # dropped from /etc/skel. omarchy-nvim ships lua/plugins/theme.lua as a
+        # relative symlink to the active theme's generated neovim.lua, so new
+        # accounts keep the Omarchy colorscheme and pacman -Qk stays clean.
         theme_link = "*/omarchy/current/theme/neovim.lua"
         FACT_CHECKS["nvim-theme-skel"] = (
             "if test -L /etc/skel/.config/nvim/lua/plugins/theme.lua; then "
-            f"case $(readlink /etc/skel/.config/nvim/lua/plugins/theme.lua) in {theme_link}) echo yes;; *) echo no;; esac; "
+            f"case \"$(readlink /etc/skel/.config/nvim/lua/plugins/theme.lua)\" in {theme_link}) echo yes;; *) echo no;; esac; "
             "else echo no; fi"
         )
         EXPECTED_FACTS["nvim-theme-skel"] = "yes"
         FACT_CHECKS["nvim-theme-user"] = (
             "if test -L ~/.config/nvim/lua/plugins/theme.lua; then "
-            f"case $(readlink ~/.config/nvim/lua/plugins/theme.lua) in {theme_link}) echo yes;; *) echo no;; esac; "
+            f"case \"$(readlink ~/.config/nvim/lua/plugins/theme.lua)\" in {theme_link}) echo yes;; *) echo no;; esac; "
             "else echo no; fi"
         )
         EXPECTED_FACTS["nvim-theme-user"] = "yes"

@@ -20,8 +20,8 @@ Windows VM tests unless noted in the release checklist):
 
 - Compatibility revision 22 carries the packaged Neovim theme link and its
   catch-up repair to existing guests. Revision 21 delivered the corrected
-  runtime repository to existing
-  guests even when the external kernel is unchanged. Revision 20 carries Venus presentation workarounds into both
+  runtime repository to existing guests even when the external kernel is
+  unchanged. Revision 20 carries Venus presentation workarounds into both
   the UWSM desktop and login shells, including persistent-disk upgrades.
   `VN_PERF=no_async_present` avoids the Mesa 26.2.2 acquisition/presentation lock
   deadlock reproduced on the Windows AMD renderer. The supported loader option

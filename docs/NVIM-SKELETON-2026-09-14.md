@@ -62,13 +62,14 @@ compatibility-21 candidate confirms the link is absent from
 The contract tests cover the skeleton ordering, the overlay membership, the
 revision, and the catch-up behavior, including leaving a user-written file in
 place. `scripts/release/smoke-guest.py` gained `nvim-theme-skel`,
-`nvim-theme-user` and `omarchy-nvim-files` facts for compatibility revision 21
-and later.
+`nvim-theme-user` and `omarchy-nvim-files` facts, enabled from compatibility
+revision 22, the first revision that carries the repair.
 
 ## Evidence
 
-Local builder with the complete patch series applied: 115 guest tests pass (one
-optional skip). The pre-fix compatibility-21 candidate was booted read-only with
+Local builder with the complete patch series applied: 117 guest tests pass (one
+optional skip). While the facts were still enabled for revision 21, the pre-fix
+compatibility-21 candidate was booted read-only with
 `smoke-guest.py --compat-revision 21`; every previous fact passed and the new
 facts failed exactly as expected:
 
@@ -78,6 +79,11 @@ TRYOMARCHY_FACT:nvim-theme-user:
 TRYOMARCHY_FACT:omarchy-nvim-files:no
 instant guest booted but the image facts are wrong: {'nvim-theme-skel': (None, 'yes'), 'nvim-theme-user': (None, 'yes'), 'omarchy-nvim-files': ('no', 'yes')}
 ```
+
+The empty values are the earlier `test -L ... && case ...` command form, which
+printed nothing when the link was absent; the shipped form prints `no`. The
+shipped gate starts at revision 22, so a revision-22 image missing the link
+still fails.
 
 Log: `/home/bts/Projects/try-omarchy-evidence/issue119-prefix-smoke/prefix-candidate.log`
 (SHA256 `068f2b2c6a5acfb16eaa629234f5e1096287f1e45dc0739f884d95b9f09e80c6`).

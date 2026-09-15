@@ -1,19 +1,19 @@
-From 05965da9266e4c807ec147739e374d1ca2af4e1c Mon Sep 17 00:00:00 2001
+From 674f6ece11c2090122be6d2018118ebbd47ccc3a Mon Sep 17 00:00:00 2001
 From: Try Omarchy <test@localhost>
-Date: Mon, 14 Sep 2026 20:14:57 -0400
+Date: Mon, 14 Sep 2026 22:45:27 -0400
 Subject: [PATCH] Retain the packaged Neovim theme link for new and existing
  users
 
 ---
- .../usr/local/lib/try-omarchy/catch-up        | 24 +++++++++++++++
- guest/scripts/finalize-rootfs.sh              |  6 ++--
- guest/scripts/materialize-omarchy.sh          | 29 ++++++++++++++-----
- guest/tests/test_overlay_scripts.py           | 23 ++++++++++++++-
- guest/tests/verify.py                         | 23 +++++++++++----
- 5 files changed, 89 insertions(+), 16 deletions(-)
+ .../usr/local/lib/try-omarchy/catch-up        | 24 +++++++++++
+ guest/scripts/finalize-rootfs.sh              |  6 ++-
+ guest/scripts/materialize-omarchy.sh          | 20 ++++++---
+ guest/tests/test_overlay_scripts.py           | 43 ++++++++++++++++++-
+ guest/tests/verify.py                         | 41 ++++++++++++------
+ 5 files changed, 110 insertions(+), 24 deletions(-)
 
 diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
-index 96d04b5..e6203ec 100755
+index 96d04b5..54aef80 100755
 --- a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
 +++ b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
 @@ -16,6 +16,7 @@ state_dir=${TRY_OMARCHY_STATE_DIR:-/var/lib/try-omarchy}
@@ -24,7 +24,7 @@ index 96d04b5..e6203ec 100755
  homes=${TRY_OMARCHY_HOMES:-/home}
  
  revision=$(cut -d: -f1 "$revision_file" 2>/dev/null || echo 0)
-@@ -71,11 +72,34 @@ enable_suspend_off() {
+@@ -71,7 +72,30 @@ enable_suspend_off() {
    echo "switched on the suspend-off toggle for $1"
  }
  
@@ -51,14 +51,10 @@ index 96d04b5..e6203ec 100755
 +}
 +
  for home in "$homes"/*; do
++  restore_nvim_theme_link "$home" || true
    [[ -d $home/.config/hypr ]] || continue
    refresh_monitors "$home" || true
    remove_seeded_toggles "$home" || true
-   enable_suspend_off "$home" || true
-+  restore_nvim_theme_link "$home" || true
- done
- printf '%s\n' "$revision" >"$marker"
- exit 0
 diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
 index 18feef4..21b0ba5 100755
 --- a/guest/scripts/finalize-rootfs.sh
@@ -84,27 +80,25 @@ index 18feef4..21b0ba5 100755
  
  # Never let the container host's hardware autodetection remove the virtual
 diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
-index 191569e..065ec04 100755
+index 191569e..82df852 100755
 --- a/guest/scripts/materialize-omarchy.sh
 +++ b/guest/scripts/materialize-omarchy.sh
-@@ -148,15 +148,30 @@ while IFS= read -r command; do
+@@ -148,15 +148,21 @@ while IFS= read -r command; do
    ln -s "/usr/bin/$name" "$omarchy_root/bin/$name"
  done < <(find "$source_dir/bin" -maxdepth 1 -type f | sort)
  
 -# Seed new users exactly like omarchy-settings does.
 +# Seed new users exactly like omarchy-settings does, but keep the packaged
-+# omarchy-nvim skeleton. The package seeds /etc/skel/.config/nvim and also ships
-+# a /usr/share/omarchy-nvim/config copy that deliberately omits
-+# lua/plugins/theme.lua, which the package creates as a relative symlink to the
-+# active theme's generated neovim.lua. Replacing skel with only the package
-+# directory dropped that symlink, so new accounts opened Neovim without the
-+# Omarchy colorscheme. Preserve the seed itself across the replacement.
++# omarchy-nvim skeleton. The package seeds /etc/skel/.config/nvim, including
++# lua/plugins/theme.lua as a relative symlink to the active theme's generated
++# neovim.lua; the separate /usr/share/omarchy-nvim/config copy omits it. Replacing
++# skel with only that copy dropped the symlink, so new accounts opened Neovim
++# without the Omarchy colorscheme. Preserve the packaged skeleton across the
++# replacement.
 +nvim_skel="$root/etc/skel/.config/nvim"
-+nvim_stash=""
-+if [[ -d $nvim_skel ]]; then
-+  nvim_stash=$(mktemp -d)
-+  mv "$nvim_skel" "$nvim_stash/nvim"
-+fi
++[[ -d $nvim_skel ]] || fail "omarchy-nvim skeleton not found: $nvim_skel"
++nvim_stash=$(mktemp -d)
++mv "$nvim_skel" "$nvim_stash/nvim"
  rm -rf "$root/etc/skel/.config"
  copy_tree "$source_dir/config" "$root/etc/skel/.config"
 -# omarchy-nvim owns its defaults separately from the main Omarchy source tree.
@@ -113,20 +107,13 @@ index 191569e..065ec04 100755
 -nvim_config="$root/usr/share/omarchy-nvim/config"
 -[[ -d $nvim_config ]] || fail "omarchy-nvim config not found: $nvim_config"
 -copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"
-+if [[ -n $nvim_stash ]]; then
-+  copy_tree "$nvim_stash/nvim" "$root/etc/skel/.config/nvim"
-+  rm -rf "$nvim_stash"
-+else
-+  # Older package layouts only ship the package-directory copy.
-+  nvim_config="$root/usr/share/omarchy-nvim/config"
-+  [[ -d $nvim_config ]] || fail "omarchy-nvim config not found: $nvim_config"
-+  copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"
-+fi
++copy_tree "$nvim_stash/nvim" "$root/etc/skel/.config/nvim"
++rm -rf "$nvim_stash"
  install_file 0644 "$source_dir/default/bashrc" "$root/etc/skel/.bashrc"
  mkdir -p "$root/etc/skel/.local/share/applications"
  copy_contents "$source_dir/applications" "$root/etc/skel/.local/share/applications"
 diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
-index 0ecfda5..40b832d 100644
+index 0ecfda5..c0d5fea 100644
 --- a/guest/tests/test_overlay_scripts.py
 +++ b/guest/tests/test_overlay_scripts.py
 @@ -577,12 +577,15 @@ class CatchUpTests(OverlayCase):
@@ -146,7 +133,7 @@ index 0ecfda5..40b832d 100644
  
      def seed_toggles(self) -> None:
          for name in ("flags", "window-no-gaps", "single-window-aspect-ratio"):
-@@ -620,6 +623,24 @@ class CatchUpTests(OverlayCase):
+@@ -620,6 +623,44 @@ class CatchUpTests(OverlayCase):
          self.assertTrue((self.toggles / "window-no-gaps.lua").exists())
          self.assertFalse((self.toggles / "single-window-aspect-ratio.lua").exists())
  
@@ -168,14 +155,34 @@ index 0ecfda5..40b832d 100644
 +        self.assertEqual(result.returncode, 0, result.stderr)
 +        self.assertEqual(link.read_text(), "-- my own theme\n")
 +
++    def test_a_home_without_hypr_config_still_gets_the_nvim_link(self) -> None:
++        home = self.homes / "bob"
++        plugins = home / ".config/nvim/lua/plugins"
++        plugins.mkdir(parents=True)
++        (home / ".config/nvim/init.lua").write_text("-- init\n")
++        (home / ".local/state/omarchy/current/theme").mkdir(parents=True)
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertTrue((plugins / "theme.lua").is_symlink())
++
++    def test_omarchy_3_home_uses_the_config_theme_directory(self) -> None:
++        plugins = self.user / ".config/nvim/lua/plugins"
++        plugins.mkdir(parents=True)
++        (self.user / ".config/nvim/init.lua").write_text("-- init\n")
++        (self.user / ".config/omarchy/current/theme").mkdir(parents=True)
++        self.omarchy_version.write_text("3.9.0\n")
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(os.readlink(plugins / "theme.lua"), "../../../../.config/omarchy/current/theme/neovim.lua")
++
  
  class FactoryUpdateNoticeTests(OverlayCase):
      def setUp(self) -> None:
 diff --git a/guest/tests/verify.py b/guest/tests/verify.py
-index 4a0003b..5902b6c 100755
+index 4a0003b..f6c3139 100755
 --- a/guest/tests/verify.py
 +++ b/guest/tests/verify.py
-@@ -124,11 +124,14 @@ def main() -> None:
+@@ -124,11 +124,15 @@ def main() -> None:
          "new users have Omarchy's suspend-off toggle on, since a VM cannot suspend",
      )
      check(
@@ -185,6 +192,7 @@ index 4a0003b..5902b6c 100755
 -        < materialize.index('copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"'),
 -        "materialization preserves the package-owned Neovim config for new users",
 +        'nvim_skel="$root/etc/skel/.config/nvim"' in materialize
++        and '[[ -d $nvim_skel ]] || fail' in materialize
 +        and 'mv "$nvim_skel" "$nvim_stash/nvim"' in materialize
 +        and 'copy_tree "$nvim_stash/nvim" "$root/etc/skel/.config/nvim"' in materialize
 +        and materialize.index('mv "$nvim_skel" "$nvim_stash/nvim"')
@@ -195,20 +203,32 @@ index 4a0003b..5902b6c 100755
      )
      build = read(GUEST / "build.sh")
      check(
-@@ -261,9 +264,10 @@ def main() -> None:
+@@ -260,19 +264,28 @@ def main() -> None:
+     )
  
      finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
++    compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
      check(
 -        "compat_revision=21" in finalize_rootfs
+-        and "usr/local/lib/try-omarchy/catch-up" in finalize_rootfs
+-        and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in finalize_rootfs
+-        and "etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf" in finalize_rootfs
+-        and "usr/local/lib/try-omarchy/agent" in finalize_rootfs
 +        "compat_revision=22" in finalize_rootfs
-         and "usr/local/lib/try-omarchy/catch-up" in finalize_rootfs
-         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in finalize_rootfs
-+        and "etc/skel/.config/nvim/lua/plugins/theme.lua" in finalize_rootfs
-         and "etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf" in finalize_rootfs
-         and "usr/local/lib/try-omarchy/agent" in finalize_rootfs
++        and "usr/local/lib/try-omarchy/catch-up" in compat_paths
++        and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in compat_paths
++        and "etc/skel/.config/nvim/lua/plugins/theme.lua" in compat_paths
++        and "etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf" in compat_paths
++        and "usr/local/lib/try-omarchy/agent" in compat_paths
          and "compat_revision" in finalize_rootfs.split("compat-version")[0]
-@@ -273,6 +277,13 @@ def main() -> None:
-         and "etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service" in finalize_rootfs,
+-        and "usr/local/lib/try-omarchy/apply-host-locale" in finalize_rootfs
+-        and "etc/systemd/system/sysinit.target.wants/try-omarchy-host-locale.service" in finalize_rootfs
+-        and "usr/local/bin/clipboard-bridge" in finalize_rootfs
+-        and "etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service" in finalize_rootfs,
++        and "usr/local/lib/try-omarchy/apply-host-locale" in compat_paths
++        and "etc/systemd/system/sysinit.target.wants/try-omarchy-host-locale.service" in compat_paths
++        and "usr/local/bin/clipboard-bridge" in compat_paths
++        and "etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service" in compat_paths,
          "launcher integration has an explicit revision for persistent-disk upgrades",
      )
 +    catch_up = read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/catch-up")

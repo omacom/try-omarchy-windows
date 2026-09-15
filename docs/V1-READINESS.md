@@ -66,7 +66,7 @@ candidates; their reports remain historical supporting evidence.
   restores it for users who lost it without replacing their own file. See
   [Neovim skeleton evidence](NVIM-SKELETON-2026-09-14.md).
 
-These changes are on master, not in the published v18 assets. Native automated
+These changes are not in the published v18 assets. Native automated
 checks passed; large installed-guest portable lifecycle acceptance remains open.
 Include them in the next candidate and identify its hashes before testing.
 
