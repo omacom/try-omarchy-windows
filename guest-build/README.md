@@ -18,7 +18,9 @@ What the patches change (the original graphics path was proven on hardware
 2026-08-28; later additions are covered by contract, release-smoke, and nested
 Windows VM tests unless noted in the release checklist):
 
-- Compatibility revision 21 delivers the corrected runtime repository to existing
+- Compatibility revision 22 carries the packaged Neovim theme link and its
+  catch-up repair to existing guests. Revision 21 delivered the corrected
+  runtime repository to existing
   guests even when the external kernel is unchanged. Revision 20 carries Venus presentation workarounds into both
   the UWSM desktop and login shells, including persistent-disk upgrades.
   `VN_PERF=no_async_present` avoids the Mesa 26.2.2 acquisition/presentation lock
@@ -106,3 +108,15 @@ bumps the runtime package to `4.0.3-4`, and preserves the two dependency-owned
 Neovim helpers when upgrading older runtime packages. Database consistency is
 checked during registration and guest smoke testing. See the
 [runtime ownership validation](../docs/RUNTIME-OWNERSHIP-2026-09-14.md).
+
+Patch 0069 retains the `omarchy-nvim` package skeleton when materialization
+replaces `/etc/skel/.config`. The package seeds `/etc/skel/.config/nvim` and a
+separate `/usr/share/omarchy-nvim/config` copy that omits
+`lua/plugins/theme.lua`, which is a relative symlink to the active theme's
+generated `neovim.lua`. Rebuilding the skeleton from the package directory alone
+dropped that symlink, so new accounts opened Neovim without the Omarchy
+colorscheme and `pacman -Qk omarchy-nvim` warned about a missing file. The seed
+is now stashed across the replacement. Compatibility revision 22 adds the link
+to the compat overlay for existing disks and has `catch-up` recreate it for
+users who have a packaged Neovim config but no theme link, without replacing a
+file they wrote themselves.

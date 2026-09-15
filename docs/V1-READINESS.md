@@ -58,6 +58,14 @@ candidates; their reports remain historical supporting evidence.
   The complete factory build/boot and five-boot normal-updater regression pass;
   see [ownership repair evidence](RUNTIME-OWNERSHIP-2026-09-14.md).
 
+- [#119](https://github.com/omacom/try-omarchy-windows/issues/119): the factory
+  builder dropped the packaged `omarchy-nvim` theme symlink by rebuilding
+  `/etc/skel/.config/nvim` from the package directory copy, which omits
+  `lua/plugins/theme.lua`. Materialization now retains the package skeleton,
+  compatibility revision 22 ships the link to existing disks, and `catch-up`
+  restores it for users who lost it without replacing their own file. See
+  [Neovim skeleton evidence](NVIM-SKELETON-2026-09-14.md).
+
 These changes are on master, not in the published v18 assets. Native automated
 checks passed; large installed-guest portable lifecycle acceptance remains open.
 Include them in the next candidate and identify its hashes before testing.

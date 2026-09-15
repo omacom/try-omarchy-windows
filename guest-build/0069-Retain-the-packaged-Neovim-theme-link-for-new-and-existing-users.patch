@@ -1,0 +1,226 @@
+From 05965da9266e4c807ec147739e374d1ca2af4e1c Mon Sep 17 00:00:00 2001
+From: Try Omarchy <test@localhost>
+Date: Mon, 14 Sep 2026 20:14:57 -0400
+Subject: [PATCH] Retain the packaged Neovim theme link for new and existing
+ users
+
+---
+ .../usr/local/lib/try-omarchy/catch-up        | 24 +++++++++++++++
+ guest/scripts/finalize-rootfs.sh              |  6 ++--
+ guest/scripts/materialize-omarchy.sh          | 29 ++++++++++++++-----
+ guest/tests/test_overlay_scripts.py           | 23 ++++++++++++++-
+ guest/tests/verify.py                         | 23 +++++++++++----
+ 5 files changed, 89 insertions(+), 16 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+index 96d04b5..e6203ec 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+@@ -16,6 +16,7 @@ state_dir=${TRY_OMARCHY_STATE_DIR:-/var/lib/try-omarchy}
+ fragment=${TRY_OMARCHY_QEMU_FRAGMENT:-/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua}
+ omarchy_default=${TRY_OMARCHY_OMARCHY_MONITORS:-/usr/share/omarchy/config/hypr/monitors.lua}
+ toggle_templates=${TRY_OMARCHY_TOGGLE_TEMPLATES:-/usr/share/omarchy/default/hypr/toggles}
++omarchy_version=${TRY_OMARCHY_OMARCHY_VERSION:-/usr/share/omarchy/version}
+ homes=${TRY_OMARCHY_HOMES:-/home}
+ 
+ revision=$(cut -d: -f1 "$revision_file" 2>/dev/null || echo 0)
+@@ -71,11 +72,34 @@ enable_suspend_off() {
+   echo "switched on the suspend-off toggle for $1"
+ }
+ 
++restore_nvim_theme_link() {
++  # omarchy-nvim seeds ~/.config/nvim/lua/plugins/theme.lua as a relative
++  # symlink to the active theme's generated neovim.lua. Images built before the
++  # skeleton repair dropped it, so users created from that skeleton lost the
++  # Omarchy colorscheme. Only recreate the link when it is gone; never touch a
++  # theme.lua the user already has.
++  local home=$1 plugins=$1/.config/nvim/lua/plugins link=$1/.config/nvim/lua/plugins/theme.lua theme_dir
++  [[ -f $1/.config/nvim/init.lua && -d $plugins ]] || return 0
++  [[ -e $link || -L $link ]] && return 0
++  theme_dir=.local/state/omarchy/current/theme
++  if [[ ! -d $1/.local/state/omarchy/current ]]; then
++    local version
++    version=$(cat "$omarchy_version" 2>/dev/null || true)
++    if [[ -d $1/.config/omarchy/current || ${version%%.*} == "3" ]]; then
++      theme_dir=.config/omarchy/current/theme
++    fi
++  fi
++  ln -snf "../../../../${theme_dir}/neovim.lua" "$link"
++  chown -h --reference="$plugins" "$link" 2>/dev/null || true
++  echo "restored the Neovim theme link for $1"
++}
++
+ for home in "$homes"/*; do
+   [[ -d $home/.config/hypr ]] || continue
+   refresh_monitors "$home" || true
+   remove_seeded_toggles "$home" || true
+   enable_suspend_off "$home" || true
++  restore_nvim_theme_link "$home" || true
+ done
+ printf '%s\n' "$revision" >"$marker"
+ exit 0
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 18feef4..21b0ba5 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -112,6 +112,7 @@ compat_paths=(
+   etc/systemd/system/try-omarchy-catch-up.service
+   etc/systemd/system/multi-user.target.wants/try-omarchy-catch-up.service
+   usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
++  etc/skel/.config/nvim/lua/plugins/theme.lua
+   etc/systemd/user/try-omarchy-share-link.service
+   etc/systemd/user/graphical-session.target.wants/try-omarchy-share-link.service
+   etc/systemd/user/try-omarchy-factory-update-notice.service
+@@ -132,8 +133,9 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+   exit 1
+ }
+ # Bump this revision whenever compat-overlay.tar changes in a way that must be
+-# applied to persistent disks created by an earlier launcher release.
+-compat_revision=21
++# applied to persistent disks created by an earlier launcher release. Revision
++# 22 carries the packaged Neovim theme symlink and its catch-up repair.
++compat_revision=22
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
+index 191569e..065ec04 100755
+--- a/guest/scripts/materialize-omarchy.sh
++++ b/guest/scripts/materialize-omarchy.sh
+@@ -148,15 +148,30 @@ while IFS= read -r command; do
+   ln -s "/usr/bin/$name" "$omarchy_root/bin/$name"
+ done < <(find "$source_dir/bin" -maxdepth 1 -type f | sort)
+ 
+-# Seed new users exactly like omarchy-settings does.
++# Seed new users exactly like omarchy-settings does, but keep the packaged
++# omarchy-nvim skeleton. The package seeds /etc/skel/.config/nvim and also ships
++# a /usr/share/omarchy-nvim/config copy that deliberately omits
++# lua/plugins/theme.lua, which the package creates as a relative symlink to the
++# active theme's generated neovim.lua. Replacing skel with only the package
++# directory dropped that symlink, so new accounts opened Neovim without the
++# Omarchy colorscheme. Preserve the seed itself across the replacement.
++nvim_skel="$root/etc/skel/.config/nvim"
++nvim_stash=""
++if [[ -d $nvim_skel ]]; then
++  nvim_stash=$(mktemp -d)
++  mv "$nvim_skel" "$nvim_stash/nvim"
++fi
+ rm -rf "$root/etc/skel/.config"
+ copy_tree "$source_dir/config" "$root/etc/skel/.config"
+-# omarchy-nvim owns its defaults separately from the main Omarchy source tree.
+-# Reapply them after replacing .config so both normal and instant accounts get
+-# the packaged editor setup through useradd's standard /etc/skel handling.
+-nvim_config="$root/usr/share/omarchy-nvim/config"
+-[[ -d $nvim_config ]] || fail "omarchy-nvim config not found: $nvim_config"
+-copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"
++if [[ -n $nvim_stash ]]; then
++  copy_tree "$nvim_stash/nvim" "$root/etc/skel/.config/nvim"
++  rm -rf "$nvim_stash"
++else
++  # Older package layouts only ship the package-directory copy.
++  nvim_config="$root/usr/share/omarchy-nvim/config"
++  [[ -d $nvim_config ]] || fail "omarchy-nvim config not found: $nvim_config"
++  copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"
++fi
+ install_file 0644 "$source_dir/default/bashrc" "$root/etc/skel/.bashrc"
+ mkdir -p "$root/etc/skel/.local/share/applications"
+ copy_contents "$source_dir/applications" "$root/etc/skel/.local/share/applications"
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index 0ecfda5..40b832d 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -577,12 +577,15 @@ class CatchUpTests(OverlayCase):
+         self.old_fragment = "-- BEGIN OMARCHY QEMU PROFILE\nold block\n-- END OMARCHY QEMU PROFILE\n"
+         self.version = self.root / "compat-version"
+         self.version.write_text("12:7.2.3-arch1\n")
++        self.omarchy_version = self.share / "version"
++        self.omarchy_version.write_text("4.0.3\n")
+         self.state = self.root / "state"
+ 
+     def run_catch_up(self) -> subprocess.CompletedProcess:
+         return self.run_script(CATCH_UP, TRY_OMARCHY_COMPAT_VERSION=str(self.version), TRY_OMARCHY_STATE_DIR=str(self.state),
+                                TRY_OMARCHY_QEMU_FRAGMENT=str(FRAGMENT), TRY_OMARCHY_OMARCHY_MONITORS=str(self.default),
+-                               TRY_OMARCHY_TOGGLE_TEMPLATES=str(self.templates), TRY_OMARCHY_HOMES=str(self.homes))
++                               TRY_OMARCHY_TOGGLE_TEMPLATES=str(self.templates), TRY_OMARCHY_HOMES=str(self.homes),
++                               TRY_OMARCHY_OMARCHY_VERSION=str(self.omarchy_version))
+ 
+     def seed_toggles(self) -> None:
+         for name in ("flags", "window-no-gaps", "single-window-aspect-ratio"):
+@@ -620,6 +623,24 @@ class CatchUpTests(OverlayCase):
+         self.assertTrue((self.toggles / "window-no-gaps.lua").exists())
+         self.assertFalse((self.toggles / "single-window-aspect-ratio.lua").exists())
+ 
++    def test_missing_nvim_theme_link_is_restored_without_replacing_a_users_own(self) -> None:
++        plugins = self.user / ".config/nvim/lua/plugins"
++        plugins.mkdir(parents=True)
++        (self.user / ".config/nvim/init.lua").write_text("-- init\n")
++        (self.user / ".local/state/omarchy/current/theme").mkdir(parents=True)
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        link = plugins / "theme.lua"
++        self.assertTrue(link.is_symlink())
++        self.assertEqual(os.readlink(link), "../../../../.local/state/omarchy/current/theme/neovim.lua")
++        # A later revision still leaves a theme.lua the user wrote themselves.
++        link.unlink()
++        link.write_text("-- my own theme\n")
++        self.version.write_text("13:7.2.3-arch1\n")
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(link.read_text(), "-- my own theme\n")
++
+ 
+ class FactoryUpdateNoticeTests(OverlayCase):
+     def setUp(self) -> None:
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 4a0003b..5902b6c 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -124,11 +124,14 @@ def main() -> None:
+         "new users have Omarchy's suspend-off toggle on, since a VM cannot suspend",
+     )
+     check(
+-        'nvim_config="$root/usr/share/omarchy-nvim/config"' in materialize
+-        and 'copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"' in materialize
+-        and materialize.index('copy_tree "$source_dir/config" "$root/etc/skel/.config"')
+-        < materialize.index('copy_tree "$nvim_config" "$root/etc/skel/.config/nvim"'),
+-        "materialization preserves the package-owned Neovim config for new users",
++        'nvim_skel="$root/etc/skel/.config/nvim"' in materialize
++        and 'mv "$nvim_skel" "$nvim_stash/nvim"' in materialize
++        and 'copy_tree "$nvim_stash/nvim" "$root/etc/skel/.config/nvim"' in materialize
++        and materialize.index('mv "$nvim_skel" "$nvim_stash/nvim"')
++        < materialize.index('rm -rf "$root/etc/skel/.config"')
++        < materialize.index('copy_tree "$source_dir/config" "$root/etc/skel/.config"')
++        < materialize.index('copy_tree "$nvim_stash/nvim" "$root/etc/skel/.config/nvim"'),
++        "materialization retains the packaged omarchy-nvim skeleton, including its theme symlink",
+     )
+     build = read(GUEST / "build.sh")
+     check(
+@@ -261,9 +264,10 @@ def main() -> None:
+ 
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     check(
+-        "compat_revision=21" in finalize_rootfs
++        "compat_revision=22" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in finalize_rootfs
+         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in finalize_rootfs
++        and "etc/skel/.config/nvim/lua/plugins/theme.lua" in finalize_rootfs
+         and "etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/agent" in finalize_rootfs
+         and "compat_revision" in finalize_rootfs.split("compat-version")[0]
+@@ -273,6 +277,13 @@ def main() -> None:
+         and "etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service" in finalize_rootfs,
+         "launcher integration has an explicit revision for persistent-disk upgrades",
+     )
++    catch_up = read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/catch-up")
++    check(
++        "restore_nvim_theme_link" in catch_up
++        and 'ln -snf "../../../../${theme_dir}/neovim.lua" "$link"' in catch_up
++        and 'restore_nvim_theme_link "$home"' in catch_up,
++        "catch-up restores a missing packaged Neovim theme link without replacing a user's own file",
++    )
+ 
+     ready_unit = read(GUEST / "factory-overlay/etc/systemd/system/try-omarchy-ready.service")
+     ready_script = GUEST / "factory-overlay/usr/local/lib/try-omarchy/guest-ready"
+-- 
+2.55.0
+

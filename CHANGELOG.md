@@ -7,6 +7,10 @@
 - Copy existing portable installations directly too, with authenticated backing
   images, independent output disks and no intermediate raw materialization.
 - Retry transient Windows file locks during move and snapshot publication.
+- Keep the packaged Neovim skeleton in new-user homes, restoring the Omarchy
+  theme symlink the factory builder dropped. Compatibility revision 22 delivers
+  the same link to existing guests and `catch-up` restores it for users who
+  lost it, clearing the `omarchy-nvim` missing-file warning.
 
 ## v0.0.18-preview - 2026-09-13
 
