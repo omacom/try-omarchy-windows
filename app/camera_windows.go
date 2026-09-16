@@ -5,9 +5,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"time"
 )
 
 // windowsCameraSource captures the host camera. Media Foundation capture is
@@ -23,27 +21,28 @@ func (windowsCameraSource) start() (<-chan []byte, error) {
 
 func (windowsCameraSource) stop() {}
 
-func dialCamera() (net.Conn, error) {
-	return net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", cameraPort))
-}
-
-// runCameraBridge keeps the camera channel connected across guest reboots and
-// QEMU restarts for as long as the launcher supervises the VM.
+// runCameraBridge listens for QEMU's camera chardev and serves the guest
+// protocol on each connection. Listening here also fails loudly if another
+// copy of the app already owns the port.
 func runCameraBridge() {
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", cameraPort))
+	if err != nil {
+		fatal("Try Omarchy camera port %d is in use.", cameraPort)
+	}
+	logf("camera: bridge listening on %d", cameraPort)
 	go func() {
 		for {
-			conn, err := dialCamera()
+			conn, err := listener.Accept()
 			if err != nil {
-				time.Sleep(time.Second)
-				continue
+				logf("camera: accept: %v", err)
+				return
 			}
-			logf("camera: bridge connected on %d", cameraPort)
-			err = serveCamera(conn, newCameraFrameSource())
-			_ = conn.Close()
-			if err != nil && err != io.EOF {
-				logf("camera: %v", err)
-			}
-			time.Sleep(time.Second)
+			go func() {
+				defer conn.Close()
+				if err := serveCamera(conn, newCameraFrameSource()); err != nil {
+					logf("camera: %v", err)
+				}
+			}()
 		}
 	}()
 }
