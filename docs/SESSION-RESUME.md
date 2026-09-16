@@ -1,8 +1,9 @@
 # Resume here
 
-Updated September 15, 2026, after merged PRs #115, #117, #118, #120 and #121.
-The user is working toward an official v1 and approved a focused reliability,
-recovery and hardware-validation plan. Use [V1-READINESS.md](V1-READINESS.md) and
+Updated September 15, 2026, after merged PRs #115, #117, #118, #120, #121, #123,
+#125 and #126. The user is working toward an official v1 and approved a focused
+reliability, recovery and hardware-validation plan. Use
+[V1-READINESS.md](V1-READINESS.md) and
 [issue #77](https://github.com/omacom/try-omarchy-windows/issues/77) for scope and
 remaining gates. The older full-feature plan is historical, not the v1 requirement.
 
@@ -10,32 +11,54 @@ remaining gates. The older full-feature plan is historical, not the v1 requireme
 
 - Repository: `omacom/try-omarchy-windows`; primary checkout:
   `/home/bts/Projects/try-omarchy-windows`; base branch: `master`.
-- Latest implementation merge: `e7280fec8df1bbcafbee3be44856a3d6adbba5c1`
-  ([#121](https://github.com/omacom/try-omarchy-windows/pull/121)). Start from current
-  `origin/master`, which also contains this handoff refresh; inspect local status
-  before switching branches. Other checkouts can have unrelated work.
+- Latest implementation merges: `608b824` ([#125](https://github.com/omacom/try-omarchy-windows/pull/125)), on top of
+  [#126](https://github.com/omacom/try-omarchy-windows/pull/126) and
+  [#123](https://github.com/omacom/try-omarchy-windows/pull/123). Start from current
+  `origin/master`; inspect local status before switching branches. Other checkouts
+  can have unrelated work.
 - Public Latest remains [v0.0.18-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.18-preview),
   published September 13. No newer signed launcher or public release was made.
+- The launcher pin is back at **v0.0.18-preview** (#126) after master was left
+  pointing at the unpublished v0.0.19-preview draft, which broke fresh builds from
+  `master` with an HTTP 404 on the graphics runtime. CI now runs
+  `validate-pin.py --require-public` (#125), so a pin bump to a release that is not
+  publicly reachable fails the build instead of merging silently. Revert the pin to
+  v0.0.19-preview only after that release is actually published.
 - Unreleased master includes #113/#114 portable-copy and Windows publication-lock
   improvements, #118's runtime ownership repair, and #121's Neovim theme-link
-  repair.
+  repair. These are code changes; the pinned download release is v18 again.
 - The guest is Omarchy 4.0.3 with runtime `4.0.3-4` and compatibility revision
   **22** (was 21). Existing guests that take a newer launcher re-apply the
   compatibility overlay once.
-- A **v0.0.19-preview** draft release is prepared ([Release run
-  34941645832](https://github.com/omacom/try-omarchy-windows/actions/runs/34941645832)),
-  and the launcher is pinned to it on master (`43faade`). The
+- A **v0.0.19-preview** draft release is fully prepared ([Release run
+  34941645832](https://github.com/omacom/try-omarchy-windows/actions/runs/34941645832)).
+  The
   [signing-check run 34942547584](https://github.com/omacom/try-omarchy-windows/actions/runs/34942547584)
   produced the signed test launcher artifact for the physical draft test.
   `.github/release-notes/v0.0.19-preview.md` is committed, and every draft asset
-  was downloaded and matched against the pinned `SHA256SUMS`. The launcher's
-  public `Latest` is still v18 until `publish` runs. Use
-  [RELEASING.md](RELEASING.md); source merges and guest CI artifacts are not releases.
-- After `publish`, bump the current-release references in `README.md` and
-  `docs/TESTING.md` from v0.0.18-preview to v0.0.19-preview.
+  was downloaded and matched against the pinned `SHA256SUMS`; the draft digest is
+  `a4d2f54dcafaaf57290789184938c439283e0931aafaa7742f743d7693a8756e`, which matches
+  the (now reverted) source pin at `43faade`. The launcher's public `Latest` is
+  still v18 until `publish` runs. Use [RELEASING.md](RELEASING.md); source merges and
+  guest CI artifacts are not releases.
+- After `publish`, re-pin `defaultReleaseURL`/`defaultSumsSHA256`/`currentVersion`
+  and the version resource back to v0.0.19-preview, then bump the current-release
+  references in `README.md` and `docs/TESTING.md` from v0.0.18-preview to
+  v0.0.19-preview.
 
 ## Completed in the September 15 session
 
+- **Master builds restored; #122/#124 closed.** The launcher pin had been moved to
+  the unpublished `v0.0.19-preview` draft, so a fresh build from `master` failed
+  with an HTTP 404 on the graphics runtime (#124). #126 reverted the pin,
+  `currentVersion`, and the version resource to `v0.0.18-preview`, verified against
+  the live published `SHA256SUMS`. #125 added `--require-public` to
+  `scripts/release/validate-pin.py` and enabled it in CI, so a pin bump to a
+  release that is not publicly reachable now fails the build. #123 fixed #122:
+  `validateMovePath` runs the full link-and-stream check on the install path itself
+  and a links-only check on its ancestors, so an unrelated NTFS stream on a folder
+  like the user profile no longer blocks an installation move. All three were
+  external contributor PRs (Rovetown) and all required CI passed before merge.
 - **#121 merged; #119 closed:** the factory builder replaced `/etc/skel/.config`
   and rebuilt the Neovim skeleton from `/usr/share/omarchy-nvim/config`, which
   omits `lua/plugins/theme.lua`. The `omarchy-nvim` package seeds that path in
@@ -125,9 +148,9 @@ Reproduction entry points:
    microphone behavior remain open. Use [TESTING.md](TESTING.md). Also complete
    native Omarchy export/restore acceptance and final support/distribution docs.
 
-Open issues at this checkpoint: #77, #90. Open PR: #111 (borderless), still
-optional for v1 and requiring rebase/review/Windows validation. Recheck GitHub
-before acting; counts and states can change.
+Open issues at this checkpoint: #77, #90. No open pull requests; #111 (borderless)
+was closed without merging and remains optional for v1. Recheck GitHub before
+acting; counts and states can change.
 
 Portable mode stays experimental. Webcam capture, accelerated RAM resume,
 arbitrary-app drops, bridged networking, ARM64 and booting a physical install
