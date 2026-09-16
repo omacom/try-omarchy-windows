@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.0.20-preview - 2026-09-16
+
+- Recover automatically from an orphaned pacman database lock left by an
+  interrupted update, so later updates no longer need a manual `db.lck` removal.
+  The lock is removed only when it provably cannot belong to a live transaction.
+- Expose the Windows camera to the guest as a `Windows Camera` V4L2 device, on
+  demand: the Windows camera indicator lights only while an app is capturing.
+- Drop files from Windows onto the Omarchy window under the cursor and have the
+  application receive them directly. When nothing can take the files, the
+  transfer window still opens.
+- Pause the guest while Windows sleeps and resume it on wake, ahead of the
+  existing clock re-sync.
+- Refresh the guest package lock for current Arch repositories, which moves the
+  guest kernel to 7.2.6.
+
 ## v0.0.19-preview - 2026-09-15
 
 - Create portable copies of normal installations directly as verified QCOW2
