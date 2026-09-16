@@ -305,7 +305,11 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 			}
 			return 0
 		case wmPowerbroadcast:
+			if wParam == pbtApmSuspend {
+				pauseGuest("host sleep")
+			}
 			if wParam == pbtApmResumeAutomatic || wParam == pbtApmResumeSuspend {
+				resumeGuest()
 				logf("windows resumed from sleep")
 				select {
 				case hostResumed <- struct{}{}:
