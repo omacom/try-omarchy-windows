@@ -42,7 +42,7 @@ type clipBridge struct {
 	getPaths            func() ([]string, bool)
 	setPaths            func([]string) bool
 	setDropPaths        func([]string) bool
-	dropRequests        chan []string
+	dropRequests        chan droppedFiles
 }
 
 func (b *clipBridge) acceptPush(l net.Listener) {

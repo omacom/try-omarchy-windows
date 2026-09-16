@@ -11,6 +11,13 @@ import (
 
 var desktopClipboard atomic.Pointer[clipBridge]
 
+// droppedFiles is one drop request. Point is set when the files were released
+// onto the VM window at a known guest-display coordinate.
+type droppedFiles struct {
+	paths []string
+	point []int
+}
+
 func droppedFilesEvent(line string) ([]string, bool) {
 	if len(line) > 1<<20 {
 		return nil, false
@@ -36,29 +43,40 @@ func droppedFilesEvent(line string) ([]string, bool) {
 }
 
 func sendDroppedFiles(paths []string) error {
+	return sendDroppedFilesAt(paths, nil)
+}
+
+func sendDroppedFilesAt(paths []string, point []int) error {
 	b := desktopClipboard.Load()
 	if b == nil {
 		return fmt.Errorf("Omarchy is still starting")
 	}
+	dropped := droppedFiles{paths: append([]string(nil), paths...)}
+	if len(point) == 2 && point[0] >= 0 && point[1] >= 0 {
+		dropped.point = append([]int(nil), point...)
+	}
 	select {
-	case b.dropRequests <- append([]string(nil), paths...):
+	case b.dropRequests <- dropped:
 		return nil
 	default:
 		return fmt.Errorf("finish another file transfer before dropping more files")
 	}
 }
 
-func (b *clipBridge) offerDroppedFiles(paths []string) error {
+func (b *clipBridge) offerDroppedFiles(dropped droppedFiles) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.pullConn == nil || !b.transferEnabled {
 		return fmt.Errorf("the guest file-transfer service is not connected yet")
 	}
 	progress := b.progress("Preparing dropped files")
-	ticket, err := b.transfers.Offer(progress.ctx, paths, progress.report)
+	ticket, err := b.transfers.Offer(progress.ctx, dropped.paths, progress.report)
 	if err != nil {
 		progress.finish()
 		return err
+	}
+	if len(dropped.point) == 2 {
+		ticket.Point = append([]int(nil), dropped.point...)
 	}
 	data, _ := json.Marshal(ticket)
 	frame := encodeClipFrame(clipItem{Kind: clipDrop, Data: data})

@@ -711,6 +711,7 @@ func main() {
 		}
 	}
 	cfg.displayWidth, cfg.displayHeight = conW, conH
+	setVMDisplaySize(conW, conH)
 	cmdline += fmt.Sprintf(" video=%dx%d", conW, conH)
 
 	reclaimDir.Store(&cfg.dir)

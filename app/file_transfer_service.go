@@ -24,6 +24,9 @@ type fileTransferTicket struct {
 	Token     string            `json:"token"`
 	Direction string            `json:"direction"`
 	Offer     fileTransferOffer `json:"offer"`
+	// Point is the guest display coordinate a direct drop was released at, set
+	// only when the files were dropped onto the running VM window.
+	Point []int `json:"point,omitempty"`
 }
 
 type fileTransferStatus struct {

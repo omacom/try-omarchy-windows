@@ -47,7 +47,7 @@ func TestGuestDesktopFileTransferRoundTrip(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if err := bridge.offerDroppedFiles([]string{source}); err != nil {
+	if err := bridge.offerDroppedFiles(droppedFiles{paths: []string{source}}); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("host sent file-drop ticket")
