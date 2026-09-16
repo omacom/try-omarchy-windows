@@ -22,8 +22,12 @@ remaining gates. The older full-feature plan is historical, not the v1 requireme
   pointing at the unpublished v0.0.19-preview draft, which broke fresh builds from
   `master` with an HTTP 404 on the graphics runtime. CI now runs
   `validate-pin.py --require-public` (#125), so a pin bump to a release that is not
-  publicly reachable fails the build instead of merging silently. Revert the pin to
-  v0.0.19-preview only after that release is actually published.
+  publicly reachable fails the build instead of merging silently. Note that
+  publishing v0.0.19-preview requires restoring the v19 pin on `master` first
+  (the workflow guard needs `refs/heads/master`, and `publish` verifies the source
+  pin against the draft manifest), so `master`'s CI will show the pin step red
+  between that re-pin and the actual `publish`. That is expected; see
+  [RELEASING.md](RELEASING.md).
 - Unreleased master includes #113/#114 portable-copy and Windows publication-lock
   improvements, #118's runtime ownership repair, and #121's Neovim theme-link
   repair. These are code changes; the pinned download release is v18 again.
@@ -41,10 +45,13 @@ remaining gates. The older full-feature plan is historical, not the v1 requireme
   the (now reverted) source pin at `43faade`. The launcher's public `Latest` is
   still v18 until `publish` runs. Use [RELEASING.md](RELEASING.md); source merges and
   guest CI artifacts are not releases.
-- After `publish`, re-pin `defaultReleaseURL`/`defaultSumsSHA256`/`currentVersion`
-  and the version resource back to v0.0.19-preview, then bump the current-release
-  references in `README.md` and `docs/TESTING.md` from v0.0.18-preview to
-  v0.0.19-preview.
+- To publish v0.0.19-preview, first restore the pin to v0.0.19-preview
+  (`defaultReleaseURL`/`defaultSumsSHA256`/`currentVersion` and the version
+  resource, digest `a4d2f54dcafaaf57290789184938c439283e0931aafaa7742f743d7693a8756e`),
+  then run the physical draft test and the `publish` phase. After publication, bump
+  the current-release references in `README.md` and `docs/TESTING.md` from
+  v0.0.18-preview to v0.0.19-preview. Undo this revert (`git revert` of the #126
+  content) is exactly that re-pin.
 
 ## Completed in the September 15 session
 

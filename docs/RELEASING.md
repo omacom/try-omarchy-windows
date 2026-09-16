@@ -47,6 +47,16 @@ artifact for verification. Use it after changing the OIDC or signing configurati
    `app/rsrc_windows_amd64.syso` using the commands in `versioninfo.rc`.
 5. Run `scripts/release/validate-pin.py TAG`, commit, and push the pin.
 
+The pinned tag must be on `master` before `publish` runs: the workflow's guard
+requires `refs/heads/master`, and the publish phase verifies that the source pin
+matches the draft release manifest. This has one consequence worth expecting:
+CI also runs `validate-pin.py --require-public` on every push to `master`, so
+while the release is still a draft the "Validate current release pin" step fails
+on `master`. That failure is correct, because a fresh build from `master` genuinely
+cannot download the pinned assets yet. It clears as soon as `publish` makes the
+release public. Do not merge a pin bump to an unpublished release through a pull
+request; land it as the deliberate pre-publish step and publish promptly.
+
 ## Test the draft on physical Windows
 
 A GitHub draft's assets require authentication, while the launcher downloads
