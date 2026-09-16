@@ -38,7 +38,7 @@ func lockMoveStore(s moveStore) (*os.File, error) {
 	return os.NewFile(uintptr(h), path), nil
 }
 
-func rejectMoveLink(path string, info os.FileInfo) error {
+func rejectAncestorLink(path string, info os.FileInfo) error {
 	ptr, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return err
@@ -49,6 +49,13 @@ func rejectMoveLink(path string, info os.FileInfo) error {
 	}
 	if info.Mode()&os.ModeSymlink != 0 || attributes&fileAttributeReparsePoint != 0 {
 		return fmt.Errorf("linked paths cannot be moved: %s", path)
+	}
+	return nil
+}
+
+func rejectMoveLink(path string, info os.FileInfo) error {
+	if err := rejectAncestorLink(path, info); err != nil {
+		return err
 	}
 	return rejectMoveStreams(path)
 }
