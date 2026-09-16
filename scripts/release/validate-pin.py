@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import re
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
@@ -34,6 +36,14 @@ def main() -> None:
     parser.add_argument("tag")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("--repository", default="omacom/try-omarchy-windows")
+    parser.add_argument(
+        "--require-public",
+        action="store_true",
+        help="also fetch the pinned release's SHA256SUMS over the network and "
+        "confirm it is publicly reachable and matches the embedded fixture. "
+        "Skip this during the release workflow's own pre-publish phases, "
+        "where the release is still a draft by design.",
+    )
     args = parser.parse_args()
 
     if not TAG_RE.fullmatch(args.tag):
@@ -84,6 +94,23 @@ def main() -> None:
     missing = sorted(REQUIRED - entries.keys())
     if missing:
         raise SystemExit(f"manifest is missing: {', '.join(missing)}")
+
+    if args.require_public:
+        sums_url = f"{release_url}/SHA256SUMS"
+        try:
+            with urllib.request.urlopen(sums_url, timeout=30) as response:
+                live_data = response.read()
+        except urllib.error.HTTPError as error:
+            raise SystemExit(
+                f"pinned release is not publicly reachable: {sums_url} returned {error.code}"
+            ) from error
+        except urllib.error.URLError as error:
+            raise SystemExit(f"could not reach pinned release {sums_url}: {error.reason}") from error
+        live_digest = hashlib.sha256(live_data).hexdigest()
+        if live_digest != expected_digest:
+            raise SystemExit(
+                f"live manifest at {sums_url} is {live_digest}, expected {expected_digest}"
+            )
 
     print(f"ok - {args.tag} pins authenticated manifest {actual_digest}")
 
