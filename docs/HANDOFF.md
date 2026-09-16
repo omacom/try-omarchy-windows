@@ -35,10 +35,14 @@ remaining gates. The older full-feature plan is historical, not the v1 requireme
   between the re-pin and the release becoming public. That window closed when v19
   published. See [RELEASING.md](RELEASING.md).
 - The published v19 guest is Omarchy 4.0.3 with runtime `4.0.3-4` and compatibility
-  revision **22**. Unreleased `master` now carries compatibility revision **23**,
-  which adds the early-boot orphaned-pacman-lock recovery for [#90](https://github.com/omacom/try-omarchy-windows/issues/90)
-  (guest patch `0070`). Existing guests receive it on the next launcher update that
-  carries the revision-23 initramfs; it is not in v19.
+  revision **22**. Unreleased `master` now carries compatibility revision **26**
+  and adds, in order: `0070` early-boot orphaned-pacman-lock recovery for
+  [#90](https://github.com/omacom/try-omarchy-windows/issues/90) (revision 23),
+  `0072` the Windows camera bridge with v4l2loopback (revision 24), `0073` the
+  direct file-drop helper (revision 25), and `0074` delivering a direct drop into
+  the window under the point (revision 26). `0071` refreshed the drifted Arch lock
+  (`linux` 7.2.4→7.2.6). Existing guests receive all of this on the next launcher
+  update that carries the revision-26 initramfs; none of it is in v19.
 - **v19 physical-test note.** The extensive Windows laptop acceptance
   ([September 13](evidence/WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md)) was for the v18-era
   artifacts (runtime r7-r15, compatibility-19/20 guest). v19 was validated on
@@ -60,6 +64,27 @@ remaining gates. The older full-feature plan is historical, not the v1 requireme
   bridge. Desktop/package changes reach existing guests through **Update > Omarchy**
   where supported. No factory rebuild is required for 4.0.4; fold an Omarchy bump
   into the next factory candidate rather than a v19.1.
+
+## Completed in the September 16 session
+
+- **Docs and repo cleanup.** `docs/` went from 32 files to 18: evidence moved to
+  `docs/evidence/`, superseded session/candidate notes deleted, `SESSION-RESUME.md`
+  renamed to `HANDOFF.md`, and `sign.ps1` repointed at `RELEASING.md`. Merged local
+  and remote branches pruned; local build junk removed.
+- **#90 orphaned-lock recovery** (guest `0070`, revision 23) with unit, contract,
+  and KVM regression coverage. **Lock refresh** (`0071`) so factory builds resolve.
+- **Webcam** — guest `0072` (v4l2loopback at `/dev/video42`, on-demand bridge) and
+  launcher transport (`virtio-serial` port `dev.tryomarchy.camera` on port 4453)
+  plus a Media Foundation capture source with a synthetic test mode. Unverified at
+  runtime.
+- **Direct in-app drops** — guest `0073`/`0074` (`try-omarchy-drop` targets the
+  window under the point; the transfer ticket carries the point and the window
+  stays hidden until delivery fails) and launcher drop capture on the QEMU window.
+  Unverified at runtime.
+- **Pause-on-host-sleep** — tray power broadcast pauses the guest (QMP `stop`) and
+  resumes it (`cont`) ahead of the existing clock re-sync.
+- **CI fix** — `smoke-guest.py` now derives the expected compatibility revision
+  from the newest guest patch instead of hardcoding 22.
 
 ## Completed in the September 15 session
 
@@ -204,10 +229,19 @@ Open issues at this checkpoint: #77, #90. No open pull requests; #111 (borderles
 was closed without merging and remains optional for v1. Recheck GitHub before
 acting; counts and states can change.
 
-Portable mode stays experimental. Webcam capture, accelerated RAM resume,
-arbitrary-app drops, bridged networking, ARM64 and booting a physical install
-remain outside the accepted v1 scope. Do not resume the old eight-feature plan
-as though all of it blocks v1.
+Webcam capture and direct in-app drops are now implemented on `master` (guest
+patches `0072`–`0074` plus the launcher side) but are **unverified at runtime**:
+the Media Foundation capture has never run, and the camera channel and direct-drop
+delivery need a VM/laptop pass. Treat them as pending verification, not shipped.
+
+Accelerated RAM resume is not a v1 candidate. The app has disk snapshots and
+rollback, and a `migrate`-based saved-session path that refuses when the runtime
+reports migration blockers (which the GPU path does). Pause-on-host-sleep is
+implemented instead (tray receives WM_POWERBROADCAST, QMP `stop`/`cont`).
+
+Portable mode stays experimental. True bridged networking (guest on the LAN with
+its own address), ARM64 and booting a physical install remain outside the accepted
+v1 scope. Do not resume the old eight-feature plan as though all of it blocks v1.
 
 ## Earlier Windows evidence and recovery context
 
