@@ -11,50 +11,65 @@ remaining gates. The older full-feature plan is historical, not the v1 requireme
 
 - Repository: `omacom/try-omarchy-windows`; primary checkout:
   `/home/bts/Projects/try-omarchy-windows`; base branch: `master`.
-- Latest implementation merges: `608b824` ([#125](https://github.com/omacom/try-omarchy-windows/pull/125)), on top of
+- Latest implementation merges: `8d3fbe8` (the v19 re-pin), on top of
+  [#125](https://github.com/omacom/try-omarchy-windows/pull/125),
   [#126](https://github.com/omacom/try-omarchy-windows/pull/126) and
   [#123](https://github.com/omacom/try-omarchy-windows/pull/123). Start from current
   `origin/master`; inspect local status before switching branches. Other checkouts
   can have unrelated work.
-- Public Latest remains [v0.0.18-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.18-preview),
-  published September 13. No newer signed launcher or public release was made.
-- The launcher pin is back at **v0.0.18-preview** (#126) after master was left
-  pointing at the unpublished v0.0.19-preview draft, which broke fresh builds from
-  `master` with an HTTP 404 on the graphics runtime. CI now runs
-  `validate-pin.py --require-public` (#125), so a pin bump to a release that is not
-  publicly reachable fails the build instead of merging silently. Note that
-  publishing v0.0.19-preview requires restoring the v19 pin on `master` first
-  (the workflow guard needs `refs/heads/master`, and `publish` verifies the source
-  pin against the draft manifest), so `master`'s CI will show the pin step red
-  between that re-pin and the actual `publish`. That is expected; see
-  [RELEASING.md](RELEASING.md).
-- Unreleased master includes #113/#114 portable-copy and Windows publication-lock
-  improvements, #118's runtime ownership repair, and #121's Neovim theme-link
-  repair. These are code changes; the pinned download release is v18 again.
+- Public Latest is [v0.0.19-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.19-preview),
+  published September 16 via [Release run
+  35043448976](https://github.com/omacom/try-omarchy-windows/actions/runs/35043448976).
+  It supersedes v0.0.18-preview (September 13). The launcher pin, `currentVersion`,
+  the version resource, and the launcher's public `Latest` all point at v19, and
+  `README.md`/`docs/TESTING.md` were updated to match. The legacy feed URL
+  (`tsouth89/try-omarchy-windows`, now a redirect to `omacom`) serves v19
+  `update.json`/`update-v2.json`, so existing installs update normally.
+- **Context on the master breakage.** Master had been left pinned to the
+  unpublished v0.0.19-preview draft, which broke fresh builds from `master` with an
+  HTTP 404 on the graphics runtime (GitHub #124). #126 reverted the pin to v18 to
+  restore it; #125 added `validate-pin.py --require-public` and enabled it in CI so
+  this cannot merge silently again. Publishing a preview requires the pin on
+  `master` first (the workflow guard needs `refs/heads/master` and `publish`
+  verifies the source pin against the draft manifest), so master's pin step is red
+  between the re-pin and the release becoming public. That window closed when v19
+  published. See [RELEASING.md](RELEASING.md).
 - The guest is Omarchy 4.0.3 with runtime `4.0.3-4` and compatibility revision
   **22** (was 21). Existing guests that take a newer launcher re-apply the
   compatibility overlay once.
-- A **v0.0.19-preview** draft release is fully prepared ([Release run
-  34941645832](https://github.com/omacom/try-omarchy-windows/actions/runs/34941645832)).
-  The
-  [signing-check run 34942547584](https://github.com/omacom/try-omarchy-windows/actions/runs/34942547584)
-  produced the signed test launcher artifact for the physical draft test.
-  `.github/release-notes/v0.0.19-preview.md` is committed, and every draft asset
-  was downloaded and matched against the pinned `SHA256SUMS`; the draft digest is
-  `a4d2f54dcafaaf57290789184938c439283e0931aafaa7742f743d7693a8756e`, which matches
-  the (now reverted) source pin at `43faade`. The launcher's public `Latest` is
-  still v18 until `publish` runs. Use [RELEASING.md](RELEASING.md); source merges and
-  guest CI artifacts are not releases.
-- To publish v0.0.19-preview, first restore the pin to v0.0.19-preview
-  (`defaultReleaseURL`/`defaultSumsSHA256`/`currentVersion` and the version
-  resource, digest `a4d2f54dcafaaf57290789184938c439283e0931aafaa7742f743d7693a8756e`),
-  then run the physical draft test and the `publish` phase. After publication, bump
-  the current-release references in `README.md` and `docs/TESTING.md` from
-  v0.0.18-preview to v0.0.19-preview. Undo this revert (`git revert` of the #126
-  content) is exactly that re-pin.
+- **v19 physical-test note.** The extensive Windows laptop acceptance
+  ([September 13](WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md)) was for the v18-era
+  artifacts (runtime r7-r15, compatibility-19/20 guest). v19 was validated on
+  Linux/KVM and CI, not physically. Publication was accepted because the guest
+  kernel (`vmlinuz-linux`) and the GPU runtime
+  (`winq-emu-alpha10-portable.zip`) are byte-identical between v18 and v19: the
+  only differences are ordinary guest package bumps (`try-omarchy-runtime`
+  `4.0.3-3` to `4.0.3-4`, `libadwaita`, `libde265`, `libtirpc`, `qt6-declarative`,
+  `tzdata`), the rebuilt initramfs/rootfs carrying compatibility 22, and metadata.
+  None of the physically-validated surfaces (kernel boot, virgl/Venus graphics,
+  input, audio) changed. The five-boot normal-updater preservation run covered the
+  changed guest path against the v18 baseline. Do not treat this as physical
+  acceptance of v19; it is an evidence-based exception for a candidate that did
+  not touch the physically-risky surfaces.
+- **Omarchy 4.0.4 (upstream, September 15)** ships a bespoke `linux-omarchy`
+  kernel, a webcam fix, and package/hardware fixes. Our guest boots its own external
+  `vmlinuz` and holds the guest `linux` package, so the headline kernel change does
+  not apply to Windows guests, and the webcam fix is irrelevant without a camera
+  bridge. Desktop/package changes reach existing guests through **Update > Omarchy**
+  where supported. No factory rebuild is required for 4.0.4; fold an Omarchy bump
+  into the next factory candidate rather than a v19.1.
 
 ## Completed in the September 15 session
 
+- **v0.0.19-preview published.** After the pin fix below, the pin was restored to
+  v19 (`8d3fbe8`) and the `publish` phase ran on `master` ([run
+  35043448976](https://github.com/omacom/try-omarchy-windows/actions/runs/35043448976)).
+  Verified public: `releases/latest` serves v19, `TryOmarchy.exe`,
+  `TryOmarchy.exe.sha256`, `SHA256SUMS`, and both signed update feeds return 200,
+  and `update-v2.json` carries version `v0.0.19-preview`, manifest
+  `a4d2f54d…8756e`, and launcher sha256 `90a74976…`. The draft physical test was
+  intentionally not run; the justification and residual risk are recorded in the
+  release-state section above.
 - **Master builds restored; #122/#124 closed.** The launcher pin had been moved to
   the unpublished `v0.0.19-preview` draft, so a fresh build from `master` failed
   with an HTTP 404 on the graphics runtime (#124). #126 reverted the pin,
@@ -141,16 +156,19 @@ Reproduction entry points:
    stale-lock cause is unknown. Tests cover SIGKILL before package writes, not
    power loss during extraction or scriptlets. Keep active locks protected; no
    automatic lock deletion was added.
-2. **v0.0.19-preview draft physical test.** The draft and pin are ready; run the
-   signed candidate from
-   [RELEASING.md](RELEASING.md#test-the-draft-on-physical-windows) on the Windows
-   laptop with a copied data directory and loopback payload. Confirm the desktop
-   and files survive, the new external kernel boots, reboot and poweroff work, the
-   revision-22 compatibility repair runs once, and a stopped first boot rolls back.
-   Then run the `publish` phase. Do not call this a Windows update/rollback pass
-   until those checks pass. Consider whether this candidate should serve as the
-   `LEGACY_UPDATE_BRIDGE_TAG` if v1 is next.
-3. **Physical coverage.** Intel/NVIDIA, full Hyper-V/Core Ultra, advertised Windows
+2. **v19 physical smoke (optional, for the record).** v19 is published without the
+   draft physical test, accepted because the guest kernel and GPU runtime are
+   byte-identical to v18 (see the release-state section). If convenient, run the
+   published v19 launcher on the Windows laptop with a copied data directory to
+   confirm the revision-22 compatibility repair runs once, the desktop and files
+   survive, and reboot/poweroff are clean, then record it as v19 acceptance. Not a
+   blocker. Decide whether v19 serves as the `LEGACY_UPDATE_BRIDGE_TAG` if v1 is
+   next.
+3. **Next factory candidate.** Fold an Omarchy version bump and any remaining guest
+   fixes into the next candidate (likely the v1 candidate) rather than a separate
+   v19.1. Omarchy 4.0.4's headline kernel change does not apply to our external-kernel
+   guest.
+4. **Physical coverage.** Intel/NVIDIA, full Hyper-V/Core Ultra, advertised Windows
    versions, sleep/resume, mixed-DPI displays, remote input, device switching and
    microphone behavior remain open. Use [TESTING.md](TESTING.md). Also complete
    native Omarchy export/restore acceptance and final support/distribution docs.

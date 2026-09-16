@@ -6,8 +6,8 @@ candidate against locally served, authenticated assets.
 
 ## Help complete the v1 hardware matrix
 
-The published baseline is [v0.0.18-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.18-preview).
-The next candidate has not been published. Reports on v18 are useful, but must
+The published baseline is [v0.0.19-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.19-preview).
+The next candidate has not been published. Reports on v19 are useful, but must
 not be recorded as acceptance of unreleased master changes. Maintainers should
 pin one signed candidate and its launcher/runtime/guest hashes in
 [issue #77](https://github.com/omacom/try-omarchy-windows/issues/77) before the

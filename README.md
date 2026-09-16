@@ -20,7 +20,7 @@ The Omarchy mark in the app icon is sourced from the
 [official Omarchy brand kit](https://omarchy.org/brand/) and remains subject to
 Omarchy's trademark rights.
 
-The current release is [v0.0.18-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.18-preview),
+The current release is [v0.0.19-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.19-preview),
 including Omarchy 4.0.3, file transfers, snapshots and installation moves.
 We are working toward v1; see the [scope and remaining release gates](docs/V1-READINESS.md)
 and [Windows testing instructions](docs/TESTING.md). Physical acceptance currently
