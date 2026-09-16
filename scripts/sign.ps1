@@ -1,10 +1,10 @@
 # Sign a binary or installer with Azure Trusted Signing.
 # Runs on Windows only (signtool + the Trusted Signing dlib).
-# Prereqs (one-time, see docs/SIGNING.md):
+# Prereqs (one-time, see docs/RELEASING.md):
 #   winget install Microsoft.Azure.TrustedSigningClientTools
 #   winget install Microsoft.WindowsSDK.SignTool   (or any Windows SDK signtool >= 10.0.2261)
 #   az login   (an account with the Trusted Signing Certificate Profile Signer role)
-# Defaults target the live Trusted Signing setup (see docs/SIGNING.md).
+# Defaults target the live Trusted Signing setup (see docs/RELEASING.md).
 param(
     [Parameter(Mandatory = $true)][string[]]$Path,
     [string]$Endpoint = 'https://eus.codesigning.azure.net',
