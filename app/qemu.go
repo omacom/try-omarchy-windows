@@ -88,6 +88,12 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		"-device", "virtio-keyboard-pci", "-device", "virtio-tablet-pci",
 		"-device", "virtio-net-pci,netdev=n0", "-netdev", netdevArg(cfg.forwards),
 		"-device", "virtio-rng-pci",
+		// The camera bridge needs a bulk channel the host can write without
+		// going through slirp. QEMU listens on loopback and the launcher
+		// connects; the guest reads the virtio port named dev.tryomarchy.camera.
+		"-chardev", fmt.Sprintf("socket,id=cam0,host=127.0.0.1,port=%d,server=on,wait=off", cameraPort),
+		"-device", "virtio-serial-pci,id=virtioserial0",
+		"-device", "virtserialport,chardev=cam0,name=dev.tryomarchy.camera",
 		// The q35 root bus cannot hotplug a PCIe controller. USB devices
 		// attach to this controller after the guest has started.
 		"-device", "qemu-xhci,id="+usbControllerID,

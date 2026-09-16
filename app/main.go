@@ -722,6 +722,7 @@ func main() {
 	go runCursorReleaseGuard()
 	go runCloseGuard()
 	runClipboardBridge()
+	runCameraBridge()
 
 	if err := checkForwardBindings(cfg.forwards); err != nil {
 		fatal("Could not prepare port forwarding:\n\n%v", err)

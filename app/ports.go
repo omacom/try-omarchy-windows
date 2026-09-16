@@ -11,4 +11,5 @@ const (
 	lifecyclePort = 4450
 	agentPort     = 4451
 	transferPort  = 4452
+	cameraPort    = 4453
 )
