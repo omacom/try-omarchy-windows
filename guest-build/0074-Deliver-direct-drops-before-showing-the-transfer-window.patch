@@ -1,0 +1,243 @@
+From cd096b4ae0dbd1b331a3a05624cd60617eb7de9f Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Wed, 16 Sep 2026 01:47:23 -0400
+Subject: [PATCH] Deliver direct drops before showing the transfer window
+
+Carry the drop point on the download ticket. file-transfer-window uses it to
+try try-omarchy-drop after the files arrive, staying hidden until delivery
+either succeeds (it quits) or fails (it appears). The root agent no longer
+handles drops, since the user session owns the compositor and clipboard. Ships
+through compatibility revision 26.
+---
+ .../usr/local/bin/file-transfer               | 18 +++++-
+ .../usr/local/bin/file-transfer-window        | 60 ++++++++++++++++---
+ .../usr/local/lib/try-omarchy/agent           |  7 ---
+ guest/scripts/finalize-rootfs.sh              |  5 +-
+ guest/tests/test_file_transfer.py             | 11 ++++
+ guest/tests/verify.py                         |  5 +-
+ 6 files changed, 86 insertions(+), 20 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/local/bin/file-transfer b/guest/factory-overlay/usr/local/bin/file-transfer
+index 2ca46af..47dabea 100755
+--- a/guest/factory-overlay/usr/local/bin/file-transfer
++++ b/guest/factory-overlay/usr/local/bin/file-transfer
+@@ -199,8 +199,18 @@ def read_metadata(path):
+     return json.loads(data)
+ 
+ 
++def valid_drop_point(value):
++    return (
++        isinstance(value, list)
++        and len(value) == 2
++        and all(isinstance(coordinate, int) and not isinstance(coordinate, bool) and coordinate >= 0 for coordinate in value)
++    )
++
++
+ def valid_ticket(ticket, direction):
+-    if not isinstance(ticket, dict) or set(ticket) != {'id', 'token', 'direction', 'offer'}:
++    if not isinstance(ticket, dict) or not {'id', 'token', 'direction', 'offer'} <= set(ticket) <= {'id', 'token', 'direction', 'offer', 'point'}:
++        return False
++    if 'point' in ticket and not valid_drop_point(ticket['point']):
+         return False
+     for name, length in (('id', 32), ('token', 64)):
+         value = ticket[name]
+@@ -415,8 +425,12 @@ def main():
+             fd, name = tempfile.mkstemp(prefix='incoming-drop-', dir=args.state)
+             with os.fdopen(fd, 'wb') as output:
+                 output.write(data)
++            command = ['file-transfer-window', '--ticket', name]
++            point = ticket.get('point')
++            if valid_drop_point(point):
++                command += ['--point', f'{point[0]},{point[1]}']
+             try:
+-                subprocess.Popen(['file-transfer-window', '--ticket', name], close_fds=True, start_new_session=True)
++                subprocess.Popen(command, close_fds=True, start_new_session=True)
+             except BaseException:
+                 Path(name).unlink(missing_ok=True)
+                 raise
+diff --git a/guest/factory-overlay/usr/local/bin/file-transfer-window b/guest/factory-overlay/usr/local/bin/file-transfer-window
+index 4af1016..cc069eb 100755
+--- a/guest/factory-overlay/usr/local/bin/file-transfer-window
++++ b/guest/factory-overlay/usr/local/bin/file-transfer-window
+@@ -19,27 +19,64 @@ class Transfers(Gtk.Application):
+         self.window = None
+         self.worker = None
+         self.pending = []
++        self.drop_point = None
++        self.received_paths = []
+         self.state = Path(os.environ.get('XDG_RUNTIME_DIR', '/run/user/' + str(os.getuid()))) / 'try-omarchy-clipboard'
+         self.state.mkdir(mode=0o700, parents=True, exist_ok=True)
+         self.cache = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'try-omarchy-transfers'
+         self.cache.mkdir(mode=0o700, parents=True, exist_ok=True)
+ 
+     def do_command_line(self, command):
+-        self.activate()
+         args = command.get_arguments()[1:]
+-        if len(args) == 2 and args[0] == '--ticket':
+-            path = Path(args[1])
+-            if path.parent != self.state or not path.name.startswith('incoming-drop-') or path.is_symlink():
++        ticket = None
++        point = None
++        index = 0
++        while index < len(args):
++            if args[index] == '--ticket' and index + 1 < len(args):
++                ticket = Path(args[index + 1])
++            elif args[index] == '--point' and index + 1 < len(args):
++                try:
++                    point = tuple(int(part) for part in args[index + 1].split(','))
++                except ValueError:
++                    return 1
++                if len(point) != 2 or point[0] < 0 or point[1] < 0:
++                    return 1
++            else:
++                return 1
++            index += 2
++        # The point is known before any window exists; do_activate only shows the
++        # window when a direct delivery is not going to be attempted.
++        self.drop_point = point
++        self.activate()
++        if ticket is not None:
++            if ticket.parent != self.state or not ticket.name.startswith('incoming-drop-') or ticket.is_symlink():
+                 self.status.set_label('The file-drop request is invalid.')
+                 return 1
+             if len(self.pending) >= 32:
+-                path.unlink(missing_ok=True)
++                ticket.unlink(missing_ok=True)
+                 self.status.set_label('Finish another transfer before receiving more files.')
+                 return 1
+-            self.pending.append(path)
++            self.pending.append(ticket)
+             self.next_download()
+         return 0
+ 
++    def deliver_direct(self):
++        if self.drop_point is None or not self.received_paths:
++            return False
++        request = json.dumps({
++            'x': self.drop_point[0],
++            'y': self.drop_point[1],
++            'paths': [str(path) for path in self.received_paths],
++        })
++        try:
++            result = subprocess.run(
++                ['try-omarchy-drop', '--json', request],
++                capture_output=True, timeout=20, close_fds=True,
++            )
++        except (OSError, subprocess.SubprocessError):
++            return False
++        return result.returncode == 0
++
+     def do_activate(self):
+         if self.window:
+             self.window.present()
+@@ -65,7 +102,8 @@ class Transfers(Gtk.Application):
+         box.append(controls)
+         self.window.set_child(box)
+         self.window.connect('close-request', self.close)
+-        self.window.present()
++        if self.drop_point is None:
++            self.window.present()
+ 
+     def choose(self, *_):
+         dialog = Gtk.FileDialog(title='Send files to Windows')
+@@ -131,10 +169,18 @@ class Transfers(Gtk.Application):
+                         self.add_received(path)
+                 except (ValueError, KeyError, TypeError):
+                     self.status.set_label('Files were received, but the transfer result could not be read.')
++            if self.drop_point is not None and not self.pending:
++                if self.deliver_direct():
++                    self.quit()
++                    return False
++                self.status.set_label('Files were received. Drag them into an application.')
++        if self.drop_point is not None and not self.window.get_visible():
++            self.window.present()
+         self.next_download()
+         return False
+ 
+     def add_received(self, path):
++        self.received_paths.append(Path(path))
+         file = Gio.File.new_for_path(path)
+         row = Gtk.ListBoxRow(child=Gtk.Label(label=Path(path).name, xalign=0, margin_top=8, margin_bottom=8))
+         drag = Gtk.DragSource(actions=Gdk.DragAction.COPY)
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/agent b/guest/factory-overlay/usr/local/lib/try-omarchy/agent
+index a637d83..9e6b10b 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/agent
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/agent
+@@ -62,13 +62,6 @@ handle() {
+     zero-fill\ *)
+       zero_fill "${line#zero-fill }"
+       ;;
+-    drop\ *)
+-      if timeout 20 /usr/local/bin/try-omarchy-drop --json "${line#drop }" >/dev/null 2>&1; then
+-        reply "drop delivered"
+-      else
+-        reply "drop failed"
+-      fi
+-      ;;
+     time\ *)
+       target=${line#time }
+       [[ $target =~ ^[0-9]{9,11}$ ]] || return 0
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 79e7572..af3440b 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -148,8 +148,9 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ # Revision 23 carries the early-boot recovery for an orphaned pacman lock left
+ # by an interrupted package update. Revision 24 carries the Windows camera
+ # bridge and its v4l2loopback wiring. Revision 25 carries the direct
+-# file-drop helper.
+-compat_revision=25
++# file-drop helper. Revision 26 delivers dropped files straight into the
++# window under the drop point, falling back to the transfer window.
++compat_revision=26
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+diff --git a/guest/tests/test_file_transfer.py b/guest/tests/test_file_transfer.py
+index ebabac1..3d97bb0 100644
+--- a/guest/tests/test_file_transfer.py
++++ b/guest/tests/test_file_transfer.py
+@@ -151,6 +151,17 @@ class StreamingFileTests(unittest.TestCase):
+             changed[name] = value
+             self.assertFalse(transfer.valid_ticket(changed, 'download'))
+ 
++    def test_ticket_accepts_only_well_formed_drop_points(self):
++        offer = {'version': 1, 'archiveBytes': 100, 'fileBytes': 1, 'entries': 1, 'sha256': 'a' * 64}
++        ticket = {'id': 'b' * 32, 'token': 'c' * 64, 'direction': 'download', 'offer': offer, 'point': [640, 360]}
++        self.assertTrue(transfer.valid_ticket(ticket, 'download'))
++        for value in ([640], [640, 360, 0], '640,360', [640, -1], [640.0, 360], [True, 360], None):
++            changed = dict(ticket)
++            changed['point'] = value
++            self.assertFalse(transfer.valid_ticket(changed, 'download'), value)
++        self.assertTrue(transfer.valid_drop_point([0, 0]))
++        self.assertFalse(transfer.valid_drop_point([0]))
++
+     def test_download_never_follows_redirect(self):
+         import http.server
+         import threading
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 995629b..2a6a8bd 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -266,7 +266,7 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=25" in finalize_rootfs
++        "compat_revision=26" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in compat_paths
+         and "etc/skel/.config/nvim/lua/plugins/theme.lua" in compat_paths
+@@ -298,7 +298,8 @@ def main() -> None:
+     )
+     check(
+         "usr/local/bin/try-omarchy-drop" in compat_paths
+-        and '"drop' in read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/agent")
++        and "valid_drop_point" in read(GUEST / "factory-overlay/usr/local/bin/file-transfer")
++        and "'--point'" in read(GUEST / "factory-overlay/usr/local/bin/file-transfer")
+         and (GUEST / "factory-overlay/usr/local/bin/try-omarchy-drop").stat().st_mode & stat.S_IXUSR != 0,
+         "direct file-drop delivery reaches persistent disks",
+     )
+-- 
+2.55.0
+
