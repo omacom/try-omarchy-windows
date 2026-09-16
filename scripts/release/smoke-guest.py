@@ -18,6 +18,24 @@ from pathlib import Path
 
 
 SUCCESS = b"TRYOMARCHY_SMOKE:omarchy:instant-trial"
+
+def guest_compat_revision() -> int:
+    """The revision the guest build will stamp, from the newest guest patch.
+
+    finalize-rootfs.sh sets this inside the guest source tree, which the release
+    helper patches at build time, so the harness reads it from the patches rather
+    than hardcoding a value that goes stale on every revision bump.
+    """
+    latest = 0
+    patches = sorted((Path(__file__).resolve().parents[2] / "guest-build").glob("*.patch"))
+    for patch in patches:
+        for line in patch.read_text(encoding="utf-8", errors="ignore").splitlines():
+            match = re.match(r"\+\s*compat_revision=(\d+)\s*$", line)
+            if match:
+                latest = int(match.group(1))
+    return latest or 22
+
+
 # Facts the built image must satisfy, checked from inside the booted guest
 # and reported on the serial console as TRYOMARCHY_FACT:<name>:<value>.
 FACT_CHECKS = {
@@ -100,7 +118,7 @@ def main() -> None:
     parser.add_argument("--network-address", help="verify TCP and UDP forwarding through this host IPv4 address")
     parser.add_argument("--accel", choices=("kvm", "tcg"), default="kvm", help="use TCG for nested Windows runtime testing")
     parser.add_argument("--login-delay", type=float, help="wait for provisioning before the first serial login; TCG defaults to 60 seconds")
-    parser.add_argument("--compat-revision", type=int, default=22, help="expected guest compatibility revision; use 18 for the signed v17 baseline or 19 for guest-r2")
+    parser.add_argument("--compat-revision", type=int, default=guest_compat_revision(), help="expected guest compatibility revision; defaults to the newest guest patch")
     parser.add_argument("--disk-image", type=Path, help="disposable test disk, for example an expanded QCOW2 overlay of the factory image")
     parser.add_argument("--disk-format", choices=("raw", "qcow2"), default="raw")
     parser.add_argument("--file-transfer-round-trip", action="store_true", help="exercise native Windows bridge file drops with the opt-in Windows test process")
