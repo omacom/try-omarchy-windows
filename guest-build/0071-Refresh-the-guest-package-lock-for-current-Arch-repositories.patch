@@ -1,0 +1,47 @@
+From 505957dac71b3e7bdf4c12092c0b16c6b854c9d3 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Tue, 15 Sep 2026 22:15:08 -0400
+Subject: [PATCH] Refresh the guest package lock for current Arch repositories
+
+The pinned lock no longer resolves: libpcap 1.10.7-1 -> 1.11.0-1,
+linux 7.2.4.arch1-2 -> 7.2.6.arch2-1, uwsm 0.26.7-1 -> 0.27.0-1. Without this
+a factory build stops at the lock check. The linux bump changes the shipped
+vmlinuz, so the next candidate carrying this lock needs a physical boot pass.
+---
+ guest/packages.lock.json | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index 72ec4b3..8753164 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -319,7 +319,7 @@
+     "libopenmpt": "0.8.9-1",
+     "libosinfo": "1.12.0-3",
+     "libp11-kit": "0.26.5-1",
+-    "libpcap": "1.10.7-1",
++    "libpcap": "1.11.0-1",
+     "libpciaccess": "0.19-1",
+     "libpgm": "5.3.128-4",
+     "libpipeline": "1.5.8-1",
+@@ -417,7 +417,7 @@
+     "libzip": "1.11.4-1",
+     "licenses": "20240728-1",
+     "lilv": "0.28.0-1",
+-    "linux": "7.2.4.arch1-2",
++    "linux": "7.2.6.arch2-1",
+     "linux-api-headers": "7.2-1",
+     "llhttp": "9.3.1-1",
+     "llvm-libs": "22.1.8-2",
+@@ -600,7 +600,7 @@
+     "upower": "1.91.4-1",
+     "util-linux": "2.42.3-1",
+     "util-linux-libs": "2.42.3-1",
+-    "uwsm": "0.26.7-1",
++    "uwsm": "0.27.0-1",
+     "v4l-utils": "1.32.0-2",
+     "vapoursynth": "79-1",
+     "vid.stab": "1.1.2-1",
+-- 
+2.55.0
+
