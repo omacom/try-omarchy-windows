@@ -107,7 +107,7 @@ Patch 0066 limits runtime command ownership to materialized upstream commands,
 bumps the runtime package to `4.0.3-4`, and preserves the two dependency-owned
 Neovim helpers when upgrading older runtime packages. Database consistency is
 checked during registration and guest smoke testing. See the
-[runtime ownership validation](../docs/RUNTIME-OWNERSHIP-2026-09-14.md).
+[runtime ownership validation](../docs/evidence/RUNTIME-OWNERSHIP-2026-09-14.md).
 
 Patch 0069 retains the `omarchy-nvim` package skeleton when materialization
 replaces `/etc/skel/.config`. The package seeds `/etc/skel/.config/nvim` and a

@@ -1,7 +1,7 @@
 # Source-built runtime validation
 
 September 13 physical laptop results are recorded in
-[WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md](WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md).
+[WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md](evidence/WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md).
 That round found r7 shared-folder Unicode/timestamp failures and Unicode
 installation-path failures. The r8 sharing correction passes on the laptop;
 r9 path correction passes restored Unicode-path boot. Multi-display failures

@@ -38,7 +38,7 @@ remaining gates. The older full-feature plan is historical, not the v1 requireme
   **22** (was 21). Existing guests that take a newer launcher re-apply the
   compatibility overlay once.
 - **v19 physical-test note.** The extensive Windows laptop acceptance
-  ([September 13](WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md)) was for the v18-era
+  ([September 13](evidence/WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md)) was for the v18-era
   artifacts (runtime r7-r15, compatibility-19/20 guest). v19 was validated on
   Linux/KVM and CI, not physically. Publication was accepted because the guest
   kernel (`vmlinuz-linux`) and the GPU runtime
@@ -89,7 +89,7 @@ remaining gates. The older full-feature plan is historical, not the v1 requireme
   `pacman -Qk omarchy-nvim` warned. Patch 0069 retains the packaged skeleton
   during materialization, compatibility revision 22 ships the link to existing
   disks, and `catch-up` restores it for users who lost it without replacing their
-  own file. See [Neovim skeleton evidence](NVIM-SKELETON-2026-09-14.md).
+  own file. See [Neovim skeleton evidence](evidence/NVIM-SKELETON-2026-09-14.md).
 - Validation passed: 117 guest contract tests (one optional skip) and 15 release
   unit tests; a manually dispatched CI run built the complete factory image and
   booted the instant account with `nvim-theme-skel=yes`, `nvim-theme-user=yes`,
@@ -148,7 +148,7 @@ Reproduction entry points:
 - `scripts/release/smoke-package-recovery.py`: controlled lock interruption;
   [instructions](GUEST-UPGRADES.md#package-lock-interruption-test).
 - `scripts/release/smoke-runtime-ownership.py`: direct packaging/upgrade regression;
-  [instructions](RUNTIME-OWNERSHIP-2026-09-14.md#reproduction-and-evidence).
+  [instructions](evidence/RUNTIME-OWNERSHIP-2026-09-14.md#reproduction-and-evidence).
 
 ## Remaining work and next steps
 
@@ -184,7 +184,7 @@ as though all of it blocks v1.
 
 ## Earlier Windows evidence and recovery context
 
-Read [the September 13 laptop acceptance](WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md)
+Read [the September 13 laptop acceptance](evidence/WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md)
 for physical AMD evidence and the final signed v18 publication record. Earlier
 sections describe intermediate failures; use the later explicit retests.
 
@@ -195,6 +195,6 @@ large portable tests. A current session's user instructions take precedence over
 historical plans, but old evidence is not permission for new publication, cleanup
 or messages to other people.
 
-[Archived session notes](SESSION-RESUME-2026-09-13.md) and
-[Windows lab notes](WINDOWS-SESSION-HANDOFF.md) preserve paths and historical
-recovery context. Use this document and the v1 tracker for the current direction.
+Use this document and the v1 tracker for the current direction. Historical session
+and candidate notes were removed from the repo during the docs cleanup; git history
+retains them if an old path or recovery detail is ever needed.

@@ -3,7 +3,7 @@
 Baseline: [v0.0.18-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.18-preview),
 published September 13, 2026. The next milestone is a focused v1 release candidate.
 The project remains a preview until the release gates below are satisfied.
-For another session, start with [the current handoff](SESSION-RESUME.md).
+For another session, start with [the current handoff](HANDOFF.md).
 
 [Issue #77](https://github.com/omacom/try-omarchy-windows/issues/77) tracks delivery
 and links to this document for scope and acceptance requirements. Record results
@@ -36,7 +36,7 @@ every Windows device or every native Omarchy feature has been validated.
 | Area | Evidence available | Remaining boundary |
 | --- | --- | --- |
 | Omarchy 4.0.3, browser-theme permissions, existing-guest package upgrades | [Guest upgrade validation](GUEST-UPGRADES.md), including preservation fixtures and busy-lock handling | Original stale-lock report #90 and interruption recovery remain open |
-| Installation moves, backup/restore, snapshots/rollback, growth/reclaim, clipboard and transfer windows | [Windows laptop acceptance](WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md) | Retest critical paths on the next exact candidate; portable lifecycle is unproven |
+| Installation moves, backup/restore, snapshots/rollback, growth/reclaim, clipboard and transfer windows | [Windows laptop acceptance](evidence/WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md) | Retest critical paths on the next exact candidate; portable lifecycle is unproven |
 | Source-built graphics runtime and matching source pinned in v18 | Same acceptance record; final r15 Vulkan playback and preserved files | AMD laptop coverage does not establish Intel/NVIDIA or full Hyper-V support |
 | GPU/CPU display paths, idle measurements and one-hour endurance | Same record, with individual runtime revisions identified | Earlier-runtime results are not exact-final-runtime acceptance for every check |
 | Signed release preparation, publication and public download verification | Final publication sections of the acceptance record | Preview-to-stable migration is a separate gate |
@@ -56,7 +56,7 @@ candidates; their reports remain historical supporting evidence.
   repairs duplicate Neovim command ownership and preserves helpers during upgrade.
   Compatibility revision 21 delivers the corrected repository to existing guests.
   The complete factory build/boot and five-boot normal-updater regression pass;
-  see [ownership repair evidence](RUNTIME-OWNERSHIP-2026-09-14.md).
+  see [ownership repair evidence](evidence/RUNTIME-OWNERSHIP-2026-09-14.md).
 
 - [#119](https://github.com/omacom/try-omarchy-windows/issues/119): the factory
   builder dropped the packaged `omarchy-nvim` theme symlink by rebuilding
@@ -64,7 +64,7 @@ candidates; their reports remain historical supporting evidence.
   `lua/plugins/theme.lua`. Materialization now retains the package skeleton,
   compatibility revision 22 ships the link to existing disks, and `catch-up`
   restores it for users who lost it without replacing their own file. See
-  [Neovim skeleton evidence](NVIM-SKELETON-2026-09-14.md).
+  [Neovim skeleton evidence](evidence/NVIM-SKELETON-2026-09-14.md).
 
 These changes are not in the published v18 assets. Native automated
 checks passed; large installed-guest portable lifecycle acceptance remains open.

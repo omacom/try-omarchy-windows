@@ -23,7 +23,7 @@ The investigation also found a separate database ownership defect,
 - Linux `7.2.5-3-omarchy`, QEMU `11.1.1`, KVM, four vCPUs, 4 GiB guest RAM;
   fresh disposable raw disk expanded to 24 GiB, headless multi-user target.
 - Run with `scripts/release/smoke-package-recovery.py`; see
-  [reproduction instructions](GUEST-UPGRADES.md#package-lock-interruption-test).
+  [reproduction instructions](../GUEST-UPGRADES.md#package-lock-interruption-test).
 
 ## Results
 

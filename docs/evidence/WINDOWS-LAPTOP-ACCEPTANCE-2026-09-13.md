@@ -180,7 +180,7 @@ AMD-only results cannot satisfy Intel/NVIDIA or native ARM64 hardware gates.
 Full Hyper-V coexistence is not covered by the current feature configuration.
 Unimplemented accelerated saved sessions, direct application drop placement,
 camera bridge, bridged networking and native ARM64 product support remain the
-separate engineering gaps identified in SESSION-RESUME.md. Do not infer their
+separate engineering gaps identified in the session handoff (docs/HANDOFF.md). Do not infer their
 completion from automated test counts or mediated transfer-window tests.
 
 ## Lifecycle and source-fix continuation, 15:00 CDT

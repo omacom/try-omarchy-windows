@@ -36,8 +36,7 @@
   and use a private temporary file during preparation.
 - Keep Settings accessible on smaller screens and add help for everyday controls.
 
-Development candidate; Windows acceptance remains pending. See
-[the combined testing checklist](docs/COMPLETION-CANDIDATE.md).
+Development candidate; Windows acceptance remains pending.
 
 ## v0.0.16-preview
 
