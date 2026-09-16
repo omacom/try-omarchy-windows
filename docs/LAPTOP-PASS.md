@@ -7,35 +7,50 @@ build and GPU.
 
 ## Build under test
 
+A **draft release**, `v0.0.20-preview`, holds everything: the launcher, the guest
+artifacts, and both runtime archives. It is unpublished, so the published `Latest`
+remains v0.0.19-preview.
+
 | Piece | Value |
 | --- | --- |
-| Launcher | `TryOmarchy.exe`, sha256 `3ddb136303a1e2297b6f47bdeddaf6c5d14e4aaee24cebbb4161c5120b27c104`, built from `master` |
+| Release | `v0.0.20-preview` (draft), target `f8e9705` |
+| Launcher | `TryOmarchy.exe`, sha256 `874915f399a3411b1611e5b3fda5d1f4f4dfb31aa40b453d79d99d24e1ce8998` (unsigned; SmartScreen may warn) |
 | Guest | compatibility revision **26** (camera bridge, direct drops) |
-| Bundle `SHA256SUMS` | sha256 `fee9d06a5dcf55e7d06fdbadfa6471f4737f81a337d31d8cc94fe2b26a875268` |
+| `SHA256SUMS` | sha256 `f7333157627beaeae356271f48377390c25d1046f147f29e6a269c021ad699db` |
 
-The bundle holds the launcher, the guest artifacts, and both runtime archives.
-Everything here is unreleased: the published `Latest` remains v0.0.19-preview.
+## Get it on the laptop and run it
 
-## Run it
+1. Download the draft (needs GitHub auth; a draft is not public):
 
-1. Copy the bundle folder to the laptop.
-2. Serve it over loopback from that folder (Windows PowerShell or cmd):
-   `py -m http.server 18080 --bind 127.0.0.1`
+   ```powershell
+   gh release download v0.0.20-preview --repo omacom/try-omarchy-windows --dir C:\TryOmarchyDraft
+   ```
+
+2. Serve that folder over loopback (a draft's asset URLs need a token, so the
+   launcher cannot fetch them directly):
+
+   ```powershell
+   cd C:\TryOmarchyDraft
+   py -m http.server 18080 --bind 127.0.0.1
+   ```
+
 3. **Use a copy, never your only install.** Copy `%LOCALAPPDATA%\TryOmarchy`
    somewhere else, or point the launcher at a fresh data directory.
+
 4. Start the candidate:
 
    ```powershell
-   .\TryOmarchy.exe `
+   C:\TryOmarchyDraft\TryOmarchy.exe `
      -dir C:\TryOmarchyTest `
      -release http://127.0.0.1:18080 `
-     -sums-sha256 fee9d06a5dcf55e7d06fdbadfa6471f4737f81a337d31d8cc94fe2b26a875268 `
+     -sums-sha256 f7333157627beaeae356271f48377390c25d1046f147f29e6a269c021ad699db `
      -runtime-release http://127.0.0.1:18080 `
-     -runtime-sums-sha256 fee9d06a5dcf55e7d06fdbadfa6471f4737f81a337d31d8cc94fe2b26a875268 `
+     -runtime-sums-sha256 f7333157627beaeae356271f48377390c25d1046f147f29e6a269c021ad699db `
      -no-update
    ```
 
    `-no-update` keeps the launcher from replacing itself with the published pin.
+   Keep the `py -m http.server` window open until Omarchy is running.
 
 ## 1. Camera
 
