@@ -1,0 +1,290 @@
+From 0df9d928045545f0ff409bcfed4f04979ca17920 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Wed, 16 Sep 2026 01:30:37 -0400
+Subject: [PATCH] Deliver dropped files into the guest window under the drop
+ point
+
+Add try-omarchy-drop, which resolves the Hyprland window under a point, focuses
+it, puts the file list on the clipboard as text/uri-list, and pastes it. The
+guest agent accepts a drop request from the launcher and reports whether it was
+delivered, so the launcher can fall back to the transfer window. Ships through
+compatibility revision 25.
+---
+ .../usr/local/bin/try-omarchy-drop            | 118 ++++++++++++++++++
+ .../usr/local/lib/try-omarchy/agent           |   7 ++
+ guest/scripts/finalize-rootfs.sh              |   6 +-
+ guest/tests/test_file_drop_target.py          |  68 ++++++++++
+ guest/tests/verify.py                         |   8 +-
+ 5 files changed, 204 insertions(+), 3 deletions(-)
+ create mode 100755 guest/factory-overlay/usr/local/bin/try-omarchy-drop
+ create mode 100644 guest/tests/test_file_drop_target.py
+
+diff --git a/guest/factory-overlay/usr/local/bin/try-omarchy-drop b/guest/factory-overlay/usr/local/bin/try-omarchy-drop
+new file mode 100755
+index 0000000..9dbc3e7
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/bin/try-omarchy-drop
+@@ -0,0 +1,118 @@
++#!/usr/bin/python3
++"""Deliver dropped files into the Omarchy window under a drop point.
++
++The Windows launcher transfers the files first, then asks the guest (through
++the agent) to deliver them here. Direct drops only work when the window under
++the point is running and can accept a file-list paste; every other case returns
++non-zero so the launcher can fall back to the transfer window.
++
++The decision logic is split into pure functions so the unprivileged test suite
++can exercise it without a compositor.
++"""
++
++from __future__ import annotations
++
++import json
++import shutil
++import subprocess
++import sys
++from pathlib import Path
++from urllib.parse import quote
++
++# The transfer window is the fallback and must never be the paste target, or a
++# failed direct drop would just re-open it.
++TRANSFER_WINDOW_CLASS = "org.omarchy.FileTransfers"
++
++
++def clients() -> list[dict]:
++    result = subprocess.run(
++        ["hyprctl", "-j", "clients"], capture_output=True, text=True, timeout=10
++    )
++    if result.returncode != 0:
++        raise RuntimeError("hyprctl clients failed")
++    return json.loads(result.stdout or "[]")
++
++
++def contains(client: dict, x: int, y: int) -> bool:
++    at = client.get("at") or [0, 0]
++    size = client.get("size") or [0, 0]
++    return at[0] <= x < at[0] + size[0] and at[1] <= y < at[1] + size[1]
++
++
++def candidate(clients: list[dict], x: int, y: int) -> dict | None:
++    """Topmost drop target under (x, y), ignoring hidden and fallback windows."""
++    matches = []
++    for client in clients:
++        if client.get("hidden") or not client.get("mapped", True):
++            continue
++        if client.get("class") == TRANSFER_WINDOW_CLASS:
++            continue
++        if contains(client, x, y):
++            matches.append(client)
++    if not matches:
++        return None
++    # Hyprland reports focusHistoryID small for recently focused windows; the
++    # most recently focused match is the one visually on top.
++    return min(matches, key=lambda client: client.get("focusHistoryID", 1 << 30))
++
++
++def uri_list(paths: list[str]) -> str:
++    return "\r\n".join("file://" + quote(str(Path(path).resolve())) for path in paths) + "\r\n"
++
++
++def deliver(x: int, y: int, paths: list[str], run=subprocess.run) -> int:
++    for path in paths:
++        if not Path(path).is_absolute():
++            print("try-omarchy-drop: paths must be absolute", file=sys.stderr)
++            return 2
++    target = candidate(clients(), x, y)
++    if target is None:
++        print("try-omarchy-drop: no application window under the drop point", file=sys.stderr)
++        return 1
++    address = target.get("address")
++    if not address:
++        print("try-omarchy-drop: the target window has no address", file=sys.stderr)
++        return 1
++    if shutil.which("wl-copy") is None:
++        print("try-omarchy-drop: wl-copy is unavailable", file=sys.stderr)
++        return 1
++
++    # Put the file list on the clipboard as text/uri-list, then paste it into
++    # the target. Apps that accept a URI paste import the files in place.
++    run(["wl-copy", "--type", "text/uri-list", "--"], input=uri_list(paths), text=True, timeout=10)
++    run(["hyprctl", "dispatch", "focuswindow", f"address:{address}"], timeout=10)
++    run(["hyprctl", "dispatch", "sendshortcut", "CTRL,V," + f"address:{address}"], timeout=10)
++    return 0
++
++
++def main(argv: list[str]) -> int:
++    if len(argv) >= 3 and argv[1] == "--json":
++        try:
++            request = json.loads(argv[2])
++        except (ValueError, IndexError):
++            print("try-omarchy-drop: invalid request", file=sys.stderr)
++            return 2
++        if (
++            not isinstance(request, dict)
++            or not isinstance(request.get("x"), int)
++            or not isinstance(request.get("y"), int)
++            or not isinstance(request.get("paths"), list)
++            or not all(isinstance(path, str) for path in request["paths"])
++            or not request["paths"]
++        ):
++            print("try-omarchy-drop: invalid request", file=sys.stderr)
++            return 2
++        return deliver(request["x"], request["y"], request["paths"])
++    if len(argv) < 4:
++        print("usage: try-omarchy-drop X Y FILE... | --json '{\"x\":..,\"y\":..,\"paths\":[..]}'", file=sys.stderr)
++        return 2
++    try:
++        x, y = int(argv[1]), int(argv[2])
++    except ValueError:
++        print("try-omarchy-drop: X and Y must be integers", file=sys.stderr)
++        return 2
++    return deliver(x, y, argv[3:])
++
++
++if __name__ == "__main__":
++    raise SystemExit(main(sys.argv))
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/agent b/guest/factory-overlay/usr/local/lib/try-omarchy/agent
+index 9e6b10b..a637d83 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/agent
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/agent
+@@ -62,6 +62,13 @@ handle() {
+     zero-fill\ *)
+       zero_fill "${line#zero-fill }"
+       ;;
++    drop\ *)
++      if timeout 20 /usr/local/bin/try-omarchy-drop --json "${line#drop }" >/dev/null 2>&1; then
++        reply "drop delivered"
++      else
++        reply "drop failed"
++      fi
++      ;;
+     time\ *)
+       target=${line#time }
+       [[ $target =~ ^[0-9]{9,11}$ ]] || return 0
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index d1505a4..79e7572 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -102,6 +102,7 @@ compat_paths=(
+   etc/udev/rules.d/94-try-omarchy-camera.rules
+   etc/modules-load.d/90-try-omarchy-camera.conf
+   etc/modprobe.d/90-try-omarchy-camera.conf
++  usr/local/bin/try-omarchy-drop
+   etc/systemd/user/clipboard-bridge.service
+   etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf
+   etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service
+@@ -146,8 +147,9 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ # 22 carries the packaged Neovim theme symlink and its catch-up repair.
+ # Revision 23 carries the early-boot recovery for an orphaned pacman lock left
+ # by an interrupted package update. Revision 24 carries the Windows camera
+-# bridge and its v4l2loopback wiring.
+-compat_revision=24
++# bridge and its v4l2loopback wiring. Revision 25 carries the direct
++# file-drop helper.
++compat_revision=25
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+diff --git a/guest/tests/test_file_drop_target.py b/guest/tests/test_file_drop_target.py
+new file mode 100644
+index 0000000..f50d8f6
+--- /dev/null
++++ b/guest/tests/test_file_drop_target.py
+@@ -0,0 +1,68 @@
++"""Behavioral tests for the direct file-drop target selection."""
++
++import importlib.machinery
++import importlib.util
++from pathlib import Path
++import unittest
++
++
++SCRIPT = (
++    Path(__file__).resolve().parents[1]
++    / "factory-overlay/usr/local/bin/try-omarchy-drop"
++)
++loader = importlib.machinery.SourceFileLoader("try_omarchy_drop", str(SCRIPT))
++spec = importlib.util.spec_from_loader(loader.name, loader)
++module = importlib.util.module_from_spec(spec)
++loader.exec_module(module)
++
++
++def client(address, at, size, *, focus=0, cls="org.gnome.Nautilus", hidden=False, mapped=True):
++    return {
++        "address": address,
++        "at": at,
++        "size": size,
++        "focusHistoryID": focus,
++        "class": cls,
++        "hidden": hidden,
++        "mapped": mapped,
++    }
++
++
++class DropTargetTests(unittest.TestCase):
++    def test_picks_the_window_under_the_point(self):
++        clients = [
++            client("0xa", [0, 0], [800, 600], focus=0),
++            client("0xb", [900, 0], [400, 300], focus=1),
++        ]
++        self.assertEqual(module.candidate(clients, 950, 100)["address"], "0xb")
++        self.assertEqual(module.candidate(clients, 10, 10)["address"], "0xa")
++
++    def test_returns_none_outside_every_window(self):
++        clients = [client("0xa", [0, 0], [800, 600])]
++        self.assertIsNone(module.candidate(clients, 900, 900))
++
++    def test_prefers_the_most_recently_focused_overlap(self):
++        clients = [
++            client("0xback", [0, 0], [800, 600], focus=5),
++            client("0xfront", [100, 100], [400, 300], focus=1),
++        ]
++        self.assertEqual(module.candidate(clients, 200, 200)["address"], "0xfront")
++
++    def test_ignores_hidden_unmapped_and_the_transfer_window(self):
++        clients = [
++            client("0xhidden", [0, 0], [800, 600], hidden=True),
++            client("0xunmapped", [0, 0], [800, 600], mapped=False),
++            client("0xfallback", [0, 0], [800, 600], cls=module.TRANSFER_WINDOW_CLASS),
++        ]
++        self.assertIsNone(module.candidate(clients, 10, 10))
++
++    def test_uri_list_is_percent_encoded(self):
++        value = module.uri_list(["/home/omarchy/My File.txt"])
++        self.assertEqual(value, "file:///home/omarchy/My%20File.txt\r\n")
++
++    def test_deliver_rejects_relative_paths(self):
++        self.assertEqual(module.deliver(0, 0, ["relative.txt"]), 2)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 4d9223c..995629b 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -266,7 +266,7 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=24" in finalize_rootfs
++        "compat_revision=25" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in compat_paths
+         and "etc/skel/.config/nvim/lua/plugins/theme.lua" in compat_paths
+@@ -296,6 +296,12 @@ def main() -> None:
+         and (GUEST / "factory-overlay/usr/local/bin/omarchy-windows-camera-bridge").stat().st_mode & stat.S_IXUSR != 0,
+         "Windows camera bridge and its v4l2loopback module reach persistent disks",
+     )
++    check(
++        "usr/local/bin/try-omarchy-drop" in compat_paths
++        and '"drop' in read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/agent")
++        and (GUEST / "factory-overlay/usr/local/bin/try-omarchy-drop").stat().st_mode & stat.S_IXUSR != 0,
++        "direct file-drop delivery reaches persistent disks",
++    )
+     catch_up = read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/catch-up")
+     check(
+         "restore_nvim_theme_link" in catch_up
+-- 
+2.55.0
+
