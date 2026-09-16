@@ -142,17 +142,26 @@ func safeMoveName(name string) bool {
 }
 
 // Reject links in every existing path component, including Windows junctions.
+// Only the path itself gets the additional-stream check: ancestor directories
+// are outside this installation and may legitimately carry unrelated streams
+// (e.g. clipboard/tooling data on the user's profile folder).
 func validateMovePath(path string) error {
+	first := true
 	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
 		info, err := os.Lstat(current)
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		if err == nil {
-			if err := rejectMoveLink(current, info); err != nil {
+			if first {
+				if err := rejectMoveLink(current, info); err != nil {
+					return err
+				}
+			} else if err := rejectAncestorLink(current, info); err != nil {
 				return err
 			}
 		}
+		first = false
 		if filepath.Dir(current) == current {
 			return nil
 		}
