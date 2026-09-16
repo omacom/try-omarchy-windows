@@ -1,0 +1,692 @@
+From c864fa6b5af4a11ee2d0ba65df908c54c1a6b1b2 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Tue, 15 Sep 2026 22:29:09 -0400
+Subject: [PATCH] Expose the Windows camera to the guest as a V4L2 device
+
+Port the macOS on-demand camera bridge to Windows. The guest reads the same
+framed NV12 stream, but over a virtio-serial port the launcher backs with a
+host-side chardev instead of a macOS-native socket, and writes it to a
+v4l2loopback camera at /dev/video42 that applications see as "Windows Camera".
+The guest asks the host to start capture only while a consumer holds the camera
+open. Adds v4l2loopback-dkms and linux-headers to the guest and carries the
+bridge through compatibility revision 24.
+---
+ .../etc/modprobe.d/90-try-omarchy-camera.conf |   1 +
+ .../modules-load.d/90-try-omarchy-camera.conf |   1 +
+ .../omarchy-windows-camera-bridge.service     |   1 +
+ .../udev/rules.d/94-try-omarchy-camera.rules  |   2 +
+ .../omarchy-windows-camera-bridge.service     |  10 +
+ .../local/bin/omarchy-windows-camera-bridge   | 326 ++++++++++++++++++
+ guest/packages.lock.json                      |   6 +-
+ guest/packages.txt                            |   2 +
+ guest/scripts/finalize-rootfs.sh              |  11 +-
+ guest/tests/test_camera_bridge.py             | 150 ++++++++
+ guest/tests/verify.py                         |  11 +-
+ 11 files changed, 517 insertions(+), 4 deletions(-)
+ create mode 100644 guest/factory-overlay/etc/modprobe.d/90-try-omarchy-camera.conf
+ create mode 100644 guest/factory-overlay/etc/modules-load.d/90-try-omarchy-camera.conf
+ create mode 120000 guest/factory-overlay/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service
+ create mode 100644 guest/factory-overlay/etc/udev/rules.d/94-try-omarchy-camera.rules
+ create mode 100644 guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+ create mode 100755 guest/factory-overlay/usr/local/bin/omarchy-windows-camera-bridge
+ create mode 100644 guest/tests/test_camera_bridge.py
+
+diff --git a/guest/factory-overlay/etc/modprobe.d/90-try-omarchy-camera.conf b/guest/factory-overlay/etc/modprobe.d/90-try-omarchy-camera.conf
+new file mode 100644
+index 0000000..85c5196
+--- /dev/null
++++ b/guest/factory-overlay/etc/modprobe.d/90-try-omarchy-camera.conf
+@@ -0,0 +1 @@
++options v4l2loopback devices=1 video_nr=42 card_label="Windows Camera" exclusive_caps=1 max_openers=10
+diff --git a/guest/factory-overlay/etc/modules-load.d/90-try-omarchy-camera.conf b/guest/factory-overlay/etc/modules-load.d/90-try-omarchy-camera.conf
+new file mode 100644
+index 0000000..d394e47
+--- /dev/null
++++ b/guest/factory-overlay/etc/modules-load.d/90-try-omarchy-camera.conf
+@@ -0,0 +1 @@
++v4l2loopback
+diff --git a/guest/factory-overlay/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service b/guest/factory-overlay/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service
+new file mode 120000
+index 0000000..381859b
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service
+@@ -0,0 +1 @@
++../omarchy-windows-camera-bridge.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/udev/rules.d/94-try-omarchy-camera.rules b/guest/factory-overlay/etc/udev/rules.d/94-try-omarchy-camera.rules
+new file mode 100644
+index 0000000..151209a
+--- /dev/null
++++ b/guest/factory-overlay/etc/udev/rules.d/94-try-omarchy-camera.rules
+@@ -0,0 +1,2 @@
++SUBSYSTEM=="virtio-ports", ATTR{name}=="dev.tryomarchy.camera", GROUP="video", MODE="0660"
++KERNEL=="video42", SUBSYSTEM=="video4linux", GROUP="video", MODE="0660"
+diff --git a/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service b/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+new file mode 100644
+index 0000000..a17f18e
+--- /dev/null
++++ b/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+@@ -0,0 +1,10 @@
++[Unit]
++Description=Expose the Windows camera to Omarchy over the virtio camera port
++
++[Service]
++ExecStart=/usr/local/bin/omarchy-windows-camera-bridge
++Restart=always
++RestartSec=1
++
++[Install]
++WantedBy=default.target
+diff --git a/guest/factory-overlay/usr/local/bin/omarchy-windows-camera-bridge b/guest/factory-overlay/usr/local/bin/omarchy-windows-camera-bridge
+new file mode 100755
+index 0000000..4c3607a
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/bin/omarchy-windows-camera-bridge
+@@ -0,0 +1,326 @@
++#!/usr/bin/python3
++"""Expose the on-demand Windows camera stream as an Omarchy V4L2 camera."""
++
++from __future__ import annotations
++
++import ctypes
++import errno
++import fcntl
++import json
++import os
++from pathlib import Path
++import select
++import struct
++import sys
++import time
++from typing import Any
++
++
++PORT = Path("/dev/virtio-ports/dev.tryomarchy.camera")
++CAMERA = Path("/dev/video42")
++MAGIC = b"TOCM"
++VERSION = 1
++HEADER = struct.Struct("<4sBBHII")
++KIND_STATUS = 1
++KIND_FRAME = 2
++WIDTH = 1280
++HEIGHT = 720
++FRAME_BYTES = WIDTH * HEIGHT * 3 // 2
++MAX_STATUS_BYTES = 4096
++
++V4L2_BUF_TYPE_VIDEO_OUTPUT = 2
++V4L2_FIELD_NONE = 1
++V4L2_COLORSPACE_REC709 = 3
++V4L2_YCBCR_ENC_709 = 2
++V4L2_QUANTIZATION_LIM_RANGE = 2
++V4L2_XFER_FUNC_709 = 1
++V4L2_EVENT_PRIVATE_START = 0x08000000
++V4L2LOOPBACK_EVENT_OFFSET = 0x08E00000
++V4L2_EVENT_PRI_CLIENT_USAGE = (
++    V4L2_EVENT_PRIVATE_START + V4L2LOOPBACK_EVENT_OFFSET + 1
++)
++V4L2_EVENT_SUB_FL_SEND_INITIAL = 0x0001
++
++
++def log(message: str) -> None:
++    print(f"omarchy-windows-camera-bridge: {message}", file=sys.stderr, flush=True)
++
++
++def fourcc(value: str) -> int:
++    if len(value) != 4 or not value.isascii():
++        raise ValueError("fourcc must contain four ASCII characters")
++    return int.from_bytes(value.encode("ascii"), "little")
++
++
++class V4L2PixFormat(ctypes.Structure):
++    _fields_ = [
++        ("width", ctypes.c_uint32),
++        ("height", ctypes.c_uint32),
++        ("pixelformat", ctypes.c_uint32),
++        ("field", ctypes.c_uint32),
++        ("bytesperline", ctypes.c_uint32),
++        ("sizeimage", ctypes.c_uint32),
++        ("colorspace", ctypes.c_uint32),
++        ("priv", ctypes.c_uint32),
++        ("flags", ctypes.c_uint32),
++        ("ycbcr_enc", ctypes.c_uint32),
++        ("quantization", ctypes.c_uint32),
++        ("xfer_func", ctypes.c_uint32),
++    ]
++
++
++class V4L2FormatValue(ctypes.Union):
++    # Linux's UAPI union includes pointer-bearing members, so it remains
++    # eight-byte aligned even though the raw storage is exactly 200 bytes.
++    _fields_ = [
++        ("pix", V4L2PixFormat),
++        ("raw_data", ctypes.c_uint8 * 200),
++        ("alignment", ctypes.c_uint64),
++    ]
++
++
++class V4L2Format(ctypes.Structure):
++    _fields_ = [("type", ctypes.c_uint32), ("value", V4L2FormatValue)]
++
++
++class V4L2EventSubscription(ctypes.Structure):
++    _fields_ = [
++        ("type", ctypes.c_uint32),
++        ("id", ctypes.c_uint32),
++        ("flags", ctypes.c_uint32),
++        ("reserved", ctypes.c_uint32 * 5),
++    ]
++
++
++class TimeSpec(ctypes.Structure):
++    _fields_ = [("seconds", ctypes.c_long), ("nanoseconds", ctypes.c_long)]
++
++
++class V4L2EventData(ctypes.Union):
++    # The UAPI union contains struct v4l2_event_ctrl, whose signed 64-bit
++    # value64 member makes the union eight-byte aligned on aarch64. Without
++    # this explicit alignment, ctypes places the payload at offset 4 and the
++    # client count is read from padding instead of the event data at offset 8.
++    _fields_ = [
++        ("raw_data", ctypes.c_uint8 * 64),
++        ("alignment", ctypes.c_int64),
++    ]
++
++
++class V4L2Event(ctypes.Structure):
++    _fields_ = [
++        ("type", ctypes.c_uint32),
++        ("data", V4L2EventData),
++        ("pending", ctypes.c_uint32),
++        ("sequence", ctypes.c_uint32),
++        ("timestamp", TimeSpec),
++        ("id", ctypes.c_uint32),
++        ("reserved", ctypes.c_uint32 * 8),
++    ]
++
++
++def ioctl_number(direction: int, kind: str, number: int, size: int) -> int:
++    return (direction << 30) | (size << 16) | (ord(kind) << 8) | number
++
++
++VIDIOC_S_FMT = ioctl_number(
++    3, "V", 5, ctypes.sizeof(V4L2Format)
++)  # _IOWR('V', 5, struct v4l2_format)
++VIDIOC_DQEVENT = ioctl_number(
++    2, "V", 89, ctypes.sizeof(V4L2Event)
++)  # _IOR('V', 89, struct v4l2_event)
++VIDIOC_SUBSCRIBE_EVENT = ioctl_number(
++    1, "V", 90, ctypes.sizeof(V4L2EventSubscription)
++)  # _IOW('V', 90, struct v4l2_event_subscription)
++
++
++def configure_camera(descriptor: int) -> None:
++    format_value = V4L2Format()
++    format_value.type = V4L2_BUF_TYPE_VIDEO_OUTPUT
++    format_value.value.pix = V4L2PixFormat(
++        width=WIDTH,
++        height=HEIGHT,
++        pixelformat=fourcc("NV12"),
++        field=V4L2_FIELD_NONE,
++        bytesperline=WIDTH,
++        sizeimage=FRAME_BYTES,
++        colorspace=V4L2_COLORSPACE_REC709,
++        priv=0,
++        flags=0,
++        ycbcr_enc=V4L2_YCBCR_ENC_709,
++        quantization=V4L2_QUANTIZATION_LIM_RANGE,
++        xfer_func=V4L2_XFER_FUNC_709,
++    )
++    try:
++        fcntl.ioctl(descriptor, VIDIOC_S_FMT, format_value, True)
++    except OSError as error:
++        raise OSError(error.errno, "cannot set the loopback camera format") from error
++    negotiated = format_value.value.pix
++    if (
++        negotiated.width != WIDTH
++        or negotiated.height != HEIGHT
++        or negotiated.pixelformat != fourcc("NV12")
++        or negotiated.sizeimage < FRAME_BYTES
++    ):
++        raise RuntimeError("v4l2loopback rejected the 1280x720 NV12 camera format")
++
++    # The first write makes an exclusive-caps loopback advertise CAPTURE, so
++    # browsers can discover it before the real Windows camera has been requested.
++    try:
++        write_frame(descriptor, black_frame())
++    except OSError as error:
++        raise OSError(error.errno, "cannot prime the loopback camera") from error
++
++    subscription = V4L2EventSubscription()
++    subscription.type = V4L2_EVENT_PRI_CLIENT_USAGE
++    subscription.flags = V4L2_EVENT_SUB_FL_SEND_INITIAL
++    try:
++        fcntl.ioctl(descriptor, VIDIOC_SUBSCRIBE_EVENT, subscription, True)
++    except OSError as error:
++        raise OSError(error.errno, "cannot subscribe to camera usage events") from error
++
++
++def black_frame() -> bytes:
++    return bytes([16]) * (WIDTH * HEIGHT) + bytes([128]) * (WIDTH * HEIGHT // 2)
++
++
++def write_frame(descriptor: int, frame: bytes | bytearray | memoryview) -> None:
++    if len(frame) != FRAME_BYTES:
++        raise ValueError("camera frame has an unexpected byte count")
++    written = os.write(descriptor, frame)
++    if written != FRAME_BYTES:
++        raise RuntimeError(f"V4L2 accepted only {written} of {FRAME_BYTES} camera bytes")
++
++
++def send_control(descriptor: int, message_type: str) -> None:
++    payload = json.dumps(
++        {"type": message_type}, separators=(",", ":"), sort_keys=True
++    ).encode("ascii") + b"\n"
++    offset = 0
++    while offset < len(payload):
++        try:
++            offset += os.write(descriptor, payload[offset:])
++        except BlockingIOError:
++            select.select([], [descriptor], [], 1)
++
++
++class MessageParser:
++    def __init__(self) -> None:
++        self.buffer = bytearray()
++
++    def feed(self, chunk: bytes) -> list[tuple[int, int, bytes]]:
++        self.buffer.extend(chunk)
++        messages: list[tuple[int, int, bytes]] = []
++        while len(self.buffer) >= HEADER.size:
++            magic, version, kind, reserved, payload_bytes, sequence = HEADER.unpack_from(
++                self.buffer
++            )
++            if magic != MAGIC or version != VERSION or reserved != 0:
++                raise ValueError("host sent an invalid camera message header")
++            if kind == KIND_FRAME:
++                if payload_bytes != FRAME_BYTES:
++                    raise ValueError("host camera frame has an invalid size")
++            elif kind == KIND_STATUS:
++                if payload_bytes > MAX_STATUS_BYTES:
++                    raise ValueError("host camera status exceeds 4 KiB")
++            else:
++                raise ValueError("host sent an unsupported camera message")
++            message_bytes = HEADER.size + payload_bytes
++            if len(self.buffer) < message_bytes:
++                break
++            payload = bytes(self.buffer[HEADER.size:message_bytes])
++            del self.buffer[:message_bytes]
++            messages.append((kind, sequence, payload))
++        if len(self.buffer) > HEADER.size + FRAME_BYTES:
++            raise ValueError("host camera message buffer exceeds its protocol limit")
++        return messages
++
++
++def dequeue_client_count(descriptor: int) -> int:
++    event = V4L2Event()
++    fcntl.ioctl(descriptor, VIDIOC_DQEVENT, event, True)
++    if event.type != V4L2_EVENT_PRI_CLIENT_USAGE:
++        raise RuntimeError("v4l2loopback returned an unexpected event")
++    return int.from_bytes(bytes(event.data.raw_data[:4]), sys.byteorder)
++
++
++def handle_status(payload: bytes) -> None:
++    value: Any = json.loads(payload)
++    if not isinstance(value, dict) or not isinstance(value.get("status"), str):
++        raise ValueError("host sent an invalid camera status")
++    status = value["status"]
++    if status == "streaming":
++        log(f"streaming {value.get('name', 'Windows Camera')} at {WIDTH}x{HEIGHT}")
++    elif status == "unavailable":
++        log(f"Windows camera is unavailable ({value.get('reason', 'capture error')})")
++
++
++def open_port() -> int:
++    while True:
++        try:
++            return os.open(PORT, os.O_RDWR | os.O_CLOEXEC | os.O_NOCTTY | os.O_NONBLOCK)
++        except FileNotFoundError:
++            time.sleep(1)
++
++
++def open_camera() -> int:
++    while True:
++        try:
++            return os.open(CAMERA, os.O_RDWR | os.O_CLOEXEC)
++        except FileNotFoundError:
++            time.sleep(1)
++
++
++def main() -> int:
++    camera = open_camera()
++    port = open_port()
++    try:
++        configure_camera(camera)
++        parser = MessageParser()
++        poller = select.poll()
++        poller.register(camera, select.POLLPRI)
++        poller.register(port, select.POLLIN | select.POLLHUP | select.POLLERR)
++        clients_active = False
++
++        while True:
++            for descriptor, events in poller.poll(1000):
++                if descriptor == camera and events & select.POLLPRI:
++                    active = dequeue_client_count(camera) > 0
++                    if active != clients_active:
++                        clients_active = active
++                        send_control(port, "start" if active else "stop")
++                        if not active:
++                            write_frame(camera, black_frame())
++                if descriptor == port:
++                    if events & (select.POLLHUP | select.POLLERR):
++                        return 0
++                    if events & select.POLLIN:
++                        try:
++                            chunk = os.read(port, 256 * 1024)
++                        except BlockingIOError:
++                            continue
++                        if not chunk:
++                            return 0
++                        for kind, _, payload in parser.feed(chunk):
++                            if kind == KIND_STATUS:
++                                handle_status(payload)
++                            elif clients_active:
++                                write_frame(camera, payload)
++    finally:
++        try:
++            send_control(port, "stop")
++        except OSError:
++            pass
++        os.close(port)
++        os.close(camera)
++
++
++if __name__ == "__main__":
++    try:
++        raise SystemExit(main())
++    except Exception as error:
++        if isinstance(error, OSError) and error.errno == errno.ENODEV:
++            log("the virtual camera device disappeared")
++        else:
++            log(str(error))
++        raise SystemExit(1)
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index 8753164..3185803 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -59,6 +59,7 @@
+     "desktop-file-utils": "0.28-1",
+     "device-mapper": "2.03.42-1",
+     "diffutils": "3.12-2",
++    "dkms": "3.4.3-2",
+     "double-conversion": "3.4.0-1",
+     "dua-cli": "2.45.0-1",
+     "duktape": "2.7.0-7",
+@@ -419,6 +420,7 @@
+     "lilv": "0.28.0-1",
+     "linux": "7.2.6.arch2-1",
+     "linux-api-headers": "7.2-1",
++    "linux-headers": "7.2.6.arch2-1",
+     "llhttp": "9.3.1-1",
+     "llvm-libs": "22.1.8-2",
+     "lm_sensors": "1:3.6.2-1",
+@@ -485,6 +487,7 @@
+     "pacman": "7.1.0.r9.g54d9411-2",
+     "pacman-contrib": "1.13.1-1",
+     "pacman-mirrorlist": "20260610-1",
++    "pahole": "1:1.32-1",
+     "pam": "1.7.2-2",
+     "pambase": "20260616-1",
+     "pamixer": "1.6-4",
+@@ -602,6 +605,7 @@
+     "util-linux-libs": "2.42.3-1",
+     "uwsm": "0.27.0-1",
+     "v4l-utils": "1.32.0-2",
++    "v4l2loopback-dkms": "0.15.4-2",
+     "vapoursynth": "79-1",
+     "vid.stab": "1.1.2-1",
+     "vmaf": "3.2.0-1",
+@@ -664,6 +668,6 @@
+     "zram-generator": "1.2.1-1",
+     "zstd": "1.5.7-3"
+   },
+-  "requestedFileSha256": "0b19e6dd2b1b201a03985dd58cc910ba26212210d2699d78773bf43a2b1f81d7",
++  "requestedFileSha256": "e53bba7e09c010d9e4dbfdca9282b8912ac91637c22b68bceb7bb829e12c0160",
+   "schemaVersion": 1
+ }
+diff --git a/guest/packages.txt b/guest/packages.txt
+index f8c3265..c21b655 100644
+--- a/guest/packages.txt
++++ b/guest/packages.txt
+@@ -42,6 +42,7 @@ less
+ libnotify
+ libsecret
+ linux
++linux-headers
+ man-db
+ mesa
+ mkinitcpio
+@@ -89,6 +90,7 @@ ttfx
+ udiskie
+ unzip
+ uwsm
++v4l2loopback-dkms
+ vulkan-swrast
+ vulkan-virtio
+ wayland
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index bc4dd7b..d1505a4 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -96,6 +96,12 @@ compat_paths=(
+   usr/local/lib/try-omarchy/clear-stale-pacman-lock
+   etc/systemd/system/try-omarchy-pacman-lock.service
+   etc/systemd/system/sysinit.target.wants/try-omarchy-pacman-lock.service
++  usr/local/bin/omarchy-windows-camera-bridge
++  usr/lib/systemd/user/omarchy-windows-camera-bridge.service
++  etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service
++  etc/udev/rules.d/94-try-omarchy-camera.rules
++  etc/modules-load.d/90-try-omarchy-camera.conf
++  etc/modprobe.d/90-try-omarchy-camera.conf
+   etc/systemd/user/clipboard-bridge.service
+   etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf
+   etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service
+@@ -139,8 +145,9 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ # applied to persistent disks created by an earlier launcher release. Revision
+ # 22 carries the packaged Neovim theme symlink and its catch-up repair.
+ # Revision 23 carries the early-boot recovery for an orphaned pacman lock left
+-# by an interrupted package update.
+-compat_revision=23
++# by an interrupted package update. Revision 24 carries the Windows camera
++# bridge and its v4l2loopback wiring.
++compat_revision=24
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+diff --git a/guest/tests/test_camera_bridge.py b/guest/tests/test_camera_bridge.py
+new file mode 100644
+index 0000000..29e29a3
+--- /dev/null
++++ b/guest/tests/test_camera_bridge.py
+@@ -0,0 +1,150 @@
++#!/usr/bin/env python3
++"""Protocol and V4L2 contract tests for the Windows camera bridge."""
++
++from __future__ import annotations
++
++import ctypes
++import importlib.machinery
++import importlib.util
++from pathlib import Path
++import struct
++import unittest
++from unittest import mock
++
++
++GUEST = Path(__file__).resolve().parents[1]
++OVERLAY = GUEST / "factory-overlay"
++BRIDGE_PATH = OVERLAY / "usr/local/bin/omarchy-windows-camera-bridge"
++
++loader = importlib.machinery.SourceFileLoader("omarchy_windows_camera_bridge", str(BRIDGE_PATH))
++spec = importlib.util.spec_from_loader(loader.name, loader)
++bridge = importlib.util.module_from_spec(spec)
++loader.exec_module(bridge)
++
++
++class WindowsCameraBridgeTests(unittest.TestCase):
++    def message(self, kind: int, payload: bytes, sequence: int = 0) -> bytes:
++        return bridge.HEADER.pack(
++            bridge.MAGIC,
++            bridge.VERSION,
++            kind,
++            0,
++            len(payload),
++            sequence,
++        ) + payload
++
++    def test_fragmented_status_and_frame_messages_are_reassembled(self) -> None:
++        status = b'{"status":"streaming"}'
++        frame = bytes([37]) * bridge.FRAME_BYTES
++        encoded = self.message(bridge.KIND_STATUS, status) + self.message(
++            bridge.KIND_FRAME, frame, sequence=42
++        )
++        parser = bridge.MessageParser()
++        messages = []
++        for offset in range(0, len(encoded), 65537):
++            messages.extend(parser.feed(encoded[offset : offset + 65537]))
++        self.assertEqual(messages[0], (bridge.KIND_STATUS, 0, status))
++        self.assertEqual(messages[1], (bridge.KIND_FRAME, 42, frame))
++        self.assertEqual(parser.buffer, b"")
++
++    def test_invalid_frame_size_is_rejected_before_buffering_payload(self) -> None:
++        parser = bridge.MessageParser()
++        header = bridge.HEADER.pack(
++            bridge.MAGIC,
++            bridge.VERSION,
++            bridge.KIND_FRAME,
++            0,
++            bridge.FRAME_BYTES - 1,
++            1,
++        )
++        with self.assertRaisesRegex(ValueError, "invalid size"):
++            parser.feed(header)
++
++    def test_invalid_header_is_rejected(self) -> None:
++        parser = bridge.MessageParser()
++        header = bridge.HEADER.pack(b"NOPE", bridge.VERSION, bridge.KIND_STATUS, 0, 2, 1)
++        with self.assertRaisesRegex(ValueError, "invalid camera message header"):
++            parser.feed(header)
++
++    def test_unsupported_message_kind_is_rejected(self) -> None:
++        parser = bridge.MessageParser()
++        header = bridge.HEADER.pack(bridge.MAGIC, bridge.VERSION, 9, 0, 0, 1)
++        with self.assertRaisesRegex(ValueError, "unsupported camera message"):
++            parser.feed(header)
++
++    def test_black_frame_is_video_range_nv12(self) -> None:
++        frame = bridge.black_frame()
++        self.assertEqual(len(frame), bridge.FRAME_BYTES)
++        luma_bytes = bridge.WIDTH * bridge.HEIGHT
++        self.assertEqual(set(frame[:luma_bytes]), {16})
++        self.assertEqual(set(frame[luma_bytes:]), {128})
++
++    def test_v4l2_ioctl_layout_matches_linux_uapi(self) -> None:
++        self.assertEqual(ctypes.sizeof(bridge.V4L2PixFormat), 48)
++        self.assertEqual(ctypes.sizeof(bridge.V4L2Format), 208)
++        self.assertEqual(ctypes.sizeof(bridge.V4L2EventSubscription), 32)
++        self.assertEqual(ctypes.sizeof(bridge.V4L2Event), 136)
++        self.assertEqual(bridge.V4L2Event.data.offset, 8)
++        self.assertEqual(bridge.V4L2Event.pending.offset, 72)
++        self.assertEqual(bridge.V4L2Event.sequence.offset, 76)
++        self.assertEqual(bridge.V4L2Event.timestamp.offset, 80)
++        self.assertEqual(bridge.VIDIOC_S_FMT, 0xC0D05605)
++        self.assertEqual(bridge.VIDIOC_DQEVENT, 0x80885659)
++        self.assertEqual(bridge.VIDIOC_SUBSCRIBE_EVENT, 0x4020565A)
++        self.assertEqual(bridge.V4L2_EVENT_SUB_FL_SEND_INITIAL, 0x0001)
++
++    def test_dequeue_client_count_reads_aligned_event_union(self) -> None:
++        def fill_event(_descriptor, request, event, mutate) -> None:
++            self.assertEqual(request, bridge.VIDIOC_DQEVENT)
++            self.assertTrue(mutate)
++            event.type = bridge.V4L2_EVENT_PRI_CLIENT_USAGE
++            count = ctypes.c_uint32(1)
++            ctypes.memmove(
++                ctypes.addressof(event) + bridge.V4L2Event.data.offset,
++                ctypes.byref(count),
++                ctypes.sizeof(count),
++            )
++
++        with mock.patch.object(bridge.fcntl, "ioctl", side_effect=fill_event):
++            self.assertEqual(bridge.dequeue_client_count(42), 1)
++
++    def test_camera_subscription_requests_initial_client_usage(self) -> None:
++        with (
++            mock.patch.object(bridge.fcntl, "ioctl") as ioctl,
++            mock.patch.object(bridge, "write_frame"),
++        ):
++            bridge.configure_camera(42)
++
++        self.assertEqual(ioctl.call_count, 2)
++        subscription_call = ioctl.call_args_list[1]
++        self.assertEqual(subscription_call.args[1], bridge.VIDIOC_SUBSCRIBE_EVENT)
++        subscription = subscription_call.args[2]
++        self.assertEqual(subscription.type, bridge.V4L2_EVENT_PRI_CLIENT_USAGE)
++        self.assertEqual(subscription.flags, bridge.V4L2_EVENT_SUB_FL_SEND_INITIAL)
++
++    def test_wire_header_is_little_endian_and_fixed_size(self) -> None:
++        self.assertEqual(bridge.HEADER.size, 16)
++        encoded = self.message(bridge.KIND_STATUS, b"ok", sequence=0x01020304)
++        self.assertEqual(encoded[:4], b"TOCM")
++        self.assertEqual(encoded[8:12], struct.pack("<I", 2))
++        self.assertEqual(encoded[12:16], b"\x04\x03\x02\x01")
++
++    def test_kernel_module_and_device_wiring(self) -> None:
++        modprobe = (OVERLAY / "etc/modprobe.d/90-try-omarchy-camera.conf").read_text()
++        self.assertIn("video_nr=42", modprobe)
++        self.assertIn('card_label="Windows Camera"', modprobe)
++        self.assertIn("exclusive_caps=1", modprobe)
++        self.assertEqual(
++            (OVERLAY / "etc/modules-load.d/90-try-omarchy-camera.conf").read_text().strip(),
++            "v4l2loopback",
++        )
++        rules = (OVERLAY / "etc/udev/rules.d/94-try-omarchy-camera.rules").read_text()
++        self.assertIn('ATTR{name}=="dev.tryomarchy.camera"', rules)
++        self.assertIn('KERNEL=="video42"', rules)
++        self.assertTrue(
++            (OVERLAY / "etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service").is_symlink()
++        )
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 17730e5..4d9223c 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -266,7 +266,7 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=23" in finalize_rootfs
++        "compat_revision=24" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in compat_paths
+         and "etc/skel/.config/nvim/lua/plugins/theme.lua" in compat_paths
+@@ -287,6 +287,15 @@ def main() -> None:
+         and (GUEST / "factory-overlay/usr/local/lib/try-omarchy/clear-stale-pacman-lock").stat().st_mode & stat.S_IXUSR != 0,
+         "orphaned pacman lock recovery reaches persistent disks created by older releases",
+     )
++    check(
++        "usr/local/bin/omarchy-windows-camera-bridge" in compat_paths
++        and "usr/lib/systemd/user/omarchy-windows-camera-bridge.service" in compat_paths
++        and "etc/modprobe.d/90-try-omarchy-camera.conf" in compat_paths
++        and "v4l2loopback" in (GUEST / "factory-overlay/etc/modules-load.d/90-try-omarchy-camera.conf").read_text()
++        and "v4l2loopback-dkms" in (GUEST / "packages.txt").read_text()
++        and (GUEST / "factory-overlay/usr/local/bin/omarchy-windows-camera-bridge").stat().st_mode & stat.S_IXUSR != 0,
++        "Windows camera bridge and its v4l2loopback module reach persistent disks",
++    )
+     catch_up = read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/catch-up")
+     check(
+         "restore_nvim_theme_link" in catch_up
+-- 
+2.55.0
+
