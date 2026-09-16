@@ -112,14 +112,21 @@ updates. Network access is needed for the fresh guest's normal Omarchy updater.
 It checks the initial lock state, runs the updater, then installs a local fixture
 package whose pre-transaction hook pauses while pacman holds its real lock. A
 competing transaction must fail without changing the lock. The test kills only
-that fixture's systemd service, reboots, verifies the stale lock still blocks
-transactions, and performs controlled recovery before completing the fixture
-installation and checking another reboot. User-file hashes must match, and package-database diagnostics and their exit
+that fixture's systemd service, powers the VM off, and reboots. On the next boot
+`try-omarchy-pacman-lock.service` removes the orphaned lock on its own and logs
+the reason, so the fixture then installs normally with no manual lock deletion.
+User-file hashes must match, and package-database diagnostics and their exit
 status must remain identical to the post-update baseline. Existing database
 errors are printed and retained, not treated as a clean integrity result.
 
-The fixture scripts deliberately kill a package transaction and remove its known
-stale lock; never run them directly on a host or a valued guest. This covers a
-controlled interruption before package writes, not power loss during extraction,
-a partially installed system update, Windows launcher rollback, or the original
-reporter's unknown interruption. Passing it does not establish those other cases.
+The recovery only removes a lock it can prove orphaned: a regular file, no
+pacman/alpm process running, no process holding it open, and an mtime older than
+the current boot. An active transaction's lock is never touched, and anything
+ambiguous is left in place and logged.
+
+The fixture scripts still deliberately kill a package transaction; never run them
+directly on a host or a valued guest. This covers a controlled interruption
+before package writes, the orphaned-lock auto-recovery, and the following normal
+transaction. It does not cover power loss during extraction, a partially
+installed system update, Windows launcher rollback, or the original reporter's
+unknown interruption. Passing it does not establish those other cases.

@@ -1,0 +1,361 @@
+From 0a0d3c57b165ba7233704ed51eb9c57fad1cc8e4 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Tue, 15 Sep 2026 21:44:09 -0400
+Subject: [PATCH] Recover from an orphaned pacman lock left by an interrupted
+ update
+
+An interrupted package transaction can leave /var/lib/pacman/db.lck behind,
+and every later update then fails with 'unable to lock database' until it is
+removed by hand (issue #90).
+
+Add an early-boot oneshot service that removes the lock only when it cannot
+belong to a live transaction: a regular file, no pacman/alpm process running,
+no process holding it open, and an mtime that predates the current boot.
+Anything ambiguous is left untouched and logged. The recovery ships to
+existing disks through the compatibility overlay, so the revision moves to 23.
+---
+ .../try-omarchy-pacman-lock.service           |   1 +
+ .../system/try-omarchy-pacman-lock.service    |  14 ++
+ .../lib/try-omarchy/clear-stale-pacman-lock   | 121 ++++++++++++++++++
+ guest/scripts/finalize-rootfs.sh              |   7 +-
+ guest/tests/test_pacman_lock_recovery.py      | 116 +++++++++++++++++
+ guest/tests/verify.py                         |  10 +-
+ 6 files changed, 267 insertions(+), 2 deletions(-)
+ create mode 120000 guest/factory-overlay/etc/systemd/system/sysinit.target.wants/try-omarchy-pacman-lock.service
+ create mode 100644 guest/factory-overlay/etc/systemd/system/try-omarchy-pacman-lock.service
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/clear-stale-pacman-lock
+ create mode 100644 guest/tests/test_pacman_lock_recovery.py
+
+diff --git a/guest/factory-overlay/etc/systemd/system/sysinit.target.wants/try-omarchy-pacman-lock.service b/guest/factory-overlay/etc/systemd/system/sysinit.target.wants/try-omarchy-pacman-lock.service
+new file mode 120000
+index 0000000..058241e
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/sysinit.target.wants/try-omarchy-pacman-lock.service
+@@ -0,0 +1 @@
++../try-omarchy-pacman-lock.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/system/try-omarchy-pacman-lock.service b/guest/factory-overlay/etc/systemd/system/try-omarchy-pacman-lock.service
+new file mode 100644
+index 0000000..7a1ac65
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/try-omarchy-pacman-lock.service
+@@ -0,0 +1,14 @@
++[Unit]
++Description=Remove an orphaned pacman database lock from an interrupted update
++DefaultDependencies=no
++After=local-fs.target
++Before=sysinit.target systemd-tmpfiles-setup.service try-omarchy-update-repository.service
++ConditionPathExists=/var/lib/pacman/db.lck
++
++[Service]
++Type=oneshot
++ExecStart=/usr/local/lib/try-omarchy/clear-stale-pacman-lock
++RemainAfterExit=yes
++
++[Install]
++WantedBy=sysinit.target
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/clear-stale-pacman-lock b/guest/factory-overlay/usr/local/lib/try-omarchy/clear-stale-pacman-lock
+new file mode 100755
+index 0000000..5785b9c
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/clear-stale-pacman-lock
+@@ -0,0 +1,121 @@
++#!/usr/bin/env python3
++"""Remove an orphaned pacman database lock left by an interrupted update.
++
++pacman records an in-progress transaction with /var/lib/pacman/db.lck and
++removes it on exit. A crash, reboot or killed terminal during an update can
++leave the file behind, and every later update then fails with "unable to lock
++database" until it is removed by hand (see try-omarchy-windows issue #90).
++
++This runs once at early boot. It removes the lock only when all of the
++following hold, which together prove the lock cannot belong to a live
++transaction:
++
++  * it is a regular file, not a symlink or directory
++  * no pacman (or alpm) process is running
++  * no process has the lock file open
++  * the file predates this boot, so no process in this boot created it
++
++Anything ambiguous is left untouched and the reason is written to the journal.
++This never runs pacman itself and never repairs the database.
++"""
++import os
++import stat
++
++LOCK = "/var/lib/pacman/db.lck"
++PROC = "/proc"
++PROC_STAT = "/proc/stat"
++PACMAN_NAMES = ("pacman", "alpm")
++
++
++def boot_time(proc_stat=PROC_STAT):
++    """Wall-clock time this boot started, from /proc/stat btime."""
++    try:
++        with open(proc_stat, encoding="utf-8") as handle:
++            for line in handle:
++                if line.startswith("btime "):
++                    return int(line.split()[1])
++    except (OSError, ValueError, IndexError):
++        return None
++    return None
++
++
++def _processes(proc):
++    for name in os.listdir(proc):
++        if name.isdigit():
++            yield name, os.path.join(proc, name)
++
++
++def running_pacman(proc=PROC):
++    """Name of a running pacman/alpm process, or None."""
++    for _, path in _processes(proc):
++        try:
++            with open(os.path.join(path, "comm"), encoding="utf-8") as handle:
++                name = handle.read().strip()
++        except OSError:
++            continue
++        if name in PACMAN_NAMES:
++            return name
++    return None
++
++
++def lock_holder(lock, proc=PROC):
++    """PID with the lock file open, or None."""
++    for pid, path in _processes(proc):
++        fd_dir = os.path.join(path, "fd")
++        try:
++            fds = os.listdir(fd_dir)
++        except OSError:
++            continue
++        for fd in fds:
++            try:
++                if os.readlink(os.path.join(fd_dir, fd)) == lock:
++                    return pid
++            except OSError:
++                continue
++    return None
++
++
++def evaluate(lock, proc=PROC, now_boot_time=None):
++    """Return (remove, reason) for the given lock path."""
++    if os.path.islink(lock):
++        return False, "lock is a symbolic link"
++    try:
++        info = os.stat(lock, follow_symlinks=False)
++    except FileNotFoundError:
++        return False, "no lock present"
++    except OSError as error:
++        return False, f"cannot inspect lock: {error}"
++    if not stat.S_ISREG(info.st_mode):
++        return False, "lock is not a regular file"
++    name = running_pacman(proc)
++    if name:
++        return False, f"{name} is running"
++    holder = lock_holder(lock, proc)
++    if holder:
++        return False, f"pid {holder} holds the lock open"
++    if now_boot_time is None:
++        return False, "boot time is unknown"
++    if info.st_mtime >= now_boot_time:
++        return False, "lock was created after this boot"
++    return True, "lock predates this boot and no pacman process owns it"
++
++
++def clear(lock=LOCK, proc=PROC, now_boot_time=None):
++    """Remove the lock when evaluate proves it stale; report in the journal."""
++    remove, reason = evaluate(lock, proc, now_boot_time)
++    if not remove:
++        print(f"try-omarchy: leaving pacman lock {lock}: {reason}", flush=True)
++        return False
++    # Re-check the live conditions immediately before unlinking. A pacman that
++    # started meanwhile cannot have created this file (it refuses to start while
++    # the lock exists), so the file being removed is still the stale one.
++    if running_pacman(proc) or lock_holder(lock, proc):
++        print(f"try-omarchy: pacman became active; keeping {lock}", flush=True)
++        return False
++    os.unlink(lock)
++    print(f"try-omarchy: removed stale pacman lock {lock} ({reason})", flush=True)
++    return True
++
++
++if __name__ == "__main__":
++    clear(LOCK, PROC, boot_time())
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 21b0ba5..bc4dd7b 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -93,6 +93,9 @@ compat_paths=(
+   usr/local/lib/try-omarchy/repair-browser-policy
+   etc/systemd/system/try-omarchy-browser-policy.service
+   etc/systemd/system/multi-user.target.wants/try-omarchy-browser-policy.service
++  usr/local/lib/try-omarchy/clear-stale-pacman-lock
++  etc/systemd/system/try-omarchy-pacman-lock.service
++  etc/systemd/system/sysinit.target.wants/try-omarchy-pacman-lock.service
+   etc/systemd/user/clipboard-bridge.service
+   etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf
+   etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service
+@@ -135,7 +138,9 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ # Bump this revision whenever compat-overlay.tar changes in a way that must be
+ # applied to persistent disks created by an earlier launcher release. Revision
+ # 22 carries the packaged Neovim theme symlink and its catch-up repair.
+-compat_revision=22
++# Revision 23 carries the early-boot recovery for an orphaned pacman lock left
++# by an interrupted package update.
++compat_revision=23
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Never let the container host's hardware autodetection remove the virtual
+diff --git a/guest/tests/test_pacman_lock_recovery.py b/guest/tests/test_pacman_lock_recovery.py
+new file mode 100644
+index 0000000..e234e5c
+--- /dev/null
++++ b/guest/tests/test_pacman_lock_recovery.py
+@@ -0,0 +1,116 @@
++"""Behavioral tests for the early-boot stale pacman lock recovery.
++
++Run unprivileged against a fake /proc and a temp lock file. They pin the exact
++conditions under which the guest is allowed to remove an orphaned
++/var/lib/pacman/db.lck and, more importantly, every case where it must not.
++"""
++
++import importlib.machinery
++import importlib.util
++import os
++from pathlib import Path
++import tempfile
++import unittest
++
++SCRIPT = (
++    Path(__file__).resolve().parents[1]
++    / "factory-overlay/usr/local/lib/try-omarchy/clear-stale-pacman-lock"
++)
++loader = importlib.machinery.SourceFileLoader("pacman_lock", str(SCRIPT))
++spec = importlib.util.spec_from_loader(loader.name, loader)
++module = importlib.util.module_from_spec(spec)
++loader.exec_module(module)
++
++BOOT = 1_700_000_000.0
++BEFORE_BOOT = BOOT - 3600
++AFTER_BOOT = BOOT + 60
++
++
++class PacmanLockTests(unittest.TestCase):
++    def setUp(self):
++        self.root = Path(tempfile.mkdtemp())
++        self.addCleanup(lambda: __import__("shutil").rmtree(self.root, ignore_errors=True))
++        self.proc = self.root / "proc"
++        self.proc.mkdir()
++        self.lock = self.root / "db.lck"
++
++    def make_lock(self, mtime=BEFORE_BOOT):
++        self.lock.write_text("")
++        os.utime(self.lock, (mtime, mtime))
++
++    def process(self, pid, comm="bash", opens=()):
++        directory = self.proc / str(pid)
++        directory.mkdir()
++        (directory / "comm").write_text(f"{comm}\n")
++        if opens:
++            fd_dir = directory / "fd"
++            fd_dir.mkdir()
++            for index, target in enumerate(opens):
++                os.symlink(target, fd_dir / str(index))
++
++    def test_removes_lock_that_predates_boot(self):
++        self.make_lock()
++        remove, reason = module.evaluate(str(self.lock), str(self.proc), BOOT)
++        self.assertTrue(remove, reason)
++        self.assertTrue(module.clear(str(self.lock), str(self.proc), BOOT))
++        self.assertFalse(self.lock.exists())
++
++    def test_keeps_lock_created_after_boot(self):
++        self.make_lock(mtime=AFTER_BOOT)
++        remove, reason = module.evaluate(str(self.lock), str(self.proc), BOOT)
++        self.assertFalse(remove)
++        self.assertIn("after this boot", reason)
++        self.assertFalse(module.clear(str(self.lock), str(self.proc), BOOT))
++        self.assertTrue(self.lock.exists())
++
++    def test_keeps_lock_while_pacman_runs(self):
++        self.make_lock()
++        self.process(4242, comm="pacman")
++        remove, reason = module.evaluate(str(self.lock), str(self.proc), BOOT)
++        self.assertFalse(remove)
++        self.assertIn("pacman", reason)
++        module.clear(str(self.lock), str(self.proc), BOOT)
++        self.assertTrue(self.lock.exists())
++
++    def test_keeps_lock_held_open_by_a_process(self):
++        self.make_lock()
++        self.process(7, comm="sh", opens=(str(self.lock),))
++        remove, reason = module.evaluate(str(self.lock), str(self.proc), BOOT)
++        self.assertFalse(remove)
++        self.assertIn("holds the lock open", reason)
++        self.assertFalse(module.clear(str(self.lock), str(self.proc), BOOT))
++        self.assertTrue(self.lock.exists())
++
++    def test_keeps_symlink_in_place_of_lock(self):
++        target = self.root / "elsewhere"
++        target.write_text("")
++        self.lock.symlink_to(target)
++        remove, reason = module.evaluate(str(self.lock), str(self.proc), BOOT)
++        self.assertFalse(remove)
++        self.assertIn("symbolic link", reason)
++        self.assertFalse(module.clear(str(self.lock), str(self.proc), BOOT))
++        self.assertTrue(self.lock.is_symlink())
++
++    def test_missing_lock_is_not_an_error(self):
++        remove, reason = module.evaluate(str(self.lock), str(self.proc), BOOT)
++        self.assertFalse(remove)
++        self.assertIn("no lock", reason)
++        self.assertFalse(module.clear(str(self.lock), str(self.proc), BOOT))
++
++    def test_unknown_boot_time_keeps_lock(self):
++        self.make_lock()
++        remove, reason = module.evaluate(str(self.lock), str(self.proc), None)
++        self.assertFalse(remove)
++        self.assertIn("boot time", reason)
++        self.assertFalse(module.clear(str(self.lock), str(self.proc), None))
++        self.assertTrue(self.lock.exists())
++
++    def test_boot_time_reads_btime(self):
++        stat_file = self.root / "stat"
++        stat_file.write_text("cpu  0 0 0\nbtime 1700000000\nprocesses 9\n")
++        self.assertEqual(module.boot_time(str(stat_file)), 1_700_000_000)
++        self.assertIsNone(module.boot_time(str(self.root / "absent")))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index f6c3139..17730e5 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -266,7 +266,7 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=22" in finalize_rootfs
++        "compat_revision=23" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in compat_paths
+         and "etc/skel/.config/nvim/lua/plugins/theme.lua" in compat_paths
+@@ -279,6 +279,14 @@ def main() -> None:
+         and "etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service" in compat_paths,
+         "launcher integration has an explicit revision for persistent-disk upgrades",
+     )
++    check(
++        "usr/local/lib/try-omarchy/clear-stale-pacman-lock" in compat_paths
++        and "etc/systemd/system/try-omarchy-pacman-lock.service" in compat_paths
++        and "etc/systemd/system/sysinit.target.wants/try-omarchy-pacman-lock.service" in compat_paths
++        and (GUEST / "factory-overlay/etc/systemd/system/sysinit.target.wants/try-omarchy-pacman-lock.service").is_symlink()
++        and (GUEST / "factory-overlay/usr/local/lib/try-omarchy/clear-stale-pacman-lock").stat().st_mode & stat.S_IXUSR != 0,
++        "orphaned pacman lock recovery reaches persistent disks created by older releases",
++    )
+     catch_up = read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/catch-up")
+     check(
+         "restore_nvim_theme_link" in catch_up
+-- 
+2.55.0
+

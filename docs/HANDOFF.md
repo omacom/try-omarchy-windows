@@ -34,9 +34,11 @@ remaining gates. The older full-feature plan is historical, not the v1 requireme
   verifies the source pin against the draft manifest), so master's pin step is red
   between the re-pin and the release becoming public. That window closed when v19
   published. See [RELEASING.md](RELEASING.md).
-- The guest is Omarchy 4.0.3 with runtime `4.0.3-4` and compatibility revision
-  **22** (was 21). Existing guests that take a newer launcher re-apply the
-  compatibility overlay once.
+- The published v19 guest is Omarchy 4.0.3 with runtime `4.0.3-4` and compatibility
+  revision **22**. Unreleased `master` now carries compatibility revision **23**,
+  which adds the early-boot orphaned-pacman-lock recovery for [#90](https://github.com/omacom/try-omarchy-windows/issues/90)
+  (guest patch `0070`). Existing guests receive it on the next launcher update that
+  carries the revision-23 initramfs; it is not in v19.
 - **v19 physical-test note.** The extensive Windows laptop acceptance
   ([September 13](evidence/WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md)) was for the v18-era
   artifacts (runtime r7-r15, compatibility-19/20 guest). v19 was validated on
@@ -61,6 +63,26 @@ remaining gates. The older full-feature plan is historical, not the v1 requireme
 
 ## Completed in the September 15 session
 
+- **#90 orphaned-lock recovery (unreleased).** Guest patch
+  `guest-build/0070-Recover-from-an-orphaned-pacman-lock-left-by-an-interrupted.patch`
+  adds `try-omarchy-pacman-lock.service` and
+  `/usr/local/lib/try-omarchy/clear-stale-pacman-lock`. It runs once at early boot
+  and removes `/var/lib/pacman/db.lck` only when it cannot belong to a live
+  transaction, logging the reason; it never runs pacman or repairs the database.
+  Compatibility revision moved 22 → 23 and the new files are in the compat overlay
+  so existing disks receive them. New unit tests
+  (`guest/tests/test_pacman_lock_recovery.py`) pin the removal and every
+  do-not-remove case; `guest/tests/verify.py` asserts the delivery; the KVM
+  `smoke-package-recovery.py` recovery phase now asserts automatic removal and a
+  following normal transaction. `scripts/release/build-guest.sh --contract-only`
+  passes. Validated on Linux/KVM: a factory image built from this patch passed all
+  four `smoke-package-recovery.py` phases; the recover phase logged
+  `removed stale pacman lock /var/lib/pacman/db.lck (lock predates this boot and no
+  pacman process owns it)`, left `pacman -Dk` diagnostics unchanged, and installed
+  the fixture normally with no manual removal. That build refreshed the drifted
+  Arch lock (`linux` 7.2.4→7.2.6, `uwsm`, `libpcap`) only to build; the refreshed
+  lock was not committed, so master still pins the v19 packages and this remains an
+  unreleased fix.
 - **v0.0.19-preview published.** After the pin fix below, the pin was restored to
   v19 (`8d3fbe8`) and the `publish` phase ran on `master` ([run
   35043448976](https://github.com/omacom/try-omarchy-windows/actions/runs/35043448976)).
@@ -152,10 +174,15 @@ Reproduction entry points:
 
 ## Remaining work and next steps
 
-1. **#90: remaining interruption/recovery investigation.** The original reporter's
-   stale-lock cause is unknown. Tests cover SIGKILL before package writes, not
-   power loss during extraction or scriptlets. Keep active locks protected; no
-   automatic lock deletion was added.
+1. **#90 follow-through.** The orphaned-lock recovery (guest patch `0070`,
+   compatibility revision 23) addresses the user-facing symptom: an interrupted
+   update no longer blocks later updates until the user removes the lock by hand.
+   It removes a lock only when it is provably orphaned (regular file, no
+   pacman/alpm process, no open holder, mtime older than this boot) and logs the
+   decision. Active locks stay protected. Open: the original reporter's exact
+   cause, and interruption during package writes or power loss mid-extraction,
+   which the controlled pre-transaction KVM test does not reproduce. Run
+   `scripts/release/smoke-package-recovery.py` on the exact next candidate.
 2. **v19 physical smoke (optional, for the record).** v19 is published without the
    draft physical test, accepted because the guest kernel and GPU runtime are
    byte-identical to v18 (see the release-state section). If convenient, run the

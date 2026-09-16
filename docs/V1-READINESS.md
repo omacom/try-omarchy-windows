@@ -1,7 +1,7 @@
 # Road to v1
 
-Baseline: [v0.0.18-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.18-preview),
-published September 13, 2026. The next milestone is a focused v1 release candidate.
+Baseline: [v0.0.19-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.19-preview),
+published September 16, 2026. The next milestone is a focused v1 release candidate.
 The project remains a preview until the release gates below are satisfied.
 For another session, start with [the current handoff](HANDOFF.md).
 
@@ -66,16 +66,28 @@ candidates; their reports remain historical supporting evidence.
   restores it for users who lost it without replacing their own file. See
   [Neovim skeleton evidence](evidence/NVIM-SKELETON-2026-09-14.md).
 
-These changes are not in the published v18 assets. Native automated
+- [#90](https://github.com/omacom/try-omarchy-windows/issues/90): an interrupted
+  package update can leave an orphaned `/var/lib/pacman/db.lck` that blocks every
+  later update with "unable to lock database" until it is removed by hand.
+  `try-omarchy-pacman-lock.service` now runs once at early boot and removes the
+  lock only when it provably cannot belong to a live transaction: a regular file,
+  no pacman/alpm process, no process holding it open, and an mtime older than this
+  boot. It logs the decision and never repairs the database. Compatibility
+  revision 23 delivers it to existing disks.
+
+These changes are not in the published v19 assets. Native automated
 checks passed; large installed-guest portable lifecycle acceptance remains open.
 Include them in the next candidate and identify its hashes before testing.
 
 ## Remaining release gates
 
-1. **Updates and recovery.** Reproduce [#90](https://github.com/omacom/try-omarchy-windows/issues/90)
-   on the released image and test interrupted package transactions. Do not remove
-   active package locks. Validate fresh install and preserved existing-guest
-   upgrades on the candidate. Exercise an old pre-transfer installation, both
+1. **Updates and recovery.** The orphaned-lock recovery above closes the
+   user-facing [#90](https://github.com/omacom/try-omarchy-windows/issues/90)
+   symptom; its KVM regression must pass on the exact candidate. Active package
+   locks stay protected. The remaining gap is interruption during package writes
+   or power loss mid-extraction, which the controlled pre-transaction test does not
+   reproduce. Validate fresh install and preserved existing-guest upgrades on the
+   candidate. Exercise an old pre-transfer installation, both
    signed feeds, a preview that skips the bridge, preview-to-stable, direct stable
    installation, stable-to-stable and forced rollback. Record file checksums,
    versions, redirects and signatures. Launcher rollback does not undo installed
