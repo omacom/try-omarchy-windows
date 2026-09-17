@@ -935,8 +935,8 @@ func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
 				break
 			}
 			silent = 0
-			if paths, ok := droppedFilesEvent(line); ok {
-				if err := sendDroppedFiles(paths); err != nil {
+			if paths, point, ok := droppedFilesEvent(line); ok {
+				if err := sendDroppedFilesAt(paths, guestDropPoint(point)); err != nil {
 					logf("file drop: %v", err)
 					go infoBox("These files could not be sent to Omarchy.\n\n" + err.Error())
 				}
