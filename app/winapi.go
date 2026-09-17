@@ -338,7 +338,6 @@ func enforceDisplayWindows(pid uint32, dir string, fullscreen bool, icon uintptr
 		selected = foreground
 	}
 	qemuHwnd.Store(selected)
-	enableVMWindowDrops(selected)
 }
 
 func clipboardGetText() (string, bool) {
