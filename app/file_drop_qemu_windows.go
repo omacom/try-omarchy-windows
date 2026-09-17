@@ -37,6 +37,7 @@ func enableVMWindowDrops(hwnd uintptr) {
 	}
 	shell32.NewProc("DragAcceptFiles").Call(hwnd, 1)
 	comctl32.NewProc("SetWindowSubclass").Call(hwnd, vmDropCallback, vmDropSubclassID, 0)
+	logf("drops: accepting file drops on the VM window %#x", hwnd)
 }
 
 func vmDropWindowProc(hwnd, message, w, l, id, data uintptr) uintptr {
@@ -81,8 +82,11 @@ func handleVMDrop(hwnd, drop uintptr) {
 		}
 	}
 	if err := sendDroppedFilesAt(paths, point); err != nil {
+		logf("drops: delivering %d path(s) at %v failed: %v", len(paths), point, err)
 		infoBox("These files could not be copied to Omarchy.\n\n" + err.Error())
+		return
 	}
+	logf("drops: delivered %d path(s) at %v", len(paths), point)
 }
 
 func dragQueryPoint(drop uintptr) ([2]int, bool) {

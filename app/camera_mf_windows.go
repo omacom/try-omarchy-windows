@@ -58,22 +58,85 @@ func newGUID(data1 uint32, data2, data3 uint16, rest ...byte) comGUID {
 }
 
 var (
-	modMfplat      = syscall.NewLazyDLL("mfplat.dll")
 	modMfreadwrite = syscall.NewLazyDLL("mfreadwrite.dll")
 
-	procMFStartup           = modMfplat.NewProc("MFStartup")
-	procMFCreateAttributes  = modMfplat.NewProc("MFCreateAttributes")
-	procMFCreateMediaType   = modMfplat.NewProc("MFCreateMediaType")
-	procMFSetAttributeSize  = modMfplat.NewProc("MFSetAttributeSize")
-	procMFSetAttributeRatio = modMfplat.NewProc("MFSetAttributeRatio")
-	procMFEnumDeviceSources = modMfplat.NewProc("MFEnumDeviceSources")
+	// mfModules is the search order for the Media Foundation platform entry
+	// points. MFEnumDeviceSources is documented as an mf.dll export rather than
+	// an mfplat.dll one, and Windows builds shuffle some of these between
+	// mfplat.dll, mf.dll and mfcore.dll, so resolve each name across all of them
+	// instead of trusting one module.
+	mfModules = []*syscall.LazyDLL{
+		syscall.NewLazyDLL("mfplat.dll"),
+		syscall.NewLazyDLL("mf.dll"),
+		syscall.NewLazyDLL("mfcore.dll"),
+	}
 
-	procMFCreateSourceReaderFromMediaSource = modMfreadwrite.NewProc("MFCreateSourceReaderFromMediaSource")
-	procCoUninitialize                      = ole32.NewProc("CoUninitialize")
+	procCoUninitialize = ole32.NewProc("CoUninitialize")
+
+	mfProcsOnce sync.Once
+	mfProcsErr  error
+	mfProcs     mfFunctions
 
 	mfStartupOnce sync.Once
 	mfStartupErr  hresult
 )
+
+// mfFunctions holds the resolved Media Foundation entry points. Resolving them
+// explicitly (LazyProc.Find) keeps a missing export an error the launcher can
+// report: LazyProc.Call panics instead, and a machine whose mfplat.dll did not
+// carry MFEnumDeviceSources took the whole app down that way.
+type mfFunctions struct {
+	startup            *syscall.LazyProc
+	createAttributes   *syscall.LazyProc
+	createMediaType    *syscall.LazyProc
+	setAttributeSize   *syscall.LazyProc
+	setAttributeRatio  *syscall.LazyProc
+	enumDeviceSources  *syscall.LazyProc
+	createSourceReader *syscall.LazyProc
+}
+
+func findMFProc(name string) (*syscall.LazyProc, error) {
+	for _, module := range mfModules {
+		proc := module.NewProc(name)
+		if err := proc.Find(); err == nil {
+			return proc, nil
+		}
+	}
+	return nil, fmt.Errorf("Media Foundation is missing %s", name)
+}
+
+func mediaFoundation() (*mfFunctions, error) {
+	mfProcsOnce.Do(func() {
+		for _, entry := range []struct {
+			target **syscall.LazyProc
+			name   string
+		}{
+			{&mfProcs.startup, "MFStartup"},
+			{&mfProcs.createAttributes, "MFCreateAttributes"},
+			{&mfProcs.createMediaType, "MFCreateMediaType"},
+			{&mfProcs.setAttributeSize, "MFSetAttributeSize"},
+			{&mfProcs.setAttributeRatio, "MFSetAttributeRatio"},
+			{&mfProcs.enumDeviceSources, "MFEnumDeviceSources"},
+		} {
+			proc, err := findMFProc(entry.name)
+			if err != nil {
+				mfProcsErr = err
+				return
+			}
+			*entry.target = proc
+		}
+		reader := modMfreadwrite.NewProc("MFCreateSourceReaderFromMediaSource")
+		if err := reader.Find(); err != nil {
+			mfProcsErr = errors.New("Media Foundation is missing MFCreateSourceReaderFromMediaSource")
+			return
+		}
+		mfProcs.createSourceReader = reader
+	})
+	if mfProcsErr != nil {
+		return nil, mfProcsErr
+	}
+	return &mfProcs, nil
+}
 
 // mfCall invokes a COM method through the object's vtable.
 func mfCall(obj unsafe.Pointer, method int, args ...uintptr) hresult {
@@ -167,8 +230,12 @@ func callbackOnReadSample(this, hrStatus, streamIndex, streamFlags, timestamp, s
 }
 
 func startMediaFoundation() error {
+	api, err := mediaFoundation()
+	if err != nil {
+		return err
+	}
 	mfStartupOnce.Do(func() {
-		mfStartupErr = procCall(procMFStartup, mfVersion, mfStartupLite)
+		mfStartupErr = procCall(api.startup, mfVersion, mfStartupLite)
 	})
 	if mfStartupErr < 0 {
 		return fmt.Errorf("Media Foundation startup failed (0x%08x)", uint32(mfStartupErr))
@@ -204,15 +271,19 @@ func (s *mfCameraSource) start() (<-chan []byte, error) {
 }
 
 func (s *mfCameraSource) open() error {
+	api, err := mediaFoundation()
+	if err != nil {
+		return err
+	}
 	var attributes unsafe.Pointer
-	if hr := procCall(procMFCreateAttributes, uintptr(unsafe.Pointer(&attributes)), 1); hr < 0 {
+	if hr := procCall(api.createAttributes, uintptr(unsafe.Pointer(&attributes)), 1); hr < 0 {
 		return fmt.Errorf("MFCreateAttributes failed (0x%08x)", uint32(hr))
 	}
 	setGUID(attributes, &guidDeviceSourceType, &guidDeviceSourceTypeVidcap)
 
 	var count uint32
 	var devices *unsafe.Pointer
-	if hr := procCall(procMFEnumDeviceSources, uintptr(attributes), uintptr(unsafe.Pointer(&devices)), uintptr(unsafe.Pointer(&count))); hr < 0 {
+	if hr := procCall(api.enumDeviceSources, uintptr(attributes), uintptr(unsafe.Pointer(&devices)), uintptr(unsafe.Pointer(&count))); hr < 0 {
 		mfRelease(&attributes)
 		return fmt.Errorf("enumerating cameras failed (0x%08x)", uint32(hr))
 	}
@@ -238,7 +309,7 @@ func (s *mfCameraSource) open() error {
 	}
 
 	var callbackAttrs unsafe.Pointer
-	if hr := procCall(procMFCreateAttributes, uintptr(unsafe.Pointer(&callbackAttrs)), 1); hr < 0 {
+	if hr := procCall(api.createAttributes, uintptr(unsafe.Pointer(&callbackAttrs)), 1); hr < 0 {
 		mfRelease(&source)
 		mfRelease(&attributes)
 		return fmt.Errorf("MFCreateAttributes failed (0x%08x)", uint32(hr))
@@ -248,7 +319,7 @@ func (s *mfCameraSource) open() error {
 	setUnknown(callbackAttrs, &guidAsyncCallback, unsafe.Pointer(s.callback))
 
 	var reader unsafe.Pointer
-	if hr := procCall(procMFCreateSourceReaderFromMediaSource, uintptr(source), uintptr(callbackAttrs), uintptr(unsafe.Pointer(&reader))); hr < 0 {
+	if hr := procCall(api.createSourceReader, uintptr(source), uintptr(callbackAttrs), uintptr(unsafe.Pointer(&reader))); hr < 0 {
 		mfRelease(&source)
 		mfRelease(&callbackAttrs)
 		mfRelease(&attributes)
@@ -263,14 +334,18 @@ func (s *mfCameraSource) open() error {
 }
 
 func (s *mfCameraSource) configure() error {
+	api, err := mediaFoundation()
+	if err != nil {
+		return err
+	}
 	var media unsafe.Pointer
-	if hr := procCall(procMFCreateMediaType, uintptr(unsafe.Pointer(&media))); hr < 0 {
+	if hr := procCall(api.createMediaType, uintptr(unsafe.Pointer(&media))); hr < 0 {
 		return fmt.Errorf("MFCreateMediaType failed (0x%08x)", uint32(hr))
 	}
 	setGUID(media, &guidMajorType, &guidMediaTypeVideo)
 	setGUID(media, &guidSubtype, &guidVideoFormatNV12)
-	procMFSetAttributeSize.Call(uintptr(media), uintptr(unsafe.Pointer(&guidFrameSize)), uintptr(cameraWidth), uintptr(cameraHeight))
-	procMFSetAttributeRatio.Call(uintptr(media), uintptr(unsafe.Pointer(&guidFrameRate)), 30, 1)
+	api.setAttributeSize.Call(uintptr(media), uintptr(unsafe.Pointer(&guidFrameSize)), uintptr(cameraWidth), uintptr(cameraHeight))
+	api.setAttributeRatio.Call(uintptr(media), uintptr(unsafe.Pointer(&guidFrameRate)), 30, 1)
 	setUint32(media, &guidInterlaceMode, mfVideoInterlaceProgressive)
 
 	if hr := mfCall(s.reader, 7, mfSourceReaderFirstVideoStream, 0, uintptr(media)); hr < 0 { // SetCurrentMediaType
