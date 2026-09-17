@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -288,6 +289,20 @@ func TestAudioUnavailableMatchesOnlyDirectSoundStartupFailures(t *testing.T) {
 		if got := audioUnavailable(cfg); got != want {
 			t.Fatalf("audioUnavailable(%q) = %v, want %v", message, got, want)
 		}
+	}
+}
+
+func TestBuildQemuArgsUsesReconnectMSForTheCameraChardev(t *testing.T) {
+	cfg := &config{vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw", diskFormat: "raw", memMiB: 4096, audio: "none"}
+	args := strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
+	// QEMU dropped the bare reconnect option, so shipping it makes every
+	// launch die at startup with "Invalid parameter 'reconnect'".
+	if strings.Contains(args, "reconnect=") {
+		t.Fatalf("camera chardev uses the removed reconnect option: %s", args)
+	}
+	want := fmt.Sprintf("socket,id=cam0,host=127.0.0.1,port=%d,reconnect-ms=1000", cameraPort)
+	if !strings.Contains(args, want) {
+		t.Fatalf("camera chardev missing %q: %s", want, args)
 	}
 }
 

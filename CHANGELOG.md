@@ -14,6 +14,16 @@
   existing clock re-sync.
 - Refresh the guest package lock for current Arch repositories, which moves the
   guest kernel to 7.2.6.
+- Boot the guest again: the camera channel used the `reconnect` chardev option,
+  which current QEMU rejects, so every launch died before the guest booted. It
+  now uses `reconnect-ms`.
+- Resolve the Media Foundation capture entry points across `mfplat.dll`, `mf.dll`
+  and `mfcore.dll` instead of assuming `mfplat.dll`, report a missing export as
+  an error instead of crashing, and set the frame size and rate through
+  `SetUINT64` rather than the inline-only `MFSetAttributeSize` and
+  `MFSetAttributeRatio` helpers. `MFEnumDeviceSources` lives in `mf.dll` on
+  current Windows, and the camera bridge took the launcher down on the first
+  real camera attempt.
 
 ## v0.0.19-preview - 2026-09-15
 
