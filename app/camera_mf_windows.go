@@ -48,6 +48,10 @@ var (
 	guidEnableVideoProcessing  = newGUID(0xfb394f3d, 0xccf1, 0x42ee, 0xbb, 0xb3, 0xf9, 0xb8, 0x45, 0xd5, 0x68, 0x1d)
 )
 
+// guidIMFMediaSource is what IMFActivate::ActivateObject is asked for here: the
+// result is handed straight to MFCreateSourceReaderFromMediaSource.
+var guidIMFMediaSource = newGUID(0x279afa83, 0x4981, 0x11ce, 0xa5, 0x21, 0x00, 0x20, 0xaf, 0x0b, 0xe5, 0x60)
+
 func newGUID(data1 uint32, data2, data3 uint16, rest ...byte) comGUID {
 	var value comGUID
 	value.d1 = data1
@@ -312,7 +316,7 @@ func (s *mfCameraSource) open() error {
 	}
 
 	var source unsafe.Pointer
-	if hr := mfCall(s.activate, 33, 0, 0, uintptr(unsafe.Pointer(&source))); hr < 0 { // IMFActivate::ActivateObject
+	if hr := mfCall(s.activate, 33, uintptr(unsafe.Pointer(&guidIMFMediaSource)), uintptr(unsafe.Pointer(&source))); hr < 0 { // IMFActivate::ActivateObject
 		mfRelease(&attributes)
 		return fmt.Errorf("the camera could not be opened (0x%08x)", uint32(hr))
 	}
@@ -447,7 +451,7 @@ func (s *mfCameraSource) stop() {
 func (s *mfCameraSource) closeLocked() {
 	s.stopped = true
 	if s.reader != nil {
-		mfCall(s.reader, 8, mfSourceReaderFirstVideoStream) // Flush
+		mfCall(s.reader, 10, mfSourceReaderFirstVideoStream) // Flush
 	}
 	mfRelease(&s.reader)
 	mfRelease(&s.media)
