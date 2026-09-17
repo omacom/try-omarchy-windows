@@ -18,8 +18,10 @@
   which current QEMU rejects, so every launch died before the guest booted. It
   now uses `reconnect-ms`.
 - Resolve the Media Foundation capture entry points across `mfplat.dll`, `mf.dll`
-  and `mfcore.dll` instead of assuming `mfplat.dll`, and report a missing export
-  as an error instead of crashing. `MFEnumDeviceSources` lives in `mf.dll` on
+  and `mfcore.dll` instead of assuming `mfplat.dll`, report a missing export as
+  an error instead of crashing, and set the frame size and rate through
+  `SetUINT64` rather than the inline-only `MFSetAttributeSize` and
+  `MFSetAttributeRatio` helpers. `MFEnumDeviceSources` lives in `mf.dll` on
   current Windows, and the camera bridge took the launcher down on the first
   real camera attempt.
 

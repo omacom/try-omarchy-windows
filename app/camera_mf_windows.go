@@ -70,7 +70,6 @@ var (
 		syscall.NewLazyDLL("mf.dll"),
 		syscall.NewLazyDLL("mfcore.dll"),
 	}
-
 	procCoUninitialize = ole32.NewProc("CoUninitialize")
 
 	mfProcsOnce sync.Once
@@ -85,12 +84,14 @@ var (
 // explicitly (LazyProc.Find) keeps a missing export an error the launcher can
 // report: LazyProc.Call panics instead, and a machine whose mfplat.dll did not
 // carry MFEnumDeviceSources took the whole app down that way.
+//
+// MFSetAttributeSize and MFSetAttributeRatio are deliberately absent: they are
+// inline helpers in mfapi.h that pack two UINT32s and call SetUINT64, not
+// exported functions, so there is nothing to resolve for them.
 type mfFunctions struct {
 	startup            *syscall.LazyProc
 	createAttributes   *syscall.LazyProc
 	createMediaType    *syscall.LazyProc
-	setAttributeSize   *syscall.LazyProc
-	setAttributeRatio  *syscall.LazyProc
 	enumDeviceSources  *syscall.LazyProc
 	createSourceReader *syscall.LazyProc
 }
@@ -114,8 +115,6 @@ func mediaFoundation() (*mfFunctions, error) {
 			{&mfProcs.startup, "MFStartup"},
 			{&mfProcs.createAttributes, "MFCreateAttributes"},
 			{&mfProcs.createMediaType, "MFCreateMediaType"},
-			{&mfProcs.setAttributeSize, "MFSetAttributeSize"},
-			{&mfProcs.setAttributeRatio, "MFSetAttributeRatio"},
 			{&mfProcs.enumDeviceSources, "MFEnumDeviceSources"},
 		} {
 			proc, err := findMFProc(entry.name)
@@ -164,6 +163,16 @@ func setGUID(obj unsafe.Pointer, key *comGUID, value *comGUID) {
 
 func setUint32(obj unsafe.Pointer, key *comGUID, value uint32) {
 	mfCall(obj, 21, uintptr(unsafe.Pointer(key)), uintptr(value))
+}
+
+func setUint64(obj unsafe.Pointer, key *comGUID, value uint64) {
+	mfCall(obj, 22, uintptr(unsafe.Pointer(key)), uintptr(value)) // IMFAttributes::SetUINT64
+}
+
+// packUint32Pair packs two UINT32s the way mfapi.h's Pack2UINT32AsUINT64 does:
+// the first value in the high 32 bits, the second in the low 32.
+func packUint32Pair(high, low uint32) uint64 {
+	return uint64(high)<<32 | uint64(low)
 }
 
 func setUnknown(obj unsafe.Pointer, key *comGUID, value unsafe.Pointer) {
@@ -344,8 +353,8 @@ func (s *mfCameraSource) configure() error {
 	}
 	setGUID(media, &guidMajorType, &guidMediaTypeVideo)
 	setGUID(media, &guidSubtype, &guidVideoFormatNV12)
-	api.setAttributeSize.Call(uintptr(media), uintptr(unsafe.Pointer(&guidFrameSize)), uintptr(cameraWidth), uintptr(cameraHeight))
-	api.setAttributeRatio.Call(uintptr(media), uintptr(unsafe.Pointer(&guidFrameRate)), 30, 1)
+	setUint64(media, &guidFrameSize, packUint32Pair(cameraWidth, cameraHeight))
+	setUint64(media, &guidFrameRate, packUint32Pair(30, 1))
 	setUint32(media, &guidInterlaceMode, mfVideoInterlaceProgressive)
 
 	if hr := mfCall(s.reader, 7, mfSourceReaderFirstVideoStream, 0, uintptr(media)); hr < 0 { // SetCurrentMediaType

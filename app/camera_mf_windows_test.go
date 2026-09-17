@@ -21,8 +21,6 @@ func TestMediaFoundationExportsResolve(t *testing.T) {
 		"MFStartup":                           api.startup,
 		"MFCreateAttributes":                  api.createAttributes,
 		"MFCreateMediaType":                   api.createMediaType,
-		"MFSetAttributeSize":                  api.setAttributeSize,
-		"MFSetAttributeRatio":                 api.setAttributeRatio,
 		"MFEnumDeviceSources":                 api.enumDeviceSources,
 		"MFCreateSourceReaderFromMediaSource": api.createSourceReader,
 	} {
