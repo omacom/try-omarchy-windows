@@ -28,10 +28,23 @@ func TestDroppedFilesEvents(t *testing.T) {
 		{"DISPLAY_FILE_DROP", 0, nil, false},
 	} {
 		data, _ := json.Marshal(map[string]any{"event": sample.event, "data": map[string]any{"display": sample.display, "files": sample.paths}})
-		_, ok := droppedFilesEvent(string(data))
+		_, _, ok := droppedFilesEvent(string(data))
 		if ok != sample.valid {
 			t.Fatal(sample, ok)
 		}
+	}
+}
+
+func TestDroppedFilesReadTheEventPoint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file")
+	reported, _ := json.Marshal(map[string]any{"event": "DISPLAY_FILE_DROP", "data": map[string]any{"display": 0, "x": 100, "y": 200, "files": []string{path}}})
+	paths, point, ok := droppedFilesEvent(string(reported))
+	if !ok || len(paths) != 1 || point == nil || point[0] != 100 || point[1] != 200 {
+		t.Fatalf("reported point: paths=%v point=%v ok=%v", paths, point, ok)
+	}
+	missing, _ := json.Marshal(map[string]any{"event": "DISPLAY_FILE_DROP", "data": map[string]any{"display": 0, "files": []string{path}}})
+	if _, point, ok := droppedFilesEvent(string(missing)); !ok || point != nil {
+		t.Fatal("a drop without a reported point must not invent one")
 	}
 }
 
