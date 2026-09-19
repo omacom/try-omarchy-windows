@@ -5,7 +5,9 @@ package main
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -50,7 +52,9 @@ var (
 
 // guidIMFMediaSource is what IMFActivate::ActivateObject is asked for here: the
 // result is handed straight to MFCreateSourceReaderFromMediaSource.
-var guidIMFMediaSource = newGUID(0x279afa83, 0x4981, 0x11ce, 0xa5, 0x21, 0x00, 0x20, 0xaf, 0x0b, 0xe5, 0x60)
+var guidIMFMediaSource = newGUID(0x279a808d, 0xaec7, 0x40c8, 0x9c, 0x6b, 0xa6, 0xb4, 0x92, 0xc7, 0x8a, 0x66)
+var guidIUnknown = newGUID(0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46)
+var guidSourceReaderCallback = newGUID(0xdeec8d99, 0xfa1d, 0x4d82, 0x84, 0xc2, 0x2c, 0x89, 0x69, 0x94, 0x48, 0x67)
 
 func newGUID(data1 uint32, data2, data3 uint16, rest ...byte) comGUID {
 	var value comGUID
@@ -146,7 +150,9 @@ func mfCall(obj unsafe.Pointer, method int, args ...uintptr) hresult {
 	if obj == nil {
 		return -1
 	}
-	return hresult(int32(uint32(comCall(uintptr(obj), method, args...))))
+	result := hresult(int32(uint32(comCall(uintptr(obj), method, args...))))
+	runtime.KeepAlive(obj)
+	return result
 }
 
 func mfRelease(obj *unsafe.Pointer) {
@@ -195,19 +201,27 @@ type mfCameraSource struct {
 	frames         chan []byte
 	reader         unsafe.Pointer
 	attrs          unsafe.Pointer
-	media          unsafe.Pointer
 	activate       unsafe.Pointer
 	devices        *unsafe.Pointer
 	callback       *cameraCallback
 	stride         int
 	stopped        bool
 	comInitialized bool
+	ended          bool
+	stopReq        chan struct{}
+	done           chan struct{}
 	mu             sync.Mutex
 }
+
+// Native COM references are invisible to Go's GC. Retain and pin each callback
+// until its last COM reference is released, including late callbacks after stop.
+var cameraCallbacks sync.Map
 
 type cameraCallback struct {
 	vtable *[6]uintptr
 	source *mfCameraSource
+	refs   atomic.Int32
+	pin    runtime.Pinner
 }
 
 func newCameraCallback(source *mfCameraSource) *cameraCallback {
@@ -220,17 +234,40 @@ func newCameraCallback(source *mfCameraSource) *cameraCallback {
 		syscall.NewCallback(callbackOnFlush),
 		syscall.NewCallback(callbackOnEvent),
 	}
+	callback.refs.Store(1)
+	callback.pin.Pin(callback)
+	callback.pin.Pin(callback.vtable)
+	cameraCallbacks.Store(callback, struct{}{})
 	return callback
 }
 
 func callbackQueryInterface(this, riid, ppv uintptr) uintptr {
+	if ppv == 0 || riid == 0 {
+		return 0x80004003 // E_POINTER
+	}
+	*(*uintptr)(unsafe.Pointer(ppv)) = 0
+	iid := *(*comGUID)(unsafe.Pointer(riid))
+	if iid != guidIUnknown && iid != guidSourceReaderCallback {
+		return 0x80004002 // E_NOINTERFACE
+	}
+	callbackAddRef(this)
 	*(*uintptr)(unsafe.Pointer(ppv)) = this
 	return uintptr(sOK)
 }
 
-func callbackAddRef(uintptr) uintptr { return 1 }
+func callbackAddRef(this uintptr) uintptr {
+	return uintptr((*cameraCallback)(unsafe.Pointer(this)).refs.Add(1))
+}
 
-func callbackRelease(uintptr) uintptr { return 1 }
+func callbackRelease(this uintptr) uintptr {
+	callback := (*cameraCallback)(unsafe.Pointer(this))
+	refs := callback.refs.Add(-1)
+	if refs == 0 {
+		cameraCallbacks.Delete(callback)
+		callback.pin.Unpin()
+	}
+	return uintptr(refs)
+}
 
 func callbackOnFlush(uintptr, uintptr) uintptr { return uintptr(sOK) }
 
@@ -238,7 +275,7 @@ func callbackOnEvent(uintptr, uintptr, uintptr) uintptr { return uintptr(sOK) }
 
 func callbackOnReadSample(this, hrStatus, streamIndex, streamFlags, timestamp, sample uintptr) uintptr {
 	callback := (*cameraCallback)(unsafe.Pointer(this))
-	callback.source.handleSample(hresult(int32(uint32(hrStatus))), sample)
+	callback.source.handleSample(callback, hresult(int32(uint32(hrStatus))), uint32(streamFlags), sample)
 	return uintptr(sOK)
 }
 
@@ -256,29 +293,49 @@ func startMediaFoundation() error {
 	return nil
 }
 
+// start and stop are serialized by serveCamera. A dedicated OS thread owns
+// COM initialization and cleanup; Go may move the network goroutine at any time.
 func (s *mfCameraSource) start() (<-chan []byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.frames != nil {
+	if s.stopReq != nil {
 		return s.frames, nil
 	}
-	if err := startMediaFoundation(); err != nil {
-		return nil, err
-	}
-	if hr := procCall(procCoInitializeEx, 0, coInitMultithreaded); hr >= 0 {
+	ready := make(chan error, 1)
+	stopReq, done := make(chan struct{}), make(chan struct{})
+	s.stopReq, s.done = stopReq, done
+	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		defer close(done)
+		defer s.close()
+		if hr := procCall(procCoInitializeEx, 0, coInitMultithreaded); hr < 0 {
+			ready <- fmt.Errorf("COM initialization failed (0x%08x)", uint32(hr))
+			return
+		}
 		s.comInitialized = true
-	} else if uint32(hr) != rpcEChangedMode {
-		return nil, fmt.Errorf("COM initialization failed (0x%08x)", uint32(hr))
-	}
-	if err := s.open(); err != nil {
-		s.closeLocked()
+		if err := startMediaFoundation(); err != nil {
+			ready <- err
+			return
+		}
+		if err := s.open(); err != nil {
+			ready <- err
+			return
+		}
+		s.mu.Lock()
+		s.frames = make(chan []byte, 4)
+		s.stopped, s.ended = false, false
+		hr := mfCall(s.reader, 9, mfSourceReaderFirstVideoStream, 0, 0, 0, 0, 0)
+		s.mu.Unlock()
+		if hr < 0 {
+			ready <- fmt.Errorf("camera capture failed to start (0x%08x)", uint32(hr))
+			return
+		}
+		ready <- nil
+		<-stopReq
+	}()
+	if err := <-ready; err != nil {
+		<-done
+		s.stopReq, s.done = nil, nil
 		return nil, err
-	}
-	s.frames = make(chan []byte, 4)
-	s.stopped = false
-	if hr := mfCall(s.reader, 9, mfSourceReaderFirstVideoStream, 0, 0, 0, 0, 0); hr < 0 { // ReadSample
-		s.closeLocked()
-		return nil, fmt.Errorf("camera capture failed to start (0x%08x)", uint32(hr))
 	}
 	return s.frames, nil
 }
@@ -328,7 +385,9 @@ func (s *mfCameraSource) open() error {
 		return fmt.Errorf("MFCreateAttributes failed (0x%08x)", uint32(hr))
 	}
 	setUint32(callbackAttrs, &guidEnableVideoProcessing, 1)
+	s.mu.Lock()
 	s.callback = newCameraCallback(s)
+	s.mu.Unlock()
 	setUnknown(callbackAttrs, &guidAsyncCallback, unsafe.Pointer(s.callback))
 
 	var reader unsafe.Pointer
@@ -381,20 +440,23 @@ func (s *mfCameraSource) configure() error {
 		s.stride = cameraWidth
 	}
 	mfRelease(&media)
-	s.media = media
 	return nil
 }
 
-func (s *mfCameraSource) handleSample(status hresult, sample uintptr) {
+func (s *mfCameraSource) handleSample(callback *cameraCallback, status hresult, flags uint32, sample uintptr) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if sample != 0 {
-		defer mfCall(unsafe.Pointer(sample), 2) // IUnknown::Release
-	}
-	if s.stopped || s.reader == nil {
+	// OnReadSample lends us the sample for this callback. It does not transfer
+	// a reference; only the buffer acquired below belongs to us.
+	if s.callback != callback || s.stopped || s.ended || s.reader == nil {
 		return
 	}
-	if status >= 0 && sample != 0 {
+	if status < 0 || flags&(1|2|32) != 0 {
+		logf("camera: capture ended or format changed (status=0x%08x flags=0x%x)", uint32(status), flags)
+		s.endFramesLocked()
+		return
+	}
+	if sample != 0 {
 		if frame := s.copyFrame(sample); frame != nil && s.frames != nil {
 			select {
 			case s.frames <- frame:
@@ -404,14 +466,17 @@ func (s *mfCameraSource) handleSample(status hresult, sample uintptr) {
 	}
 	// Re-request while still holding the lock so stop() cannot release the
 	// reader between the check and the call.
-	mfCall(s.reader, 9, mfSourceReaderFirstVideoStream, 0, 0, 0, 0, 0) // ReadSample
+	if hr := mfCall(s.reader, 9, mfSourceReaderFirstVideoStream, 0, 0, 0, 0, 0); hr < 0 {
+		logf("camera: requesting sample failed (0x%08x)", uint32(hr))
+		s.endFramesLocked()
+	}
 }
 
 // copyFrame converts one camera sample to tightly packed NV12, dropping any row
 // padding the device reported.
 func (s *mfCameraSource) copyFrame(sample uintptr) []byte {
 	var buffer unsafe.Pointer
-	if hr := mfCall(unsafe.Pointer(sample), 10, 0, uintptr(unsafe.Pointer(&buffer))); hr < 0 { // GetBufferByIndex
+	if hr := mfCall(unsafe.Pointer(sample), 41, uintptr(unsafe.Pointer(&buffer))); hr < 0 { // IMFSample::ConvertToContiguousBuffer
 		return nil
 	}
 	defer mfRelease(&buffer)
@@ -440,28 +505,46 @@ func (s *mfCameraSource) copyFrame(sample uintptr) []byte {
 	return frame
 }
 
-func (s *mfCameraSource) stop() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.closeLocked()
+func (s *mfCameraSource) endFramesLocked() {
+	if s.frames != nil && !s.ended {
+		close(s.frames)
+		s.ended = true
+	}
 }
 
-// closeLocked releases Media Foundation resources. The caller holds s.mu so a
-// callback in flight can never re-issue ReadSample against a released reader.
-func (s *mfCameraSource) closeLocked() {
-	s.stopped = true
-	if s.reader != nil {
-		mfCall(s.reader, 10, mfSourceReaderFirstVideoStream) // Flush
+func (s *mfCameraSource) stop() {
+	if s.stopReq != nil {
+		close(s.stopReq)
+		<-s.done
+		s.stopReq, s.done = nil, nil
 	}
-	mfRelease(&s.reader)
-	mfRelease(&s.media)
+}
+
+func (s *mfCameraSource) close() {
+	// Never release the reader while holding the callback mutex: native
+	// shutdown may wait for an in-flight callback to finish.
+	s.mu.Lock()
+	s.stopped = true
+	s.endFramesLocked()
+	reader, callback := s.reader, s.callback
+	s.reader, s.callback = nil, nil
+	s.mu.Unlock()
+	if reader != nil {
+		mfCall(reader, 10, mfSourceReaderFirstVideoStream) // Flush
+	}
+	if s.activate != nil {
+		mfCall(s.activate, 34) // ShutdownObject releases the camera device
+	}
+	mfRelease(&reader)
 	mfRelease(&s.attrs)
 	mfRelease(&s.activate)
+	if callback != nil {
+		callbackRelease(uintptr(unsafe.Pointer(callback)))
+	}
 	if s.devices != nil {
 		procCoTaskMemFree.Call(uintptr(unsafe.Pointer(s.devices)))
 		s.devices = nil
 	}
-	s.frames = nil
 	if s.comInitialized {
 		procCoUninitialize.Call()
 		s.comInitialized = false

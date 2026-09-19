@@ -58,7 +58,7 @@ func sendDroppedFilesAt(paths []string, point []int) error {
 		return fmt.Errorf("Omarchy is still starting")
 	}
 	dropped := droppedFiles{paths: append([]string(nil), paths...)}
-	if len(point) == 2 && point[0] >= 0 && point[1] >= 0 {
+	if (len(point) == 2 || len(point) == 4) && point[0] >= 0 && point[1] >= 0 {
 		dropped.point = append([]int(nil), point...)
 	}
 	select {
@@ -81,7 +81,7 @@ func (b *clipBridge) offerDroppedFiles(dropped droppedFiles) error {
 		progress.finish()
 		return err
 	}
-	if len(dropped.point) == 2 {
+	if len(dropped.point) == 2 || len(dropped.point) == 4 {
 		ticket.Point = append([]int(nil), dropped.point...)
 	}
 	data, _ := json.Marshal(ticket)

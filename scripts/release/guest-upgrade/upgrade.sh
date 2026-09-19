@@ -3,6 +3,16 @@ set -euxo pipefail
 systemctl status try-omarchy-update-repository.service --no-pager
 [[ $(pacman -Q try-omarchy-runtime) == "try-omarchy-runtime $BASELINE_RUNTIME" ]]
 sha256sum -c "$HOME/upgrade-preserve.sha256"
+# Prove the compatibility payload supplied loadable modules before any package
+# update can mask a missing-module regression on the persistent disk.
+sudo modprobe tun
+[[ -c /dev/net/tun ]]
+sudo modprobe v4l2loopback
+[[ -c /dev/video42 ]]
+[[ $(cat "/usr/lib/modules/$(uname -r)/.tryomarchy-complete") == "$(cat /usr/share/try-omarchy/compat-version)" ]]
+for metadata in modules.order modules.builtin modules.builtin.modinfo; do
+  [[ -f /usr/lib/modules/$(uname -r)/$metadata ]]
+done
 # A lock deliberately owned by this test must block the transaction unchanged.
 [[ ! -e /var/lib/pacman/db.lck ]]
 printf 'upgrade-test-owned-lock\n' | sudo tee /var/lib/pacman/db.lck

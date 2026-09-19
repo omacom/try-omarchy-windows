@@ -3,7 +3,6 @@
 package main
 
 import (
-	"sync/atomic"
 	"unsafe"
 )
 
@@ -18,21 +17,13 @@ import (
 // when it does not, the cursor is still over the release point while QEMU
 // reports the completed drop, so that is mapped instead.
 
-var vmDropSize atomic.Uint64 // width<<32 | height of the current guest display
-
 var (
 	procGetClientRect  = user32.NewProc("GetClientRect")
 	procScreenToClient = user32.NewProc("ScreenToClient")
 )
 
-func setVMDisplaySize(width, height int) {
-	if width > 0 && height > 0 {
-		vmDropSize.Store(uint64(uint32(width))<<32 | uint64(uint32(height)))
-	}
-}
-
-// guestDropPoint scales a drop point from display-window client coordinates to
-// the guest display. point is nil when the runtime did not report coordinates.
+// guestDropPoint includes the current display-window size so the guest can
+// map the point using its current resolution and scale. point is nil when the runtime did not report coordinates.
 func guestDropPoint(point *[2]int) []int {
 	hwnd := qemuHwnd.Load()
 	if hwnd == 0 {
@@ -58,10 +49,5 @@ func guestDropPoint(point *[2]int) []int {
 	if x < 0 || y < 0 || x >= width || y >= height {
 		return nil
 	}
-	size := vmDropSize.Load()
-	guestWidth, guestHeight := int(uint32(size>>32)), int(uint32(size))
-	if guestWidth <= 0 || guestHeight <= 0 {
-		return nil
-	}
-	return []int{x * guestWidth / width, y * guestHeight / height}
+	return []int{x, y, width, height}
 }

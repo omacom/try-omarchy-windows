@@ -1,15 +1,21 @@
 # Changelog
 
-## v0.0.20-preview - 2026-09-16
+## v0.0.20-preview - Unreleased
 
 - Recover automatically from an orphaned pacman database lock left by an
   interrupted update, so later updates no longer need a manual `db.lck` removal.
   The lock is removed only when it provably cannot belong to a live transaction.
 - Expose the Windows camera to the guest as a `Windows Camera` V4L2 device, on
   demand: the Windows camera indicator lights only while an app is capturing.
-- Drop files from Windows onto the Omarchy window under the cursor and have the
-  application receive them directly. When nothing can take the files, the
-  transfer window still opens.
+- Drop files from Windows onto the Omarchy window and request a paste into the
+  application under the cursor on a single display. Keep received files in the
+  transfer window because applications do not acknowledge shortcut delivery.
+- Repair camera activation, frame extraction and capture shutdown, and keep
+  callbacks alive until Media Foundation releases them.
+- Use SDL audio for microphone capture and playback, retaining DirectSound and
+  silent startup fallbacks when audio cannot initialize.
+- Deliver the complete matching kernel module tree to existing guests, including
+  TUN and the camera driver; retry interrupted delivery on the next boot.
 - Pause the guest while Windows sleeps and resume it on wake, ahead of the
   existing clock re-sync.
 - Refresh the guest package lock for current Arch repositories, which moves the

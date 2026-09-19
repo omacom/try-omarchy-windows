@@ -1,5 +1,26 @@
 # Resume here
 
+Updated September 19, 2026. The active follow-up is branch
+`codex/preview20-reliability`. Public Latest remains v0.0.19-preview.
+
+The current v20 draft launcher predates the startup fix in #130 and must not be
+used for another acceptance pass. The separate September 17 retest launcher also
+predates #132/#133. A replacement candidate is being prepared with those fixes,
+additional Media Foundation ABI/lifetime corrections, SDL audio capture, complete
+matching kernel modules for persistent guests, and visible file-drop fallback.
+Guest compatibility revision is 27. No new physical Windows acceptance is claimed.
+
+Before release, record the replacement launcher, runtime and guest hashes in
+[LAPTOP-PASS.md](LAPTOP-PASS.md), run fresh and preserved-guest acceptance, and
+refresh this checkpoint with the exact build results. Current open reports include
+#128 (microphone), #129 (site wording), #134 (TUN), and the existing v1 tracker #77.
+Camera and direct-paste behavior still require physical acceptance.
+
+The remainder is historical context from September 15-17. Current GitHub state
+and the dated checkpoint above supersede its PR counts and candidate references.
+
+## Earlier handoff
+
 Updated September 15, 2026, after merged PRs #115, #117, #118, #120, #121, #123,
 #125 and #126. The user is working toward an official v1 and approved a focused
 reliability, recovery and hardware-validation plan. Use
