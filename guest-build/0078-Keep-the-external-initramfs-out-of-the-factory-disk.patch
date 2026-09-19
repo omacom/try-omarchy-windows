@@ -1,0 +1,40 @@
+From 5ebed3d4275e078d607c9981a24e6fe13baf491a Mon Sep 17 00:00:00 2001
+From: Try Omarchy <actions@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 14:03:27 -0400
+Subject: [PATCH] Keep the external initramfs out of the factory disk
+
+---
+ guest/scripts/pack-image.sh | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/guest/scripts/pack-image.sh b/guest/scripts/pack-image.sh
+index c41fca7..6a6e2de 100755
+--- a/guest/scripts/pack-image.sh
++++ b/guest/scripts/pack-image.sh
+@@ -59,6 +59,14 @@ done
+ [[ ! -e $root/var/lib/pacman/db.lck && ! -L $root/var/lib/pacman/db.lck ]] ||
+   fail "package database is locked; finish the package transaction before packing"
+ 
++# Windows boots the external initramfs. Keeping another compressed copy in
++# the factory disk wastes download space and the disk's reserved headroom,
++# especially now that it carries the complete matching kernel modules.
++mkdir -p "$output"
++install -m 0644 "$root$kernel_source" "$output/vmlinuz-linux"
++install -m 0644 "$root$initramfs_source" "$output/initramfs-linux.img"
++rm -- "$root$initramfs_source"
++
+ size_mib=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"]["sizeMiB"])' "$spec")
+ label=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"]["filesystemLabel"])' "$spec")
+ uuid=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"]["filesystemUuid"])' "$spec")
+@@ -80,8 +88,6 @@ mke2fs -q -F -t ext4 -b 4096 -L "$label" -U "$uuid" \
+   -d "$root" "$raw" "$blocks"
+ e2fsck -fn "$raw"
+ 
+-install -m 0644 "$root$kernel_source" "$output/vmlinuz-linux"
+-install -m 0644 "$root$initramfs_source" "$output/initramfs-linux.img"
+ install -m 0644 "$root/usr/share/try-omarchy/build-spec.json" "$output/build-spec.json"
+ install -m 0644 "$root/usr/share/try-omarchy/provenance.json" "$output/provenance.json"
+ install -m 0644 "$root/usr/share/licenses/omarchy/LICENSE" "$output/LICENSE.omarchy"
+-- 
+2.55.0
+

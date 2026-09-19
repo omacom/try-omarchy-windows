@@ -711,7 +711,6 @@ func main() {
 		}
 	}
 	cfg.displayWidth, cfg.displayHeight = conW, conH
-	setVMDisplaySize(conW, conH)
 	cmdline += fmt.Sprintf(" video=%dx%d", conW, conH)
 
 	reclaimDir.Store(&cfg.dir)
@@ -731,7 +730,7 @@ func main() {
 	if err := ensureLANFirewall(cfg); err != nil {
 		fatal("Could not prepare LAN forwarding:\n\n%v", err)
 	}
-	cfg.audio = "dsound"
+	cfg.audio = "sdl"
 
 	for relaunch := true; relaunch; {
 		relaunch = supervise(cfg, cmdline)
@@ -829,11 +828,15 @@ func supervise(cfg *config, cmdline string) bool {
 					}
 					fatal("Windows refused to start the virtual machine: the hypervisor does not allow nested virtualization on this PC.\n\nThis is a known problem with some Intel Core Ultra laptops and machines running the full Hyper-V feature set. Details are in %s\\qemu-stderr.log.", cfg.vmDir)
 				}
-				// No DirectSound device (VMs, some remote sessions) kills
-				// QEMU at startup; retry silent rather than dying.
-				if cfg.audio == "dsound" && audioUnavailable(cfg) {
-					logf("QEMU exited at startup - retrying without audio")
-					cfg.audio = "none"
+				// SDL supports capture and playback. Retain playback-only
+				// DirectSound, then silent operation, for unavailable devices.
+				if cfg.audio != "none" && audioUnavailable(cfg) {
+					if cfg.audio == "sdl" {
+						cfg.audio = "dsound"
+					} else {
+						cfg.audio = "none"
+					}
+					logf("QEMU exited at startup - retrying with audio backend %s", cfg.audio)
 					break probe
 				}
 				// Not enough free memory: step the guest down before giving
@@ -935,8 +938,8 @@ func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
 				break
 			}
 			silent = 0
-			if paths, ok := droppedFilesEvent(line); ok {
-				if err := sendDroppedFiles(paths); err != nil {
+			if paths, point, ok := droppedFilesEvent(line); ok {
+				if err := sendDroppedFilesAt(paths, guestDropPoint(point)); err != nil {
 					logf("file drop: %v", err)
 					go infoBox("These files could not be sent to Omarchy.\n\n" + err.Error())
 				}

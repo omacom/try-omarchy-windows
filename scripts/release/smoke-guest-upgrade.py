@@ -103,7 +103,11 @@ def main():
         parser.error('accessible /dev/kvm is required')
     baseline, candidate, work = (p.resolve() for p in (args.baseline, args.candidate, args.work))
     for directory in (baseline, candidate):
-        for filename in ('rootfs.ext4', 'vmlinuz-linux', 'initramfs-linux.img', 'build-spec.json'):
+        # Only the baseline factory is copied. Candidate boots reuse that disk.
+        required = ('vmlinuz-linux', 'initramfs-linux.img', 'build-spec.json')
+        if directory == baseline:
+            required += ('rootfs.ext4',)
+        for filename in required:
             if not (directory / filename).is_file():
                 parser.error(f'missing artifact: {directory / filename}')
         if ',' in str(directory):

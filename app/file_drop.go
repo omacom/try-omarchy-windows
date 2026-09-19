@@ -12,34 +12,41 @@ import (
 var desktopClipboard atomic.Pointer[clipBridge]
 
 // droppedFiles is one drop request. Point is set when the files were released
-// onto the VM window at a known guest-display coordinate.
+// onto the VM window. New tickets carry x, y, window width and window height;
+// older two-value tickets retain transfer-window fallback.
 type droppedFiles struct {
 	paths []string
 	point []int
 }
 
-func droppedFilesEvent(line string) ([]string, bool) {
+func droppedFilesEvent(line string) ([]string, *[2]int, bool) {
 	if len(line) > 1<<20 {
-		return nil, false
+		return nil, nil, false
 	}
 	var event struct {
 		Event string `json:"event"`
 		Data  struct {
 			Display int      `json:"display"`
+			X       *int     `json:"x"`
+			Y       *int     `json:"y"`
 			Files   []string `json:"files"`
 		} `json:"data"`
 	}
 	if json.Unmarshal([]byte(line), &event) != nil || event.Event != "DISPLAY_FILE_DROP" || event.Data.Display < 0 || event.Data.Display >= maximumGuestDisplays || len(event.Data.Files) == 0 || len(event.Data.Files) > 1000 {
-		return nil, false
+		return nil, nil, false
 	}
 	bytes := 0
 	for _, path := range event.Data.Files {
 		bytes += len(path)
 		if !filepath.IsAbs(path) || strings.ContainsRune(path, 0) || bytes > 131072 {
-			return nil, false
+			return nil, nil, false
 		}
 	}
-	return event.Data.Files, true
+	var point *[2]int
+	if event.Data.X != nil && event.Data.Y != nil {
+		point = &[2]int{*event.Data.X, *event.Data.Y}
+	}
+	return event.Data.Files, point, true
 }
 
 func sendDroppedFiles(paths []string) error {
@@ -52,7 +59,7 @@ func sendDroppedFilesAt(paths []string, point []int) error {
 		return fmt.Errorf("Omarchy is still starting")
 	}
 	dropped := droppedFiles{paths: append([]string(nil), paths...)}
-	if len(point) == 2 && point[0] >= 0 && point[1] >= 0 {
+	if (len(point) == 2 || len(point) == 4) && point[0] >= 0 && point[1] >= 0 {
 		dropped.point = append([]int(nil), point...)
 	}
 	select {
@@ -75,7 +82,7 @@ func (b *clipBridge) offerDroppedFiles(dropped droppedFiles) error {
 		progress.finish()
 		return err
 	}
-	if len(dropped.point) == 2 {
+	if len(dropped.point) == 2 || len(dropped.point) == 4 {
 		ticket.Point = append([]int(nil), dropped.point...)
 	}
 	data, _ := json.Marshal(ticket)

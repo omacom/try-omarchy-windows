@@ -18,25 +18,46 @@ class Transfers(Gtk.Application):
         super().__init__(application_id='org.omarchy.FileTransfers', flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
         self.window = None
         self.worker = None
+        self.closing = False
         self.pending = []
+        self.drop_point = None
+        self.received_paths = []
         self.state = Path(os.environ.get('XDG_RUNTIME_DIR', '/run/user/' + str(os.getuid()))) / 'try-omarchy-clipboard'
         self.state.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.cache = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'try-omarchy-transfers'
         self.cache.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def do_command_line(self, command):
-        self.activate()
         args = command.get_arguments()[1:]
-        if len(args) == 2 and args[0] == '--ticket':
-            path = Path(args[1])
-            if path.parent != self.state or not path.name.startswith('incoming-drop-') or path.is_symlink():
+        ticket = None
+        point = None
+        index = 0
+        while index < len(args):
+            if args[index] == '--ticket' and index + 1 < len(args):
+                ticket = Path(args[index + 1])
+            elif args[index] == '--point' and index + 1 < len(args):
+                try:
+                    point = tuple(int(part) for part in args[index + 1].split(','))
+                except ValueError:
+                    return 1
+                if len(point) not in (2, 4) or any(value < 0 for value in point):
+                    return 1
+            else:
+                return 1
+            index += 2
+        # Keep each queued ticket's own point. Never retarget an active copy.
+        if not self.worker:
+            self.drop_point = point
+        self.activate()
+        if ticket is not None:
+            if ticket.parent != self.state or not ticket.name.startswith('incoming-drop-') or ticket.is_symlink():
                 self.status.set_label('The file-drop request is invalid.')
                 return 1
             if len(self.pending) >= 32:
-                path.unlink(missing_ok=True)
+                ticket.unlink(missing_ok=True)
                 self.status.set_label('Finish another transfer before receiving more files.')
                 return 1
-            self.pending.append(path)
+            self.pending.append((ticket, point))
             self.next_download()
         return 0
 
@@ -65,7 +86,8 @@ class Transfers(Gtk.Application):
         box.append(controls)
         self.window.set_child(box)
         self.window.connect('close-request', self.close)
-        self.window.present()
+        if self.drop_point is None:
+            self.window.present()
 
     def choose(self, *_):
         dialog = Gtk.FileDialog(title='Send files to Windows')
@@ -92,7 +114,8 @@ class Transfers(Gtk.Application):
     def next_download(self):
         if self.worker or not self.pending:
             return
-        ticket = self.pending.pop(0)
+        ticket, self.drop_point = self.pending.pop(0)
+        self.received_paths = []
         destination = self.cache / ('received-' + os.urandom(16).hex())
         self.start(['file-transfer', 'download', '--ticket', str(ticket), '--destination', str(destination)], None, ticket)
 
@@ -103,6 +126,7 @@ class Transfers(Gtk.Application):
             self.worker = subprocess.Popen(arguments, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
         except OSError as error:
             self.status.set_label(str(error))
+            self.window.present()
             self.cancel.set_sensitive(False)
             if ticket:
                 ticket.unlink(missing_ok=True)
@@ -120,6 +144,9 @@ class Transfers(Gtk.Application):
         if worker is not self.worker:
             return False
         self.worker = None
+        if self.closing:
+            self.quit()
+            return False
         self.cancel.set_sensitive(False)
         if worker.returncode:
             self.status.set_label(error.decode(errors='replace')[:1000] or 'Transfer cancelled. Original files were kept.')
@@ -135,6 +162,7 @@ class Transfers(Gtk.Application):
         return False
 
     def add_received(self, path):
+        self.received_paths.append(Path(path))
         file = Gio.File.new_for_path(path)
         row = Gtk.ListBoxRow(child=Gtk.Label(label=Path(path).name, xalign=0, margin_top=8, margin_bottom=8))
         drag = Gtk.DragSource(actions=Gdk.DragAction.COPY)
@@ -160,10 +188,11 @@ class Transfers(Gtk.Application):
 
     def close(self, *_):
         if self.worker:
+            self.closing = True
             self.cancel_transfer()
-            self.status.set_label('Cancelling transfer. Close this window after it finishes.')
+            self.window.set_visible(False)
             return True
-        for ticket in self.pending:
+        for ticket, _point in self.pending:
             ticket.unlink(missing_ok=True)
         self.pending.clear()
         self.window = None

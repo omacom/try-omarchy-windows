@@ -47,7 +47,6 @@ func mouseHookCallback(nCode, wParam, lParam uintptr) uintptr {
 			lp := uintptr(uint32(pt[0])&0xffff | uint32(pt[1])<<16)
 			if hit, _, _ := procSendMessageW.Call(hwnd, wmNchittest, 0, lp); hit == htCloseBtn {
 				qemuHwnd.Store(hwnd)
-				enableVMWindowDrops(hwnd)
 				requestQuitConfirm()
 				return 1
 			}

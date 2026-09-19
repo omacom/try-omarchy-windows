@@ -75,9 +75,11 @@ candidates; their reports remain historical supporting evidence.
   boot. It logs the decision and never repairs the database. Compatibility
   revision 23 delivers it to existing disks.
 
-These changes are not in the published v19 assets. Native automated
-checks passed; large installed-guest portable lifecycle acceptance remains open.
-Include them in the next candidate and identify its hashes before testing.
+The portable-copy, runtime-ownership and Neovim repairs above shipped in v19.
+The orphaned-lock recovery is unreleased. The next preview also needs the camera,
+direct-paste, microphone and complete kernel-module fixes described in
+[the current handoff](HANDOFF.md). Large installed-guest portable lifecycle
+acceptance remains open. Identify the exact next candidate hashes before testing.
 
 ## Remaining release gates
 

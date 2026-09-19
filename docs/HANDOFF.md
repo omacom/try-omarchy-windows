@@ -1,5 +1,25 @@
 # Resume here
 
+Updated September 19, 2026. The active follow-up is branch
+`codex/preview20-reliability`. Public Latest remains v0.0.19-preview.
+
+The replacement diagnostic candidate is built from `0f8f371` in [PR #135](https://github.com/omacom/try-omarchy-windows/pull/135),
+with guest compatibility **27**. Linux/Windows CI, all 150 guest tests, the full
+fresh guest boot, and the five-boot v19 upgrade/old-image/return sequence passed.
+Exact hashes and validation boundaries are in
+[the candidate record](evidence/PREVIEW20-CANDIDATE-2026-09-19.md).
+
+The launcher is unsigned and still defaults to public v19. Use the explicit
+local-asset commands in [LAPTOP-PASS.md](LAPTOP-PASS.md) for candidate testing.
+Physical camera/audio, Windows update/rollback and storage acceptance, payload
+pinning and signing remain pending. Do not publish the draft yet.
+The original September 16 v20 and September 17 retest launchers are obsolete.
+
+The remainder is historical context from September 15-17. Current GitHub state
+and the dated checkpoint above supersede its PR counts and candidate references.
+
+## Earlier handoff
+
 Updated September 15, 2026, after merged PRs #115, #117, #118, #120, #121, #123,
 #125 and #126. The user is working toward an official v1 and approved a focused
 reliability, recovery and hardware-validation plan. Use

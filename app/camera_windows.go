@@ -56,17 +56,18 @@ type syntheticCameraSource struct {
 func (s *syntheticCameraSource) start() (<-chan []byte, error) {
 	s.frames = make(chan []byte, 2)
 	s.stopCh = make(chan struct{})
+	stopCh, frames := s.stopCh, s.frames
 	go func() {
 		ticker := time.NewTicker(time.Second / 30)
 		defer ticker.Stop()
 		var column int
 		for {
 			select {
-			case <-s.stopCh:
+			case <-stopCh:
 				return
 			case <-ticker.C:
 				select {
-				case s.frames <- syntheticFrame(column):
+				case frames <- syntheticFrame(column):
 				default: // drop when the reader is behind
 				}
 				column = (column + 8) % cameraWidth

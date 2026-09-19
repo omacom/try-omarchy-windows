@@ -1,0 +1,580 @@
+From af8f60e2e833fc7c74183fec8e13b27a50283b52 Mon Sep 17 00:00:00 2001
+From: Try Omarchy <actions@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 13:54:54 -0400
+Subject: [PATCH] Deliver matching kernel modules and preserve file-drop
+ fallback
+
+---
+ .../etc/initcpio/hooks/tryomarchy_compat      | 20 ++--
+ .../etc/initcpio/install/tryomarchy_compat    | 17 ++++
+ .../omarchy-windows-camera-bridge.service     |  1 -
+ .../omarchy-windows-camera-bridge.service     |  1 +
+ ...mera.rules => 70-try-omarchy-camera.rules} |  4 +-
+ .../omarchy-windows-camera-bridge.service     |  4 +-
+ .../usr/local/bin/file-transfer               |  5 +-
+ .../usr/local/bin/file-transfer-window        | 28 +++---
+ .../usr/local/bin/try-omarchy-drop            | 56 ++++++++++--
+ guest/scripts/finalize-rootfs.sh              | 13 ++-
+ guest/tests/test_camera_bridge.py             |  9 +-
+ guest/tests/test_file_drop_target.py          | 24 +++++
+ guest/tests/test_kernel_module_delivery.py    | 91 +++++++++++++++++++
+ guest/tests/verify.py                         |  6 +-
+ 14 files changed, 239 insertions(+), 40 deletions(-)
+ delete mode 120000 guest/factory-overlay/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service
+ create mode 120000 guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service
+ rename guest/factory-overlay/etc/udev/rules.d/{94-try-omarchy-camera.rules => 70-try-omarchy-camera.rules} (57%)
+ create mode 100644 guest/tests/test_kernel_module_delivery.py
+
+diff --git a/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat b/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat
+index 9ba0de3..6ce51a3 100755
+--- a/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat
++++ b/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat
+@@ -5,9 +5,10 @@ run_latehook() {
+     marker="$root/usr/share/try-omarchy/compat-version"
+     version=$(cat /tryomarchy-compat-version 2>/dev/null) || return 0
+     kernel=$(uname -r)
++    modules_marker="$root/usr/lib/modules/$kernel/.tryomarchy-complete"
+     [ -d "$root" ] || return 0
+     if [ "$(cat "$marker" 2>/dev/null)" = "$version" ] &&
+-       [ -f "$root/usr/lib/modules/$kernel/modules.dep.bin" ]; then
++       [ "$(cat "$modules_marker" 2>/dev/null)" = "$version" ]; then
+         return 0
+     fi
+ 
+@@ -20,16 +21,21 @@ run_latehook() {
+     # cannot express deletion, so remove the obsolete early-start link after
+     # its replacement has been extracted successfully.
+     rm -f "$root/etc/systemd/user/default.target.wants/try-omarchy-share-link.service"
+-    # The launcher boots the release's external kernel. Persistent disks can
+-    # still contain an older linux package, so carry this initramfs's matching
+-    # module tree across before switch_root. A failed copy is retried next boot.
+-    if [ ! -f "$root/usr/lib/modules/$kernel/modules.dep.bin" ]; then
++    # Replace the camera's old broken link and grant the active desktop access
++    # before systemd's seat-late udev rule applies ACLs.
++    rm -f "$root/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service"
++    rm -f "$root/etc/udev/rules.d/94-try-omarchy-camera.rules"
++    # Merge the complete matching tree, including into an older partial tree.
++    # Preserve existing files on failure and leave the completion marker stale,
++    # so an interrupted or disk-full extraction is retried on the next boot.
++    if [ "$(cat "$modules_marker" 2>/dev/null)" != "$version" ]; then
+         if ! mkdir -p "$root/usr/lib/modules" ||
+-           ! cp -a "/usr/lib/modules/$kernel" "$root/usr/lib/modules/"; then
++           ! tar -xf /tryomarchy-kernel-modules.tar -C "$root/usr/lib/modules"; then
+             echo "ERROR: Try Omarchy could not install modules for $kernel" >&2
+-            rm -rf "$root/usr/lib/modules/$kernel"
+             return 1
+         fi
++        [ -f "$root/usr/lib/modules/$kernel/modules.dep.bin" ] || return 1
++        printf '%s\n' "$version" >"$modules_marker" || return 1
+     fi
+     mkdir -p "$(dirname "$marker")"
+     printf '%s\n' "$version" >"$marker"
+diff --git a/guest/factory-overlay/etc/initcpio/install/tryomarchy_compat b/guest/factory-overlay/etc/initcpio/install/tryomarchy_compat
+index 45414b3..71cd997 100755
+--- a/guest/factory-overlay/etc/initcpio/install/tryomarchy_compat
++++ b/guest/factory-overlay/etc/initcpio/install/tryomarchy_compat
+@@ -3,6 +3,23 @@
+ build() {
+     add_file /usr/share/try-omarchy/compat-overlay.tar /tryomarchy-compat-overlay.tar
+     add_file /usr/share/try-omarchy/compat-version /tryomarchy-compat-version
++    # The external kernel needs its complete module tree after switch_root,
++    # including TUN and the DKMS camera module, not just early-boot drivers.
++    # Keep build headers out of the initramfs and avoid a duplicate archive in
++    # the factory rootfs. add_file copies the archive into the build tree.
++    local modules_archive
++    modules_archive=$(mktemp) || return 1
++    if ! tar --exclude="$KERNELVERSION/build" --exclude="$KERNELVERSION/source" \
++        --exclude="$KERNELVERSION/vmlinuz" -C /usr/lib/modules \
++        -cf "$modules_archive" "$KERNELVERSION"; then
++        rm -f "$modules_archive"
++        return 1
++    fi
++    add_file "$modules_archive" /tryomarchy-kernel-modules.tar || {
++        rm -f "$modules_archive"
++        return 1
++    }
++    rm -f "$modules_archive"
+     add_runscript
+ }
+ 
+diff --git a/guest/factory-overlay/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service b/guest/factory-overlay/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service
+deleted file mode 120000
+index 381859b..0000000
+--- a/guest/factory-overlay/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service
++++ /dev/null
+@@ -1 +0,0 @@
+-../omarchy-windows-camera-bridge.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service
+new file mode 120000
+index 0000000..46a2905
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service
+@@ -0,0 +1 @@
++/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/udev/rules.d/94-try-omarchy-camera.rules b/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-camera.rules
+similarity index 57%
+rename from guest/factory-overlay/etc/udev/rules.d/94-try-omarchy-camera.rules
+rename to guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-camera.rules
+index 151209a..c2a0dfb 100644
+--- a/guest/factory-overlay/etc/udev/rules.d/94-try-omarchy-camera.rules
++++ b/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-camera.rules
+@@ -1,2 +1,2 @@
+-SUBSYSTEM=="virtio-ports", ATTR{name}=="dev.tryomarchy.camera", GROUP="video", MODE="0660"
+-KERNEL=="video42", SUBSYSTEM=="video4linux", GROUP="video", MODE="0660"
++SUBSYSTEM=="virtio-ports", ATTR{name}=="dev.tryomarchy.camera", GROUP="video", MODE="0660", TAG+="uaccess", TAG+="seat"
++KERNEL=="video42", SUBSYSTEM=="video4linux", GROUP="video", MODE="0660", TAG+="uaccess", TAG+="seat"
+diff --git a/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service b/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+index a17f18e..3660d11 100644
+--- a/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
++++ b/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+@@ -1,5 +1,7 @@
+ [Unit]
+ Description=Expose the Windows camera to Omarchy over the virtio camera port
++PartOf=graphical-session.target
++After=graphical-session-pre.target
+ 
+ [Service]
+ ExecStart=/usr/local/bin/omarchy-windows-camera-bridge
+@@ -7,4 +9,4 @@ Restart=always
+ RestartSec=1
+ 
+ [Install]
+-WantedBy=default.target
++WantedBy=graphical-session.target
+diff --git a/guest/factory-overlay/usr/local/bin/file-transfer b/guest/factory-overlay/usr/local/bin/file-transfer
+index 47dabea..45cc97b 100755
+--- a/guest/factory-overlay/usr/local/bin/file-transfer
++++ b/guest/factory-overlay/usr/local/bin/file-transfer
+@@ -202,8 +202,9 @@ def read_metadata(path):
+ def valid_drop_point(value):
+     return (
+         isinstance(value, list)
+-        and len(value) == 2
++        and len(value) in (2, 4)
+         and all(isinstance(coordinate, int) and not isinstance(coordinate, bool) and coordinate >= 0 for coordinate in value)
++        and (len(value) == 2 or (value[2] > 0 and value[3] > 0))
+     )
+ 
+ 
+@@ -428,7 +429,7 @@ def main():
+             command = ['file-transfer-window', '--ticket', name]
+             point = ticket.get('point')
+             if valid_drop_point(point):
+-                command += ['--point', f'{point[0]},{point[1]}']
++                command += ['--point', ','.join(map(str, point))]
+             try:
+                 subprocess.Popen(command, close_fds=True, start_new_session=True)
+             except BaseException:
+diff --git a/guest/factory-overlay/usr/local/bin/file-transfer-window b/guest/factory-overlay/usr/local/bin/file-transfer-window
+index cc069eb..5f85550 100755
+--- a/guest/factory-overlay/usr/local/bin/file-transfer-window
++++ b/guest/factory-overlay/usr/local/bin/file-transfer-window
+@@ -39,14 +39,14 @@ class Transfers(Gtk.Application):
+                     point = tuple(int(part) for part in args[index + 1].split(','))
+                 except ValueError:
+                     return 1
+-                if len(point) != 2 or point[0] < 0 or point[1] < 0:
++                if len(point) not in (2, 4) or any(value < 0 for value in point):
+                     return 1
+             else:
+                 return 1
+             index += 2
+-        # The point is known before any window exists; do_activate only shows the
+-        # window when a direct delivery is not going to be attempted.
+-        self.drop_point = point
++        # Keep each queued ticket's own point. Never retarget an active copy.
++        if not self.worker:
++            self.drop_point = point
+         self.activate()
+         if ticket is not None:
+             if ticket.parent != self.state or not ticket.name.startswith('incoming-drop-') or ticket.is_symlink():
+@@ -56,7 +56,7 @@ class Transfers(Gtk.Application):
+                 ticket.unlink(missing_ok=True)
+                 self.status.set_label('Finish another transfer before receiving more files.')
+                 return 1
+-            self.pending.append(ticket)
++            self.pending.append((ticket, point))
+             self.next_download()
+         return 0
+ 
+@@ -67,6 +67,8 @@ class Transfers(Gtk.Application):
+             'x': self.drop_point[0],
+             'y': self.drop_point[1],
+             'paths': [str(path) for path in self.received_paths],
++            'width': self.drop_point[2] if len(self.drop_point) == 4 else 0,
++            'height': self.drop_point[3] if len(self.drop_point) == 4 else 0,
+         })
+         try:
+             result = subprocess.run(
+@@ -75,7 +77,7 @@ class Transfers(Gtk.Application):
+             )
+         except (OSError, subprocess.SubprocessError):
+             return False
+-        return result.returncode == 0
++        return result.returncode == 3
+ 
+     def do_activate(self):
+         if self.window:
+@@ -130,7 +132,8 @@ class Transfers(Gtk.Application):
+     def next_download(self):
+         if self.worker or not self.pending:
+             return
+-        ticket = self.pending.pop(0)
++        ticket, self.drop_point = self.pending.pop(0)
++        self.received_paths = []
+         destination = self.cache / ('received-' + os.urandom(16).hex())
+         self.start(['file-transfer', 'download', '--ticket', str(ticket), '--destination', str(destination)], None, ticket)
+ 
+@@ -141,6 +144,7 @@ class Transfers(Gtk.Application):
+             self.worker = subprocess.Popen(arguments, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
+         except OSError as error:
+             self.status.set_label(str(error))
++            self.window.present()
+             self.cancel.set_sensitive(False)
+             if ticket:
+                 ticket.unlink(missing_ok=True)
+@@ -169,11 +173,11 @@ class Transfers(Gtk.Application):
+                         self.add_received(path)
+                 except (ValueError, KeyError, TypeError):
+                     self.status.set_label('Files were received, but the transfer result could not be read.')
+-            if self.drop_point is not None and not self.pending:
++            if ticket and self.drop_point is not None:
+                 if self.deliver_direct():
+-                    self.quit()
+-                    return False
+-                self.status.set_label('Files were received. Drag them into an application.')
++                    self.status.set_label('Paste requested. If the application did not receive the files, drag them from here.')
++                else:
++                    self.status.set_label('Files were received. Drag them into an application.')
+         if self.drop_point is not None and not self.window.get_visible():
+             self.window.present()
+         self.next_download()
+@@ -209,7 +213,7 @@ class Transfers(Gtk.Application):
+             self.cancel_transfer()
+             self.status.set_label('Cancelling transfer. Close this window after it finishes.')
+             return True
+-        for ticket in self.pending:
++        for ticket, _point in self.pending:
+             ticket.unlink(missing_ok=True)
+         self.pending.clear()
+         self.window = None
+diff --git a/guest/factory-overlay/usr/local/bin/try-omarchy-drop b/guest/factory-overlay/usr/local/bin/try-omarchy-drop
+index 9dbc3e7..e0e6a3c 100755
+--- a/guest/factory-overlay/usr/local/bin/try-omarchy-drop
++++ b/guest/factory-overlay/usr/local/bin/try-omarchy-drop
+@@ -4,7 +4,8 @@
+ The Windows launcher transfers the files first, then asks the guest (through
+ the agent) to deliver them here. Direct drops only work when the window under
+ the point is running and can accept a file-list paste; every other case returns
+-non-zero so the launcher can fall back to the transfer window.
++non-zero so received files remain available in the transfer window.
++A successful shortcut is only a paste request, not application acceptance.
+ 
+ The decision logic is split into pure functions so the unprivileged test suite
+ can exercise it without a compositor.
+@@ -60,12 +61,26 @@ def uri_list(paths: list[str]) -> str:
+     return "\r\n".join("file://" + quote(str(Path(path).resolve())) for path in paths) + "\r\n"
+ 
+ 
+-def deliver(x: int, y: int, paths: list[str], run=subprocess.run) -> int:
++def display_point(x, y, width, height, monitors):
++    # Direct placement currently supports one guest display. Multiple displays
++    # keep the ordinary transfer window until the host event carries an identity.
++    if len(monitors) != 1 or width <= 0 or height <= 0 or not (0 <= x < width and 0 <= y < height):
++        return None
++    monitor = monitors[0]
++    scale = monitor.get("scale", 1)
++    if scale <= 0:
++        return None
++    return (int(monitor.get("x", 0) + x * monitor["width"] / scale / width),
++            int(monitor.get("y", 0) + y * monitor["height"] / scale / height))
++
++
++def deliver(x: int, y: int, paths: list[str], run=subprocess.run, target=None) -> int:
+     for path in paths:
+         if not Path(path).is_absolute():
+             print("try-omarchy-drop: paths must be absolute", file=sys.stderr)
+             return 2
+-    target = candidate(clients(), x, y)
++    if target is None:
++        target = candidate(clients(), x, y)
+     if target is None:
+         print("try-omarchy-drop: no application window under the drop point", file=sys.stderr)
+         return 1
+@@ -79,10 +94,20 @@ def deliver(x: int, y: int, paths: list[str], run=subprocess.run) -> int:
+ 
+     # Put the file list on the clipboard as text/uri-list, then paste it into
+     # the target. Apps that accept a URI paste import the files in place.
+-    run(["wl-copy", "--type", "text/uri-list", "--"], input=uri_list(paths), text=True, timeout=10)
+-    run(["hyprctl", "dispatch", "focuswindow", f"address:{address}"], timeout=10)
+-    run(["hyprctl", "dispatch", "sendshortcut", "CTRL,V," + f"address:{address}"], timeout=10)
+-    return 0
++    try:
++        for args, options in (
++            (["wl-copy", "--type", "text/uri-list", "--"], {"input": uri_list(paths), "text": True}),
++            (["hyprctl", "dispatch", "focuswindow", f"address:{address}"], {}),
++            (["hyprctl", "dispatch", "sendshortcut", "CTRL,V," + f"address:{address}"], {}),
++        ):
++            result = run(args, timeout=10, **options)
++            if result.returncode != 0:
++                return 1
++    except (OSError, subprocess.SubprocessError):
++        return 1
++    # Wayland shortcut injection supplies no acknowledgement that the app
++    # accepted these files. Keep the transfer window available in either case.
++    return 3
+ 
+ 
+ def main(argv: list[str]) -> int:
+@@ -102,7 +127,22 @@ def main(argv: list[str]) -> int:
+         ):
+             print("try-omarchy-drop: invalid request", file=sys.stderr)
+             return 2
+-        return deliver(request["x"], request["y"], request["paths"])
++        try:
++            result = subprocess.run(["hyprctl", "-j", "monitors"], capture_output=True, text=True, timeout=10, check=True)
++            monitors = json.loads(result.stdout)
++            point = display_point(request["x"], request["y"], request.get("width", 0), request.get("height", 0), monitors)
++            if point is None:
++                return 1
++            active_workspace = monitors[0].get("activeWorkspace", {}).get("id")
++            visible = clients()
++            target = candidate([client for client in visible if client.get("workspace", {}).get("id") == active_workspace], *point)
++            if target is None:
++                return 1
++            # Take one snapshot so focus changes during copying cannot select
++            # an unrelated workspace or a different application.
++            return deliver(*point, request["paths"], target=target)
++        except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError):
++            return 1
+     if len(argv) < 4:
+         print("usage: try-omarchy-drop X Y FILE... | --json '{\"x\":..,\"y\":..,\"paths\":[..]}'", file=sys.stderr)
+         return 2
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index af3440b..227bd2f 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -98,8 +98,8 @@ compat_paths=(
+   etc/systemd/system/sysinit.target.wants/try-omarchy-pacman-lock.service
+   usr/local/bin/omarchy-windows-camera-bridge
+   usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+-  etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service
+-  etc/udev/rules.d/94-try-omarchy-camera.rules
++  etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service
++  etc/udev/rules.d/70-try-omarchy-camera.rules
+   etc/modules-load.d/90-try-omarchy-camera.conf
+   etc/modprobe.d/90-try-omarchy-camera.conf
+   usr/local/bin/try-omarchy-drop
+@@ -150,9 +150,16 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ # bridge and its v4l2loopback wiring. Revision 25 carries the direct
+ # file-drop helper. Revision 26 delivers dropped files straight into the
+ # window under the drop point, falling back to the transfer window.
+-compat_revision=26
++# Revision 27 delivers the complete matching kernel modules and preserves
++# the transfer fallback when a direct paste cannot be confirmed.
++compat_revision=27
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
++# Fail the build if DKMS or networking modules were not packaged for this kernel.
++modinfo -k "$kernel_release" tun >/dev/null
++modinfo -k "$kernel_release" v4l2loopback >/dev/null
++depmod -a "$kernel_release"
++
+ # Never let the container host's hardware autodetection remove the virtual
+ # devices required by QEMU on the Windows host.
+ mkinitcpio -P
+diff --git a/guest/tests/test_camera_bridge.py b/guest/tests/test_camera_bridge.py
+index 29e29a3..39a2587 100644
+--- a/guest/tests/test_camera_bridge.py
++++ b/guest/tests/test_camera_bridge.py
+@@ -23,6 +23,13 @@ loader.exec_module(bridge)
+ 
+ 
+ class WindowsCameraBridgeTests(unittest.TestCase):
++    def test_camera_service_is_enabled_at_the_installed_unit(self):
++        link = OVERLAY / "etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service"
++        self.assertEqual(str(link.readlink()), "/usr/lib/systemd/user/omarchy-windows-camera-bridge.service")
++        self.assertTrue((OVERLAY / str(link.readlink()).lstrip('/')).is_file())
++        rules = (OVERLAY / 'etc/udev/rules.d/70-try-omarchy-camera.rules').read_text()
++        self.assertEqual(rules.count('TAG+="uaccess"'), 2)
++
+     def message(self, kind: int, payload: bytes, sequence: int = 0) -> bytes:
+         return bridge.HEADER.pack(
+             bridge.MAGIC,
+@@ -138,7 +145,7 @@ class WindowsCameraBridgeTests(unittest.TestCase):
+             (OVERLAY / "etc/modules-load.d/90-try-omarchy-camera.conf").read_text().strip(),
+             "v4l2loopback",
+         )
+-        rules = (OVERLAY / "etc/udev/rules.d/94-try-omarchy-camera.rules").read_text()
++        rules = (OVERLAY / "etc/udev/rules.d/70-try-omarchy-camera.rules").read_text()
+         self.assertIn('ATTR{name}=="dev.tryomarchy.camera"', rules)
+         self.assertIn('KERNEL=="video42"', rules)
+         self.assertTrue(
+diff --git a/guest/tests/test_file_drop_target.py b/guest/tests/test_file_drop_target.py
+index f50d8f6..c35045d 100644
+--- a/guest/tests/test_file_drop_target.py
++++ b/guest/tests/test_file_drop_target.py
+@@ -4,6 +4,8 @@ import importlib.machinery
+ import importlib.util
+ from pathlib import Path
+ import unittest
++from unittest.mock import patch
++from subprocess import CompletedProcess
+ 
+ 
+ SCRIPT = (
+@@ -63,6 +65,28 @@ class DropTargetTests(unittest.TestCase):
+     def test_deliver_rejects_relative_paths(self):
+         self.assertEqual(module.deliver(0, 0, ["relative.txt"]), 2)
+ 
++    def test_failed_paste_steps_preserve_fallback(self):
++        target = client("0xa", [0, 0], [800, 600])
++        for failed_at in range(3):
++            calls = []
++            def run(args, **kwargs):
++                calls.append(args)
++                return CompletedProcess(args, int(len(calls) == failed_at + 1))
++            with patch.object(module.shutil, 'which', return_value='/usr/bin/wl-copy'):
++                self.assertEqual(module.deliver(1, 1, ['/tmp/file'], run=run, target=target), 1)
++            self.assertEqual(len(calls), failed_at + 1)
++
++    def test_successful_shortcut_is_not_application_acceptance(self):
++        with patch.object(module.shutil, 'which', return_value='/usr/bin/wl-copy'):
++            result = module.deliver(1, 1, ['/tmp/file'], run=lambda args, **kwargs: CompletedProcess(args, 0), target=client('0xa', [0, 0], [800, 600]))
++        self.assertEqual(result, 3)
++
++    def test_drop_uses_current_guest_scale_and_resolution(self):
++        monitors = [{'width': 2560, 'height': 1440, 'scale': 2, 'x': 0, 'y': 0}]
++        self.assertEqual(module.display_point(400, 300, 800, 600, monitors), (640, 360))
++        self.assertIsNone(module.display_point(400, 300, 800, 600, monitors * 2))
++        self.assertIsNone(module.display_point(-1, 0, 800, 600, monitors))
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/guest/tests/test_kernel_module_delivery.py b/guest/tests/test_kernel_module_delivery.py
+new file mode 100644
+index 0000000..1c5e34d
+--- /dev/null
++++ b/guest/tests/test_kernel_module_delivery.py
+@@ -0,0 +1,91 @@
++"""Run the actual initramfs hooks against disposable persistent-guest trees."""
++import io
++import os
++from pathlib import Path
++import subprocess
++import tarfile
++import tempfile
++import unittest
++
++GUEST = Path(__file__).resolve().parents[1]
++HOOKS = GUEST / 'factory-overlay/etc/initcpio'
++
++class ModuleDeliveryTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.root = Path(self.tmp.name)
++        self.guest = self.root / 'guest'
++        self.guest.mkdir()
++        self.kernel = 'test-kernel'
++        self.modules = self.guest / 'usr/lib/modules' / self.kernel
++        self.modules.mkdir(parents=True)
++        (self.modules / 'modules.dep.bin').write_text('old partial metadata')
++        (self.modules / 'keep-user-file').write_text('retained')
++        self.version = '27:test-kernel'
++        (self.root / 'version').write_text(self.version + '\n')
++        self.archive('overlay.tar', {'usr/share/try-omarchy/new-helper': 'helper'})
++        self.archive('modules.tar', {
++            self.kernel + '/modules.dep.bin': 'complete metadata',
++            self.kernel + '/modules.order': 'order',
++            self.kernel + '/modules.builtin': 'builtin',
++            self.kernel + '/modules.builtin.modinfo': 'metadata',
++            self.kernel + '/kernel/drivers/net/tun.ko': 'tun',
++            self.kernel + '/updates/dkms/v4l2loopback.ko': 'camera',
++        })
++        script = (HOOKS / 'hooks/tryomarchy_compat').read_text()
++        script = script.replace('root=/new_root', 'root=' + str(self.guest))
++        for before, after in [('tryomarchy-compat-version', 'version'), ('tryomarchy-compat-overlay.tar', 'overlay.tar'), ('tryomarchy-kernel-modules.tar', 'modules.tar')]:
++            script = script.replace('/' + before, str(self.root / after))
++        script = script.replace('kernel=$(uname -r)', 'kernel=' + self.kernel)
++        self.script = script
++
++    def archive(self, name, files):
++        with tarfile.open(self.root / name, 'w') as out:
++            for name, value in files.items():
++                data = value.encode()
++                info = tarfile.TarInfo(name)
++                info.size = len(data)
++                out.addfile(info, io.BytesIO(data))
++
++    def run_hook(self, prefix=''):
++        return subprocess.run(['sh', '-c', prefix + '\n' + self.script + '\nrun_latehook'], text=True, capture_output=True)
++
++    def test_repairs_partial_tree_and_does_not_repeat(self):
++        result = self.run_hook()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual((self.modules / 'kernel/drivers/net/tun.ko').read_text(), 'tun')
++        self.assertEqual((self.modules / 'updates/dkms/v4l2loopback.ko').read_text(), 'camera')
++        self.assertEqual((self.modules / 'keep-user-file').read_text(), 'retained')
++        self.assertEqual((self.modules / '.tryomarchy-complete').read_text().strip(), self.version)
++        (self.root / 'modules.tar').unlink()
++        self.assertEqual(self.run_hook().returncode, 0)
++
++    def test_failed_extraction_preserves_files_and_retries(self):
++        prefix = '''tar() {
++case "$*" in *modules.tar*) return 1;; esac
++command tar "$@"
++}'''
++        self.assertNotEqual(self.run_hook(prefix).returncode, 0)
++        self.assertFalse((self.modules / '.tryomarchy-complete').exists())
++        self.assertFalse((self.guest / 'usr/share/try-omarchy/compat-version').exists())
++        self.assertEqual((self.modules / 'keep-user-file').read_text(), 'retained')
++        self.assertEqual(self.run_hook().returncode, 0)
++
++    def test_install_archive_includes_modules_and_excludes_headers(self):
++        source = self.root / 'source'
++        for name in ['modules.order', 'kernel/drivers/net/tun.ko', 'updates/dkms/v4l2loopback.ko', 'build/header.h', 'source/source.c', 'vmlinuz']:
++            file = source / self.kernel / name
++            file.parent.mkdir(parents=True, exist_ok=True)
++            file.write_text(name)
++        install = (HOOKS / 'install/tryomarchy_compat').read_text().replace('/usr/lib/modules', str(source))
++        output = self.root / 'captured.tar'
++        prefix = 'KERNELVERSION=test-kernel\nadd_runscript() { :; }\n'
++        prefix += 'add_file() { if [[ $2 == /tryomarchy-kernel-modules.tar ]]; then cp "$1" ' + str(output) + '; fi; }\n'
++        result = subprocess.run(['bash', '-c', prefix + install + '\nbuild'], text=True, capture_output=True)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        with tarfile.open(output) as archive:
++            names = archive.getnames()
++        self.assertIn(self.kernel + '/kernel/drivers/net/tun.ko', names)
++        self.assertIn(self.kernel + '/updates/dkms/v4l2loopback.ko', names)
++        self.assertFalse(any('/build' in name or '/source' in name or name.endswith('/vmlinuz') for name in names))
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 2a6a8bd..23749e2 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -266,7 +266,7 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=26" in finalize_rootfs
++        "compat_revision=27" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in compat_paths
+         and "etc/skel/.config/nvim/lua/plugins/theme.lua" in compat_paths
+@@ -335,8 +335,8 @@ def main() -> None:
+     )
+     check(
+         'kernel=$(uname -r)' in read(compat_hook)
+-        and 'modules.dep.bin" ]; then' in read(compat_hook)
+-        and 'cp -a "/usr/lib/modules/$kernel" "$root/usr/lib/modules/"' in read(compat_hook),
++        and '.tryomarchy-complete' in read(compat_hook)
++        and 'tar -xf /tryomarchy-kernel-modules.tar' in read(compat_hook),
+         "persistent older disks receive modules matching the external release kernel",
+     )
+     update_notice = read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/show-factory-update-notice")
+-- 
+2.55.0
+
