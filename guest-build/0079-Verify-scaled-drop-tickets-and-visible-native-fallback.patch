@@ -1,0 +1,61 @@
+From 1109f3b17dc2e3796c0359a1f40fca2d0b5c2d52 Mon Sep 17 00:00:00 2001
+From: Try Omarchy <actions@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 14:05:24 -0400
+Subject: [PATCH] Verify scaled drop tickets and visible native fallback
+
+---
+ guest/tests/test_file_transfer.py        |  3 +++
+ guest/tests/test_file_transfer_window.py | 16 ++++++++++++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/guest/tests/test_file_transfer.py b/guest/tests/test_file_transfer.py
+index 3d97bb0..bcf5c15 100644
+--- a/guest/tests/test_file_transfer.py
++++ b/guest/tests/test_file_transfer.py
+@@ -160,6 +160,9 @@ class StreamingFileTests(unittest.TestCase):
+             changed['point'] = value
+             self.assertFalse(transfer.valid_ticket(changed, 'download'), value)
+         self.assertTrue(transfer.valid_drop_point([0, 0]))
++        self.assertTrue(transfer.valid_drop_point([640, 360, 1280, 720]))
++        self.assertFalse(transfer.valid_drop_point([640, 360, 0, 720]))
++        self.assertFalse(transfer.valid_drop_point([640, 360, '1280', 720]))
+         self.assertFalse(transfer.valid_drop_point([0]))
+ 
+     def test_download_never_follows_redirect(self):
+diff --git a/guest/tests/test_file_transfer_window.py b/guest/tests/test_file_transfer_window.py
+index 986da3e..4f1c771 100644
+--- a/guest/tests/test_file_transfer_window.py
++++ b/guest/tests/test_file_transfer_window.py
+@@ -1,6 +1,8 @@
+ import importlib.machinery
+ import importlib.util
+ import os
++import json
++from types import SimpleNamespace
+ from pathlib import Path
+ import tempfile
+ import unittest
+@@ -47,6 +49,20 @@ class FileTransferWindowTests(unittest.TestCase):
+                     self.assertFalse(ticket.exists())
+                     self.assertIsNone(app.worker)
+                     idle.assert_called_once_with(app.next_download)
++                for accepted in (False, True):
++                    ticket = app.state / 'incoming-drop-fallback'
++                    ticket.write_text('{}')
++                    app.drop_point = (320, 180, 1280, 720)
++                    app.received_paths = []
++                    worker = SimpleNamespace(returncode=0)
++                    app.worker = worker
++                    app.window.set_visible(False)
++                    with patch.object(app, 'deliver_direct', return_value=accepted), patch.object(app, 'quit') as quit_app:
++                        app.finished(worker, json.dumps({'paths': [str(path)]}).encode(), b'', ticket)
++                        quit_app.assert_not_called()
++                    self.assertTrue(app.window.get_visible())
++                    self.assertEqual(app.received_paths, [path])
++                    self.assertEqual(path.read_text(), 'preserved')
+             finally:
+                 app.window.destroy()
+                 app.quit()
+-- 
+2.55.0
+

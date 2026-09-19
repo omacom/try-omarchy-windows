@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 )
 
 // The host half of the camera bridge. The guest side
@@ -81,6 +82,9 @@ type cameraConnection struct {
 func (c *cameraConnection) message(kind uint8, payload []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
 	header := cameraHeader(kind, len(payload), c.sequence)
 	if kind == cameraKindFrame {
 		c.sequence++
@@ -109,16 +113,20 @@ func serveCamera(conn net.Conn, source cameraFrameSource) error {
 	connection := &cameraConnection{conn: conn}
 	lines := make(chan string, 8)
 	readErr := make(chan error, 1)
+	done := make(chan struct{})
+	defer close(done)
+	defer conn.Close()
 	go func() {
-		reader := bufio.NewReader(conn)
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				readErr <- err
+		reader := bufio.NewScanner(conn)
+		reader.Buffer(make([]byte, 1024), 4096)
+		for reader.Scan() {
+			select {
+			case lines <- strings.TrimSpace(reader.Text()):
+			case <-done:
 				return
 			}
-			lines <- strings.TrimSpace(line)
 		}
+		readErr <- reader.Err()
 	}()
 
 	var frames <-chan []byte
@@ -158,7 +166,10 @@ func serveCamera(conn net.Conn, source cameraFrameSource) error {
 			}
 		case frame, ok := <-frames:
 			if !ok {
-				frames = nil
+				stop()
+				if err := connection.status(map[string]any{"status": "unavailable", "reason": "camera capture ended"}); err != nil {
+					return err
+				}
 				continue
 			}
 			if err := connection.frame(frame); err != nil {

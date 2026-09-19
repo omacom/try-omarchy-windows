@@ -4,6 +4,7 @@ package main
 
 import (
 	"os"
+	"runtime"
 	"syscall"
 	"unsafe"
 )
@@ -51,6 +52,7 @@ const (
 	vtLpwstr               = 31
 )
 
+//go:uintptrescapes
 func comCall(obj uintptr, method int, args ...uintptr) uintptr {
 	vtbl := *(*uintptr)(unsafe.Pointer(obj))
 	fn := *(*uintptr)(unsafe.Pointer(vtbl + uintptr(method)*unsafe.Sizeof(uintptr(0))))
@@ -66,7 +68,17 @@ func setTaskbarIdentity(hwnd uintptr) {
 	if err != nil {
 		return
 	}
-	procCoInitializeEx.Call(0, 2) // apartment-threaded; "already initialized" is fine
+	// COM apartments belong to OS threads. Do not leave an STA on a pooled
+	// Go thread, where it can later prevent camera MTA initialization.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	hr, _, _ := procCoInitializeEx.Call(0, 2)
+	if int32(hr) >= 0 {
+		defer procCoUninitialize.Call()
+	} else if uint32(hr) != 0x80010106 { // An existing MTA is also usable.
+		logf("taskbar identity: COM initialization hr=%#x", hr)
+		return
+	}
 	var ps uintptr
 	if hr, _, _ := procSHGetPropertyStoreForWindow.Call(hwnd,
 		uintptr(unsafe.Pointer(&iidIPropertyStore)), uintptr(unsafe.Pointer(&ps))); hr != 0 || ps == 0 {
@@ -80,6 +92,7 @@ func setTaskbarIdentity(hwnd uintptr) {
 		*(*uintptr)(unsafe.Pointer(&pv.val[0])) = uintptr(unsafe.Pointer(u))
 		key := propertyKey{appUserModelFmtid, pid}
 		comCall(ps, 6, uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(&pv))) // SetValue
+		runtime.KeepAlive(u)
 	}
 	set(pidAppUserModelID, "SouthForge.TryOmarchy")
 	set(pidRelaunchCommand, `"`+exe+`"`)

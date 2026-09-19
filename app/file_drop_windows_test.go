@@ -243,7 +243,7 @@ func TestNativeQEMUFileDropEvent(t *testing.T) {
 	mouse.Call(4, 0, 0, 0, 0)
 	c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	for c.lines.Scan() {
-		paths, ok := droppedFilesEvent(c.lines.Text())
+		paths, _, ok := droppedFilesEvent(c.lines.Text())
 		if ok {
 			if len(paths) != 1 {
 				t.Fatal("native drop changed path count", paths)

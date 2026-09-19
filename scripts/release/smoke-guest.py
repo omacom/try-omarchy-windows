@@ -63,6 +63,10 @@ FACT_CHECKS = {
     "compat-version": "test \"$(cat /usr/share/try-omarchy/compat-version)\" = \"19:$(uname -r)\" && echo yes || echo no",
     "kernel-modules": "test -f /usr/lib/modules/$(uname -r)/modules.dep.bin && echo yes || echo no",
     "ready-service": "systemctl is-enabled try-omarchy-ready.service 2>/dev/null || true",
+    "tun-device": "sudo modprobe tun && test -c /dev/net/tun && echo yes || echo no",
+    "camera-device": "sudo modprobe v4l2loopback && test -c /dev/video42 && echo yes || echo no",
+    "camera-service": "test \"$(readlink -f /etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service)\" = /usr/lib/systemd/user/omarchy-windows-camera-bridge.service && echo yes || echo no",
+    "complete-modules": "test -f /usr/lib/modules/$(uname -r)/modules.order && test -f /usr/lib/modules/$(uname -r)/modules.builtin && test -f /usr/lib/modules/$(uname -r)/modules.builtin.modinfo && echo yes || echo no",
 }
 EXPECTED_FACTS = {
     "icon-cache": "yes",
@@ -89,6 +93,10 @@ EXPECTED_FACTS = {
     "compat-version": "yes",
     "kernel-modules": "yes",
     "ready-service": "enabled",
+    "tun-device": "yes",
+    "camera-device": "yes",
+    "camera-service": "yes",
+    "complete-modules": "yes",
 }
 
 

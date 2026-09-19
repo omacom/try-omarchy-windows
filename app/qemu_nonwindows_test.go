@@ -251,7 +251,7 @@ func TestNestedVirtRefusedMatchesOnlyTheFatalForm(t *testing.T) {
 	}
 }
 
-func TestAudioUnavailableRecognizesQEMUDSoundErrorsOnly(t *testing.T) {
+func TestAudioUnavailableRecognizesQEMUAudioErrors(t *testing.T) {
 	cfg := &config{vmDir: t.TempDir()}
 	log := filepath.Join(cfg.vmDir, "qemu-stderr.log")
 	for _, message := range []string{
@@ -274,14 +274,18 @@ func TestAudioUnavailableRecognizesQEMUDSoundErrorsOnly(t *testing.T) {
 	}
 }
 
-func TestAudioUnavailableMatchesOnlyDirectSoundStartupFailures(t *testing.T) {
+func TestAudioUnavailableDoesNotMistakeDisplayFailuresForAudio(t *testing.T) {
 	cfg := &config{vmDir: t.TempDir()}
 	log := filepath.Join(cfg.vmDir, "qemu-stderr.log")
 	for message, want := range map[string]bool{
-		"Could not initialize DirectSound: no device": true,
-		"audio: Could not init dsound audio driver":   true,
-		"cannot set up guest memory":                  false,
-		"SDL failed to create an OpenGL context":      false,
+		"Could not initialize DirectSound: no device":         true,
+		"audio: Could not init dsound audio driver":           true,
+		"cannot set up guest memory":                          false,
+		"SDL failed to create an OpenGL context":              false,
+		"SDL failed to initialize audio subsystem":            true,
+		"SDL_OpenAudioDevice for recording failed: no device": true,
+		"SDL_OpenAudioDevice for playback failed: no device":  true,
+		"audio: Could not init sdl audio driver":              true,
 	} {
 		if err := os.WriteFile(log, []byte(message), 0o644); err != nil {
 			t.Fatal(err)

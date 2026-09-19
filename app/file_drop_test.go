@@ -28,10 +28,23 @@ func TestDroppedFilesEvents(t *testing.T) {
 		{"DISPLAY_FILE_DROP", 0, nil, false},
 	} {
 		data, _ := json.Marshal(map[string]any{"event": sample.event, "data": map[string]any{"display": sample.display, "files": sample.paths}})
-		_, ok := droppedFilesEvent(string(data))
+		_, _, ok := droppedFilesEvent(string(data))
 		if ok != sample.valid {
 			t.Fatal(sample, ok)
 		}
+	}
+}
+
+func TestDroppedFilesReadTheEventPoint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file")
+	reported, _ := json.Marshal(map[string]any{"event": "DISPLAY_FILE_DROP", "data": map[string]any{"display": 0, "x": 100, "y": 200, "files": []string{path}}})
+	paths, point, ok := droppedFilesEvent(string(reported))
+	if !ok || len(paths) != 1 || point == nil || point[0] != 100 || point[1] != 200 {
+		t.Fatalf("reported point: paths=%v point=%v ok=%v", paths, point, ok)
+	}
+	missing, _ := json.Marshal(map[string]any{"event": "DISPLAY_FILE_DROP", "data": map[string]any{"display": 0, "files": []string{path}}})
+	if _, point, ok := droppedFilesEvent(string(missing)); !ok || point != nil {
+		t.Fatal("a drop without a reported point must not invent one")
 	}
 }
 
@@ -47,7 +60,7 @@ func TestDroppedFilesCarryTheDropPoint(t *testing.T) {
 	bridge := &clipBridge{transfers: service, transferEnabled: true, pullConn: host}
 	done := make(chan error, 1)
 	go func() {
-		done <- bridge.offerDroppedFiles(droppedFiles{paths: []string{source}, point: []int{640, 360}})
+		done <- bridge.offerDroppedFiles(droppedFiles{paths: []string{source}, point: []int{640, 360, 1280, 720}})
 	}()
 	line, err := bufio.NewReader(guest).ReadString('\n')
 	if err != nil {
@@ -64,7 +77,7 @@ func TestDroppedFilesCarryTheDropPoint(t *testing.T) {
 	if err := json.Unmarshal(item.Data, &ticket); err != nil {
 		t.Fatal(err)
 	}
-	if len(ticket.Point) != 2 || ticket.Point[0] != 640 || ticket.Point[1] != 360 {
+	if len(ticket.Point) != 4 || ticket.Point[0] != 640 || ticket.Point[1] != 360 || ticket.Point[2] != 1280 || ticket.Point[3] != 720 {
 		t.Fatalf("ticket point = %v", ticket.Point)
 	}
 }

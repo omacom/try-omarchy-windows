@@ -1,0 +1,49 @@
+From 573550577151d6c9314792006581c8297081f9ec Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 19 Sep 2026 14:08:00 -0400
+Subject: [PATCH] Wait for complete kernel modules before accepting an image
+ update
+
+---
+ .../usr/local/lib/try-omarchy/guest-ready          |  2 ++
+ guest/tests/test_kernel_module_delivery.py         | 14 ++++++++++++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/guest-ready b/guest/factory-overlay/usr/local/lib/try-omarchy/guest-ready
+index 3ac6ad1..5c5fc83 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/guest-ready
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/guest-ready
+@@ -7,6 +7,8 @@ kernel=$(uname -r)
+ marker=$(cat /usr/share/try-omarchy/compat-version 2>/dev/null || true)
+ [[ $marker == *:"$kernel" ]] || exit 0
+ [[ -f /usr/lib/modules/$kernel/modules.dep.bin ]] || exit 0
++complete=$(cat /usr/lib/modules/$kernel/.tryomarchy-complete 2>/dev/null || true)
++[[ $complete == "$marker" ]] || exit 0
+ for _ in {1..10}; do
+   if printf 'ready\n' | socat -u - TCP:10.0.2.2:4450,connect-timeout=2 2>/dev/null; then
+     exit 0
+diff --git a/guest/tests/test_kernel_module_delivery.py b/guest/tests/test_kernel_module_delivery.py
+index 1c5e34d..c1fd42c 100644
+--- a/guest/tests/test_kernel_module_delivery.py
++++ b/guest/tests/test_kernel_module_delivery.py
+@@ -89,3 +89,17 @@ command tar "$@"
+         self.assertIn(self.kernel + '/kernel/drivers/net/tun.ko', names)
+         self.assertIn(self.kernel + '/updates/dkms/v4l2loopback.ko', names)
+         self.assertFalse(any('/build' in name or '/source' in name or name.endswith('/vmlinuz') for name in names))
++
++    def test_readiness_waits_for_complete_module_delivery(self):
++        ready = (GUEST / 'factory-overlay/usr/local/lib/try-omarchy/guest-ready').read_text()
++        ready = ready.replace('kernel=$(uname -r)', 'kernel=' + self.kernel)
++        ready = ready.replace('/usr/lib/modules', str(self.guest / 'usr/lib/modules'))
++        ready = ready.replace('/usr/share/try-omarchy/compat-version', str(self.root / 'version'))
++        notified = self.root / 'notified'
++        prefix = 'socat() { cat > "' + str(notified) + '"; }\n'
++        for value in [None, '26:test-kernel', self.version]:
++            if value is not None:
++                (self.modules / '.tryomarchy-complete').write_text(value)
++            result = subprocess.run(['bash', '-c', prefix + ready], capture_output=True)
++            self.assertEqual(result.returncode, 0)
++            self.assertEqual(notified.exists(), value == self.version)
+-- 
+2.55.0
+

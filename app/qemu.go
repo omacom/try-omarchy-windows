@@ -112,8 +112,8 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		"-global", "ICH9-LPC.disable_s3=1", "-global", "ICH9-LPC.disable_s4=1",
 		// The backend must be explicit: with no audiodev the guest's PipeWire
 		// stalls on virtio-snd control messages and the whole session hangs.
-		// cfg.audio is dsound normally; "none" on machines where DirectSound
-		// has no device (QEMU exits at startup otherwise).
+		// cfg.audio is sdl normally, with dsound and none fallbacks when
+		// the host cannot initialize audio.
 		"-audiodev", cfg.audio+",id=snd",
 		"-device", "virtio-sound-pci,audiodev=snd",
 		"-qmp", "unix:"+qemuOptionValue(filepath.Join(cfg.qmpDir, qmpControlName(qmpToolsPort)))+",server=on,wait=off",
@@ -157,7 +157,7 @@ func nestedVirtRefused(cfg *config) bool {
 	return err == nil && bytes.Contains(data, []byte("Failed to enable nested virtualization"))
 }
 
-// audioUnavailable distinguishes a missing DirectSound device from unrelated
+// audioUnavailable distinguishes a missing audio device from unrelated
 // startup failures. Retrying every failure without audio used to consume a
 // fallback attempt even when the real problem was memory or graphics.
 func audioUnavailable(cfg *config) bool {
@@ -168,7 +168,11 @@ func audioUnavailable(cfg *config) bool {
 	message := bytes.ToLower(data)
 	return bytes.Contains(message, []byte("dsound:")) ||
 		bytes.Contains(message, []byte("directsound")) ||
-		bytes.Contains(message, []byte("dsound audio driver"))
+		bytes.Contains(message, []byte("dsound audio driver")) ||
+		bytes.Contains(message, []byte("sdl failed to initialize audio subsystem")) ||
+		bytes.Contains(message, []byte("sdl_openaudiodevice for playback failed")) ||
+		bytes.Contains(message, []byte("sdl_openaudiodevice for recording failed")) ||
+		bytes.Contains(message, []byte("sdl audio driver"))
 }
 
 func sdlDisplay(gpu, hostCursor bool) string {

@@ -117,6 +117,26 @@ func TestServeCameraReportsUnavailable(t *testing.T) {
 	}
 }
 
+func TestServeCameraCleansUpEndedCaptureAndRestarts(t *testing.T) {
+	source := &fakeCameraSource{}
+	conn, reader := startCameraServe(t, source)
+	fmt.Fprintln(conn, `{"type":"start"}`)
+	readCameraMessage(t, reader)
+	close(source.frames)
+	kind, payload := readCameraMessage(t, reader)
+	if kind != cameraKindStatus || !bytes.Contains(payload, []byte("unavailable")) || source.stops != 1 {
+		t.Fatalf("ended capture was not cleaned up: %d %s stops=%d", kind, payload, source.stops)
+	}
+	fmt.Fprintln(conn, `{"type":"start"}`)
+	if kind, payload := readCameraMessage(t, reader); kind != cameraKindStatus || !bytes.Contains(payload, []byte("streaming")) {
+		t.Fatalf("restart: %d %s", kind, payload)
+	}
+	source.frames <- cameraBlackFrame()
+	if kind, _ := readCameraMessage(t, reader); kind != cameraKindFrame {
+		t.Fatal("no frame after restart")
+	}
+}
+
 func TestCameraHeaderAndBlackFrame(t *testing.T) {
 	header := cameraHeader(cameraKindFrame, cameraFrameBytes, 0x01020304)
 	if len(header) != cameraHeaderSize {
