@@ -1,6 +1,13 @@
 # Preview 20 candidate, September 19, 2026
 
-Guest and unsigned launcher source: `e402965018ca3bb8c9563d248354b9381846b935`,
+The compatibility-28 image below is superseded: fresh Windows testing found
+that direct drops into the Windows shared mount failed while preserving timestamps.
+PR #136 adds a capability check before consuming the transfer ticket. Unsupported
+folders use Downloads with a notification; compatibility 29 needs a new build.
+All 157 guest tests pass. On the fresh laptop installation, the corrected helpers
+passed shared-mount fallback and normal folder delivery, including duplicate names.
+
+Compatibility-28 guest and unsigned launcher source: `e402965018ca3bb8c9563d248354b9381846b935`,
 [PR #135](https://github.com/omacom/try-omarchy-windows/pull/135).
 Guest compatibility: **28**. Public Latest remains v0.0.19-preview.
 This candidate supersedes the compatibility-27 assets with the failed drop UI.
@@ -83,7 +90,10 @@ asset arguments in [LAPTOP-PASS.md](../LAPTOP-PASS.md) for this candidate.
 
 ## Remaining before release
 
-1. Exact rebuilt-package Windows fresh install with the signed diagnostic launcher.
+1. Build and authenticate compatibility 29, then verify its packaged delivery
+   and fresh boot. Compatibility 28 passed fresh desktop, camera and Vulkan
+   playback checks with the signed diagnostic launcher, but failed shared-mount
+   drops before the helper correction.
 2. Audio playback/device switching, sleep/resume and final physical input/display
    checks on the selected package.
 3. Pin the accepted payload, build and verify the signed

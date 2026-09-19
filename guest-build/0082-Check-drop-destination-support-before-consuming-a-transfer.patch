@@ -1,0 +1,182 @@
+From 924bf7f3fd2e22c5bdb339c5ea6b406c388b551b Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 19 Sep 2026 17:03:10 -0400
+Subject: [PATCH] Check drop destination support before consuming a transfer
+
+---
+ .../usr/local/bin/file-transfer               | 24 ++++++++++++++
+ .../usr/local/bin/try-omarchy-drop            |  2 ++
+ guest/scripts/finalize-rootfs.sh              |  2 +-
+ guest/tests/test_file_drop_target.py          | 30 +++++++++++++++++
+ guest/tests/test_file_transfer.py             | 32 +++++++++++++++++++
+ guest/tests/verify.py                         |  2 +-
+ 6 files changed, 90 insertions(+), 2 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/local/bin/file-transfer b/guest/factory-overlay/usr/local/bin/file-transfer
+index 150dc73..a2f06a2 100755
+--- a/guest/factory-overlay/usr/local/bin/file-transfer
++++ b/guest/factory-overlay/usr/local/bin/file-transfer
+@@ -191,6 +191,30 @@ def receive(input, offer, destination):
+                 return {'paths': [str(destination / name) for name in roots]}
+ 
+ 
++def can_receive_into(folder):
++    """Check required filesystem operations before consuming a one-use ticket.
++
++    Windows shares may allow writes but reject timestamp preservation or atomic
++    no-replace renames. Probe only disposable files, never an existing item.
++    """
++    try:
++        plain_path(folder)
++        with tempfile.TemporaryDirectory(prefix='.windows-drop-check-', dir=folder) as tmp:
++            stage = Path(tmp)
++            contents = stage / 'contents'
++            contents.mkdir(mode=0o700)
++            probe = contents / 'probe'
++            with probe.open('xb') as output:
++                output.write(b'probe')
++                output.flush()
++                os.fsync(output.fileno())
++            os.utime(probe, (946684800, 946684800), follow_symlinks=False)
++            publish(contents, stage / 'received')
++        return True
++    except (OSError, ValueError):
++        return False
++
++
+ def download_into(ticket, folder, host='10.0.2.2', port=4452):
+     """Verify in hidden staging, then atomically reveal each top-level item.
+ 
+diff --git a/guest/factory-overlay/usr/local/bin/try-omarchy-drop b/guest/factory-overlay/usr/local/bin/try-omarchy-drop
+index 4878d32..6c1af6c 100755
+--- a/guest/factory-overlay/usr/local/bin/try-omarchy-drop
++++ b/guest/factory-overlay/usr/local/bin/try-omarchy-drop
+@@ -151,6 +151,8 @@ def receive_ticket(ticket_path, point):
+         # not redirect a copy that is already in progress.
+         try:
+             folder = target_folder(point)
++            if folder is not None and not transfer.can_receive_into(folder):
++                folder = None
+         except Exception:
+             folder = None
+         fallback = folder is None
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 3fd9342..285fd5d 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -153,7 +153,7 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ # Revision 27 delivers the complete matching kernel modules and preserves
+ # the transfer fallback when a direct paste cannot be confirmed.
+ # Revision 28 receives file drops in the background directly into folders.
+-compat_revision=28
++compat_revision=29
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_file_drop_target.py b/guest/tests/test_file_drop_target.py
+index f94a31a..29e1111 100644
+--- a/guest/tests/test_file_drop_target.py
++++ b/guest/tests/test_file_drop_target.py
+@@ -4,6 +4,10 @@ import importlib.machinery
+ import importlib.util
+ from pathlib import Path
+ import unittest
++import os
++import tempfile
++from types import SimpleNamespace
++from unittest.mock import Mock
+ from unittest.mock import patch
+ from subprocess import CompletedProcess
+ 
+@@ -31,6 +35,32 @@ def client(address, at, size, *, focus=0, cls="org.gnome.Nautilus", hidden=False
+ 
+ 
+ class DropTargetTests(unittest.TestCase):
++    def test_unsupported_folder_falls_back_before_downloading(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            state = root / 'try-omarchy-clipboard'
++            state.mkdir()
++            request = state / 'incoming-drop-test'
++            request.write_text('{}')
++            shared, downloads = root / 'shared', root / 'Downloads'
++            shared.mkdir()
++            ticket = {'test': 'one-use-ticket'}
++            fake = SimpleNamespace(read_metadata=Mock(return_value=ticket),
++                valid_ticket=Mock(return_value=True), can_receive_into=Mock(return_value=False),
++                download_into=Mock(return_value=[downloads / 'file']))
++            with patch.dict(os.environ, {'XDG_RUNTIME_DIR': str(root)}), \
++                 patch.object(module, 'target_folder', return_value=shared), \
++                 patch.object(module, 'downloads_folder', return_value=downloads), \
++                 patch.object(module, 'notify') as notify, \
++                 patch.object(importlib.machinery.SourceFileLoader, 'exec_module',
++                              side_effect=lambda loaded: loaded.__dict__.update(vars(fake))):
++                module.receive_ticket(request, (1, 1, 10, 10))
++            fake.can_receive_into.assert_called_once_with(shared)
++            fake.download_into.assert_called_once_with(ticket, downloads)
++            notify.assert_called_once_with('Files saved to Downloads', '1 item(s) received from Windows.')
++            self.assertFalse(request.exists())
++            self.assertEqual(list(shared.iterdir()), [])
++
+     def test_picks_the_window_under_the_point(self):
+         clients = [
+             client("0xa", [0, 0], [800, 600], focus=0),
+diff --git a/guest/tests/test_file_transfer.py b/guest/tests/test_file_transfer.py
+index 478f56a..d55d601 100644
+--- a/guest/tests/test_file_transfer.py
++++ b/guest/tests/test_file_transfer.py
+@@ -15,6 +15,38 @@ loader.exec_module(transfer)
+ 
+ 
+ class StreamingFileTests(unittest.TestCase):
++    def test_drop_probe_preserves_existing_files_and_cleans_up(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            folder = Path(tmp)
++            original = folder / 'original'
++            original.write_text('keep me')
++            self.assertTrue(transfer.can_receive_into(folder))
++            self.assertEqual(list(folder.iterdir()), [original])
++            self.assertEqual(original.read_text(), 'keep me')
++
++    def test_drop_probe_rejects_unsupported_operations_without_leftovers(self):
++        for operation in ('utime', 'fsync'):
++            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as tmp:
++                folder = Path(tmp)
++                with patch.object(transfer.os, operation, side_effect=PermissionError('shared filesystem')):
++                    self.assertFalse(transfer.can_receive_into(folder))
++                self.assertEqual(list(folder.iterdir()), [])
++        with tempfile.TemporaryDirectory() as tmp:
++            folder = Path(tmp)
++            with patch.object(transfer, 'publish', side_effect=OSError('no atomic rename')):
++                self.assertFalse(transfer.can_receive_into(folder))
++            self.assertEqual(list(folder.iterdir()), [])
++
++    def test_drop_probe_rejects_symlinked_destination(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            folder = root / 'folder'
++            folder.mkdir()
++            link = root / 'link'
++            link.symlink_to(folder)
++            self.assertFalse(transfer.can_receive_into(link))
++            self.assertEqual(list(folder.iterdir()), [])
++
+     def test_outgoing_archive_uses_disk_cache_when_runtime_storage_is_small(self):
+         from types import SimpleNamespace
+         from unittest import mock
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 0d99c0a..a8bf9d4 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -266,7 +266,7 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=28" in finalize_rootfs
++        "compat_revision=29" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in compat_paths
+         and "etc/skel/.config/nvim/lua/plugins/theme.lua" in compat_paths
+-- 
+2.55.0
+

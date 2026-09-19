@@ -10,7 +10,10 @@ build and GPU.
 The earlier v20 guest assets are obsolete. The corrected candidate was built
 from `e402965` on `codex/preview20-reliability`, with guest compatibility **28**.
 Camera, browser microphone and clean file drops passed on the physical laptop;
-the user confirmed the repeated drag. The full rebuilt guest passed CI build
+the user confirmed the repeated drag. Fresh testing then found a shared-mount
+timestamp failure. Compatibility 29 checks destination capabilities before
+consuming the ticket and falls back to Downloads when required; its rebuild is
+pending. The compatibility-28 guest passed CI build
 and fresh-boot smoke. Exact packaged and signed acceptance remains in progress.
 See the [drop evidence](evidence/FILE-DROP-2026-09-19.md).
 
@@ -82,7 +85,9 @@ frames arrive, indicator behavior, and any error codes.
 2. Repeat the same file. Expect a numbered copy; the original must remain intact.
 3. Drop outside a recognized Files folder. Expect delivery to Downloads and a small
    notification. Ambiguous tabs/windows, other apps and nonlocal folders use this
-   fallback; arbitrary application imports and nested folder-icon targeting are
+   fallback. Windows shared mounts and other folders that cannot preserve timestamps
+   and publish without overwriting also use Downloads. Arbitrary application imports
+   and nested folder-icon targeting are
    not supported.
 4. For a slower transfer, close Windows progress. Expect copying to continue.
    Its Cancel button should stop copying without changing the Windows originals.

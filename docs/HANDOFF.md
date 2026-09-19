@@ -4,7 +4,12 @@ Updated September 19, 2026. PR #135 merged as `58f5b70`; the active release
 validation branch is `codex/preview20-release`. Public Latest remains
 v0.0.19-preview. The v20 release is still a draft.
 
-The corrected candidate is built from `e402965`, with guest compatibility **28**.
+Fresh testing found one more drop failure on the Windows shared mount. PR #136
+adds filesystem capability checks before consuming a transfer; unsupported folders
+use Downloads. The fix passes all 157 guest tests and physical shared-mount and
+normal-folder drops. Compatibility **29** needs a rebuilt candidate.
+
+The previous candidate is built from `e402965`, with guest compatibility **28**.
 Linux/Windows CI, 153 guest tests, a full fresh guest boot and the five-boot v19
 upgrade/old-image/return sequence passed. Camera, browser microphone and quiet
 file drops passed on the physical Windows laptop, with user confirmation.
@@ -18,7 +23,8 @@ Exact hashes and validation boundaries are in
 [the candidate record](evidence/PREVIEW20-CANDIDATE-2026-09-19.md).
 The protected signing check passed and Windows verified its signature, but that
 diagnostic launcher still identifies as v19. The public source pin is unchanged.
-Exact rebuilt-package Windows fresh-install checks,
+The previous candidate also passed fresh desktop, camera and Vulkan playback
+checks with the signed diagnostic launcher. The compatibility-29 rebuild,
 audio/device switching, sleep/resume and final signed v20 acceptance remain open.
 Do not publish until these pass. Use [LAPTOP-PASS.md](LAPTOP-PASS.md) for the
 isolated local-asset testing procedure.

@@ -191,6 +191,30 @@ def receive(input, offer, destination):
                 return {'paths': [str(destination / name) for name in roots]}
 
 
+def can_receive_into(folder):
+    """Check required filesystem operations before consuming a one-use ticket.
+
+    Windows shares may allow writes but reject timestamp preservation or atomic
+    no-replace renames. Probe only disposable files, never an existing item.
+    """
+    try:
+        plain_path(folder)
+        with tempfile.TemporaryDirectory(prefix='.windows-drop-check-', dir=folder) as tmp:
+            stage = Path(tmp)
+            contents = stage / 'contents'
+            contents.mkdir(mode=0o700)
+            probe = contents / 'probe'
+            with probe.open('xb') as output:
+                output.write(b'probe')
+                output.flush()
+                os.fsync(output.fileno())
+            os.utime(probe, (946684800, 946684800), follow_symlinks=False)
+            publish(contents, stage / 'received')
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def download_into(ticket, folder, host='10.0.2.2', port=4452):
     """Verify in hidden staging, then atomically reveal each top-level item.
 

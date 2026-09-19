@@ -151,6 +151,8 @@ def receive_ticket(ticket_path, point):
         # not redirect a copy that is already in progress.
         try:
             folder = target_folder(point)
+            if folder is not None and not transfer.can_receive_into(folder):
+                folder = None
         except Exception:
             folder = None
         fallback = folder is None
