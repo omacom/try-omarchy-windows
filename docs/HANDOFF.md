@@ -36,6 +36,26 @@ Sleep/wake and the broader hardware, storage and stable-update checks remain v1
 work. This preview release does not certify those paths.
 See [LAPTOP-PASS.md](LAPTOP-PASS.md) and [RELEASING.md](RELEASING.md).
 
+## V1 validation follow-up
+
+The [September 19 v1 laptop pass](evidence/V1-LAPTOP-2026-09-19.md) closes the
+repository-transfer update gate: the original signed v7 launcher followed its
+built-in legacy URL to public v20, preserved the guest fixture and committed only
+after readiness. An interrupted attempt first restored v7 and preserved that file.
+
+A full v20 snapshot was restored into a separate installation. The restored
+copy booted on the GPU, retained all three fixtures, grew to 32 GiB and did not
+shrink when a lower capacity was requested. Reboot retained that capacity and
+the fixtures. Windows refused a competing write
+handle during snapshot creation. The laptop currently runs the restored test
+copy; original test installations, snapshots and evidence are retained.
+
+Continue with stable-update transitions and the remaining storage/migration
+checks. Full Hyper-V is disabled; a proposed temporary enable/test/restore cycle
+requires Windows reboots and has not been authorized. SSHD has Manual startup,
+so remote-reboot preparation must account for it. Do not reboot during disk tests
+or assume that an interactive Windows sign-in will return automatically.
+
 The remainder is historical context from September 15-17. Current GitHub state
 and the dated checkpoint above supersede its PR counts and candidate references.
 

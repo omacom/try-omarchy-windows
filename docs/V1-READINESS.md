@@ -1,7 +1,7 @@
 # Road to v1
 
-Baseline: [v0.0.19-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.19-preview),
-published September 16, 2026. The next milestone is a focused v1 release candidate.
+Baseline: [v0.0.20-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.20-preview),
+published September 19, 2026. The next milestone is a focused v1 release candidate.
 The project remains a preview until the release gates below are satisfied.
 For another session, start with [the current handoff](HANDOFF.md).
 
@@ -35,7 +35,7 @@ every Windows device or every native Omarchy feature has been validated.
 
 | Area | Evidence available | Remaining boundary |
 | --- | --- | --- |
-| Omarchy 4.0.3, browser-theme permissions, existing-guest package upgrades | [Guest upgrade validation](GUEST-UPGRADES.md), including preservation fixtures and busy-lock handling | Original stale-lock report #90 and interruption recovery remain open |
+| Omarchy 4.0.3, browser-theme permissions, existing-guest package upgrades | [Guest upgrade validation](GUEST-UPGRADES.md), including preservation fixtures and busy-lock handling | Controlled orphaned-lock recovery passed in v20; interruption during package writes remains open |
 | Installation moves, backup/restore, snapshots/rollback, growth/reclaim, clipboard and transfer windows | [Windows laptop acceptance](evidence/WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md) | Retest critical paths on the next exact candidate; portable lifecycle is unproven |
 | Source-built graphics runtime and matching source pinned in v18 | Same acceptance record; final r15 Vulkan playback and preserved files | AMD laptop coverage does not establish Intel/NVIDIA or full Hyper-V support |
 | GPU/CPU display paths, idle measurements and one-hour endurance | Same record, with individual runtime revisions identified | Earlier-runtime results are not exact-final-runtime acceptance for every check |
@@ -86,25 +86,26 @@ stable update chains and the broader checks below remain open.
 
 ## Remaining release gates
 
-1. **Updates and recovery.** The orphaned-lock recovery above closes the
-   user-facing [#90](https://github.com/omacom/try-omarchy-windows/issues/90)
-   symptom; its KVM regression must pass on the exact candidate. Active package
-   locks stay protected. The remaining gap is interruption during package writes
-   or power loss mid-extraction, which the controlled pre-transaction test does not
-   reproduce. Validate fresh install and preserved existing-guest upgrades on the
-   candidate. Exercise an old pre-transfer installation, both
-   signed feeds, a preview that skips the bridge, preview-to-stable, direct stable
-   installation, stable-to-stable and forced rollback. Record file checksums,
-   versions, redirects and signatures. Launcher rollback does not undo installed
-   guest OS package updates.
+1. **Updates and recovery.** Preview 20 passed fresh installation, preserved
+   existing-guest upgrades, controlled orphaned-lock recovery and interrupted
+   launcher/payload rollback. The [original v7-to-v20 update and rollback](evidence/V1-LAPTOP-2026-09-19.md)
+   also passed on physical Windows, closing the repository-transfer gate.
+   Remaining work: interruption during package writes or power loss mid-extraction;
+   both signed feeds across a stable release; an old preview that skips the bridge;
+   preview-to-stable, direct stable, stable-to-stable and forced rollback.
+   Record file checksums, versions, redirects and signatures. Launcher rollback
+   does not undo installed guest OS package updates. Select the tested bridge
+   preview in the release environment before stable publication; that variable
+   was still unset at the September 19 checkpoint.
 2. **Supported Windows hardware.** Obtain physical Intel and NVIDIA graphics
    results, full Hyper-V coexistence and Core Ultra virtualization coverage.
    Record Windows version/edition; include each advertised Windows version and
    lower-memory hardware. Complete sleep/resume, physical mixed-DPI movement,
    keyboard/focus and RDP/VNC checks, headphone switching and microphone-indicator
    observations. Repeat long-session and idle checks on the selected runtime.
-3. **Storage regression.** On the exact candidate, verify move, backup, restore,
-   reset, snapshot rollback, growth and reclaim with preserved fixtures. Include
+3. **Storage regression.** V20 now has physical full-guest snapshot/restore and
+   growth/no-shrink acceptance with preserved fixtures; see the [laptop pass](evidence/V1-LAPTOP-2026-09-19.md).
+   Complete move, reset, active snapshot rollback and reclaim on the candidate. Include
    interruption, low space and temporary Windows file locks. Lowering capacity
    or rolling back the launcher must not shrink an existing disk.
 4. **Native migration.** Restore an export onto a fresh physical Omarchy install;
