@@ -191,6 +191,35 @@ def receive(input, offer, destination):
                 return {'paths': [str(destination / name) for name in roots]}
 
 
+def download_into(ticket, folder, host='10.0.2.2', port=4452):
+    """Verify in hidden staging, then atomically reveal each top-level item.
+
+    Existing files and directories are never overwritten, including a name
+    created by another concurrent drop. All staging stays on the destination
+    filesystem, so publication does not recopy a large file on the UI thread.
+    """
+    plain_path(folder)
+    if not folder.is_dir():
+        raise ValueError('The destination folder is no longer available')
+    with tempfile.TemporaryDirectory(prefix='.windows-drop-', dir=folder) as tmp:
+        result = download(ticket, Path(tmp) / 'received', host, port)
+        published = []
+        for raw in result['paths']:
+            source = Path(raw)
+            for number in itertools.count():
+                name = source.name if number == 0 else (
+                    source.name + f' ({number})' if source.is_dir() else
+                    source.stem + f' ({number})' + source.suffix)
+                target = folder / name
+                try:
+                    publish(source, target)
+                    published.append(target)
+                    break
+                except FileExistsError:
+                    continue
+        return published
+
+
 def read_metadata(path):
     with path.open('rb') as metadata:
         data = metadata.read(4097)
@@ -199,8 +228,19 @@ def read_metadata(path):
     return json.loads(data)
 
 
+def valid_drop_point(value):
+    return (
+        isinstance(value, list)
+        and len(value) in (2, 4)
+        and all(isinstance(coordinate, int) and not isinstance(coordinate, bool) and coordinate >= 0 for coordinate in value)
+        and (len(value) == 2 or (value[2] > 0 and value[3] > 0))
+    )
+
+
 def valid_ticket(ticket, direction):
-    if not isinstance(ticket, dict) or set(ticket) != {'id', 'token', 'direction', 'offer'}:
+    if not isinstance(ticket, dict) or not {'id', 'token', 'direction', 'offer'} <= set(ticket) <= {'id', 'token', 'direction', 'offer', 'point'}:
+        return False
+    if 'point' in ticket and not valid_drop_point(ticket['point']):
         return False
     for name, length in (('id', 32), ('token', 64)):
         value = ticket[name]
@@ -415,8 +455,12 @@ def main():
             fd, name = tempfile.mkstemp(prefix='incoming-drop-', dir=args.state)
             with os.fdopen(fd, 'wb') as output:
                 output.write(data)
+            command = ['try-omarchy-drop', '--receive', name]
+            point = ticket.get('point')
+            if valid_drop_point(point):
+                command += [','.join(map(str, point))]
             try:
-                subprocess.Popen(['file-transfer-window', '--ticket', name], close_fds=True, start_new_session=True)
+                subprocess.Popen(command, stdin=subprocess.DEVNULL, close_fds=True, start_new_session=True)
             except BaseException:
                 Path(name).unlink(missing_ok=True)
                 raise

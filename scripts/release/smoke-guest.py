@@ -222,12 +222,13 @@ os.environ['WAYLAND_DISPLAY'] = instance['wl_socket']
 os.environ['DBUS_SESSION_BUS_ADDRESS'] = 'unix:path=' + os.environ['XDG_RUNTIME_DIR'] + '/bus'
 expected = b'Try Omarchy verified file drop\n' * (1 << 20)
 digest = hashlib.sha256(expected).hexdigest()
-cache = Path.home() / '.cache/try-omarchy-transfers'
+background = BACKGROUND_DROP
+cache = Path(subprocess.check_output(['xdg-user-dir', 'DOWNLOAD'], text=True).strip()) if background else Path.home() / '.cache/try-omarchy-transfers'
 assert shutil.disk_usage(Path.home()).free >= len(expected) * 2 + (1 << 30), 'Transfer smoke needs an expanded test disk with at least 1 GiB reserve'
 deadline = time.monotonic() + 180
 received = None
 while time.monotonic() < deadline:
-    for path in cache.glob('received-*/from-windows-世界.txt'):
+    for path in cache.glob('from-windows-世界*.txt' if background else 'received-*/from-windows-世界.txt'):
         if hashlib.sha256(path.read_bytes()).hexdigest() == digest:
             received = path
             break
@@ -239,14 +240,9 @@ if not received:
     print(subprocess.getoutput('journalctl --user -b --no-pager -n 100'), file=sys.stderr, flush=True)
     print(subprocess.getoutput('find ~/.cache/try-omarchy-transfers /run/user/$(id -u)/try-omarchy-clipboard -maxdepth 2 -type f'), file=sys.stderr, flush=True)
 assert received, 'Windows file did not arrive intact'
-deadline = time.monotonic() + 30
-while time.monotonic() < deadline:
-    clients = json.loads(subprocess.check_output(['hyprctl', 'clients', '-j']))
-    if any(client['class'] == 'org.omarchy.FileTransfers' for client in clients):
-        break
-    time.sleep(.25)
-else:
-    raise AssertionError('guest transfer window is missing: ' + repr(clients))
+clients = json.loads(subprocess.check_output(['hyprctl', 'clients', '-j']))
+visible = any(client['class'] == 'org.omarchy.FileTransfers' for client in clients)
+assert visible != background, 'unexpected guest transfer window state: ' + repr(clients)
 assert subprocess.check_output(['wl-paste', '--no-newline']) == b'clipboard stays here', 'file drop replaced the guest clipboard'
 with tempfile.TemporaryDirectory(prefix='tryomarchy-drag-') as temporary:
     source = Path(temporary) / 'from-omarchy-世界.txt'
@@ -256,6 +252,7 @@ with tempfile.TemporaryDirectory(prefix='tryomarchy-drag-') as temporary:
 assert received.read_bytes() == expected, 'received file changed'
 print('yes')
 """
+        transfer_check = transfer_check.replace("BACKGROUND_DROP", repr(args.compat_revision >= 28))
         encoded_transfer = base64.b64encode(transfer_check.encode()).decode()
         FACT_CHECKS["file-transfer-round-trip"] = ("export XDG_RUNTIME_DIR=/run/user/$(id -u); "
             f"printf %s {encoded_transfer} | base64 -d >/tmp/tryomarchy-transfer-check.py; "

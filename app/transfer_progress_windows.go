@@ -35,12 +35,12 @@ func transferWindowProc(hwnd, message, w, l uintptr) uintptr {
 			return 0
 		case wmCommand:
 			if w&0xffff == 2 {
-				procPostMessageW.Call(hwnd, wmClose, 0, 0)
+				state.progress.cancel()
+				procDestroyWindow.Call(hwnd)
 				return 0
 			}
 		case wmClose:
-			state.progress.cancel()
-			usbSetText(state.status, "Cancelling transfer...")
+			procDestroyWindow.Call(hwnd)
 			return 0
 		case wmDestroy:
 			transferWindows.Delete(hwnd)
@@ -57,7 +57,7 @@ func showTransferProgress(progress *transferProgress) {
 	select {
 	case <-progress.done:
 		return
-	case <-time.After(750 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 	}
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -81,8 +81,10 @@ func showTransferProgress(progress *transferProgress) {
 		logf("could not create file transfer window")
 		return
 	}
+	// WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW keeps background transfers from
+	// taking focus. Closing dismisses progress; Cancel explicitly stops copying.
 	title, _ := syscall.UTF16PtrFromString("Copying files")
-	hwnd, _, _ := procCreateWindowExW.Call(0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(title)), wsCaption|wsSysmenu|wsVisible, 120, 120, 500, 150, 0, 0, instance, 0)
+	hwnd, _, _ := procCreateWindowExW.Call(0x08000080, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(title)), wsCaption|wsSysmenu|wsVisible, 120, 120, 500, 150, 0, 0, instance, 0)
 	if hwnd == 0 {
 		return
 	}
@@ -103,7 +105,6 @@ func showTransferProgress(progress *transferProgress) {
 		procDestroyWindow.Call(hwnd)
 	} else {
 		procSetTimer.Call(hwnd, 1, 100, 0)
-		procSetFocus.Call(button)
 	}
 	var message msgStruct
 	for {

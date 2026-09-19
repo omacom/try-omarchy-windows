@@ -56,3 +56,32 @@ func TestNativeTransferProgressCancellation(t *testing.T) {
 		t.Fatal("transfer window did not close")
 	}
 }
+
+func TestNativeTransferProgressCloseKeepsCopying(t *testing.T) {
+	if os.Getenv("TRYOMARCHY_NATIVE_UI_TEST") != "1" {
+		t.Skip("interactive Windows desktop required")
+	}
+	progress := newTransferProgress("Copying in background")
+	defer progress.finish()
+	done := make(chan struct{})
+	go func() { defer close(done); showTransferProgress(progress) }()
+	class, _ := syscall.UTF16PtrFromString("TryOmarchyFileTransfer")
+	var hwnd uintptr
+	deadline := time.Now().Add(5 * time.Second)
+	for hwnd == 0 && time.Now().Before(deadline) {
+		hwnd, _, _ = user32.NewProc("FindWindowW").Call(uintptr(unsafe.Pointer(class)), 0)
+		time.Sleep(20 * time.Millisecond)
+	}
+	if hwnd == 0 {
+		t.Fatal("transfer window did not open")
+	}
+	procPostMessageW.Call(hwnd, wmClose, 0, 0)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not dismiss progress")
+	}
+	if progress.ctx.Err() != nil {
+		t.Fatal("dismissing progress cancelled the copy")
+	}
+}

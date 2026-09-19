@@ -1,0 +1,608 @@
+From 113495df5374cf704da178910682c0f1140c7139 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 19 Sep 2026 16:16:01 -0400
+Subject: [PATCH] Receive file drops in folders without opening a transfer
+ window
+
+---
+ .../usr/local/bin/file-transfer               |  35 ++-
+ .../usr/local/bin/file-transfer-window        |  33 +--
+ .../usr/local/bin/try-omarchy-drop            | 218 ++++++++++--------
+ guest/scripts/finalize-rootfs.sh              |   3 +-
+ guest/tests/test_file_drop_target.py          |  33 ++-
+ guest/tests/test_file_transfer.py             |  59 +++++
+ guest/tests/test_file_transfer_window.py      |  20 +-
+ guest/tests/verify.py                         |   4 +-
+ 8 files changed, 243 insertions(+), 162 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/local/bin/file-transfer b/guest/factory-overlay/usr/local/bin/file-transfer
+index 45cc97b..150dc73 100755
+--- a/guest/factory-overlay/usr/local/bin/file-transfer
++++ b/guest/factory-overlay/usr/local/bin/file-transfer
+@@ -191,6 +191,35 @@ def receive(input, offer, destination):
+                 return {'paths': [str(destination / name) for name in roots]}
+ 
+ 
++def download_into(ticket, folder, host='10.0.2.2', port=4452):
++    """Verify in hidden staging, then atomically reveal each top-level item.
++
++    Existing files and directories are never overwritten, including a name
++    created by another concurrent drop. All staging stays on the destination
++    filesystem, so publication does not recopy a large file on the UI thread.
++    """
++    plain_path(folder)
++    if not folder.is_dir():
++        raise ValueError('The destination folder is no longer available')
++    with tempfile.TemporaryDirectory(prefix='.windows-drop-', dir=folder) as tmp:
++        result = download(ticket, Path(tmp) / 'received', host, port)
++        published = []
++        for raw in result['paths']:
++            source = Path(raw)
++            for number in itertools.count():
++                name = source.name if number == 0 else (
++                    source.name + f' ({number})' if source.is_dir() else
++                    source.stem + f' ({number})' + source.suffix)
++                target = folder / name
++                try:
++                    publish(source, target)
++                    published.append(target)
++                    break
++                except FileExistsError:
++                    continue
++        return published
++
++
+ def read_metadata(path):
+     with path.open('rb') as metadata:
+         data = metadata.read(4097)
+@@ -426,12 +455,12 @@ def main():
+             fd, name = tempfile.mkstemp(prefix='incoming-drop-', dir=args.state)
+             with os.fdopen(fd, 'wb') as output:
+                 output.write(data)
+-            command = ['file-transfer-window', '--ticket', name]
++            command = ['try-omarchy-drop', '--receive', name]
+             point = ticket.get('point')
+             if valid_drop_point(point):
+-                command += ['--point', ','.join(map(str, point))]
++                command += [','.join(map(str, point))]
+             try:
+-                subprocess.Popen(command, close_fds=True, start_new_session=True)
++                subprocess.Popen(command, stdin=subprocess.DEVNULL, close_fds=True, start_new_session=True)
+             except BaseException:
+                 Path(name).unlink(missing_ok=True)
+                 raise
+diff --git a/guest/factory-overlay/usr/local/bin/file-transfer-window b/guest/factory-overlay/usr/local/bin/file-transfer-window
+index 5f85550..23686d2 100755
+--- a/guest/factory-overlay/usr/local/bin/file-transfer-window
++++ b/guest/factory-overlay/usr/local/bin/file-transfer-window
+@@ -18,6 +18,7 @@ class Transfers(Gtk.Application):
+         super().__init__(application_id='org.omarchy.FileTransfers', flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+         self.window = None
+         self.worker = None
++        self.closing = False
+         self.pending = []
+         self.drop_point = None
+         self.received_paths = []
+@@ -60,25 +61,6 @@ class Transfers(Gtk.Application):
+             self.next_download()
+         return 0
+ 
+-    def deliver_direct(self):
+-        if self.drop_point is None or not self.received_paths:
+-            return False
+-        request = json.dumps({
+-            'x': self.drop_point[0],
+-            'y': self.drop_point[1],
+-            'paths': [str(path) for path in self.received_paths],
+-            'width': self.drop_point[2] if len(self.drop_point) == 4 else 0,
+-            'height': self.drop_point[3] if len(self.drop_point) == 4 else 0,
+-        })
+-        try:
+-            result = subprocess.run(
+-                ['try-omarchy-drop', '--json', request],
+-                capture_output=True, timeout=20, close_fds=True,
+-            )
+-        except (OSError, subprocess.SubprocessError):
+-            return False
+-        return result.returncode == 3
+-
+     def do_activate(self):
+         if self.window:
+             self.window.present()
+@@ -162,6 +144,9 @@ class Transfers(Gtk.Application):
+         if worker is not self.worker:
+             return False
+         self.worker = None
++        if self.closing:
++            self.quit()
++            return False
+         self.cancel.set_sensitive(False)
+         if worker.returncode:
+             self.status.set_label(error.decode(errors='replace')[:1000] or 'Transfer cancelled. Original files were kept.')
+@@ -173,13 +158,6 @@ class Transfers(Gtk.Application):
+                         self.add_received(path)
+                 except (ValueError, KeyError, TypeError):
+                     self.status.set_label('Files were received, but the transfer result could not be read.')
+-            if ticket and self.drop_point is not None:
+-                if self.deliver_direct():
+-                    self.status.set_label('Paste requested. If the application did not receive the files, drag them from here.')
+-                else:
+-                    self.status.set_label('Files were received. Drag them into an application.')
+-        if self.drop_point is not None and not self.window.get_visible():
+-            self.window.present()
+         self.next_download()
+         return False
+ 
+@@ -210,8 +188,9 @@ class Transfers(Gtk.Application):
+ 
+     def close(self, *_):
+         if self.worker:
++            self.closing = True
+             self.cancel_transfer()
+-            self.status.set_label('Cancelling transfer. Close this window after it finishes.')
++            self.window.set_visible(False)
+             return True
+         for ticket, _point in self.pending:
+             ticket.unlink(missing_ok=True)
+diff --git a/guest/factory-overlay/usr/local/bin/try-omarchy-drop b/guest/factory-overlay/usr/local/bin/try-omarchy-drop
+index e0e6a3c..4878d32 100755
+--- a/guest/factory-overlay/usr/local/bin/try-omarchy-drop
++++ b/guest/factory-overlay/usr/local/bin/try-omarchy-drop
+@@ -1,33 +1,20 @@
+ #!/usr/bin/python3
+-"""Deliver dropped files into the Omarchy window under a drop point.
+-
+-The Windows launcher transfers the files first, then asks the guest (through
+-the agent) to deliver them here. Direct drops only work when the window under
+-the point is running and can accept a file-list paste; every other case returns
+-non-zero so received files remain available in the transfer window.
+-A successful shortcut is only a paste request, not application acceptance.
+-
+-The decision logic is split into pure functions so the unprivileged test suite
+-can exercise it without a compositor.
+-"""
++"""Receive Windows drops in the background without opening or focusing a window."""
+ 
+ from __future__ import annotations
+ 
+ import json
+-import shutil
+ import subprocess
+ import sys
+ from pathlib import Path
+-from urllib.parse import quote
+ 
+-# The transfer window is the fallback and must never be the paste target, or a
+-# failed direct drop would just re-open it.
++# An explicitly opened outgoing-transfer window is not a destination folder.
+ TRANSFER_WINDOW_CLASS = "org.omarchy.FileTransfers"
+ 
+ 
+ def clients() -> list[dict]:
+     result = subprocess.run(
+-        ["hyprctl", "-j", "clients"], capture_output=True, text=True, timeout=10
++        ["hyprctl", "-j", "clients"], capture_output=True, text=True, timeout=2
+     )
+     if result.returncode != 0:
+         raise RuntimeError("hyprctl clients failed")
+@@ -44,7 +31,7 @@ def candidate(clients: list[dict], x: int, y: int) -> dict | None:
+     """Topmost drop target under (x, y), ignoring hidden and fallback windows."""
+     matches = []
+     for client in clients:
+-        if client.get("hidden") or not client.get("mapped", True):
++        if client.get("hidden") or not client.get("mapped", True) or not client.get("visible", True):
+             continue
+         if client.get("class") == TRANSFER_WINDOW_CLASS:
+             continue
+@@ -57,13 +44,9 @@ def candidate(clients: list[dict], x: int, y: int) -> dict | None:
+     return min(matches, key=lambda client: client.get("focusHistoryID", 1 << 30))
+ 
+ 
+-def uri_list(paths: list[str]) -> str:
+-    return "\r\n".join("file://" + quote(str(Path(path).resolve())) for path in paths) + "\r\n"
+-
+-
+ def display_point(x, y, width, height, monitors):
+     # Direct placement currently supports one guest display. Multiple displays
+-    # keep the ordinary transfer window until the host event carries an identity.
++    # use Downloads until the host event carries a display identity.
+     if len(monitors) != 1 or width <= 0 or height <= 0 or not (0 <= x < width and 0 <= y < height):
+         return None
+     monitor = monitors[0]
+@@ -74,85 +57,128 @@ def display_point(x, y, width, height, monitors):
+             int(monitor.get("y", 0) + y * monitor["height"] / scale / height))
+ 
+ 
+-def deliver(x: int, y: int, paths: list[str], run=subprocess.run, target=None) -> int:
+-    for path in paths:
+-        if not Path(path).is_absolute():
+-            print("try-omarchy-drop: paths must be absolute", file=sys.stderr)
+-            return 2
+-    if target is None:
+-        target = candidate(clients(), x, y)
+-    if target is None:
+-        print("try-omarchy-drop: no application window under the drop point", file=sys.stderr)
+-        return 1
+-    address = target.get("address")
+-    if not address:
+-        print("try-omarchy-drop: the target window has no address", file=sys.stderr)
+-        return 1
+-    if shutil.which("wl-copy") is None:
+-        print("try-omarchy-drop: wl-copy is unavailable", file=sys.stderr)
+-        return 1
++def dbus_call(destination, path, interface, method, signature, values):
++    from gi.repository import Gio, GLib
++    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
++    return bus.call_sync(destination, path, interface, method,
++                         GLib.Variant(signature, values), None,
++                         Gio.DBusCallFlags.NONE, 1000, None).unpack()
+ 
+-    # Put the file list on the clipboard as text/uri-list, then paste it into
+-    # the target. Apps that accept a URI paste import the files in place.
++
++def folder_from_windows(target, windows):
++    """Only use an unambiguous local folder, never guess between tabs/windows."""
++    from urllib.parse import urlsplit, unquote
++    folders = []
++    for locations in windows.values():
++        unique = set(locations)
++        if len(unique) != 1:
++            continue
++        uri = urlsplit(next(iter(unique)))
++        if uri.scheme != 'file' or uri.netloc not in ('', 'localhost') or uri.query or uri.fragment:
++            continue
++        path = Path(unquote(uri.path))
++        if not path.is_absolute():
++            continue
++        if len(windows) == 1 or path.name == target.get('title'):
++            folders.append(path)
++    return folders[0] if len(folders) == 1 else None
++
++
++def target_folder(point):
++    if len(point) != 4:
++        return None
++    result = subprocess.run(['hyprctl', '-j', 'monitors'], capture_output=True,
++                            text=True, timeout=2, check=True)
++    monitors = json.loads(result.stdout)
++    mapped = display_point(*point, monitors)
++    if mapped is None:
++        return None
++    workspace = monitors[0].get('activeWorkspace', {}).get('id')
++    visible = [c for c in clients() if c.get('workspace', {}).get('id') == workspace]
++    target = candidate(visible, *mapped)
++    if target is None or target.get('class') != 'org.gnome.Nautilus':
++        return None
++    # Check the actual service owner, not just a window title/app ID.
++    owner = dbus_call('org.freedesktop.DBus', '/org/freedesktop/DBus',
++                      'org.freedesktop.DBus', 'GetConnectionUnixProcessID',
++                      '(s)', ('org.gnome.Nautilus',))[0]
++    if target.get('pid') != owner:
++        return None
++    windows = dbus_call('org.freedesktop.FileManager1', '/org/freedesktop/FileManager1',
++                        'org.freedesktop.DBus.Properties', 'Get', '(ss)',
++                        ('org.freedesktop.FileManager1', 'OpenWindowsWithLocations'))[0]
++    return folder_from_windows(target, windows)
++
++
++def downloads_folder():
++    result = subprocess.run(['xdg-user-dir', 'DOWNLOAD'], capture_output=True,
++                            text=True, timeout=2, check=True)
++    path = Path(result.stdout.strip())
++    if not path.is_absolute():
++        raise ValueError('Downloads folder is unavailable')
++    return path
++
++
++def notify(title, message):
++    # This runs in a background receiver, never on a GTK/UI thread.
+     try:
+-        for args, options in (
+-            (["wl-copy", "--type", "text/uri-list", "--"], {"input": uri_list(paths), "text": True}),
+-            (["hyprctl", "dispatch", "focuswindow", f"address:{address}"], {}),
+-            (["hyprctl", "dispatch", "sendshortcut", "CTRL,V," + f"address:{address}"], {}),
+-        ):
+-            result = run(args, timeout=10, **options)
+-            if result.returncode != 0:
+-                return 1
++        subprocess.run(['notify-send', '--app-name=Files', '--expire-time=5000',
++                        '--', title, message], timeout=2, check=False,
++                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
++                       stderr=subprocess.DEVNULL)
+     except (OSError, subprocess.SubprocessError):
+-        return 1
+-    # Wayland shortcut injection supplies no acknowledgement that the app
+-    # accepted these files. Keep the transfer window available in either case.
+-    return 3
++        pass
+ 
+ 
+-def main(argv: list[str]) -> int:
+-    if len(argv) >= 3 and argv[1] == "--json":
+-        try:
+-            request = json.loads(argv[2])
+-        except (ValueError, IndexError):
+-            print("try-omarchy-drop: invalid request", file=sys.stderr)
+-            return 2
+-        if (
+-            not isinstance(request, dict)
+-            or not isinstance(request.get("x"), int)
+-            or not isinstance(request.get("y"), int)
+-            or not isinstance(request.get("paths"), list)
+-            or not all(isinstance(path, str) for path in request["paths"])
+-            or not request["paths"]
+-        ):
+-            print("try-omarchy-drop: invalid request", file=sys.stderr)
+-            return 2
+-        try:
+-            result = subprocess.run(["hyprctl", "-j", "monitors"], capture_output=True, text=True, timeout=10, check=True)
+-            monitors = json.loads(result.stdout)
+-            point = display_point(request["x"], request["y"], request.get("width", 0), request.get("height", 0), monitors)
+-            if point is None:
+-                return 1
+-            active_workspace = monitors[0].get("activeWorkspace", {}).get("id")
+-            visible = clients()
+-            target = candidate([client for client in visible if client.get("workspace", {}).get("id") == active_workspace], *point)
+-            if target is None:
+-                return 1
+-            # Take one snapshot so focus changes during copying cannot select
+-            # an unrelated workspace or a different application.
+-            return deliver(*point, request["paths"], target=target)
+-        except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError):
+-            return 1
+-    if len(argv) < 4:
+-        print("usage: try-omarchy-drop X Y FILE... | --json '{\"x\":..,\"y\":..,\"paths\":[..]}'", file=sys.stderr)
+-        return 2
++def receive_ticket(ticket_path, point):
++    import importlib.machinery
++    import importlib.util
++    import os
++    runtime = Path(os.environ.get('XDG_RUNTIME_DIR', '/run/user/' + str(os.getuid())))
++    state = runtime / 'try-omarchy-clipboard'
++    if (ticket_path.parent != state or not ticket_path.name.startswith('incoming-drop-')
++            or ticket_path.is_symlink()):
++        raise ValueError('Invalid file-drop request')
++    loader = importlib.machinery.SourceFileLoader('drop_transfer', str(Path(__file__).with_name('file-transfer')))
++    spec = importlib.util.spec_from_loader(loader.name, loader)
++    transfer = importlib.util.module_from_spec(spec)
++    loader.exec_module(transfer)
+     try:
+-        x, y = int(argv[1]), int(argv[2])
+-    except ValueError:
+-        print("try-omarchy-drop: X and Y must be integers", file=sys.stderr)
+-        return 2
+-    return deliver(x, y, argv[3:])
++        ticket = transfer.read_metadata(ticket_path)
++        if not transfer.valid_ticket(ticket, 'download'):
++            raise ValueError('Invalid dropped-file ticket')
++        # Resolve before any network/disk work. A later focus/folder change must
++        # not redirect a copy that is already in progress.
++        try:
++            folder = target_folder(point)
++        except Exception:
++            folder = None
++        fallback = folder is None
++        if fallback:
++            folder = downloads_folder()
++            folder.mkdir(parents=True, exist_ok=True)
++        import fcntl
++        with (state / 'drop-receive.lock').open('a') as lock:
++            fcntl.flock(lock, fcntl.LOCK_EX)
++            paths = transfer.download_into(ticket, folder)
++        if fallback:
++            notify('Files saved to Downloads', f'{len(paths)} item(s) received from Windows.')
++        print(json.dumps({'paths': [str(p) for p in paths], 'fallback': fallback}), flush=True)
++    except Exception as error:
++        notify('Could not copy files', str(error)[:250] + '. Original files are still on Windows.')
++        raise
++    finally:
++        ticket_path.unlink(missing_ok=True)
+ 
+ 
+-if __name__ == "__main__":
+-    raise SystemExit(main(sys.argv))
++def main(argv):
++    if len(argv) >= 3 and argv[1] == '--receive':
++        point = tuple(int(v) for v in argv[3].split(',')) if len(argv) == 4 else ()
++        receive_ticket(Path(argv[2]), point)
++        return 0
++    # Legacy agent requests must not inject clipboard shortcuts or claim delivery.
++    return 1
++
++
++if __name__ == '__main__':
++    sys.exit(main(sys.argv))
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 227bd2f..3fd9342 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -152,7 +152,8 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ # window under the drop point, falling back to the transfer window.
+ # Revision 27 delivers the complete matching kernel modules and preserves
+ # the transfer fallback when a direct paste cannot be confirmed.
+-compat_revision=27
++# Revision 28 receives file drops in the background directly into folders.
++compat_revision=28
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_file_drop_target.py b/guest/tests/test_file_drop_target.py
+index c35045d..f94a31a 100644
+--- a/guest/tests/test_file_drop_target.py
++++ b/guest/tests/test_file_drop_target.py
+@@ -58,28 +58,23 @@ class DropTargetTests(unittest.TestCase):
+         ]
+         self.assertIsNone(module.candidate(clients, 10, 10))
+ 
+-    def test_uri_list_is_percent_encoded(self):
+-        value = module.uri_list(["/home/omarchy/My File.txt"])
+-        self.assertEqual(value, "file:///home/omarchy/My%20File.txt\r\n")
++    def test_resolves_one_window_folder_without_using_its_title(self):
++        self.assertEqual(module.folder_from_windows({}, {'/window/1': ['file:///home/a/My%20Files']}), Path('/home/a/My Files'))
+ 
+-    def test_deliver_rejects_relative_paths(self):
+-        self.assertEqual(module.deliver(0, 0, ["relative.txt"]), 2)
++    def test_multiple_windows_need_an_unambiguous_folder_title(self):
++        windows = {'/window/1': ['file:///home/a/Downloads'], '/window/2': ['file:///home/a/Work']}
++        self.assertEqual(module.folder_from_windows({'title': 'Work'}, windows), Path('/home/a/Work'))
++        windows['/window/3'] = ['file:///home/b/Work']
++        self.assertIsNone(module.folder_from_windows({'title': 'Work'}, windows))
+ 
+-    def test_failed_paste_steps_preserve_fallback(self):
+-        target = client("0xa", [0, 0], [800, 600])
+-        for failed_at in range(3):
+-            calls = []
+-            def run(args, **kwargs):
+-                calls.append(args)
+-                return CompletedProcess(args, int(len(calls) == failed_at + 1))
+-            with patch.object(module.shutil, 'which', return_value='/usr/bin/wl-copy'):
+-                self.assertEqual(module.deliver(1, 1, ['/tmp/file'], run=run, target=target), 1)
+-            self.assertEqual(len(calls), failed_at + 1)
++    def test_does_not_guess_between_tabs_or_nonlocal_locations(self):
++        for locations in (['file:///home/a/A', 'file:///home/a/B'], ['smb://server/share'], ['file://server/share'], ['trash:///']):
++            self.assertIsNone(module.folder_from_windows({}, {'/window/1': locations}))
+ 
+-    def test_successful_shortcut_is_not_application_acceptance(self):
+-        with patch.object(module.shutil, 'which', return_value='/usr/bin/wl-copy'):
+-            result = module.deliver(1, 1, ['/tmp/file'], run=lambda args, **kwargs: CompletedProcess(args, 0), target=client('0xa', [0, 0], [800, 600]))
+-        self.assertEqual(result, 3)
++    def test_legacy_request_never_injects_a_paste(self):
++        with patch.object(module.subprocess, 'run') as run:
++            self.assertEqual(module.main(['drop', '--json', '{"paths":["/tmp/file"]}']), 1)
++            run.assert_not_called()
+ 
+     def test_drop_uses_current_guest_scale_and_resolution(self):
+         monitors = [{'width': 2560, 'height': 1440, 'scale': 2, 'x': 0, 'y': 0}]
+diff --git a/guest/tests/test_file_transfer.py b/guest/tests/test_file_transfer.py
+index bcf5c15..478f56a 100644
+--- a/guest/tests/test_file_transfer.py
++++ b/guest/tests/test_file_transfer.py
+@@ -5,6 +5,7 @@ import io
+ from pathlib import Path
+ import tempfile
+ import unittest
++from unittest.mock import patch
+ 
+ HELPER = Path(__file__).resolve().parents[1] / 'factory-overlay/usr/local/bin/file-transfer'
+ loader = importlib.machinery.SourceFileLoader('file_transfer', str(HELPER))
+@@ -151,6 +152,64 @@ class StreamingFileTests(unittest.TestCase):
+             changed[name] = value
+             self.assertFalse(transfer.valid_ticket(changed, 'download'))
+ 
++    def test_incoming_drop_launches_background_receiver_without_a_window(self):
++        import json
++        from types import SimpleNamespace
++        with tempfile.TemporaryDirectory() as tmp:
++            state = Path(tmp)
++            ticket = {'id': 'a' * 32, 'token': 'b' * 64, 'direction': 'download',
++                      'point': [300, 200, 1280, 720],
++                      'offer': {'version': 1, 'archiveBytes': 100, 'fileBytes': 1,
++                                'entries': 1, 'sha256': 'c' * 64}}
++            with patch.object(transfer.sys, 'argv', ['file-transfer', 'drop-receive', '--state', str(state)]), \
++                 patch.object(transfer.sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(json.dumps(ticket).encode()))), \
++                 patch.object(transfer.subprocess, 'Popen') as launch:
++                transfer.main()
++            args = launch.call_args.args[0]
++            self.assertEqual(args[0:2], ['try-omarchy-drop', '--receive'])
++            self.assertEqual(args[3], '300,200,1280,720')
++            self.assertEqual(json.loads(Path(args[2]).read_text()), ticket)
++            self.assertTrue(launch.call_args.kwargs['start_new_session'])
++
++    def test_background_drop_publishes_verified_files_without_overwriting(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            source = root / 'source'
++            source.mkdir()
++            (source / 'same.txt').write_text('new')
++            (source / 'folder').mkdir()
++            (source / 'folder' / 'nested.txt').write_text('nested')
++            archive = root / 'incoming.zip'
++            offer = transfer.pack([source / 'same.txt', source / 'folder'], archive)
++            folder = root / 'destination'
++            folder.mkdir()
++            (folder / 'same.txt').write_text('original')
++            (folder / 'folder').mkdir()
++            (folder / 'folder' / 'keep.txt').write_text('keep')
++            def download(ticket, destination, *unused):
++                with archive.open('rb') as stream:
++                    return transfer.receive(stream, offer, destination)
++            with patch.object(transfer, 'download', side_effect=download):
++                paths = transfer.download_into({}, folder)
++            self.assertEqual({p.name for p in paths}, {'same (1).txt', 'folder (1)'})
++            self.assertEqual((folder / 'same.txt').read_text(), 'original')
++            self.assertEqual((folder / 'same (1).txt').read_text(), 'new')
++            self.assertEqual((folder / 'folder (1)' / 'nested.txt').read_text(), 'nested')
++            self.assertEqual((folder / 'folder' / 'keep.txt').read_text(), 'keep')
++            self.assertFalse(list(folder.glob('.windows-drop-*')))
++
++    def test_failed_background_drop_never_leaves_a_visible_partial_file(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            folder = Path(tmp)
++            def broken(ticket, destination, *unused):
++                destination.mkdir()
++                (destination / 'partial.txt').write_text('partial')
++                raise ValueError('checksum mismatch')
++            with patch.object(transfer, 'download', side_effect=broken):
++                with self.assertRaisesRegex(ValueError, 'checksum'):
++                    transfer.download_into({}, folder)
++            self.assertEqual(list(folder.iterdir()), [])
++
+     def test_ticket_accepts_only_well_formed_drop_points(self):
+         offer = {'version': 1, 'archiveBytes': 100, 'fileBytes': 1, 'entries': 1, 'sha256': 'a' * 64}
+         ticket = {'id': 'b' * 32, 'token': 'c' * 64, 'direction': 'download', 'offer': offer, 'point': [640, 360]}
+diff --git a/guest/tests/test_file_transfer_window.py b/guest/tests/test_file_transfer_window.py
+index 4f1c771..852f476 100644
+--- a/guest/tests/test_file_transfer_window.py
++++ b/guest/tests/test_file_transfer_window.py
+@@ -49,20 +49,12 @@ class FileTransferWindowTests(unittest.TestCase):
+                     self.assertFalse(ticket.exists())
+                     self.assertIsNone(app.worker)
+                     idle.assert_called_once_with(app.next_download)
+-                for accepted in (False, True):
+-                    ticket = app.state / 'incoming-drop-fallback'
+-                    ticket.write_text('{}')
+-                    app.drop_point = (320, 180, 1280, 720)
+-                    app.received_paths = []
+-                    worker = SimpleNamespace(returncode=0)
+-                    app.worker = worker
+-                    app.window.set_visible(False)
+-                    with patch.object(app, 'deliver_direct', return_value=accepted), patch.object(app, 'quit') as quit_app:
+-                        app.finished(worker, json.dumps({'paths': [str(path)]}).encode(), b'', ticket)
+-                        quit_app.assert_not_called()
+-                    self.assertTrue(app.window.get_visible())
+-                    self.assertEqual(app.received_paths, [path])
+-                    self.assertEqual(path.read_text(), 'preserved')
++                worker = SimpleNamespace(terminate=lambda: None, poll=lambda: None)
++                app.worker = worker
++                with patch.object(module.GLib, 'timeout_add'):
++                    self.assertTrue(app.close())
++                self.assertFalse(app.window.get_visible())
++                app.worker = None
+             finally:
+                 app.window.destroy()
+                 app.quit()
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 23749e2..0d99c0a 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -266,7 +266,7 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=27" in finalize_rootfs
++        "compat_revision=28" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in compat_paths
+         and "etc/skel/.config/nvim/lua/plugins/theme.lua" in compat_paths
+@@ -299,7 +299,7 @@ def main() -> None:
+     check(
+         "usr/local/bin/try-omarchy-drop" in compat_paths
+         and "valid_drop_point" in read(GUEST / "factory-overlay/usr/local/bin/file-transfer")
+-        and "'--point'" in read(GUEST / "factory-overlay/usr/local/bin/file-transfer")
++        and "'--receive'" in read(GUEST / "factory-overlay/usr/local/bin/file-transfer")
+         and (GUEST / "factory-overlay/usr/local/bin/try-omarchy-drop").stat().st_mode & stat.S_IXUSR != 0,
+         "direct file-drop delivery reaches persistent disks",
+     )
+-- 
+2.55.0
+

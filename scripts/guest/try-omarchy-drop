@@ -1,0 +1,184 @@
+#!/usr/bin/python3
+"""Receive Windows drops in the background without opening or focusing a window."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+# An explicitly opened outgoing-transfer window is not a destination folder.
+TRANSFER_WINDOW_CLASS = "org.omarchy.FileTransfers"
+
+
+def clients() -> list[dict]:
+    result = subprocess.run(
+        ["hyprctl", "-j", "clients"], capture_output=True, text=True, timeout=2
+    )
+    if result.returncode != 0:
+        raise RuntimeError("hyprctl clients failed")
+    return json.loads(result.stdout or "[]")
+
+
+def contains(client: dict, x: int, y: int) -> bool:
+    at = client.get("at") or [0, 0]
+    size = client.get("size") or [0, 0]
+    return at[0] <= x < at[0] + size[0] and at[1] <= y < at[1] + size[1]
+
+
+def candidate(clients: list[dict], x: int, y: int) -> dict | None:
+    """Topmost drop target under (x, y), ignoring hidden and fallback windows."""
+    matches = []
+    for client in clients:
+        if client.get("hidden") or not client.get("mapped", True) or not client.get("visible", True):
+            continue
+        if client.get("class") == TRANSFER_WINDOW_CLASS:
+            continue
+        if contains(client, x, y):
+            matches.append(client)
+    if not matches:
+        return None
+    # Hyprland reports focusHistoryID small for recently focused windows; the
+    # most recently focused match is the one visually on top.
+    return min(matches, key=lambda client: client.get("focusHistoryID", 1 << 30))
+
+
+def display_point(x, y, width, height, monitors):
+    # Direct placement currently supports one guest display. Multiple displays
+    # use Downloads until the host event carries a display identity.
+    if len(monitors) != 1 or width <= 0 or height <= 0 or not (0 <= x < width and 0 <= y < height):
+        return None
+    monitor = monitors[0]
+    scale = monitor.get("scale", 1)
+    if scale <= 0:
+        return None
+    return (int(monitor.get("x", 0) + x * monitor["width"] / scale / width),
+            int(monitor.get("y", 0) + y * monitor["height"] / scale / height))
+
+
+def dbus_call(destination, path, interface, method, signature, values):
+    from gi.repository import Gio, GLib
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    return bus.call_sync(destination, path, interface, method,
+                         GLib.Variant(signature, values), None,
+                         Gio.DBusCallFlags.NONE, 1000, None).unpack()
+
+
+def folder_from_windows(target, windows):
+    """Only use an unambiguous local folder, never guess between tabs/windows."""
+    from urllib.parse import urlsplit, unquote
+    folders = []
+    for locations in windows.values():
+        unique = set(locations)
+        if len(unique) != 1:
+            continue
+        uri = urlsplit(next(iter(unique)))
+        if uri.scheme != 'file' or uri.netloc not in ('', 'localhost') or uri.query or uri.fragment:
+            continue
+        path = Path(unquote(uri.path))
+        if not path.is_absolute():
+            continue
+        if len(windows) == 1 or path.name == target.get('title'):
+            folders.append(path)
+    return folders[0] if len(folders) == 1 else None
+
+
+def target_folder(point):
+    if len(point) != 4:
+        return None
+    result = subprocess.run(['hyprctl', '-j', 'monitors'], capture_output=True,
+                            text=True, timeout=2, check=True)
+    monitors = json.loads(result.stdout)
+    mapped = display_point(*point, monitors)
+    if mapped is None:
+        return None
+    workspace = monitors[0].get('activeWorkspace', {}).get('id')
+    visible = [c for c in clients() if c.get('workspace', {}).get('id') == workspace]
+    target = candidate(visible, *mapped)
+    if target is None or target.get('class') != 'org.gnome.Nautilus':
+        return None
+    # Check the actual service owner, not just a window title/app ID.
+    owner = dbus_call('org.freedesktop.DBus', '/org/freedesktop/DBus',
+                      'org.freedesktop.DBus', 'GetConnectionUnixProcessID',
+                      '(s)', ('org.gnome.Nautilus',))[0]
+    if target.get('pid') != owner:
+        return None
+    windows = dbus_call('org.freedesktop.FileManager1', '/org/freedesktop/FileManager1',
+                        'org.freedesktop.DBus.Properties', 'Get', '(ss)',
+                        ('org.freedesktop.FileManager1', 'OpenWindowsWithLocations'))[0]
+    return folder_from_windows(target, windows)
+
+
+def downloads_folder():
+    result = subprocess.run(['xdg-user-dir', 'DOWNLOAD'], capture_output=True,
+                            text=True, timeout=2, check=True)
+    path = Path(result.stdout.strip())
+    if not path.is_absolute():
+        raise ValueError('Downloads folder is unavailable')
+    return path
+
+
+def notify(title, message):
+    # This runs in a background receiver, never on a GTK/UI thread.
+    try:
+        subprocess.run(['notify-send', '--app-name=Files', '--expire-time=5000',
+                        '--', title, message], timeout=2, check=False,
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def receive_ticket(ticket_path, point):
+    import importlib.machinery
+    import importlib.util
+    import os
+    runtime = Path(os.environ.get('XDG_RUNTIME_DIR', '/run/user/' + str(os.getuid())))
+    state = runtime / 'try-omarchy-clipboard'
+    if (ticket_path.parent != state or not ticket_path.name.startswith('incoming-drop-')
+            or ticket_path.is_symlink()):
+        raise ValueError('Invalid file-drop request')
+    loader = importlib.machinery.SourceFileLoader('drop_transfer', str(Path(__file__).with_name('file-transfer')))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    transfer = importlib.util.module_from_spec(spec)
+    loader.exec_module(transfer)
+    try:
+        ticket = transfer.read_metadata(ticket_path)
+        if not transfer.valid_ticket(ticket, 'download'):
+            raise ValueError('Invalid dropped-file ticket')
+        # Resolve before any network/disk work. A later focus/folder change must
+        # not redirect a copy that is already in progress.
+        try:
+            folder = target_folder(point)
+        except Exception:
+            folder = None
+        fallback = folder is None
+        if fallback:
+            folder = downloads_folder()
+            folder.mkdir(parents=True, exist_ok=True)
+        import fcntl
+        with (state / 'drop-receive.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            paths = transfer.download_into(ticket, folder)
+        if fallback:
+            notify('Files saved to Downloads', f'{len(paths)} item(s) received from Windows.')
+        print(json.dumps({'paths': [str(p) for p in paths], 'fallback': fallback}), flush=True)
+    except Exception as error:
+        notify('Could not copy files', str(error)[:250] + '. Original files are still on Windows.')
+        raise
+    finally:
+        ticket_path.unlink(missing_ok=True)
+
+
+def main(argv):
+    if len(argv) >= 3 and argv[1] == '--receive':
+        point = tuple(int(v) for v in argv[3].split(',')) if len(argv) == 4 else ()
+        receive_ticket(Path(argv[2]), point)
+        return 0
+    # Legacy agent requests must not inject clipboard shortcuts or claim delivery.
+    return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))
