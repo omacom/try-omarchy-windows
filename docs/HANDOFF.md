@@ -1,19 +1,27 @@
 # Resume here
 
-Updated September 19, 2026. The active follow-up is branch
-`codex/preview20-reliability`. Public Latest remains v0.0.19-preview.
+Updated September 19, 2026. PR #135 merged as `58f5b70`; the active release
+validation branch is `codex/preview20-release`. Public Latest remains
+v0.0.19-preview. The v20 release is still a draft.
 
-The replacement diagnostic candidate is built from `0f8f371` in [PR #135](https://github.com/omacom/try-omarchy-windows/pull/135),
-with guest compatibility **27**. Linux/Windows CI, all 150 guest tests, the full
-fresh guest boot, and the five-boot v19 upgrade/old-image/return sequence passed.
+The corrected candidate is built from `e402965`, with guest compatibility **28**.
+Linux/Windows CI, 153 guest tests, a full fresh guest boot and the five-boot v19
+upgrade/old-image/return sequence passed. Camera, browser microphone and quiet
+file drops passed on the physical Windows laptop, with user confirmation.
+A full Windows backup/restore preserved all nine manifest files and the restored
+copy booted. All 52 native storage/update regression tests passed. Forced early-boot
+interruption restored the previous payload and preserved the test file. The
+normal upgrade retry and second boot passed with complete modules and unchanged
+compatibility markers.
+
 Exact hashes and validation boundaries are in
 [the candidate record](evidence/PREVIEW20-CANDIDATE-2026-09-19.md).
-
-The launcher is unsigned and still defaults to public v19. Use the explicit
-local-asset commands in [LAPTOP-PASS.md](LAPTOP-PASS.md) for candidate testing.
-Physical camera/audio, Windows update/rollback and storage acceptance, payload
-pinning and signing remain pending. Do not publish the draft yet.
-The original September 16 v20 and September 17 retest launchers are obsolete.
+The protected signing check passed and Windows verified its signature, but that
+diagnostic launcher still identifies as v19. The public source pin is unchanged.
+Exact rebuilt-package Windows fresh-install checks,
+audio/device switching, sleep/resume and final signed v20 acceptance remain open.
+Do not publish until these pass. Use [LAPTOP-PASS.md](LAPTOP-PASS.md) for the
+isolated local-asset testing procedure.
 
 The remainder is historical context from September 15-17. Current GitHub state
 and the dated checkpoint above supersede its PR counts and candidate references.

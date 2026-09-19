@@ -43,6 +43,23 @@ This candidate supersedes the compatibility-27 assets with the failed drop UI.
   See [drop scope and evidence](FILE-DROP-2026-09-19.md).
 - Native Windows progress tests passed cancellation and dismissal without
   cancelling the copy.
+- A full Windows backup and restore preserved all nine manifest files, including
+  the factory image and writable disk. The restored copy booted with WHPX and
+  accelerated graphics. The original installation and backup remain intact.
+- All 52 native Windows storage/update regression tests passed, including
+  failure injection and overwrite protection. These exercise the core operations,
+  not every storage dialog on a full guest.
+- The rebuilt guest was interrupted before userspace readiness on the restored
+  Windows installation. The next launch restored the old payload receipt,
+  reached the accelerated desktop without downloading the failed payload again,
+  and preserved the user fixture hash. The next ordinary launch successfully
+  installed compatibility 28 and loaded TUN and v4l2loopback before any package
+  update. Its drop helper matched the reviewed source hash. A second boot
+  preserved both compatibility-marker timestamps and the fixture hash, without
+  repeating repair.
+- PR #135 merged as `58f5b70`. The protected signing check passed, and Windows
+  verified the downloaded launcher's Authenticode signature. This diagnostic
+  build still identifies as v19; final v20 signed acceptance remains pending.
 
 The physical camera/drop checks used the running test installation, with corrected
 scripts installed before the compatibility-28 image was built. Rebuilt-package
@@ -66,11 +83,10 @@ asset arguments in [LAPTOP-PASS.md](../LAPTOP-PASS.md) for this candidate.
 
 ## Remaining before release
 
-1. Exact rebuilt-package Windows fresh install, upgrade/failure rollback and
-   critical storage regression, with preserved fixture hashes.
+1. Exact rebuilt-package Windows fresh install with the signed diagnostic launcher.
 2. Audio playback/device switching, sleep/resume and final physical input/display
    checks on the selected package.
-3. Merge the reviewed fixes, pin the accepted payload, build and verify the signed
+3. Pin the accepted payload, build and verify the signed
    launcher through the protected release workflow, and repeat signed acceptance.
 4. Publish only after those checks pass. The user requested release once verified.
 

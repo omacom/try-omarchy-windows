@@ -2,34 +2,19 @@
 
 ## v0.0.20-preview - Unreleased
 
-- Recover automatically from an orphaned pacman database lock left by an
-  interrupted update, so later updates no longer need a manual `db.lck` removal.
-  The lock is removed only when it provably cannot belong to a live transaction.
-- Expose the Windows camera to the guest as a `Windows Camera` V4L2 device, on
-  demand: the Windows camera indicator lights only while an app is capturing.
-- Drop files from Windows onto the Omarchy window and request a paste into the
-  application under the cursor on a single display. Keep received files in the
-  transfer window because applications do not acknowledge shortcut delivery.
-- Repair camera activation, frame extraction and capture shutdown, and keep
-  callbacks alive until Media Foundation releases them.
-- Use SDL audio for microphone capture and playback, retaining DirectSound and
-  silent startup fallbacks when audio cannot initialize.
-- Deliver the complete matching kernel module tree to existing guests, including
-  TUN and the camera driver; retry interrupted delivery on the next boot.
-- Pause the guest while Windows sleeps and resume it on wake, ahead of the
-  existing clock re-sync.
-- Refresh the guest package lock for current Arch repositories, which moves the
-  guest kernel to 7.2.6.
-- Boot the guest again: the camera channel used the `reconnect` chardev option,
-  which current QEMU rejects, so every launch died before the guest booted. It
-  now uses `reconnect-ms`.
-- Resolve the Media Foundation capture entry points across `mfplat.dll`, `mf.dll`
-  and `mfcore.dll` instead of assuming `mfplat.dll`, report a missing export as
-  an error instead of crashing, and set the frame size and rate through
-  `SetUINT64` rather than the inline-only `MFSetAttributeSize` and
-  `MFSetAttributeRatio` helpers. `MFEnumDeviceSources` lives in `mf.dll` on
-  current Windows, and the camera bridge took the launcher down on the first
-  real camera attempt.
+- Use the Windows camera in guest apps, with capture starting on demand and
+  stopping when the app closes it.
+- Enable microphone input alongside audio playback, with playback-only and
+  silent fallbacks when an audio device cannot initialize.
+- Drop Windows files into an open local Files folder without a transfer window
+  taking focus. Unrecognized destinations use Downloads with a notification;
+  duplicate names keep both files.
+- Deliver complete matching kernel modules to existing guests, including TUN
+  and the camera driver, and retry interrupted delivery on the next boot.
+- Recover from orphaned pacman locks left by interrupted updates while preserving
+  locks owned by a live transaction.
+- Pause the guest while Windows sleeps and resume it on wake with clock sync.
+- Refresh guest packages and move the guest kernel to 7.2.6.
 
 ## v0.0.19-preview - 2026-09-15
 
