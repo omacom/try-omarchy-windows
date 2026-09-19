@@ -7,12 +7,14 @@ build and GPU.
 
 ## Build under test
 
-The earlier v20 guest assets are obsolete. The corrected candidate was built
-from `e402965` on `codex/preview20-reliability`, with guest compatibility **28**.
-Camera, browser microphone and clean file drops passed on the physical laptop;
-the user confirmed the repeated drag. The full rebuilt guest passed CI build
-and fresh-boot smoke. Exact packaged and signed acceptance remains in progress.
-See the [drop evidence](evidence/FILE-DROP-2026-09-19.md).
+The current candidate was built from `946521b` on `codex/preview20-release`, with
+guest compatibility **29**. It supersedes compatibility 28 after fresh Windows
+testing found a shared-mount timestamp failure. Unsupported drop destinations now
+use Downloads before consuming the transfer ticket. The corrected helpers passed
+physical shared-folder and normal-folder drops; the complete rebuilt image and
+five-boot upgrade sequence passed. The exact package also passed Windows upgrade
+and clean-guest checks. Physical sleep/wake and final signed v20 acceptance remain
+open. See the [candidate evidence](evidence/PREVIEW20-CANDIDATE-2026-09-19.md).
 
 Use one candidate directory containing the verified launcher and complete guest
 and runtime assets. Record the commit and SHA256 of the launcher, `SHA256SUMS`,
@@ -82,7 +84,9 @@ frames arrive, indicator behavior, and any error codes.
 2. Repeat the same file. Expect a numbered copy; the original must remain intact.
 3. Drop outside a recognized Files folder. Expect delivery to Downloads and a small
    notification. Ambiguous tabs/windows, other apps and nonlocal folders use this
-   fallback; arbitrary application imports and nested folder-icon targeting are
+   fallback. Windows shared mounts and other folders that cannot preserve timestamps
+   and publish without overwriting also use Downloads. Arbitrary application imports
+   and nested folder-icon targeting are
    not supported.
 4. For a slower transfer, close Windows progress. Expect copying to continue.
    Its Cancel button should stop copying without changing the Windows originals.
@@ -100,7 +104,7 @@ devices. A black frame or nonzero recording byte count alone is not a pass.
 
 On an upgraded disk, check `sudo modprobe tun`, `/dev/net/tun`,
 `sudo modprobe v4l2loopback`, and `/dev/video42` before running any package update.
-Verify the compatibility marker is `28:<running kernel>` and the next boot does
+Verify the compatibility marker is `29:<running kernel>` and the next boot does
 not repeat module delivery. Preserve fixture hashes through upgrade and rollback.
 
 ## 3. Pause on host sleep

@@ -1,19 +1,32 @@
 # Resume here
 
-Updated September 19, 2026. The active follow-up is branch
-`codex/preview20-reliability`. Public Latest remains v0.0.19-preview.
+Updated September 19, 2026. PR #135 merged as `58f5b70`; the follow-up is
+[PR #136](https://github.com/omacom/try-omarchy-windows/pull/136) on
+`codex/preview20-release`. Public Latest and the source pin remain v0.0.19-preview.
+The v20 release is still a draft.
 
-The replacement diagnostic candidate is built from `0f8f371` in [PR #135](https://github.com/omacom/try-omarchy-windows/pull/135),
-with guest compatibility **27**. Linux/Windows CI, all 150 guest tests, the full
-fresh guest boot, and the five-boot v19 upgrade/old-image/return sequence passed.
+The candidate is built from `946521b`, with guest compatibility **29**. It adds a
+filesystem capability check before consuming a drop ticket. This fixes the
+shared-mount timestamp failure found during fresh Windows testing: unsupported
+folders use Downloads with a notification. The fix passed physical shared-folder
+fallback and normal-folder delivery with matching hashes and duplicate preservation.
+
+Linux/Windows CI, all 157 guest tests, the full image build/fresh boot and the
+five-boot v19 upgrade/old-image/return sequence passed. Windows camera, microphone,
+normal use and quiet drops have user acceptance. Full Windows backup/restore,
+forced update rollback, successful upgrade/reboot and 52 native storage/update
+tests passed. Fresh compatibility-28 desktop, camera and Vulkan playback passed
+with the signed diagnostic launcher. The exact compatibility-29 package also upgraded Windows successfully, with
+matching helper hashes and preserved files. A clean compatibility-29 guest also
+passed accelerated desktop, module and packaged shared-folder drop checks.
+
 Exact hashes and validation boundaries are in
 [the candidate record](evidence/PREVIEW20-CANDIDATE-2026-09-19.md).
-
-The launcher is unsigned and still defaults to public v19. Use the explicit
-local-asset commands in [LAPTOP-PASS.md](LAPTOP-PASS.md) for candidate testing.
-Physical camera/audio, Windows update/rollback and storage acceptance, payload
-pinning and signing remain pending. Do not publish the draft yet.
-The original September 16 v20 and September 17 retest launchers are obsolete.
+The protected signing check passed, but that diagnostic identifies as v19. Keep
+the public pin unchanged until physical sleep/wake and final package checks pass,
+then pin/sign/test v20 and publish. The user confirmed normal use was working well;
+actual sleep/wake remains unconfirmed. Do not publish before the remaining gates.
+See [LAPTOP-PASS.md](LAPTOP-PASS.md) and [RELEASING.md](RELEASING.md).
 
 The remainder is historical context from September 15-17. Current GitHub state
 and the dated checkpoint above supersede its PR counts and candidate references.
