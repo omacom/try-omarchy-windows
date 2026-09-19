@@ -5,6 +5,11 @@ Launcher source: `11227bda63659418944ebb4561ed0027d1438b08`, [PR #135](https://g
 Guest compatibility: **27**. This is a diagnostic candidate, not release approval.
 Public Latest remains v0.0.19-preview.
 
+The physical file-drop test failed with these guest assets. The subsequent
+[background drop correction](FILE-DROP-2026-09-19.md) is installed and tested on
+the laptop, but these compatibility-27 artifacts must not be published as the
+corrected candidate. A compatibility-28 guest rebuild is in progress.
+
 ## Changes
 
 - Camera: corrected COM interface IDs and method slots, sample ownership,
