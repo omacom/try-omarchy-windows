@@ -1,24 +1,32 @@
-From 45aad7ab7d2c90b17ac0693ba89e327d233b4790 Mon Sep 17 00:00:00 2001
+From af8f60e2e833fc7c74183fec8e13b27a50283b52 Mon Sep 17 00:00:00 2001
 From: Try Omarchy <actions@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 13:54:54 -0400
 Subject: [PATCH] Deliver matching kernel modules and preserve file-drop
  fallback
 
 ---
- .../etc/initcpio/hooks/tryomarchy_compat      | 16 ++--
+ .../etc/initcpio/hooks/tryomarchy_compat      | 20 ++--
  .../etc/initcpio/install/tryomarchy_compat    | 17 ++++
+ .../omarchy-windows-camera-bridge.service     |  1 -
+ .../omarchy-windows-camera-bridge.service     |  1 +
+ ...mera.rules => 70-try-omarchy-camera.rules} |  4 +-
+ .../omarchy-windows-camera-bridge.service     |  4 +-
  .../usr/local/bin/file-transfer               |  5 +-
  .../usr/local/bin/file-transfer-window        | 28 +++---
  .../usr/local/bin/try-omarchy-drop            | 56 ++++++++++--
- guest/scripts/finalize-rootfs.sh              |  9 +-
+ guest/scripts/finalize-rootfs.sh              | 13 ++-
+ guest/tests/test_camera_bridge.py             |  9 +-
  guest/tests/test_file_drop_target.py          | 24 +++++
  guest/tests/test_kernel_module_delivery.py    | 91 +++++++++++++++++++
  guest/tests/verify.py                         |  6 +-
- 9 files changed, 219 insertions(+), 33 deletions(-)
+ 14 files changed, 239 insertions(+), 40 deletions(-)
+ delete mode 120000 guest/factory-overlay/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service
+ create mode 120000 guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service
+ rename guest/factory-overlay/etc/udev/rules.d/{94-try-omarchy-camera.rules => 70-try-omarchy-camera.rules} (57%)
  create mode 100644 guest/tests/test_kernel_module_delivery.py
 
 diff --git a/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat b/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat
-index 9ba0de3..5a42fd7 100755
+index 9ba0de3..6ce51a3 100755
 --- a/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat
 +++ b/guest/factory-overlay/etc/initcpio/hooks/tryomarchy_compat
 @@ -5,9 +5,10 @@ run_latehook() {
@@ -33,7 +41,7 @@ index 9ba0de3..5a42fd7 100755
          return 0
      fi
  
-@@ -20,16 +21,17 @@ run_latehook() {
+@@ -20,16 +21,21 @@ run_latehook() {
      # cannot express deletion, so remove the obsolete early-start link after
      # its replacement has been extracted successfully.
      rm -f "$root/etc/systemd/user/default.target.wants/try-omarchy-share-link.service"
@@ -41,6 +49,10 @@ index 9ba0de3..5a42fd7 100755
 -    # still contain an older linux package, so carry this initramfs's matching
 -    # module tree across before switch_root. A failed copy is retried next boot.
 -    if [ ! -f "$root/usr/lib/modules/$kernel/modules.dep.bin" ]; then
++    # Replace the camera's old broken link and grant the active desktop access
++    # before systemd's seat-late udev rule applies ACLs.
++    rm -f "$root/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service"
++    rm -f "$root/etc/udev/rules.d/94-try-omarchy-camera.rules"
 +    # Merge the complete matching tree, including into an older partial tree.
 +    # Preserve existing files on failure and leave the completion marker stale,
 +    # so an interrupted or disk-full extraction is retried on the next boot.
@@ -85,6 +97,52 @@ index 45414b3..71cd997 100755
      add_runscript
  }
  
+diff --git a/guest/factory-overlay/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service b/guest/factory-overlay/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service
+deleted file mode 120000
+index 381859b..0000000
+--- a/guest/factory-overlay/etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service
++++ /dev/null
+@@ -1 +0,0 @@
+-../omarchy-windows-camera-bridge.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service
+new file mode 120000
+index 0000000..46a2905
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service
+@@ -0,0 +1 @@
++/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/udev/rules.d/94-try-omarchy-camera.rules b/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-camera.rules
+similarity index 57%
+rename from guest/factory-overlay/etc/udev/rules.d/94-try-omarchy-camera.rules
+rename to guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-camera.rules
+index 151209a..c2a0dfb 100644
+--- a/guest/factory-overlay/etc/udev/rules.d/94-try-omarchy-camera.rules
++++ b/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-camera.rules
+@@ -1,2 +1,2 @@
+-SUBSYSTEM=="virtio-ports", ATTR{name}=="dev.tryomarchy.camera", GROUP="video", MODE="0660"
+-KERNEL=="video42", SUBSYSTEM=="video4linux", GROUP="video", MODE="0660"
++SUBSYSTEM=="virtio-ports", ATTR{name}=="dev.tryomarchy.camera", GROUP="video", MODE="0660", TAG+="uaccess", TAG+="seat"
++KERNEL=="video42", SUBSYSTEM=="video4linux", GROUP="video", MODE="0660", TAG+="uaccess", TAG+="seat"
+diff --git a/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service b/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+index a17f18e..3660d11 100644
+--- a/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
++++ b/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+@@ -1,5 +1,7 @@
+ [Unit]
+ Description=Expose the Windows camera to Omarchy over the virtio camera port
++PartOf=graphical-session.target
++After=graphical-session-pre.target
+ 
+ [Service]
+ ExecStart=/usr/local/bin/omarchy-windows-camera-bridge
+@@ -7,4 +9,4 @@ Restart=always
+ RestartSec=1
+ 
+ [Install]
+-WantedBy=default.target
++WantedBy=graphical-session.target
 diff --git a/guest/factory-overlay/usr/local/bin/file-transfer b/guest/factory-overlay/usr/local/bin/file-transfer
 index 47dabea..45cc97b 100755
 --- a/guest/factory-overlay/usr/local/bin/file-transfer
@@ -295,9 +353,20 @@ index 9dbc3e7..e0e6a3c 100755
          print("usage: try-omarchy-drop X Y FILE... | --json '{\"x\":..,\"y\":..,\"paths\":[..]}'", file=sys.stderr)
          return 2
 diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
-index af3440b..a8b9d81 100755
+index af3440b..227bd2f 100755
 --- a/guest/scripts/finalize-rootfs.sh
 +++ b/guest/scripts/finalize-rootfs.sh
+@@ -98,8 +98,8 @@ compat_paths=(
+   etc/systemd/system/sysinit.target.wants/try-omarchy-pacman-lock.service
+   usr/local/bin/omarchy-windows-camera-bridge
+   usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+-  etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service
+-  etc/udev/rules.d/94-try-omarchy-camera.rules
++  etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service
++  etc/udev/rules.d/70-try-omarchy-camera.rules
+   etc/modules-load.d/90-try-omarchy-camera.conf
+   etc/modprobe.d/90-try-omarchy-camera.conf
+   usr/local/bin/try-omarchy-drop
 @@ -150,9 +150,16 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
  # bridge and its v4l2loopback wiring. Revision 25 carries the direct
  # file-drop helper. Revision 26 delivers dropped files straight into the
@@ -316,6 +385,33 @@ index af3440b..a8b9d81 100755
  # Never let the container host's hardware autodetection remove the virtual
  # devices required by QEMU on the Windows host.
  mkinitcpio -P
+diff --git a/guest/tests/test_camera_bridge.py b/guest/tests/test_camera_bridge.py
+index 29e29a3..39a2587 100644
+--- a/guest/tests/test_camera_bridge.py
++++ b/guest/tests/test_camera_bridge.py
+@@ -23,6 +23,13 @@ loader.exec_module(bridge)
+ 
+ 
+ class WindowsCameraBridgeTests(unittest.TestCase):
++    def test_camera_service_is_enabled_at_the_installed_unit(self):
++        link = OVERLAY / "etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service"
++        self.assertEqual(str(link.readlink()), "/usr/lib/systemd/user/omarchy-windows-camera-bridge.service")
++        self.assertTrue((OVERLAY / str(link.readlink()).lstrip('/')).is_file())
++        rules = (OVERLAY / 'etc/udev/rules.d/70-try-omarchy-camera.rules').read_text()
++        self.assertEqual(rules.count('TAG+="uaccess"'), 2)
++
+     def message(self, kind: int, payload: bytes, sequence: int = 0) -> bytes:
+         return bridge.HEADER.pack(
+             bridge.MAGIC,
+@@ -138,7 +145,7 @@ class WindowsCameraBridgeTests(unittest.TestCase):
+             (OVERLAY / "etc/modules-load.d/90-try-omarchy-camera.conf").read_text().strip(),
+             "v4l2loopback",
+         )
+-        rules = (OVERLAY / "etc/udev/rules.d/94-try-omarchy-camera.rules").read_text()
++        rules = (OVERLAY / "etc/udev/rules.d/70-try-omarchy-camera.rules").read_text()
+         self.assertIn('ATTR{name}=="dev.tryomarchy.camera"', rules)
+         self.assertIn('KERNEL=="video42"', rules)
+         self.assertTrue(
 diff --git a/guest/tests/test_file_drop_target.py b/guest/tests/test_file_drop_target.py
 index f50d8f6..c35045d 100644
 --- a/guest/tests/test_file_drop_target.py

@@ -146,6 +146,8 @@ func mediaFoundation() (*mfFunctions, error) {
 }
 
 // mfCall invokes a COM method through the object's vtable.
+//
+//go:uintptrescapes
 func mfCall(obj unsafe.Pointer, method int, args ...uintptr) hresult {
 	if obj == nil {
 		return -1
@@ -162,6 +164,7 @@ func mfRelease(obj *unsafe.Pointer) {
 	}
 }
 
+//go:uintptrescapes
 func procCall(proc *syscall.LazyProc, args ...uintptr) hresult {
 	result, _, _ := proc.Call(args...)
 	return hresult(int32(uint32(result)))
