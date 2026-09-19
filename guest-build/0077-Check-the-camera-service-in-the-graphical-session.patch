@@ -1,0 +1,25 @@
+From ac366e16fbe080cabe003e3193fa2230c55ca557 Mon Sep 17 00:00:00 2001
+From: Try Omarchy <actions@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 13:58:57 -0400
+Subject: [PATCH] Check the camera service in the graphical session
+
+---
+ guest/tests/test_camera_bridge.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/guest/tests/test_camera_bridge.py b/guest/tests/test_camera_bridge.py
+index 39a2587..fb8ca06 100644
+--- a/guest/tests/test_camera_bridge.py
++++ b/guest/tests/test_camera_bridge.py
+@@ -149,7 +149,7 @@ class WindowsCameraBridgeTests(unittest.TestCase):
+         self.assertIn('ATTR{name}=="dev.tryomarchy.camera"', rules)
+         self.assertIn('KERNEL=="video42"', rules)
+         self.assertTrue(
+-            (OVERLAY / "etc/systemd/user/default.target.wants/omarchy-windows-camera-bridge.service").is_symlink()
++            (OVERLAY / "etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service").is_symlink()
+         )
+ 
+ 
+-- 
+2.55.0
+
