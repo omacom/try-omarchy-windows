@@ -13,8 +13,10 @@ testing found a shared-mount timestamp failure. Unsupported drop destinations no
 use Downloads before consuming the transfer ticket. The corrected helpers passed
 physical shared-folder and normal-folder drops; the complete rebuilt image and
 five-boot upgrade sequence passed. The exact package also passed Windows upgrade
-and clean-guest checks. Physical sleep/wake is untested and the user waived it for this preview on
-September 19. Final signed v20 acceptance remains open. See the [candidate evidence](evidence/PREVIEW20-CANDIDATE-2026-09-19.md).
+and clean-guest checks. Physical sleep/wake is untested and the user waived it for
+this preview on September 19. Final signed v20 acceptance passed boot, reboot,
+file preservation, camera capture and native drops. See the
+[candidate evidence](evidence/PREVIEW20-CANDIDATE-2026-09-19.md).
 
 Use one candidate directory containing the verified launcher and complete guest
 and runtime assets. Record the commit and SHA256 of the launcher, `SHA256SUMS`,

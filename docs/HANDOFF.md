@@ -1,9 +1,9 @@
 # Resume here
 
-Updated September 19, 2026. PR #135 merged as `58f5b70`; [PR #136](https://github.com/omacom/try-omarchy-windows/pull/136) merged as
-`e1341df`. Public Latest remains v0.0.19-preview while the source pin advances
-to v20 for protected signing and final acceptance.
-The v20 release is still a draft.
+Updated September 19, 2026. PR #135 merged as `58f5b70`; PR #136 merged as
+`e1341df`. **v0.0.20-preview is published and Latest**, from source `98cce48`.
+[Release](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.20-preview)
+| [successful publication](https://github.com/omacom/try-omarchy-windows/actions/runs/35470832033).
 
 The candidate is built from `946521b`, with guest compatibility **29**. It adds a
 filesystem capability check before consuming a drop ticket. This fixes the
@@ -22,11 +22,18 @@ passed accelerated desktop, module and packaged shared-folder drop checks.
 
 Exact hashes and validation boundaries are in
 [the candidate record](evidence/PREVIEW20-CANDIDATE-2026-09-19.md).
-The protected signing check passed, but that diagnostic identifies as v19.
-Physical sleep/wake remains untested. The user explicitly declined that test and
-accepted proceeding with this preview on September 19. Record the limitation in
-the release notes. Complete final signed v20 acceptance, then publish; no further
-release approval is needed. Sleep/wake remains an open physical check for v1.
+Final signed v20 acceptance passed on the physical Windows laptop: GPU boot and
+reboot, preserved fixtures, unchanged completed-repair timestamps, 30 distinct
+camera frames and native file delivery with duplicate preservation. The published
+launcher has valid Authenticode and v20 version resources. Tagged and Latest
+assets and both signed update feeds passed through current and legacy URLs.
+The public download also booted on the laptop with public payload URLs and
+preserved all fixtures. Release-commit CI is green.
+
+Physical sleep/wake remains untested. The user declined that test and accepted
+proceeding with this preview; the public release notes state the limitation.
+Sleep/wake and the broader hardware, storage and stable-update checks remain v1
+work. This preview release does not certify those paths.
 See [LAPTOP-PASS.md](LAPTOP-PASS.md) and [RELEASING.md](RELEASING.md).
 
 The remainder is historical context from September 15-17. Current GitHub state

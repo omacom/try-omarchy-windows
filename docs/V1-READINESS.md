@@ -76,10 +76,13 @@ candidates; their reports remain historical supporting evidence.
   revision 23 delivers it to existing disks.
 
 The portable-copy, runtime-ownership and Neovim repairs above shipped in v19.
-The orphaned-lock recovery is unreleased. The next preview also needs the camera,
-direct-paste, microphone and complete kernel-module fixes described in
-[the current handoff](HANDOFF.md). Large installed-guest portable lifecycle
-acceptance remains open. Identify the exact next candidate hashes before testing.
+The orphaned-lock recovery, camera/microphone repairs, quiet file drops and complete
+kernel-module delivery shipped in **v0.0.20-preview**. The
+[September 19 evidence](evidence/PREVIEW20-CANDIDATE-2026-09-19.md) records fresh and
+existing-guest Windows checks, preserved files, backup/restore, interrupted launcher
+update rollback, signed acceptance and verified public downloads. Sleep/wake was
+explicitly left untested for that preview. Large installed-guest portable lifecycle,
+stable update chains and the broader checks below remain open.
 
 ## Remaining release gates
 
@@ -114,7 +117,7 @@ acceptance remains open. Identify the exact next candidate hashes before testing
 
 ## Next checkpoint
 
-Resolve the package-lock investigation and run update/recovery acceptance while
-collecting the missing hardware reports. Keep evidence linked from #77. Publish a
+Test the stable update chain, remaining storage cases and native migration while
+collecting missing hardware and sleep/wake results. Keep evidence linked from #77. Publish a
 stable candidate only through the normal release process; this document does not
 authorize publication or certify the current preview as stable.

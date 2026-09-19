@@ -2,7 +2,8 @@
 
 Guest and unsigned launcher source: `946521b4afeab02a6dcd6e3d8f02acc37553c507`,
 [PR #136](https://github.com/omacom/try-omarchy-windows/pull/136).
-Guest compatibility: **29**. Public Latest remains v0.0.19-preview.
+Guest compatibility: **29**. [v0.0.20-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.20-preview)
+was published and promoted to Latest on September 19 at 21:38 UTC.
 Compatibility 29 supersedes the earlier v20 images.
 
 ## Changes
@@ -71,6 +72,15 @@ Compatibility 29 supersedes the earlier v20 images.
 - PR #135 merged as `58f5b70`. The protected signing check passed; Windows verified
   Authenticode and the signed update metadata matched the production public key.
   This diagnostic launcher identifies as v19. Its app code is unchanged in #136.
+- The final v20 signing check from `98cce48131f1b0efa057c46d560a63cbb1bbfa3e`
+  passed in [run 35470601017](https://github.com/omacom/try-omarchy-windows/actions/runs/35470601017).
+  Windows verified Authenticode and version `v0.0.20-preview`; the update metadata
+  signature matched the production key. The signed launcher reached the GPU
+  desktop, captured 30 distinct camera frames, and delivered a native file drop
+  without overwriting the existing file. Reboot reached a new guest boot ID,
+  retained all fixture hashes and left both completed-repair timestamps unchanged.
+  Test launcher SHA256:
+  `73ad933ef71efa4da157149aa921f264463c2b26ae48eb2bed9010a906fc1e06`.
 
 ## Candidate identity
 
@@ -87,16 +97,28 @@ Compatibility 29 supersedes the earlier v20 images.
 The unsigned launcher defaults to public v19. Use the explicit local-asset
 arguments in [LAPTOP-PASS.md](../LAPTOP-PASS.md) for candidate testing.
 
-## Remaining before release
+## Publication and remaining validation
 
 Physical Windows sleep/wake remains **untested**. On September 19 the user
 explicitly declined that physical test and accepted proceeding with this preview.
 Normal use is accepted; headphone switching has no separate explicit confirmation.
 This does not count as sleep/wake acceptance for v1.
 
-1. The correction merged as `e1341df`. Pin the accepted payload, build the signed
-   v20 launcher through the protected workflow and repeat final acceptance.
-2. Publish after signed acceptance passes, with the sleep/wake limitation stated.
+The correction merged as `e1341df`; `98cce48` pins the accepted payload. Final
+signed v20 acceptance passed. [Publication run 35470832033](https://github.com/omacom/try-omarchy-windows/actions/runs/35470832033)
+passed Windows race tests, signing, payload verification, tagged and Latest
+downloads, and both signed update feeds through the current and legacy repository
+URLs. The public manifest matches the embedded pin. Both public metadata signatures
+verified locally, and Windows verified the downloaded launcher signature and version.
+The public Latest executable then launched with default public payload URLs,
+reached the accelerated desktop, preserved all three fixtures and both repair
+marker timestamps, and committed the payload only after userspace readiness.
+The release commit CI rerun also passed once the manifest became public.
+
+Published launcher SHA256:
+`bef22fda3b22ce666dc195725be4e7f956945b1817c0af9f9912d2a15393c6dd`.
+The publish workflow rebuilt from the same `98cce48` source; its hash differs from
+the signing-check artifact because of build metadata and a new signing timestamp.
 
 This is a preview milestone. Broader Windows/GPU coverage, portable lifecycle,
 native migration and stable-version update paths remain v1 gates.
