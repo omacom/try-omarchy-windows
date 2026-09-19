@@ -2,9 +2,7 @@
 
 package main
 
-import (
-	"unsafe"
-)
+import "unsafe"
 
 // Direct file drops on the VM window arrive as a QMP DISPLAY_FILE_DROP event
 // (see file_drop.go). QEMU owns the SDL window and runs in another process, so
@@ -23,7 +21,8 @@ var (
 )
 
 // guestDropPoint includes the current display-window size so the guest can
-// map the point using its current resolution and scale. point is nil when the runtime did not report coordinates.
+// map the point using its current resolution and scale. A nil point means
+// the runtime did not report coordinates.
 func guestDropPoint(point *[2]int) []int {
 	hwnd := qemuHwnd.Load()
 	if hwnd == 0 {

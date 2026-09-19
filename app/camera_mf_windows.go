@@ -24,15 +24,12 @@ type hresult = int32
 
 const (
 	sOK                            hresult = 0
-	sFalse                         hresult = 1
 	coInitMultithreaded                    = 0x0
 	mfVersion                              = 0x00020070
 	mfStartupLite                          = 0x1
 	mfSourceReaderFirstVideoStream         = 0xfffffffc
 	mfVideoInterlaceProgressive            = 2
 )
-
-const rpcEChangedMode = 0x80010106
 
 // Media Foundation GUIDs, taken verbatim from the mingw-w64 headers.
 var (
@@ -47,7 +44,7 @@ var (
 	guidMediaTypeVideo         = newGUID(0x73646976, 0x0000, 0x0010, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71)
 	guidVideoFormatNV12        = newGUID(0x3231564e, 0x0000, 0x0010, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71)
 	guidAsyncCallback          = newGUID(0x1e3dbeac, 0xbb43, 0x4c35, 0xb5, 0x07, 0xcd, 0x64, 0x44, 0x64, 0xc9, 0x65)
-	guidEnableVideoProcessing  = newGUID(0xfb394f3d, 0xccf1, 0x42ee, 0xbb, 0xb3, 0xf9, 0xb8, 0x45, 0xd5, 0x68, 0x1d)
+	guidEnableVideoProcessing  = newGUID(0x0f81da2c, 0xb537, 0x4672, 0xa8, 0xb2, 0xa6, 0x81, 0xb1, 0x73, 0x07, 0xa3) // advanced video processing
 )
 
 // guidIMFMediaSource is what IMFActivate::ActivateObject is asked for here: the
@@ -170,16 +167,16 @@ func procCall(proc *syscall.LazyProc, args ...uintptr) hresult {
 	return hresult(int32(uint32(result)))
 }
 
-func setGUID(obj unsafe.Pointer, key *comGUID, value *comGUID) {
-	mfCall(obj, 24, uintptr(unsafe.Pointer(key)), uintptr(unsafe.Pointer(value)))
+func setGUID(obj unsafe.Pointer, key *comGUID, value *comGUID) hresult {
+	return mfCall(obj, 24, uintptr(unsafe.Pointer(key)), uintptr(unsafe.Pointer(value)))
 }
 
-func setUint32(obj unsafe.Pointer, key *comGUID, value uint32) {
-	mfCall(obj, 21, uintptr(unsafe.Pointer(key)), uintptr(value))
+func setUint32(obj unsafe.Pointer, key *comGUID, value uint32) hresult {
+	return mfCall(obj, 21, uintptr(unsafe.Pointer(key)), uintptr(value))
 }
 
-func setUint64(obj unsafe.Pointer, key *comGUID, value uint64) {
-	mfCall(obj, 22, uintptr(unsafe.Pointer(key)), uintptr(value)) // IMFAttributes::SetUINT64
+func setUint64(obj unsafe.Pointer, key *comGUID, value uint64) hresult {
+	return mfCall(obj, 22, uintptr(unsafe.Pointer(key)), uintptr(value)) // IMFAttributes::SetUINT64
 }
 
 // packUint32Pair packs two UINT32s the way mfapi.h's Pack2UINT32AsUINT64 does:
@@ -188,8 +185,8 @@ func packUint32Pair(high, low uint32) uint64 {
 	return uint64(high)<<32 | uint64(low)
 }
 
-func setUnknown(obj unsafe.Pointer, key *comGUID, value unsafe.Pointer) {
-	mfCall(obj, 27, uintptr(unsafe.Pointer(key)), uintptr(value))
+func setUnknown(obj unsafe.Pointer, key *comGUID, value unsafe.Pointer) hresult {
+	return mfCall(obj, 27, uintptr(unsafe.Pointer(key)), uintptr(value))
 }
 
 func getUint32(obj unsafe.Pointer, key *comGUID) uint32 {
@@ -352,7 +349,10 @@ func (s *mfCameraSource) open() error {
 	if hr := procCall(api.createAttributes, uintptr(unsafe.Pointer(&attributes)), 1); hr < 0 {
 		return fmt.Errorf("MFCreateAttributes failed (0x%08x)", uint32(hr))
 	}
-	setGUID(attributes, &guidDeviceSourceType, &guidDeviceSourceTypeVidcap)
+	if hr := setGUID(attributes, &guidDeviceSourceType, &guidDeviceSourceTypeVidcap); hr < 0 {
+		mfRelease(&attributes)
+		return fmt.Errorf("selecting camera devices failed (0x%08x)", uint32(hr))
+	}
 
 	var count uint32
 	var devices *unsafe.Pointer
@@ -387,11 +387,23 @@ func (s *mfCameraSource) open() error {
 		mfRelease(&attributes)
 		return fmt.Errorf("MFCreateAttributes failed (0x%08x)", uint32(hr))
 	}
-	setUint32(callbackAttrs, &guidEnableVideoProcessing, 1)
+	// The basic processing flag only converts YUV to RGB. The advanced
+	// processor can negotiate our fixed NV12 size/rate from other camera modes.
+	if hr := setUint32(callbackAttrs, &guidEnableVideoProcessing, 1); hr < 0 {
+		mfRelease(&source)
+		mfRelease(&callbackAttrs)
+		mfRelease(&attributes)
+		return fmt.Errorf("enabling camera format conversion failed (0x%08x)", uint32(hr))
+	}
 	s.mu.Lock()
 	s.callback = newCameraCallback(s)
 	s.mu.Unlock()
-	setUnknown(callbackAttrs, &guidAsyncCallback, unsafe.Pointer(s.callback))
+	if hr := setUnknown(callbackAttrs, &guidAsyncCallback, unsafe.Pointer(s.callback)); hr < 0 {
+		mfRelease(&source)
+		mfRelease(&callbackAttrs)
+		mfRelease(&attributes)
+		return fmt.Errorf("installing the camera callback failed (0x%08x)", uint32(hr))
+	}
 
 	var reader unsafe.Pointer
 	if hr := procCall(api.createSourceReader, uintptr(source), uintptr(callbackAttrs), uintptr(unsafe.Pointer(&reader))); hr < 0 {
@@ -417,11 +429,18 @@ func (s *mfCameraSource) configure() error {
 	if hr := procCall(api.createMediaType, uintptr(unsafe.Pointer(&media))); hr < 0 {
 		return fmt.Errorf("MFCreateMediaType failed (0x%08x)", uint32(hr))
 	}
-	setGUID(media, &guidMajorType, &guidMediaTypeVideo)
-	setGUID(media, &guidSubtype, &guidVideoFormatNV12)
-	setUint64(media, &guidFrameSize, packUint32Pair(cameraWidth, cameraHeight))
-	setUint64(media, &guidFrameRate, packUint32Pair(30, 1))
-	setUint32(media, &guidInterlaceMode, mfVideoInterlaceProgressive)
+	for _, hr := range []hresult{
+		setGUID(media, &guidMajorType, &guidMediaTypeVideo),
+		setGUID(media, &guidSubtype, &guidVideoFormatNV12),
+		setUint64(media, &guidFrameSize, packUint32Pair(cameraWidth, cameraHeight)),
+		setUint64(media, &guidFrameRate, packUint32Pair(30, 1)),
+		setUint32(media, &guidInterlaceMode, mfVideoInterlaceProgressive),
+	} {
+		if hr < 0 {
+			mfRelease(&media)
+			return fmt.Errorf("setting camera format attributes failed (0x%08x)", uint32(hr))
+		}
+	}
 
 	if hr := mfCall(s.reader, 7, mfSourceReaderFirstVideoStream, 0, uintptr(media)); hr < 0 { // SetCurrentMediaType
 		mfRelease(&media)

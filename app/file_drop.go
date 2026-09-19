@@ -12,7 +12,8 @@ import (
 var desktopClipboard atomic.Pointer[clipBridge]
 
 // droppedFiles is one drop request. Point is set when the files were released
-// onto the VM window at a known guest-display coordinate.
+// onto the VM window. New tickets carry x, y, window width and window height;
+// older two-value tickets retain transfer-window fallback.
 type droppedFiles struct {
 	paths []string
 	point []int
