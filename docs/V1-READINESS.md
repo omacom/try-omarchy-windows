@@ -97,8 +97,10 @@ stable update chains and the broader checks below remain open.
    does not undo installed guest OS package updates. Select the tested bridge
    preview in the release environment before stable publication; that variable
    was still unset at the September 19 checkpoint.
-2. **Supported Windows hardware.** Obtain physical Intel and NVIDIA graphics
-   results, full Hyper-V coexistence and Core Ultra virtualization coverage.
+2. **Supported Windows hardware.** Full Hyper-V role coexistence passed on the
+   AMD/Radeon laptop with public v20; see the [physical record](evidence/V1-LAPTOP-2026-09-19.md).
+   Obtain physical Intel and NVIDIA graphics results and Core Ultra virtualization
+   coverage. This pass does not cover concurrent workloads in another Hyper-V VM.
    Record Windows version/edition; include each advertised Windows version and
    lower-memory hardware. Complete sleep/resume, physical mixed-DPI movement,
    keyboard/focus and RDP/VNC checks, headphone switching and microphone-indicator

@@ -51,10 +51,14 @@ handle during snapshot creation. The laptop currently runs the restored test
 copy; original test installations, snapshots and evidence are retained.
 
 Continue with stable-update transitions and the remaining storage/migration
-checks. Full Hyper-V is disabled; a proposed temporary enable/test/restore cycle
-requires Windows reboots and has not been authorized. SSHD has Manual startup,
-so remote-reboot preparation must account for it. Do not reboot during disk tests
-or assume that an interactive Windows sign-in will return automatically.
+checks. Full Hyper-V role coexistence passed on this physical AMD laptop after
+enabling all seven role components and rebooting Windows. Public v20 passed GPU
+boot, camera capture, native file drop, preserved files, guest reboot and poweroff.
+This does not cover another concurrent Hyper-V VM, Intel/Core Ultra or NVIDIA.
+The temporary role was removed, Windows rebooted, and all original feature states
+verified. A final normal GPU boot passed with all fixture hashes intact. SSHD is
+back to Manual startup. Future remote-reboot preparation must
+account for that and for the required interactive Windows sign-in.
 
 The remainder is historical context from September 15-17. Current GitHub state
 and the dated checkpoint above supersede its PR counts and candidate references.
