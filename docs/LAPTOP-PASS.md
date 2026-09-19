@@ -7,11 +7,12 @@ build and GPU.
 
 ## Build under test
 
-The September 16 v20 draft launcher and the September 17 retest launcher are
-obsolete. Do not use their earlier hashes for acceptance. The replacement was built from `0f8f371` on `codex/preview20-reliability`, with
-guest compatibility **27**. See the [candidate record](evidence/PREVIEW20-CANDIDATE-2026-09-19.md)
-for exact hashes and completed automated/KVM checks. A physical pass has not yet
-been recorded for this revision.
+The earlier v20 guest assets are obsolete. The corrected candidate was built
+from `e402965` on `codex/preview20-reliability`, with guest compatibility **28**.
+Camera, browser microphone and clean file drops passed on the physical laptop;
+the user confirmed the repeated drag. The full rebuilt guest passed CI build
+and fresh-boot smoke. Exact packaged and signed acceptance remains in progress.
+See the [drop evidence](evidence/FILE-DROP-2026-09-19.md).
 
 Use one candidate directory containing the verified launcher and complete guest
 and runtime assets. Record the commit and SHA256 of the launcher, `SHA256SUMS`,
@@ -76,19 +77,19 @@ frames arrive, indicator behavior, and any error codes.
 
 ## 2. Direct drops
 
-This is the one place the guest-side targeting is unproven, so try both a hit and
-a miss.
+1. Open a local folder in Files and drop a Windows file into its empty area.
+   Expect the file to appear directly, without a transfer window or clipboard change.
+2. Repeat the same file. Expect a numbered copy; the original must remain intact.
+3. Drop outside a recognized Files folder. Expect delivery to Downloads and a small
+   notification. Ambiguous tabs/windows, other apps and nonlocal folders use this
+   fallback; arbitrary application imports and nested folder-icon targeting are
+   not supported.
+4. For a slower transfer, close Windows progress. Expect copying to continue.
+   Its Cancel button should stop copying without changing the Windows originals.
+5. Drop while the guest is still starting. Expect a clear message and no lost file.
 
-1. In Omarchy, open Files (or an editor) and note roughly where its window is.
-2. Drag a file from Explorer onto the VM window, over that app window.
-   - Expect: the app receives a file-list paste request. The transfer window
-     retains the files so an unsupported application cannot lose the fallback.
-3. Drop onto the desktop or an empty area with no app window.
-   - Expect: the transfer window appears (the fallback), and the file is available.
-4. Drop while the guest is still starting.
-   - Expect: a clear message, no lost file.
-
-Record: whether targeting hit the right window, the app's behavior, and fallback.
+Record destination and source hashes, absence of an automatic transfer window,
+and whether progress stays responsive.
 
 ## Camera and audio lifecycle
 
@@ -99,7 +100,7 @@ devices. A black frame or nonzero recording byte count alone is not a pass.
 
 On an upgraded disk, check `sudo modprobe tun`, `/dev/net/tun`,
 `sudo modprobe v4l2loopback`, and `/dev/video42` before running any package update.
-Verify the compatibility marker is `27:<running kernel>` and the next boot does
+Verify the compatibility marker is `28:<running kernel>` and the next boot does
 not repeat module delivery. Preserve fixture hashes through upgrade and rollback.
 
 ## 3. Pause on host sleep
