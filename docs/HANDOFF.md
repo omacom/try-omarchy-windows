@@ -1,8 +1,8 @@
 # Resume here
 
-Updated September 19, 2026. PR #135 merged as `58f5b70`; the follow-up is
-[PR #136](https://github.com/omacom/try-omarchy-windows/pull/136) on
-`codex/preview20-release`. Public Latest and the source pin remain v0.0.19-preview.
+Updated September 19, 2026. PR #135 merged as `58f5b70`; [PR #136](https://github.com/omacom/try-omarchy-windows/pull/136) merged as
+`e1341df`. Public Latest remains v0.0.19-preview while the source pin advances
+to v20 for protected signing and final acceptance.
 The v20 release is still a draft.
 
 The candidate is built from `946521b`, with guest compatibility **29**. It adds a
@@ -22,10 +22,11 @@ passed accelerated desktop, module and packaged shared-folder drop checks.
 
 Exact hashes and validation boundaries are in
 [the candidate record](evidence/PREVIEW20-CANDIDATE-2026-09-19.md).
-The protected signing check passed, but that diagnostic identifies as v19. Keep
-the public pin unchanged until physical sleep/wake and final package checks pass,
-then pin/sign/test v20 and publish. The user confirmed normal use was working well;
-actual sleep/wake remains unconfirmed. Do not publish before the remaining gates.
+The protected signing check passed, but that diagnostic identifies as v19.
+Physical sleep/wake remains untested. The user explicitly declined that test and
+accepted proceeding with this preview on September 19. Record the limitation in
+the release notes. Complete final signed v20 acceptance, then publish; no further
+release approval is needed. Sleep/wake remains an open physical check for v1.
 See [LAPTOP-PASS.md](LAPTOP-PASS.md) and [RELEASING.md](RELEASING.md).
 
 The remainder is historical context from September 15-17. Current GitHub state

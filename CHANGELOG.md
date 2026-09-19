@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.20-preview - Unreleased
+## v0.0.20-preview - 2026-09-19
 
 - Use the Windows camera in guest apps, with capture starting on demand and
   stopping when the app closes it.

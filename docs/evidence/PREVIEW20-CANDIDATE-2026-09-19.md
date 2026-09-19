@@ -89,12 +89,14 @@ arguments in [LAPTOP-PASS.md](../LAPTOP-PASS.md) for candidate testing.
 
 ## Remaining before release
 
-1. Confirm physical Windows sleep/wake and audio recovery. Normal use is accepted;
-   no sleep/resume event has been recorded yet. Headphone switching has no
-   separate explicit confirmation.
-2. Merge the reviewed correction, pin the accepted payload, build the signed v20
-   launcher through the protected workflow and repeat final acceptance.
-3. Publish only after those checks pass. The user requested release once verified.
+Physical Windows sleep/wake remains **untested**. On September 19 the user
+explicitly declined that physical test and accepted proceeding with this preview.
+Normal use is accepted; headphone switching has no separate explicit confirmation.
+This does not count as sleep/wake acceptance for v1.
+
+1. The correction merged as `e1341df`. Pin the accepted payload, build the signed
+   v20 launcher through the protected workflow and repeat final acceptance.
+2. Publish after signed acceptance passes, with the sleep/wake limitation stated.
 
 This is a preview milestone. Broader Windows/GPU coverage, portable lifecycle,
 native migration and stable-version update paths remain v1 gates.
