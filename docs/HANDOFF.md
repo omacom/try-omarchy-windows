@@ -3,18 +3,17 @@
 Updated September 19, 2026. The active follow-up is branch
 `codex/preview20-reliability`. Public Latest remains v0.0.19-preview.
 
-The current v20 draft launcher predates the startup fix in #130 and must not be
-used for another acceptance pass. The separate September 17 retest launcher also
-predates #132/#133. A replacement candidate is being prepared with those fixes,
-additional Media Foundation ABI/lifetime corrections, SDL audio capture, complete
-matching kernel modules for persistent guests, and visible file-drop fallback.
-Guest compatibility revision is 27. No new physical Windows acceptance is claimed.
+The replacement diagnostic candidate is built from `0f8f371` in [PR #135](https://github.com/omacom/try-omarchy-windows/pull/135),
+with guest compatibility **27**. Linux/Windows CI, all 150 guest tests, the full
+fresh guest boot, and the five-boot v19 upgrade/old-image/return sequence passed.
+Exact hashes and validation boundaries are in
+[the candidate record](evidence/PREVIEW20-CANDIDATE-2026-09-19.md).
 
-Before release, record the replacement launcher, runtime and guest hashes in
-[LAPTOP-PASS.md](LAPTOP-PASS.md), run fresh and preserved-guest acceptance, and
-refresh this checkpoint with the exact build results. Current open reports include
-#128 (microphone), #129 (site wording), #134 (TUN), and the existing v1 tracker #77.
-Camera and direct-paste behavior still require physical acceptance.
+The launcher is unsigned and still defaults to public v19. Use the explicit
+local-asset commands in [LAPTOP-PASS.md](LAPTOP-PASS.md) for candidate testing.
+Physical camera/audio, Windows update/rollback and storage acceptance, payload
+pinning and signing remain pending. Do not publish the draft yet.
+The original September 16 v20 and September 17 retest launchers are obsolete.
 
 The remainder is historical context from September 15-17. Current GitHub state
 and the dated checkpoint above supersede its PR counts and candidate references.

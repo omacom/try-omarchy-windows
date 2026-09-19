@@ -8,9 +8,10 @@ build and GPU.
 ## Build under test
 
 The September 16 v20 draft launcher and the September 17 retest launcher are
-obsolete. Do not use their earlier hashes for acceptance. The replacement is
-being built from `codex/preview20-reliability`, with guest compatibility **27**.
-A physical pass has not yet been recorded for this revision.
+obsolete. Do not use their earlier hashes for acceptance. The replacement was built from `0f8f371` on `codex/preview20-reliability`, with
+guest compatibility **27**. See the [candidate record](evidence/PREVIEW20-CANDIDATE-2026-09-19.md)
+for exact hashes and completed automated/KVM checks. A physical pass has not yet
+been recorded for this revision.
 
 Use one candidate directory containing the verified launcher and complete guest
 and runtime assets. Record the commit and SHA256 of the launcher, `SHA256SUMS`,
