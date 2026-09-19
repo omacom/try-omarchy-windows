@@ -22,6 +22,9 @@ import (
 // screen readers, unlike the custom-painted splash.
 
 var (
+	procRedrawWindow       = user32.NewProc("RedrawWindow")
+	procGetKeyState        = user32.NewProc("GetKeyState")
+	procGetNextDlgTabItem  = user32.NewProc("GetNextDlgTabItem")
 	procIsDialogMessageW   = user32.NewProc("IsDialogMessageW")
 	procEnableWindow       = user32.NewProc("EnableWindow")
 	procLoadCursorW        = user32.NewProc("LoadCursorW")
@@ -31,53 +34,61 @@ var (
 )
 
 const (
-	wsCaption             = 0x00C00000
-	wsSysmenu             = 0x00080000
-	wsBorder              = 0x00800000
-	wsTabstop             = 0x00010000
-	wsVscroll             = 0x00200000
-	esAutohscroll         = 0x0080
-	esMultiline           = 0x0004
-	esAutovscroll         = 0x0040
-	bsAutocheckbox        = 0x0003
-	bsDefpushbutton       = 0x0001
-	bmGetcheck            = 0x00F0
-	bmSetcheck            = 0x00F1
-	bstChecked            = 1
-	idcArrow              = 32512
-	colorBtnface          = 15
-	defaultGuiFont        = 17
-	wmGettextlength       = 0x000E
-	wmGettext             = 0x000D
-	settingsSaveID        = 2001
-	settingsCancelID      = 2002
-	settingsBrowseID      = 2003
-	settingsFullID        = 2010
-	settingsMemID         = 2011
-	settingsShareID       = 2012
-	settingsFwdID         = 2013
-	settingsKeyID         = 2014
-	settingsShareOnID     = 2015
-	settingsDiskID        = 2016
-	settingsBackupID      = 2020
-	settingsRestoreID     = 2021
-	settingsResetID       = 2022
-	settingsRenderAutoID  = 2023
-	settingsRenderGPUID   = 2024
-	settingsRenderCPUID   = 2025
-	settingsCPUsID        = 2026
-	settingsUninstallID   = 2027
-	settingsMoveID        = 2028
-	settingsMoveCleanupID = 2029
-	settingsHelpID        = 2030
-	settingsSnapshotsID   = 2031
-	settingsPortableID    = 2032
-	settingsDisplaysID    = 2033
-	settingsLANPublicID   = 2034
-	settingsLANAddID      = 2035
-	bsAutoradiobutton     = 0x0009
-	wsGroup               = 0x00020000
-	settingsRecoveryDone  = 0x8010
+	wsCaption                   = 0x00C00000
+	wsSysmenu                   = 0x00080000
+	wsBorder                    = 0x00800000
+	wsTabstop                   = 0x00010000
+	wsVscroll                   = 0x00200000
+	esAutohscroll               = 0x0080
+	esMultiline                 = 0x0004
+	esAutovscroll               = 0x0040
+	bsAutocheckbox              = 0x0003
+	bsDefpushbutton             = 0x0001
+	bmGetcheck                  = 0x00F0
+	bmSetcheck                  = 0x00F1
+	bstChecked                  = 1
+	idcArrow                    = 32512
+	colorBtnface                = 15
+	defaultGuiFont              = 17
+	wmGettextlength             = 0x000E
+	wmGettext                   = 0x000D
+	settingsPageBase            = 2100
+	settingsCameraOnID          = 2110
+	settingsMicrophoneOnID      = 2111
+	settingsCameraID            = 2112
+	settingsUpdateOnID          = 2113
+	settingsAboutID             = 2114
+	settingsPrivacyID           = 2115
+	settingsMicrophonePrivacyID = 2116
+	settingsSaveID              = 2001
+	settingsCancelID            = 2002
+	settingsBrowseID            = 2003
+	settingsFullID              = 2010
+	settingsMemID               = 2011
+	settingsShareID             = 2012
+	settingsFwdID               = 2013
+	settingsKeyID               = 2014
+	settingsShareOnID           = 2015
+	settingsDiskID              = 2016
+	settingsBackupID            = 2020
+	settingsRestoreID           = 2021
+	settingsResetID             = 2022
+	settingsRenderAutoID        = 2023
+	settingsRenderGPUID         = 2024
+	settingsRenderCPUID         = 2025
+	settingsCPUsID              = 2026
+	settingsUninstallID         = 2027
+	settingsMoveID              = 2028
+	settingsMoveCleanupID       = 2029
+	settingsHelpID              = 2030
+	settingsSnapshotsID         = 2031
+	settingsPortableID          = 2032
+	settingsDisplaysID          = 2033
+	settingsLANPublicID         = 2034
+	settingsLANAddID            = 2035
+	bsAutoradiobutton           = 0x0009
+	wsGroup                     = 0x00020000
+	settingsRecoveryDone        = 0x8010
 )
 
 // runSettingsDialog shows the window and returns once it closes. saved is
@@ -116,6 +127,24 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		return false
 	}
 
+	prefs, err := loadDesktopPreferences(dataDir)
+	if err != nil {
+		errorBox("Cannot read device and update preferences:\n\n" + err.Error())
+		return false
+	}
+	cameras, cameraErr := listCameraDevices()
+	if prefs.CameraID != "" {
+		found := false
+		for _, d := range cameras {
+			if d.ID == prefs.CameraID {
+				found = true
+			}
+		}
+		if !found {
+			cameras = append(cameras, cameraDevice{prefs.CameraID, "Selected camera (disconnected)"})
+		}
+	}
+
 	storage, err := loadStorageWithRepair(dataDir)
 	if err != nil {
 		if errors.Is(err, errSetupCancelled) {
@@ -131,6 +160,11 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	var scroll settingsScroll
 	var hFull, hMem, hCPUs, hDisk, hShare, hShareOn, hFwd, hKey uintptr
 	var hRenderAuto, hRenderGPU, hRenderCPU, hDisplays, hLANPublic uintptr
+	var hCameraOn, hMicrophoneOn, hCamera, hUpdateOn uintptr
+	var selectPage func(int)
+	var pages [4][]settingsScrollControl
+	var pageHeights [4]int32
+	var common []settingsScrollControl
 
 	text := func(handle uintptr) string {
 		n, _, _ := procSendMessageW.Call(handle, wmGettextlength, 0, 0)
@@ -151,8 +185,12 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		} else if r, _, _ := procSendMessageW.Call(hRenderCPU, bmGetcheck, 0, 0); r == bstChecked {
 			render = renderCPU
 		}
+		memory, err := memoryMiBFromGiB(text(hMem))
+		if err != nil {
+			return settings{}, err
+		}
 		s, err := settingsFromForm(checked == bstChecked, shareChecked == bstChecked,
-			text(hMem), text(hCPUs), text(hShare), text(hFwd), text(hKey), render)
+			memory, text(hCPUs), text(hShare), text(hFwd), text(hKey), render)
 		if err != nil {
 			return s, err
 		}
@@ -204,7 +242,30 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		}
 		switch msg {
 		case wmCommand:
+			if id := wParam & 0xffff; id >= settingsPageBase && id < settingsPageBase+4 {
+				if selectPage != nil {
+					selectPage(int(id - settingsPageBase))
+				}
+				return 0
+			}
 			switch wParam & 0xffff {
+			case settingsAboutID:
+				self, err := os.Executable()
+				if err == nil {
+					cmd := exec.Command(self, "-about")
+					cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+					err = cmd.Start()
+					if err == nil {
+						_ = cmd.Process.Release()
+					}
+				}
+				if err != nil {
+					errorBox(err.Error())
+				}
+			case settingsMicrophonePrivacyID:
+				openWindowsURL("ms-settings:privacy-microphone")
+			case settingsPrivacyID:
+				openWindowsURL("ms-settings:privacy-webcam")
 			case settingsHelpID:
 				infoBox(everydayHelp)
 			case settingsSaveID:
@@ -245,6 +306,28 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 				if err != nil {
 					errorBox("These settings cannot be saved:\n\n" + err.Error())
 					return 0
+				}
+				if err == nil {
+					updated := prefs
+					v, _, _ := procSendMessageW.Call(hCameraOn, bmGetcheck, 0, 0)
+					updated.CameraDisabled = v != bstChecked
+					v, _, _ = procSendMessageW.Call(hMicrophoneOn, bmGetcheck, 0, 0)
+					updated.MicrophoneDisabled = v != bstChecked
+					v, _, _ = procSendMessageW.Call(hUpdateOn, bmGetcheck, 0, 0)
+					updated.AutomaticUpdatesDisabled = v != bstChecked
+					index, _, _ := procSendMessageW.Call(hCamera, 0x147, 0, 0)
+					if index == 0 {
+						updated.CameraID = ""
+					} else if index <= uintptr(len(cameras)) {
+						updated.CameraID = cameras[index-1].ID
+					} else {
+						errorBox("Choose a camera before saving.")
+						return 0
+					}
+					if err = saveDesktopPreferences(dataDir, updated); err != nil {
+						errorBox("Other settings were saved, but device and update preferences could not be saved:\n\n" + err.Error())
+						return 0
+					}
 				}
 				saved = true
 				procDestroyWindow.Call(h)
@@ -339,7 +422,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		return false
 	}
 
-	const clientW, clientH = 480, 780
+	const clientW, clientH = 500, 650
 	rect := [4]int32{0, 0, clientW, clientH}
 	style := uintptr(wsCaption | wsSysmenu | wsVscroll)
 	procAdjustWindowRectEx.Call(uintptr(unsafe.Pointer(&rect[0])), style, 0, 0)
@@ -378,38 +461,20 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		return h
 	}
 	const left, labelW, fieldX, fieldW = 16, 150, 170, 294
-	y := int32(16)
+	for i, label := range []string{"General", "Devices", "Advanced", "Recovery"} {
+		mk("BUTTON", label, 16+int32(i)*116, 12, 110, 28, wsTabstop, settingsPageBase+uintptr(i))
+	}
+	common = append(common, scroll.controls...)
+	scroll.controls = nil
+	y := int32(56)
 	hFull = mk("BUTTON", "Open fullscreen (Immersive)", left, y, 300, 22, bsAutocheckbox|wsTabstop, settingsFullID)
 	if current.Fullscreen {
 		procSendMessageW.Call(hFull, bmSetcheck, bstChecked, 0)
 	}
 	y += 30
-	mk("STATIC", "Guest displays", left, y+3, labelW, 20, ssNoprefix, 0)
-	hDisplays = mk("EDIT", strconv.Itoa(guestDisplayCount(current.Displays)), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsDisplaysID)
-	mk("STATIC", "1 to 16 displays", fieldX+112, y+3, fieldW-112, 20, ssNoprefix, 0)
-	y += 34
-	mk("STATIC", "Rendering", left, y+3, labelW, 20, ssNoprefix, 0)
-	hRenderAuto = mk("BUTTON", "Automatic", fieldX, y, 90, 22, bsAutoradiobutton|wsGroup|wsTabstop, settingsRenderAutoID)
-	hRenderGPU = mk("BUTTON", "GPU", fieldX+96, y, 60, 22, bsAutoradiobutton, settingsRenderGPUID)
-	hRenderCPU = mk("BUTTON", "CPU", fieldX+162, y, 60, 22, bsAutoradiobutton, settingsRenderCPUID)
-	switch current.Render {
-	case renderGPU:
-		procSendMessageW.Call(hRenderGPU, bmSetcheck, bstChecked, 0)
-	case renderCPU:
-		procSendMessageW.Call(hRenderCPU, bmSetcheck, bstChecked, 0)
-	default:
-		procSendMessageW.Call(hRenderAuto, bmSetcheck, bstChecked, 0)
-	}
-	y += 24
-	mk("STATIC", "Automatic tries the GPU and remembers when this PC cannot use it. GPU retries every launch.", left, y, clientW-2*left, 36, ssNoprefix, 0)
-	y += 44
-	mk("STATIC", "Guest memory (MiB)", left, y+3, labelW, 20, ssNoprefix, 0)
-	hMem = mk("EDIT", strconv.Itoa(current.MemoryMiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsMemID)
+	mk("STATIC", "Memory (GB)", left, y+3, labelW, 20, ssNoprefix, 0)
+	hMem = mk("EDIT", memoryGiBText(current.MemoryMiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsMemID)
 	mk("STATIC", "0 = automatic", fieldX+112, y+3, fieldW-112, 20, ssNoprefix, 0)
-	y += 34
-	mk("STATIC", "Guest CPUs", left, y+3, labelW, 20, ssNoprefix, 0)
-	hCPUs = mk("EDIT", strconv.Itoa(current.CPUs), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsCPUsID)
-	mk("STATIC", fmt.Sprintf("0 = automatic (%d of %d)", pickGuestCPUs(runtime.NumCPU()), runtime.NumCPU()), fieldX+112, y+3, fieldW-112, 20, ssNoprefix, 0)
 	y += 34
 	mk("STATIC", "Disk capacity (GiB)", left, y+3, labelW, 20, ssNoprefix, 0)
 	hDisk = mk("EDIT", strconv.Itoa(storage.DiskGiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsDiskID)
@@ -439,6 +504,78 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		procSendMessageW.Call(hShareOn, bmSetcheck, bstChecked, 0)
 	}
 	y += 34
+	pages[0] = append(pages[0], scroll.controls...)
+	pageHeights[0] = y
+	scroll.controls = nil
+	y = 56
+	mk("STATIC", "Camera and microphone", left, y, 450, 24, ssNoprefix, 0)
+	y += 30
+	hCameraOn = mk("BUTTON", "Allow camera access", left, y, 440, 24, bsAutocheckbox|wsTabstop, settingsCameraOnID)
+	if !prefs.CameraDisabled {
+		procSendMessageW.Call(hCameraOn, bmSetcheck, bstChecked, 0)
+	}
+	y += 34
+	mk("STATIC", "Camera", left, y+3, labelW, 24, ssNoprefix, 0)
+	hCamera = mk("COMBOBOX", "", fieldX, y, fieldW, 180, 0x0003|wsVscroll|wsTabstop, settingsCameraID)
+	addCamera := func(label string) {
+		t, _ := syscall.UTF16PtrFromString(label)
+		procSendMessageW.Call(hCamera, 0x143, 0, uintptr(unsafe.Pointer(t)))
+	}
+	addCamera("Automatic (first available)")
+	selected := 0
+	for i, d := range cameras {
+		addCamera(d.Name)
+		if d.ID == prefs.CameraID {
+			selected = i + 1
+		}
+	}
+	procSendMessageW.Call(hCamera, 0x14E, uintptr(selected), 0)
+	y += 38
+	cameraHelp := "The camera opens only when an app inside Omarchy requests it."
+	if cameraErr != nil {
+		cameraHelp = "Windows could not list cameras. Check privacy settings and reconnect your camera."
+	} else if len(cameras) == 0 {
+		cameraHelp = "No Windows camera found. Connect a camera and reopen Settings."
+	}
+	mk("STATIC", cameraHelp, left, y, 450, 42, ssNoprefix, 0)
+	y += 50
+	hMicrophoneOn = mk("BUTTON", "Allow microphone access", left, y, 440, 24, bsAutocheckbox|wsTabstop, settingsMicrophoneOnID)
+	if !prefs.MicrophoneDisabled {
+		procSendMessageW.Call(hMicrophoneOn, bmSetcheck, bstChecked, 0)
+	}
+	y += 34
+	mk("STATIC", "Uses the Windows default recording device. Turning input off keeps sound playback enabled.", left, y, 450, 42, ssNoprefix, 0)
+	y += 50
+	mk("BUTTON", "Camera privacy...", left, y, 210, 28, wsTabstop, settingsPrivacyID)
+	mk("BUTTON", "Microphone privacy...", left+224, y, 224, 28, wsTabstop, settingsMicrophonePrivacyID)
+	y += 40
+	pages[1] = append(pages[1], scroll.controls...)
+	pageHeights[1] = y
+	scroll.controls = nil
+	y = 56
+	mk("STATIC", "Guest displays", left, y+3, labelW, 20, ssNoprefix, 0)
+	hDisplays = mk("EDIT", strconv.Itoa(guestDisplayCount(current.Displays)), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsDisplaysID)
+	mk("STATIC", "1 to 16 displays", fieldX+112, y+3, fieldW-112, 20, ssNoprefix, 0)
+	y += 34
+	mk("STATIC", "Rendering", left, y+3, labelW, 20, ssNoprefix, 0)
+	hRenderAuto = mk("BUTTON", "Automatic", fieldX, y, 90, 22, bsAutoradiobutton|wsGroup|wsTabstop, settingsRenderAutoID)
+	hRenderGPU = mk("BUTTON", "GPU", fieldX+96, y, 60, 22, bsAutoradiobutton, settingsRenderGPUID)
+	hRenderCPU = mk("BUTTON", "CPU", fieldX+162, y, 60, 22, bsAutoradiobutton, settingsRenderCPUID)
+	switch current.Render {
+	case renderGPU:
+		procSendMessageW.Call(hRenderGPU, bmSetcheck, bstChecked, 0)
+	case renderCPU:
+		procSendMessageW.Call(hRenderCPU, bmSetcheck, bstChecked, 0)
+	default:
+		procSendMessageW.Call(hRenderAuto, bmSetcheck, bstChecked, 0)
+	}
+	y += 24
+	mk("STATIC", "Automatic tries the GPU and remembers when this PC cannot use it. GPU retries every launch.", left, y, clientW-2*left, 36, ssNoprefix, 0)
+	y += 44
+	mk("STATIC", "Guest CPUs", left, y+3, labelW, 20, ssNoprefix, 0)
+	hCPUs = mk("EDIT", strconv.Itoa(current.CPUs), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsCPUsID)
+	mk("STATIC", fmt.Sprintf("0 = automatic (%d of %d)", pickGuestCPUs(runtime.NumCPU()), runtime.NumCPU()), fieldX+112, y+3, fieldW-112, 20, ssNoprefix, 0)
+	y += 34
 	mk("STATIC", "Port forwards\nLocal: tcp:2222:22\nLAN: tcp:IP:8080:80", left, y+3, labelW, 60, ssNoprefix, 0)
 	hFwd = mk("EDIT", strings.Join(current.Forwards, "\r\n"), fieldX, y, fieldW, 72,
 		wsBorder|wsTabstop|wsVscroll|esMultiline|esAutovscroll, settingsFwdID)
@@ -454,9 +591,19 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	// The two-line key label above is 40 px tall from y+3; start the next
 	// row below it or the label's second line paints over this text.
 	y += 50
-	mk("STATIC", "Changes apply the next time Omarchy starts.",
-		left, y, clientW-2*left, 20, ssNoprefix, 0)
-	y += 30
+	hUpdateOn = mk("BUTTON", "Check for launcher updates automatically", left, y, 450, 24, bsAutocheckbox|wsTabstop, settingsUpdateOnID)
+	if !prefs.AutomaticUpdatesDisabled {
+		procSendMessageW.Call(hUpdateOn, bmSetcheck, bstChecked, 0)
+	}
+	y += 34
+	mk("STATIC", "Linux packages and Omarchy are updated from inside the desktop.", left, y, 450, 36, ssNoprefix, 0)
+	y += 42
+	mk("BUTTON", "About and updates...", left, y, 210, 28, wsTabstop, settingsAboutID)
+	y += 40
+	pages[2] = append(pages[2], scroll.controls...)
+	pageHeights[2] = y
+	scroll.controls = nil
+	y = 56
 	mk("STATIC", "Backup and recovery", left, y, clientW-2*left, 20, ssNoprefix, 0)
 	y += 24
 	for _, control := range []struct {
@@ -488,10 +635,34 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	if portable || stateErr != nil || state.Retained == nil || !state.Retained.Booted || !pathsEqual(state.Retained.Destination, dataDir) {
 		procEnableWindow.Call(cleanupButton, 0)
 	}
-	mk("BUTTON", "Help and shortcuts", left, clientH-40, 150, 26, wsTabstop, settingsHelpID)
-	mk("BUTTON", "Save", clientW-16-180, clientH-40, 84, 26, bsDefpushbutton|wsTabstop, settingsSaveID)
-	mk("BUTTON", "Cancel", clientW-16-84, clientH-40, 84, 26, wsTabstop, settingsCancelID)
-	scroll.move(0)
+	pages[3] = append(pages[3], scroll.controls...)
+	pageHeights[3] = y + 40
+	scroll.controls = nil
+	mk("STATIC", "Save, then restart Omarchy to apply changes.", left, 0, 460, 24, ssNoprefix, 0)
+	mk("BUTTON", "Help and shortcuts", left, 30, 150, 26, wsTabstop, settingsHelpID)
+	mk("BUTTON", "Save", clientW-16-180, 30, 84, 26, bsDefpushbutton|wsTabstop, settingsSaveID)
+	mk("BUTTON", "Cancel", clientW-16-84, 30, 84, 26, wsTabstop, settingsCancelID)
+	footer := append([]settingsScrollControl{}, scroll.controls...)
+	selectPage = func(index int) {
+		for _, page := range pages {
+			for _, c := range page {
+				procShowWindow.Call(c.handle, 0)
+			}
+		}
+		scroll.controls = append([]settingsScrollControl{}, common...)
+		for _, c := range pages[index] {
+			procShowWindow.Call(c.handle, swShow)
+			scroll.controls = append(scroll.controls, c)
+		}
+		for _, c := range footer {
+			c.y += pageHeights[index] + 12
+			scroll.controls = append(scroll.controls, c)
+		}
+		scroll.content = pageHeights[index] + 80
+		scroll.move(0)
+		procRedrawWindow.Call(hwnd, 0, 0, 0x185)
+	}
+	selectPage(0)
 	// Settings is often opened from the tray while the maximized QEMU window
 	// owns the foreground. Raise it once, then immediately return it to the
 	// normal z-order so it is visible without staying above unrelated apps.
@@ -505,6 +676,17 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
 		if r == 0 || int32(r) == -1 {
 			break
+		}
+		// The multiline port-forward editor consumes Tab by default. Port
+		// entries use newlines, so keep Tab and Shift+Tab for form navigation.
+		if m.hwnd == hFwd && m.message == wmKeydown && m.wParam == 9 {
+			shift, _, _ := procGetKeyState.Call(0x10)
+			next, _, _ := procGetNextDlgTabItem.Call(hwnd, hFwd, (shift>>15)&1)
+			if next != 0 {
+				procSetFocus.Call(next)
+			}
+			scroll.revealFocus()
+			continue
 		}
 		if ok, _, _ := procIsDialogMessageW.Call(hwnd, uintptr(unsafe.Pointer(&m))); ok != 0 {
 			// IsDialogMessage also dispatches scrolling and paint messages.

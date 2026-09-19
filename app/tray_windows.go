@@ -6,10 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf16"
 	"unsafe"
 )
 
@@ -28,6 +30,7 @@ var (
 const (
 	trayIconID                = 1
 	trayCallbackMessage       = 0x8001 // WM_APP + 1
+	trayNoticeMessage         = 0x8003
 	trayStopMessage           = 0x8002 // WM_APP + 2
 	trayCommandShow           = 3001
 	trayCommandShare          = 3002
@@ -36,6 +39,8 @@ const (
 	trayCommandShutdown       = 3005
 	trayCommandReclaim        = 3006
 	trayCommandReclaimStatus  = 3007
+	trayCommandCameraStatus   = 3021
+	trayCommandAbout          = 3020
 	trayCommandHelp           = 3008
 	trayCommandClipboardFiles = 3009
 	trayCommandDevices        = 3010
@@ -94,6 +99,36 @@ type trayLaunchConfig struct {
 	share    string
 }
 
+var trayWindow atomic.Uintptr
+var pendingTrayNotice atomic.Pointer[string]
+var transferErrorDialog atomic.Bool
+
+// Errors must never wait for a modal dialog in the file-transfer worker.
+func reportTransferError(err error) {
+	logf("file transfer: %v", err)
+	message := "These files could not be copied to Omarchy.\n\n" + err.Error()
+	if hwnd := trayWindow.Load(); hwnd != 0 {
+		pendingTrayNotice.Store(&message)
+		if posted, _, _ := procPostMessageW.Call(hwnd, trayNoticeMessage, 0, 0); posted != 0 {
+			return
+		}
+	}
+	if transferErrorDialog.CompareAndSwap(false, true) {
+		go func() { defer transferErrorDialog.Store(false); infoBox(message) }()
+	}
+}
+
+func notificationText(dst []uint16, text string) {
+	data := utf16.Encode([]rune(strings.ReplaceAll(text, "\x00", "")))
+	if len(data) >= len(dst) {
+		data = data[:len(dst)-1]
+		if n := len(data); n > 0 && data[n-1] >= 0xd800 && data[n-1] <= 0xdbff {
+			data = data[:n-1]
+		}
+	}
+	copy(dst, data)
+}
+
 // startTray keeps settings and diagnostics reachable after the setup window
 // gives way to QEMU. Each action uses ordinary Windows UI and changes made in
 // Settings take effect on the next VM launch.
@@ -133,6 +168,7 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 
 	var hwnd uintptr
 	var nid notifyIconData
+	var aboutOpen atomic.Bool
 	var settingsOpen, diagnosticsOpen, devicesOpen atomic.Bool
 
 	addIcon := func() bool {
@@ -216,6 +252,7 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 		appendItem(shareFlags, trayCommandShare, "Open Shared Folder")
 		appendItem(mfSeparator, 0, "")
 		appendItem(mfString, trayCommandSettings, "Settings...")
+		appendItem(mfString, trayCommandCameraStatus, "Camera status...")
 		appendItem(mfString, trayCommandDevices, "USB devices...")
 		appendItem(mfString, trayCommandTransfers, "File transfers…")
 		appendItem(mfString, trayCommandDiagnose, "Create diagnostics...")
@@ -226,6 +263,7 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 		appendItem(reclaimFlags, trayCommandReclaim, "Reclaim disk space...")
 		appendItem(reclaimFlags, trayCommandReclaimStatus, "Reclaim status...")
 		appendItem(mfString, trayCommandClipboardFiles, "Open received files")
+		appendItem(mfString, trayCommandAbout, "About and updates...")
 		appendItem(mfString, trayCommandHelp, "Help and shortcuts...")
 		appendItem(mfSeparator, 0, "")
 		appendItem(mfString, trayCommandShutdown, "Shut down Omarchy...")
@@ -266,6 +304,10 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 			} else {
 				infoBox("Omarchy is not ready yet.")
 			}
+		case trayCommandCameraStatus:
+			infoBox(cameraStatusText())
+		case trayCommandAbout:
+			launchControl("-about", &aboutOpen)
 		case trayCommandHelp:
 			infoBox(everydayHelp)
 		case trayCommandClipboardFiles:
@@ -292,6 +334,18 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 			return 0
 		}
 		switch message {
+		case trayNoticeMessage:
+			if text := pendingTrayNotice.Swap(nil); text != nil {
+				notice := nid
+				notice.flags = 0x10  // NIF_INFO
+				notice.infoFlags = 2 // NIIF_WARNING
+				notificationText(notice.info[:], *text)
+				notificationText(notice.infoTitle[:], "File transfer")
+				if ok, _, err := procShellNotifyIconW.Call(1, uintptr(unsafe.Pointer(&notice))); ok == 0 {
+					logf("tray: file-transfer notification failed: %v", err)
+				}
+			}
+			return 0
 		case trayCallbackMessage:
 			event := uint32(lParam & 0xffff)
 			switch event {
@@ -321,6 +375,7 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 			procDestroyWindow.Call(window)
 			return 0
 		case wmDestroy:
+			trayWindow.CompareAndSwap(window, 0)
 			procShellNotifyIconW.Call(nimDelete, uintptr(unsafe.Pointer(&nid)))
 			procPostQuitMessage.Call(0)
 			return 0
@@ -362,6 +417,7 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 		ready <- 0
 		return
 	}
+	trayWindow.Store(hwnd)
 	logf("tray: ready")
 	ready <- hwnd
 

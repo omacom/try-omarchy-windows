@@ -1,12 +1,12 @@
 package main
 
-const everydayHelp = `Settings controls memory, CPUs, displays, disk capacity, rendering and sharing. Use 0 for automatic resources. Save, then restart Omarchy.
+const everydayHelp = `Settings groups everyday options, devices, advanced options and recovery. Devices controls camera selection and camera/microphone access. About and updates checks for launcher updates. Use 0 for automatic resources. Save, then restart Omarchy.
 
 Back up, Restore, Snapshots, Portable copy, Reset, Move and Uninstall are in Settings. Close Omarchy first. Reclaim and its status are in the tray.
 
-Copy files or folders in Explorer or Omarchy Files, then paste in the other system. Cut also copies; originals stay intact. Limits: 16 MiB compressed, 64 MiB expanded, 1,024 entries. Use the shared folder for larger selections or links.
+Copy files or folders in Explorer or Omarchy Files, then paste in the other system. Cut also copies; originals stay intact. Current guests stream files and folders in the background, up to 100 GiB and 10,000 entries when both drives have enough free space. Older guests may use the legacy 16 MiB clipboard path. Use the shared folder for links or repeated large exchanges.
 
-Open received files shows cached Windows copies. Paste into your own folder to keep them. Remove old copies when the 256 MiB cache fills. Guest cache: ~/.cache/try-omarchy/clipboard-files.
+Open received files shows cached Windows copies. Paste into your own folder to keep them. These copies also use space on Windows; remove ones you no longer need. Guest cache: ~/.cache/try-omarchy/clipboard-files.
 
 Ctrl+Alt+F: fullscreen. Ctrl+Alt+G: release input. The Windows key goes to Omarchy only while its window is focused.
 

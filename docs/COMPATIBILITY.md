@@ -18,12 +18,13 @@ Try Omarchy runs the full x86_64 Arch Linux environment used by Omarchy. It is n
 - 64-bit Windows 10 or 11 with hardware virtualization is required.
 - ARM64 Windows PCs (Snapdragon and similar) are not supported: the launcher, runtime, and guest image are all x86_64, and setup stops with an explanation instead of blaming virtualization settings.
 - GPU acceleration depends on the patched WINQ-EMU runtime and compatible Windows graphics drivers. Try Omarchy falls back to CPU rendering when that path is unavailable.
-- USB management exists, but general physical-device compatibility remains unvalidated. Host webcam capture is not usable in the recorded acceptance run; arbitrary PCI passthrough is unsupported.
+- USB management exists, but general physical-device compatibility remains unvalidated. V20 camera and microphone capture passed on the AMD test laptop; additional device combinations remain unverified, and arbitrary PCI passthrough is unsupported.
 - Networking uses QEMU NAT. Services inside the guest are not exposed to the Windows network automatically.
 - Host-folder sharing is not available with an external stock QEMU fallback.
 - Text and image clipboard sharing work in both directions (images travel as
-  PNG, up to 16 MiB). v18 also supports file/folder clipboard transfers and native
-  Windows drag and drop through dedicated transfer windows. Direct drops into
+  PNG, up to 16 MiB). V20 streams file/folder clipboard transfers and accepts native
+  Windows file drops without a blocking transfer window. Supported folders receive
+  the files directly; other destinations fall back to Downloads. Direct drops into
   arbitrary guest applications remain unfinished.
 - Portable mode is experimental pending external-drive and second-PC acceptance.
   Accelerated saved-session/RAM resume and bridged networking are not ready for use.

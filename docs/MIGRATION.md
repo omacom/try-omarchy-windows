@@ -55,6 +55,9 @@ produce an incomplete-restore message and a nonzero exit status. Configuration
 already restored and its backups remain available. Review `packages/*.txt`
 and the reported errors before logging out.
 
-These migration fixes are included in the v0.0.16-preview draft guest image
-with compatibility revision 17. The earlier v0.0.15-preview draft contains
-revision 16; archives created by it still contain the earlier restore script.
+These migration fixes were introduced in compatibility revision 17 and are
+included in the published v0.0.20-preview guest (revision 29). Archives created
+by earlier exporters retain their original restore script; create a fresh export
+from the updated guest. Automated restore checks cover configuration preservation
+and incomplete-restore reporting. Restoration onto a separate physical Omarchy
+installation is still unverified.

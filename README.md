@@ -4,7 +4,7 @@
 
 <h1 align="center">Try Omarchy for Windows</h1>
 
-Run the full [Omarchy](https://omarchy.org) desktop in a window on Windows 10 or 11. No VMware, no VirtualBox, no dual boot: QEMU on the Windows Hypervisor Platform (WHPX), a prebuilt Arch image with Omarchy baked in, and the desktop rendered on your actual GPU (virgl + Venus Vulkan via [WINQ-EMU](https://github.com/cmspam/winq-emu)) with CPU rendering as the automatic fallback. No partitions, no bootloader, no changes to your Windows install: everything lives in one folder chosen on first run, with `%LOCALAPPDATA%\TryOmarchy` as the default.
+Run the full [Omarchy](https://omarchy.org) desktop in a window on Windows 10 or 11. No VMware, no VirtualBox, no dual boot: QEMU on the Windows Hypervisor Platform (WHPX), a prebuilt Arch image with Omarchy baked in, and the desktop rendered on your actual GPU (virgl + Venus Vulkan via [WINQ-EMU](https://github.com/cmspam/winq-emu)) with CPU rendering as the automatic fallback. No repartitioning or replacement of Windows. Setup may enable Windows Hypervisor Platform and request a restart; the Linux installation lives in a folder chosen on first run, with `%LOCALAPPDATA%\TryOmarchy` as the default.
 
 Download, boot, Hyprland.
 
@@ -20,19 +20,19 @@ The Omarchy mark in the app icon is sourced from the
 [official Omarchy brand kit](https://omarchy.org/brand/) and remains subject to
 Omarchy's trademark rights.
 
-The current release is [v0.0.19-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.19-preview),
-including Omarchy 4.0.3, file transfers, snapshots and installation moves.
+The current release is [v0.0.20-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.20-preview),
+including Omarchy 4.0.3, working camera and microphone capture, quiet file drops, snapshots and installation moves.
 We are working toward v1; see the [scope and remaining release gates](docs/V1-READINESS.md)
 and [Windows testing instructions](docs/TESTING.md). Physical acceptance currently
 centers on an AMD Windows 11 laptop; broader host coverage remains open.
 
 ## What works today
 
-- **The full Omarchy 4.0.3 desktop on new or reset guests**: Hyprland, the bar, notifications, all 22 themes, the screensavers. On our mid-range Ryzen 5 test laptop the desktop is up about 6 seconds after launch, and every launch after setup goes straight there. No Linux login screens, no console text, branded window.
+- **The full Omarchy 4.0.3 desktop on new or reset guests**: Hyprland, the bar, notifications, all 22 themes, the screensavers. Launches after setup go straight to the desktop. Startup time depends on the host and the drive holding the guest. No Linux login screens, no console text, branded window.
 - **GPU acceleration**: Hyprland renders on the host GPU via virgl, `vulkaninfo` shows Venus, smooth video and audio (verified on a Radeon iGPU laptop); `-cpu host` (AVX2 and all) via WINQ-EMU's patched WHPX.
 - **One app, zero prerequisites**: `TryOmarchy.exe` (~10 MB, no console window). First run lets you keep the default Local AppData location or choose another local drive or folder, switches on Windows' Hypervisor Platform (one permission prompt, one restart), then downloads the SHA256-verified GPU runtime and image and boots into Omarchy's setup form. Once setup is complete it keeps a stable launcher in the chosen data folder and can add optional Start-menu and Desktop shortcuts. After that it supervises everything: GPU/CPU auto-detect, the known WHPX launch wedge, in-guest reboot relaunch, poweroff cleanup.
 - **Feels like an app, not a VM**: the window is branded "Try Omarchy", the Windows key acts as Super only while the window is focused (Start menu and Win+Shift+S keep working everywhere else), Ctrl+Alt+F goes fullscreen.
-- **Two-way text and image clipboard sharing** between Windows and Omarchy (own compositor-native bridge over wl-clipboard, no SPICE) and **folder sharing** over virtio-9p: standard installs offer to create `Omarchy Shared` in your Windows home, then pin it in Omarchy's Files sidebar and link it into the Linux home. The tray can open the Windows folder at any time. File and folder clipboard transfers are also available, with dedicated transfer windows for native Windows drag and drop. Dropping directly into arbitrary guest applications remains unfinished.
+- **Two-way text and image clipboard sharing** between Windows and Omarchy (own compositor-native bridge over wl-clipboard, no SPICE) and **folder sharing** over virtio-9p: standard installs offer to create `Omarchy Shared` in your Windows home, then pin it in Omarchy's Files sidebar and link it into the Linux home. The tray can open the Windows folder at any time. File and folder clipboard transfers stream in the background. Drop Windows files into the Omarchy window to copy them into the supported folder under the pointer, or Downloads when that folder cannot accept the drop. Larger copies show small, nonblocking progress with cancellation. Dropping directly into arbitrary guest applications remains unfinished.
 - First boot offers an instant trial account or Omarchy's normal personalized account setup, with SDDM autologin after either path. Instant mode keeps `omarchy` as both the local username and lock-screen password, shows that on the setup splash, and repeats it once on the first desktop. Sudo remains passwordless in this disposable local trial.
 - Reproducible x86_64 guest image build (containerized, package-locked, pinned Omarchy revision) and a headless QMP control plane for automated testing.
 
@@ -62,7 +62,7 @@ Same recipe as the excellent macOS [try-omarchy](https://github.com/themartiano/
 
 WHPX works on Windows Home and Pro (it's the same platform WSL2 rides on), so no Hyper-V role is required. If WSL2 runs on your machine, you're set.
 
-Proven boot recipe: `-accel whpx -machine q35 -cpu qemu64`, direct kernel boot (vmlinuz + initramfs + raw ext4 rootfs on virtio-blk), all-virtio devices, DirectSound audio. See [docs/FINDINGS.md](docs/FINDINGS.md) for the details and the traps.
+Proven boot recipe: `-accel whpx -machine q35 -cpu qemu64`, direct kernel boot (vmlinuz + initramfs + raw ext4 rootfs on virtio-blk), all-virtio devices, SDL audio with recording support. See [docs/FINDINGS.md](docs/FINDINGS.md) for the details and the traps.
 
 ## Try it
 
@@ -120,8 +120,12 @@ launch. Portable mode continues to support exFAT through the `data` and
 
 ### Settings
 
-The next preview adds [moving an existing installation](docs/MOVING.md) from
-Settings. This is under validation and is not available in v0.0.14-preview.
+[Moving an existing installation](docs/MOVING.md) is available from Settings.
+
+The next candidate adds General, Devices, Advanced and Recovery pages, camera
+selection and camera/microphone switches, and About and updates. These controls
+are in this source branch and are not yet part of the published v20 download.
+See [desktop controls](docs/DESKTOP-CONTROLS.md) for behavior and validation.
 
 `settings.json` in the chosen data folder keeps the choices that survive a
 relaunch. Every row has a matching flag, and a flag given on the command line
@@ -186,8 +190,7 @@ Deleting files inside Omarchy does not shrink the disk file by itself. While
 Omarchy is running, `TryOmarchy.exe -reclaim` asks it to write zeros over its
 free space, up to what the Windows drive can spare beyond a 4 GiB reserve and
 at most 8 GiB per pass, and the disk file shrinks the next time Omarchy shuts
-down. Run it again for another pass if a lot was deleted. A tray entry for
-this is coming once it has been exercised on more machines.
+down. Run it again for another pass if a lot was deleted. The tray includes Reclaim disk space and Reclaim status.
 
 This preference is saved separately in `storage.json` so older launchers can
 still read their settings after rollback. An explicit `-disk-size` applies only
@@ -287,31 +290,31 @@ stays until you remove it from there.
 
 ### I have the full Hyper-V feature set installed. Will it conflict?
 
-WHPX and Hyper-V share the same Windows hypervisor and are designed to coexist. We have not yet validated every Try Omarchy feature on a machine with the full Hyper-V feature set enabled, so please open an issue if you hit anything odd.
+WHPX and Hyper-V share the same Windows hypervisor and are designed to coexist. Public v20 passed GPU boot, camera capture, file drop, guest reboot and shutdown with the full Hyper-V role enabled on an AMD/Radeon Windows 11 laptop. Intel/Core Ultra, NVIDIA and simultaneous workloads in another Hyper-V VM remain unverified.
 
 ## Repository layout
 
-- `app/` — the app itself: one Go exe covering the launcher, supervisor, first-run download, focus-scoped Win-key forwarding, and the host side of the clipboard bridge
+- `app/`: the app itself: one Go exe covering the launcher, supervisor, first-run download, focus-scoped Win-key forwarding, and the host side of the clipboard bridge
 - `runtime-build/`: the source-locked Windows QEMU runtime build, verification, licenses, and provenance tooling
-- `scripts/` — PowerShell path plus QMP tooling (screendump, send-key, WHPX smoke test)
-- `guest-build/` — patches on jorge's guest builder that produce our image, plus build instructions
-- `docs/FINDINGS.md` — technical findings, gotchas, and their fixes
+- `scripts/`: PowerShell path plus QMP tooling (screendump, send-key, WHPX smoke test)
+- `guest-build/`: patches on jorge's guest builder that produce our image, plus build instructions
+- `docs/FINDINGS.md`: technical findings, gotchas, and their fixes
 - `docs/RELEASING.md` - the authenticated two-phase build, signing, and publishing process
 
-The guest image (Omarchy 4.0.2, all upstream themes, screensavers, autologin, clipboard bridge) is built from [jorge-huxley/try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win)'s `win` branch guest builder (`guest/build-container.sh`, needs Docker on Linux) — an x86_64 retarget of the upstream try-omarchy build system — with the patches in `guest-build/` applied. Images are not committed; setup downloads the latest release artifact, or build your own.
+The guest image (Omarchy 4.0.3, all upstream themes, screensavers, autologin, clipboard bridge) is built from [jorge-huxley/try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win)'s `win` branch guest builder (`guest/build-container.sh`, needs Docker on Linux), an x86_64 retarget of the upstream try-omarchy build system. The patches in `guest-build/` add Windows integration. Images are not committed; setup downloads the latest release artifact, or build your own.
 
 ## Credit where due
 
 This project stands on a lot of shoulders:
 
-- [Omarchy](https://github.com/basecamp/omarchy) by DHH / Basecamp — the desktop this is all about
-- [try-omarchy](https://github.com/themartiano/try-omarchy) by Eduardo (themartiano) — the original macOS app and the architecture this follows
-- [try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win) by Jorge Silva — the x86_64 guest builder retarget and the proven WHPX boot recipe this project reuses
-- [WINQ-EMU](https://github.com/cmspam/winq-emu) by cmspam — Venus Vulkan GPU forwarding for QEMU on Windows, the graphics path
-- [omarchy-windows-hyperv-gpu](https://github.com/Chainfire/omarchy-windows-hyperv-gpu) by Chainfire — prior art proving GPU-accelerated Omarchy on Windows, plus the QEMU 11 WHPX interrupt findings
-- [dockur/windows](https://github.com/dockur/windows) — the Windows-in-Docker environment this is developed and tested in
+- [Omarchy](https://github.com/basecamp/omarchy) by DHH / Basecamp: the desktop this is all about
+- [try-omarchy](https://github.com/themartiano/try-omarchy) by Eduardo (themartiano): the original macOS app and the architecture this follows
+- [try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win) by Jorge Silva: the x86_64 guest builder retarget and the proven WHPX boot recipe this project reuses
+- [WINQ-EMU](https://github.com/cmspam/winq-emu) by cmspam: Venus Vulkan GPU forwarding for QEMU on Windows, the graphics path
+- [omarchy-windows-hyperv-gpu](https://github.com/Chainfire/omarchy-windows-hyperv-gpu) by Chainfire: prior art proving GPU-accelerated Omarchy on Windows, plus the QEMU 11 WHPX interrupt findings
+- [dockur/windows](https://github.com/dockur/windows): the Windows-in-Docker environment this is developed and tested in
 
-Open to collaboration — if you're working on any of this, get in touch.
+Open to collaboration : if you're working on any of this, get in touch.
 
 ## License
 

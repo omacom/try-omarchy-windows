@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -134,6 +135,7 @@ func serveCamera(conn net.Conn, source cameraFrameSource) error {
 		if frames != nil {
 			source.stop()
 			frames = nil
+			cameraState.Store("Camera idle. No capture is active.")
 		}
 	}
 	defer stop()
@@ -154,10 +156,12 @@ func serveCamera(conn net.Conn, source cameraFrameSource) error {
 				}
 				stream, err := source.start()
 				if err != nil {
+					cameraState.Store(err.Error())
 					_ = connection.status(map[string]any{"status": "unavailable", "reason": err.Error()})
 					continue
 				}
 				frames = stream
+				cameraState.Store("Camera in use by an application inside Omarchy.")
 				_ = connection.status(map[string]any{"status": "streaming", "name": "Windows Camera"})
 			case "stop":
 				stop()
@@ -177,4 +181,20 @@ func serveCamera(conn net.Conn, source cameraFrameSource) error {
 			}
 		}
 	}
+}
+
+type disabledCameraSource struct{}
+
+func (disabledCameraSource) start() (<-chan []byte, error) {
+	return nil, fmt.Errorf("Camera access is off in Try Omarchy Settings. Enable it and restart Omarchy.")
+}
+func (disabledCameraSource) stop() {}
+
+var cameraState atomic.Value
+
+func cameraStatusText() string {
+	if state := cameraState.Load(); state != nil {
+		return state.(string)
+	}
+	return "Camera idle. No capture is active."
 }

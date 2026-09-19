@@ -23,7 +23,10 @@ func newCameraFrameSource() cameraFrameSource {
 // runCameraBridge listens for QEMU's camera chardev and serves the guest
 // protocol on each connection. Listening here also fails loudly if another
 // copy of the app already owns the port.
-func runCameraBridge() {
+func runCameraBridge(preferences desktopPreferences) {
+	if preferences.CameraDisabled {
+		cameraState.Store("Camera access is off. Enable it in Settings and restart Omarchy.")
+	}
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", cameraPort))
 	if err != nil {
 		fatal("Try Omarchy camera port %d is in use.", cameraPort)
@@ -38,7 +41,7 @@ func runCameraBridge() {
 			}
 			go func() {
 				defer conn.Close()
-				if err := serveCamera(conn, newCameraFrameSource()); err != nil {
+				if err := serveCamera(conn, configuredCameraSource(preferences)); err != nil {
 					logf("camera: %v", err)
 				}
 			}()
@@ -97,4 +100,14 @@ func syntheticFrame(column int) []byte {
 		frame[i] = 96
 	}
 	return frame
+}
+
+func configuredCameraSource(p desktopPreferences) cameraFrameSource {
+	if p.CameraDisabled {
+		return disabledCameraSource{}
+	}
+	if os.Getenv("TRYOMARCHY_FAKE_CAMERA") != "" {
+		return newCameraFrameSource()
+	}
+	return &mfCameraSource{deviceID: p.CameraID}
 }

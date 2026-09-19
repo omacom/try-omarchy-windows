@@ -21,7 +21,7 @@ v1 claims support. GPU acceleration depends on host drivers, with CPU rendering
 as fallback. The app runs QEMU on Windows Hypervisor Platform, not a WSL distribution.
 
 Portable mode remains experimental pending real installed-guest conversion,
-external-drive lifecycle and second-PC testing. Webcam capture, accelerated RAM
+external-drive lifecycle and second-PC testing. Additional webcam-device coverage, accelerated RAM
 resume, direct drops into arbitrary guest applications, bridged networking,
 Windows ARM64 and booting an existing physical installation are outside the v1
 commitment. Multiple display windows exist; that does not establish physical
@@ -37,7 +37,7 @@ every Windows device or every native Omarchy feature has been validated.
 | --- | --- | --- |
 | Omarchy 4.0.3, browser-theme permissions, existing-guest package upgrades | [Guest upgrade validation](GUEST-UPGRADES.md), including preservation fixtures and busy-lock handling | Controlled orphaned-lock recovery passed in v20; interruption during package writes remains open |
 | Installation moves, backup/restore, snapshots/rollback, growth/reclaim, clipboard and transfer windows | [Windows laptop acceptance](evidence/WINDOWS-LAPTOP-ACCEPTANCE-2026-09-13.md) | Retest critical paths on the next exact candidate; portable lifecycle is unproven |
-| Source-built graphics runtime and matching source pinned in v18 | Same acceptance record; final r15 Vulkan playback and preserved files | AMD laptop coverage does not establish Intel/NVIDIA or full Hyper-V support |
+| Source-built graphics runtime and matching source pinned in v18 | Same acceptance record; final r15 Vulkan playback and preserved files | AMD full Hyper-V role coexistence passed in v20; Intel/NVIDIA coverage remains open |
 | GPU/CPU display paths, idle measurements and one-hour endurance | Same record, with individual runtime revisions identified | Earlier-runtime results are not exact-final-runtime acceptance for every check |
 | Signed release preparation, publication and public download verification | Final publication sections of the acceptance record | Preview-to-stable migration is a separate gate |
 

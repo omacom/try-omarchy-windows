@@ -29,7 +29,7 @@ func runClipboardBridge() {
 			logf("file transfers: %v", err)
 		}
 	}()
-	b := &clipBridge{dropRequests: make(chan droppedFiles, 8), setDropPaths: func(paths []string) bool { go showFileDropWindow(paths); return true }, transferError: func(err error) { infoBox("These files could not be copied to Omarchy.\n\n" + err.Error()) }, showTransfer: showTransferProgress, transfers: transfers, getPaths: clipboardGetFilePaths, setPaths: clipboardSetFilePaths, getHost: clipboardGetItem, setHost: clipboardSetItem, sequence: clipboardSequence}
+	b := &clipBridge{dropRequests: make(chan droppedFiles, 8), setDropPaths: func(paths []string) bool { go showFileDropWindow(paths); return true }, transferError: reportTransferError, showTransfer: showTransferProgress, transfers: transfers, getPaths: clipboardGetFilePaths, setPaths: clipboardSetFilePaths, getHost: clipboardGetItem, setHost: clipboardSetItem, sequence: clipboardSequence}
 	// These listeners double as the single-instance check: a second copy of
 	// the app (or a leftover QEMU on our QMP ports) must fail loudly, not
 	// die 30 seconds later with an inscrutable QEMU port error.

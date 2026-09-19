@@ -16,6 +16,7 @@ const (
 )
 
 type config struct {
+	desktop                     desktopPreferences
 	dir, hostDir, payloadDir    string
 	winqEmu, share              string
 	fresh, fullscreen, noGpu    bool
