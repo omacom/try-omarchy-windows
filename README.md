@@ -166,6 +166,56 @@ Automatic sizing gives the guest all logical processors but two, between two
 and eight, and a third of the machine's RAM between 4 and 8 GiB (6 GiB with GPU
 rendering, the same as before), reduced to what Windows can spare at launch.
 
+#### CPU and RAM profiles
+
+Open **Settings > General > Resource profile** before starting Omarchy:
+
+- **Balanced** keeps the automatic sizing above.
+- **Maximum performance** samples Windows CPU activity for 750 ms and reads
+  available physical RAM immediately before starting the VM. It gives Omarchy
+  the unused capacity after leaving additional Windows headroom: at least two
+  logical processors (one eighth of the host on larger machines), and at least
+  4 GiB RAM (one eighth of physical RAM on larger machines). RAM is rounded down
+  to 256 MiB steps. The supported limits remain 64 vCPUs and 64 GiB RAM.
+- **Manual** enables the CPU count and RAM fields together. RAM is entered in
+  GiB; either field can be 0 to use Balanced sizing for that resource. Requests
+  exceeding the host CPU count or leaving less than 2 GiB physical RAM for
+  Windows are rejected with an explanation.
+
+Settings shows an estimate using the host state when the window opens. Maximum
+performance measures again on launch. These are boot-time capacities: Windows
+and Omarchy still share processor scheduling, and the launcher does not pin
+cores, guarantee an FPS increase, or continuously resize a running VM. Save,
+shut down, and relaunch to apply a change. Windows must retain headroom for
+new applications, QEMU, and graphics resources.
+
+If CPU measurement fails, or the PC has more than 64 logical processors,
+Maximum performance uses the Balanced CPU count. An unavailable memory query
+uses Balanced RAM sizing. A successful query showing insufficient free RAM
+stops Maximum performance with an explanation instead of allocating that RAM.
+The existing QEMU low-memory retry can still reduce an allocation if conditions
+change after measurement; the effective allocation is recorded in `vm/shell.log`.
+
+The profile is saved separately in `resources.json` so older launchers can
+still read `settings.json` after rollback. Old CPU/RAM choices are preserved
+and select Manual until a profile is chosen. Presets retain those manual values
+for later use. Backups and snapshots include the profile.
+
+For one launch, use `-resource-profile maximum-performance`, `balanced`, or
+`manual`. Explicit `-cpus` and `-memory` flags override their individual
+resources within any profile; `-memory` still takes **MiB**. For example:
+
+```powershell
+TryOmarchy.exe -resource-profile maximum-performance
+TryOmarchy.exe -resource-profile manual -cpus 16 -memory 24576
+```
+
+**Graphics:** Settings > Advanced reports the last successful boot's rendering
+path. GPU mode shares Windows' GPU through VirGL OpenGL and Venus Vulkan; it
+does not assign the physical GPU to Linux. NVIDIA CUDA/OptiX and native PCI GPU
+passthrough are not provided by this runtime. See [application and graphics
+limits](docs/COMPATIBILITY.md) before relying on a particular game or renderer.
+
 The guest follows the Windows time zone, default keyboard layout, and display
 language. Each is applied inside Omarchy when it changes on the Windows side,
 so a layout, zone, or language chosen inside the guest stays until Windows
