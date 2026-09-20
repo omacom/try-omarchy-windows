@@ -27,7 +27,7 @@ type checkpointRollbackState struct {
 }
 
 func checkpointRollbackNames() []string {
-	names := []string{"guest", "runtime", "vm", "settings.json", storageSettingsFilename, desktopPreferencesFilename}
+	names := []string{"guest", "runtime", "vm", "settings.json", storageSettingsFilename, desktopPreferencesFilename, resourcePreferencesFilename}
 	for index := 0; index < maximumGuestDisplays; index++ {
 		names = append(names, displayPlacementFilename(index))
 	}

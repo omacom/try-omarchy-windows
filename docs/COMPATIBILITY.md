@@ -33,5 +33,51 @@ Try Omarchy runs the full x86_64 Arch Linux environment used by Omarchy. It is n
 
 Compatibility varies with Windows, CPU, GPU, and driver combinations. When reporting a problem, include those details and whether Try Omarchy selected GPU or CPU rendering.
 
+## Games, Blender, and Godot
+
+The guest sees a virtio GPU. WINQ-EMU forwards supported OpenGL and Vulkan
+commands to the Windows GPU through VirGL and Venus; this is shared graphics
+acceleration, not physical PCI passthrough. The Windows graphics driver remains
+in control of the GPU. The launcher cannot expose NVIDIA CUDA/OptiX by increasing
+guest RAM or installing a Linux NVIDIA driver.
+
+| Workload | What to check |
+| --- | --- |
+| OpenGL / Vulkan games | Test the actual title, required extensions, and performance. A working desktop does not establish game compatibility. |
+| Windows games through Wine / Proton | Translation, graphics extensions, DRM, and anti-cheat impose additional title-specific requirements. |
+| Blender | Test viewport and CPU rendering separately. CUDA/OptiX rendering is unavailable through this graphics path. |
+| Godot | Test the selected OpenGL or Vulkan renderer with the actual project. |
+
+Use `vulkaninfo --summary` and `glxinfo -B` inside the graphical guest session
+to inspect the rendering devices. `llvmpipe` or `lavapipe` indicates software
+rendering; a GPU boot record only establishes that the VM reached userspace
+using the GPU launch path. It is not an application benchmark. The cached record
+can also predate a driver update; its timestamp is shown in Settings.
+
+Maximum performance allocates more currently unused host resources, but extra
+vCPUs can increase WHPX scheduling overhead. Use Manual to compare allocations
+with the same workload. Guest RAM, GPU mapping space, and dedicated VRAM are
+different resources: the RAM control does not allocate a percentage of GPU VRAM.
+
+Relevant platform references: [WINQ-EMU graphics support](https://github.com/cmspam/winq-emu),
+[QEMU virtio GPU backends](https://www.qemu.org/docs/master/system/devices/virtio/virtio-gpu.html),
+and [Microsoft's Hyper-V GPU support limits](https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/troubleshoot-hyper-v-gpu-assignment-partitioning-passthrough-issues).
+
+The [Intel / RTX 5080 acceptance record](evidence/RESOURCE-PROFILES-INTEL-NVIDIA-2026-09-20.md)
+documents working OpenGL and CPU-rendering checks alongside Vulkan and Blender
+viewport failures on that particular driver/runtime combination.
+
+The later [GPU application acceptance record](evidence/GPU-APPLICATIONS-2026-09-20.md)
+tests an optional Blender source patch and conservative application profile in
+the same QEMU desktop: Workbench, Eevee, Cycles CPU and saved scene data pass the
+small-scene checks. Godot Compatibility and a SuperTuxKart race also pass.
+See [installation, build and rollback instructions](GPU-APPLICATIONS.md).
+Vulkan, CUDA/OptiX and physical passthrough remain unavailable on that tested path.
+
+The separate [WSL GPU feasibility report](WSL-GPU-EXPERIMENT.md) contains reusable
+checks for other PCs and application results using Windows' WSL GPU bridge.
+WSL is not a launcher backend: the tested full Hyprland desktop cannot start
+against WSLg, even though individual GPU applications can work there.
+
 See [v1 readiness](V1-READINESS.md) for the supported-scope target and outstanding
 hardware acceptance. Current physical evidence centers on an AMD Windows 11 laptop.
