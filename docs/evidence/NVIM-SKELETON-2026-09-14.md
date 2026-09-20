@@ -144,5 +144,5 @@ Local evidence: `/home/bts/Projects/try-omarchy-evidence/issue119-upgrade`.
 Candidate artifacts came from CI run 34922457869 (guest-manifest data and
 SHA256SUMS verified before the run; decompressed rootfs SHA256
 `fbff55d881ddfeea2679aa80ba578ef17427dd41ecf3dd6d55f33123698a3c01`). This is
-headless Linux/KVM evidence, not new physical Windows acceptance. The v1
-hardware gates in [V1-READINESS.md](../V1-READINESS.md) remain open.
+headless Linux/KVM evidence, not new physical Windows acceptance. The remaining
+physical hardware checks in [TESTING.md](../TESTING.md) are still open.
