@@ -1,5 +1,9 @@
 # Resume here
 
+For driving the physical Windows laptop, read
+[Remote laptop testing](REMOTE-LAPTOP-TESTING.md). The machine-local runbook and
+persistent helpers are in `~/.local/share/try-omarchy-laptop-control/`.
+
 Updated September 19, 2026. PR #135 merged as `58f5b70`; PR #136 merged as
 `e1341df`. **v0.0.20-preview is published and Latest**, from source `98cce48`.
 [Release](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.20-preview)
