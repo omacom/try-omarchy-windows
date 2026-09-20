@@ -22,8 +22,8 @@ Omarchy's trademark rights.
 
 The current release is [v0.0.20-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.20-preview),
 including Omarchy 4.0.3, working camera and microphone capture, quiet file drops, snapshots and installation moves.
-We are working toward v1; see the [scope and remaining release gates](docs/V1-READINESS.md)
-and [Windows testing instructions](docs/TESTING.md). Physical acceptance currently
+The project remains a preview while broader host coverage is completed. See the
+[Windows testing instructions](docs/TESTING.md). Physical acceptance currently
 centers on an AMD Windows 11 laptop; broader host coverage remains open.
 
 ## What works today
@@ -36,7 +36,7 @@ centers on an AMD Windows 11 laptop; broader host coverage remains open.
 - First boot offers an instant trial account or Omarchy's normal personalized account setup, with SDDM autologin after either path. Instant mode keeps `omarchy` as both the local username and lock-screen password, shows that on the setup splash, and repeats it once on the first desktop. Sudo remains passwordless in this disposable local trial.
 - Reproducible x86_64 guest image build (containerized, package-locked, pinned Omarchy revision) and a headless QMP control plane for automated testing.
 
-See [app compatibility](docs/COMPATIBILITY.md) for package support and current VM limitations. The [v1 checklist](docs/V1-READINESS.md) tracks the remaining release work.
+See [app compatibility](docs/COMPATIBILITY.md) for package support and current VM limitations.
 
 | First run | Screensaver |
 |---|---|
