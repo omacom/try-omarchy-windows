@@ -216,6 +216,11 @@ does not assign the physical GPU to Linux. NVIDIA CUDA/OptiX and native PCI GPU
 passthrough are not provided by this runtime. See [application and graphics
 limits](docs/COMPATIBILITY.md) before relying on a particular game or renderer.
 
+Optional [Blender, Godot and SuperTuxKart launch profiles](docs/GPU-APPLICATIONS.md)
+document tested OpenGL paths, a separately built Blender compatibility patch,
+installation and rollback. These are experimental application profiles, not a
+change to the bundled graphics runtime or a claim of universal GPU support.
+
 The guest follows the Windows time zone, default keyboard layout, and display
 language. Each is applied inside Omarchy when it changes on the Windows side,
 so a layout, zone, or language chosen inside the guest stays until Windows

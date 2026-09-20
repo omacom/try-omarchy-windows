@@ -1,0 +1,18 @@
+diff --git a/source/blender/gpu/opengl/gl_storage_buffer.cc b/source/blender/gpu/opengl/gl_storage_buffer.cc
+index adb69165..ba3c9cbd 100644
+--- a/source/blender/gpu/opengl/gl_storage_buffer.cc
++++ b/source/blender/gpu/opengl/gl_storage_buffer.cc
+@@ -186,6 +186,13 @@ void GLStorageBuf::async_flush_to_host()
+     this->init();
+   }
+ 
++  /* Persistent mapping is optional on OpenGL 4.3 implementations. Leave
++   * read_fence_ unset so read() uses its existing synchronous readback path. */
++  if (epoxy_gl_version() < 44 && !epoxy_has_gl_extension("GL_ARB_buffer_storage")) {
++    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
++    return;
++  }
++
+   if (read_ssbo_id_ == 0) {
+     glGenBuffers(1, &read_ssbo_id_);
+     glBindBuffer(GL_SHADER_STORAGE_BUFFER, read_ssbo_id_);

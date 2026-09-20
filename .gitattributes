@@ -2,3 +2,5 @@ app/testdata/SHA256SUMS.* text eol=lf
 
 # Runtime patches are digest-pinned and must be byte-identical on Windows.
 runtime-build/patches/**/*.patch text eol=lf
+scripts/gpu/blender/*.sh text eol=lf
+scripts/gpu/blender/*.patch text eol=lf whitespace=-blank-at-eol

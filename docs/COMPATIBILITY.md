@@ -67,6 +67,13 @@ The [Intel / RTX 5080 acceptance record](evidence/RESOURCE-PROFILES-INTEL-NVIDIA
 documents working OpenGL and CPU-rendering checks alongside Vulkan and Blender
 viewport failures on that particular driver/runtime combination.
 
+The later [GPU application acceptance record](evidence/GPU-APPLICATIONS-2026-09-20.md)
+tests an optional Blender source patch and conservative application profile in
+the same QEMU desktop: Workbench, Eevee, Cycles CPU and saved scene data pass the
+small-scene checks. Godot Compatibility and a SuperTuxKart race also pass.
+See [installation, build and rollback instructions](GPU-APPLICATIONS.md).
+Vulkan, CUDA/OptiX and physical passthrough remain unavailable on that tested path.
+
 The separate [WSL GPU feasibility report](WSL-GPU-EXPERIMENT.md) contains reusable
 checks for other PCs and application results using Windows' WSL GPU bridge.
 WSL is not a launcher backend: the tested full Hyprland desktop cannot start
