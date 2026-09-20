@@ -67,5 +67,10 @@ The [Intel / RTX 5080 acceptance record](evidence/RESOURCE-PROFILES-INTEL-NVIDIA
 documents working OpenGL and CPU-rendering checks alongside Vulkan and Blender
 viewport failures on that particular driver/runtime combination.
 
+The separate [WSL GPU feasibility report](WSL-GPU-EXPERIMENT.md) contains reusable
+checks for other PCs and application results using Windows' WSL GPU bridge.
+WSL is not a launcher backend: the tested full Hyprland desktop cannot start
+against WSLg, even though individual GPU applications can work there.
+
 See [v1 readiness](V1-READINESS.md) for the supported-scope target and outstanding
 hardware acceptance. Current physical evidence centers on an AMD Windows 11 laptop.
