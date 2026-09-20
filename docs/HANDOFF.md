@@ -50,8 +50,10 @@ the fixtures. Windows refused a competing write
 handle during snapshot creation. The laptop currently runs the restored test
 copy; original test installations, snapshots and evidence are retained.
 
-Continue with stable-update transitions and the remaining storage/migration
-checks. Full Hyper-V role coexistence passed on this physical AMD laptop after
+Native stable-transition fixtures and full-copy move/reset/rollback/reclaim
+checks are covered by the desktop candidate record below. Public stable-feed
+acceptance, interruption cases and physical native migration remain open.
+Full Hyper-V role coexistence passed on this physical AMD laptop after
 enabling all seven role components and rebooting Windows. Public v20 passed GPU
 boot, camera capture, native file drop, preserved files, guest reboot and poweroff.
 This does not cover another concurrent Hyper-V VM, Intel/Core Ultra or NVIDIA.
@@ -60,8 +62,25 @@ verified. A final normal GPU boot passed with all fixture hashes intact. SSHD is
 back to Manual startup. Future remote-reboot preparation must
 account for that and for the required interactive Windows sign-in.
 
+## Desktop polish candidate
+
+Draft [PR #137](https://github.com/omacom/try-omarchy-windows/pull/137) adds camera
+and microphone controls, remembered camera selection, four Settings pages,
+About/manual update checks and an automatic-update preference. It also fixes
+failed drops blocking subsequent transfers and Tab navigation in Advanced settings.
+The unsigned polish7 launcher uses the public v20 runtime and guest payloads.
+See [the candidate evidence](evidence/DESKTOP-POLISH-2026-09-19.md) for exact hashes,
+physical checks, recovery results and remaining boundaries.
+
+The separate website draft is
+[tryomarchy-site #1](https://github.com/btsouth/tryomarchy-site/pull/1).
+Its Cloudflare preview passed inspection; production remains unchanged.
+Neither draft authorizes a release. Only the current AMD laptop is available,
+and the user explicitly deferred sleep/wake. Do not repeat those hardware requests.
+Keep the original installations and recovery archives.
+
 The remainder is historical context from September 15-17. Current GitHub state
-and the dated checkpoint above supersede its PR counts and candidate references.
+and the dated checkpoints above supersede its PR counts and candidate references.
 
 ## Earlier handoff
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Choose a camera and turn camera or microphone access off in Settings.
+- Find everyday controls in General, Devices, Advanced and Recovery pages, with
+  memory shown in GB and keyboard navigation through the full form.
+- Check the launcher version and signed update feed from About, or turn automatic
+  launcher update checks off. Linux updates remain separate inside Omarchy.
+- Report failed file transfers without a blocking dialog, so dropping a file
+  during startup cannot prevent later drops from working.
+
 ## v0.0.20-preview - 2026-09-19
 
 - Use the Windows camera in guest apps, with capture starting on demand and

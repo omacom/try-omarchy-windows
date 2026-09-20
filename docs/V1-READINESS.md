@@ -90,6 +90,9 @@ stable update chains and the broader checks below remain open.
    existing-guest upgrades, controlled orphaned-lock recovery and interrupted
    launcher/payload rollback. The [original v7-to-v20 update and rollback](evidence/V1-LAPTOP-2026-09-19.md)
    also passed on physical Windows, closing the repository-transfer gate.
+   Native signed test-key v1.0.0/v1.0.1 replacement, restart and rollback also
+   passed in the [desktop candidate pass](evidence/DESKTOP-POLISH-2026-09-19.md).
+   These fixtures do not establish a public production-key stable release chain.
    Remaining work: interruption during package writes or power loss mid-extraction;
    both signed feeds across a stable release; an old preview that skips the bridge;
    preview-to-stable, direct stable, stable-to-stable and forced rollback.
@@ -107,8 +110,13 @@ stable update chains and the broader checks below remain open.
    observations. Repeat long-session and idle checks on the selected runtime.
 3. **Storage regression.** V20 now has physical full-guest snapshot/restore and
    growth/no-shrink acceptance with preserved fixtures; see the [laptop pass](evidence/V1-LAPTOP-2026-09-19.md).
-   Complete move, reset, active snapshot rollback and reclaim on the candidate. Include
-   interruption, low space and temporary Windows file locks. Lowering capacity
+   The unsigned desktop candidate additionally passed a verified full move,
+   fresh reset, snapshot rollback, byte-preserving compaction and the complete
+   guest-preparation/shutdown/reclaim flow on this laptop;
+   see [the candidate record](evidence/DESKTOP-POLISH-2026-09-19.md). Real sharing
+   locks and an injected low-space refusal passed. Move shortcut rewiring and
+   interruption/power-loss cases remain distinct checks. Repeat critical checks
+   on the selected signed release artifact. Lowering capacity
    or rolling back the launcher must not shrink an existing disk.
 4. **Native migration.** Restore an export onto a fresh physical Omarchy install;
    verify actual package/theme restoration and exclusion of VM-specific state.
@@ -120,7 +128,11 @@ stable update chains and the broader checks below remain open.
 
 ## Next checkpoint
 
-Test the stable update chain, remaining storage cases and native migration while
-collecting missing hardware and sleep/wake results. Keep evidence linked from #77. Publish a
+Select and verify the production stable update chain, complete the remaining
+interruption and native migration checks, and collect missing hardware and
+sleep/wake results. Only the current AMD laptop is available, and sleep/wake was
+explicitly deferred. The desktop polish candidate is implemented and its
+[verification record](evidence/DESKTOP-POLISH-2026-09-19.md) separates completed
+checks from those boundaries. Publish a
 stable candidate only through the normal release process; this document does not
 authorize publication or certify the current preview as stable.
