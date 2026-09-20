@@ -30,6 +30,7 @@ import (
 const appTitle = "Try Omarchy"
 
 type config struct {
+	desktop                     desktopPreferences
 	dir, hostDir, payloadDir    string
 	winqEmu, share              string
 	fresh, fullscreen, noGpu    bool
@@ -154,6 +155,7 @@ func main() {
 	firewallPlan := flag.String("firewall-plan", "", "internal: apply owned LAN firewall rules")
 	flag.BoolVar(&cfg.lanPublic, "lan-public", false, "allow explicitly selected LAN forwards on public networks")
 	sshPort := flag.Int("ssh", 0, "forward this Windows loopback port to Omarchy's sshd and start sshd for the session")
+	openAbout := flag.Bool("about", false, "show version information and check for updates")
 	openDevices := flag.Bool("devices", false, "manage USB devices in the running VM")
 	recoveryAction := flag.String("recovery", "", "open backup, restore, snapshots, portable-create, reset, move, or uninstall controls")
 	uninstall := flag.Bool("uninstall", false, "remove this Try Omarchy installation: shortcuts, the Apps & features entry, and the data folder")
@@ -180,6 +182,10 @@ func main() {
 	updateWaitPID := flag.Int("update-wait-pid", 0, "internal: process to wait for before replacing the launcher")
 	updateRestartArgs := flag.String("update-restart-args", "", "internal: encoded launcher restart arguments")
 	flag.Parse()
+	if *openAbout {
+		runAbout()
+		return
+	}
 	if *openDevices {
 		if err := runUSBDeviceUI(); err != nil {
 			fatal("Could not open USB devices: %v", err)
@@ -373,6 +379,12 @@ func main() {
 		return
 	}
 
+	var desktopErr error
+	cfg.desktop, desktopErr = loadDesktopPreferences(cfg.dir)
+	if desktopErr != nil {
+		fatal("Cannot read device and update preferences: %v", desktopErr)
+	}
+
 	// settings.json holds the rows the settings window edits; explicit flags
 	// win for this launch only.
 	settingsFile := settingsPath(cfg.dir)
@@ -520,7 +532,7 @@ func main() {
 	// previous run must not be mistaken for this one's.
 	os.Remove(filepath.Join(cfg.vmDir, "qemu-stderr.log"))
 
-	if !snapshotRecovery && automaticUpdatesEnabled(cfg, *noUpdate, *release, *sumsSHA256) {
+	if !snapshotRecovery && !cfg.desktop.AutomaticUpdatesDisabled && automaticUpdatesEnabled(cfg, *noUpdate, *release, *sumsSHA256) {
 		checkDue := *updateURL != defaultUpdateURL || updateCheckDue(cfg.dir, time.Now())
 		if checkDue {
 			_ = recordUpdateCheck(cfg.dir, time.Now())
@@ -722,7 +734,7 @@ func main() {
 	go runCursorReleaseGuard()
 	go runCloseGuard()
 	runClipboardBridge()
-	runCameraBridge()
+	runCameraBridge(cfg.desktop)
 
 	if err := checkForwardBindings(cfg.forwards); err != nil {
 		fatal("Could not prepare port forwarding:\n\n%v", err)
@@ -909,6 +921,7 @@ func supervise(cfg *config, cmdline string) bool {
 }
 
 func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
+	logf("supervisor: watching guest lifecycle and file drops")
 	lines := qmp.readLines()
 	reason := ""
 	silent := 0
@@ -939,9 +952,9 @@ func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
 			}
 			silent = 0
 			if paths, point, ok := droppedFilesEvent(line); ok {
+				logf("file drop: received %d item(s)", len(paths))
 				if err := sendDroppedFilesAt(paths, guestDropPoint(point)); err != nil {
-					logf("file drop: %v", err)
-					go infoBox("These files could not be sent to Omarchy.\n\n" + err.Error())
+					reportTransferError(err)
 				}
 			}
 			if r := shutdownReason(line); r != "" {

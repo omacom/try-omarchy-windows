@@ -24,6 +24,7 @@ func TestWriteDiagnosticsBundlesLogsStateAndFactsOnly(t *testing.T) {
 	write("vm/shell.log", "12:00:00 booting "+strings.ToUpper(dir)+" tryomarchy.sshkey=AAA-user-at-pc\n")
 	write("vm/qemu-stderr.log", "WHPX: Failed to enable nested virtualization, hr=80370302\n")
 	write("settings.json", `{"schemaVersion":1,"share":"C:\\Users\\secret\\Work","forwards":["tcp:2222:22"],"sshKey":"C:\\Users\\secret\\.ssh\\id.pub"}`)
+	write(desktopPreferencesFilename, `{"schemaVersion":1,"cameraID":"private-camera-serial","cameraDisabled":true}`)
 	write("guest/install-state.json", `{"version":1}`)
 	write("runtime/runtime-install-state.json", `{"version":1}`)
 	write("guest/guest-manifest.json", `{"kind":"try-omarchy-guest-artifacts"}`)
@@ -79,6 +80,9 @@ func TestWriteDiagnosticsBundlesLogsStateAndFactsOnly(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(contents["vm/shell.log"]), strings.ToLower(dir)) || strings.Contains(contents["vm/shell.log"], "AAA-user-at-pc") {
 		t.Fatalf("sensitive diagnostic values were not redacted: %s", contents["vm/shell.log"])
+	}
+	if data := contents["desktop-preferences.redacted.json"]; strings.Contains(data, "private-camera-serial") || !strings.Contains(data, `"cameraSelected": true`) || !strings.Contains(data, `"cameraDisabled": true`) {
+		t.Fatalf("device preferences were not safely summarized: %s", data)
 	}
 	serial := contents["vm/serial.log"]
 	if !strings.HasPrefix(serial, "[truncated: last") || !strings.HasSuffix(serial, "NEWEST!!\n") || len(serial) > diagnosticTailBytes+200 {

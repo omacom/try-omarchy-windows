@@ -46,7 +46,7 @@ func backupNameAllowed(name string) bool {
 			return true
 		}
 	}
-	return name == "vm/disk.raw" || name == "settings.json" || name == storageSettingsFilename || strings.HasPrefix(name, "guest/") || strings.HasPrefix(name, "runtime/")
+	return name == "vm/disk.raw" || name == "settings.json" || name == desktopPreferencesFilename || name == storageSettingsFilename || strings.HasPrefix(name, "guest/") || strings.HasPrefix(name, "runtime/")
 }
 
 func requiredBackupFiles(files map[string]bool) error {
@@ -119,7 +119,7 @@ func writeVMArchive(dir, destination string, report backupProgress, checkpoint b
 	var entries []backupEntry
 	seen := map[string]bool{}
 	var total int64
-	roots := []string{"guest", "runtime", "vm/disk.raw", "settings.json", storageSettingsFilename}
+	roots := []string{"guest", "runtime", "vm/disk.raw", "settings.json", storageSettingsFilename, desktopPreferencesFilename}
 	for index := 0; index < maximumGuestDisplays; index++ {
 		roots = append(roots, displayPlacementFilename(index))
 	}

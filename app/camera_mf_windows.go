@@ -198,6 +198,7 @@ func getUint32(obj unsafe.Pointer, key *comGUID) uint32 {
 // mfCameraSource -------------------------------------------------------------
 
 type mfCameraSource struct {
+	deviceID       string
 	frames         chan []byte
 	reader         unsafe.Pointer
 	attrs          unsafe.Pointer
@@ -369,16 +370,22 @@ func (s *mfCameraSource) open() error {
 	}
 	s.devices = devices
 	array := unsafe.Slice(devices, int(count))
-	s.activate = array[0]
-	for _, extra := range array[1:] {
-		extra := extra
-		mfRelease(&extra)
+	for _, device := range array {
+		if s.activate == nil && (s.deviceID == "" || cameraAttribute(device, &guidCameraLink) == s.deviceID) {
+			s.activate = device
+		} else {
+			mfRelease(&device)
+		}
+	}
+	if s.activate == nil {
+		mfRelease(&attributes)
+		return errors.New("The selected camera is disconnected. Reconnect it or choose another camera in Try Omarchy Settings.")
 	}
 
 	var source unsafe.Pointer
 	if hr := mfCall(s.activate, 33, uintptr(unsafe.Pointer(&guidIMFMediaSource)), uintptr(unsafe.Pointer(&source))); hr < 0 { // IMFActivate::ActivateObject
 		mfRelease(&attributes)
-		return fmt.Errorf("the camera could not be opened (0x%08x)", uint32(hr))
+		return fmt.Errorf("The camera could not be opened. Close other camera apps and check Windows camera privacy settings (0x%08x)", uint32(hr))
 	}
 
 	var callbackAttrs unsafe.Pointer
