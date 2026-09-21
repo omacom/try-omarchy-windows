@@ -99,5 +99,5 @@ and preservation of existing folders. Repeat the Settings and restored-guest
 boot checks for the exact release candidate using [TESTING.md](TESTING.md).
 Keep the original installation until you have checked the restored copy.
 
-For changing the active installation's location, see the next preview's
+For changing the active installation's location, see the
 [move flow](MOVING.md). Restore continues to create an independent copy.

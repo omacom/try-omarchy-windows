@@ -1,6 +1,6 @@
 # Move an installation
 
-This feature is being prepared for the next preview. It is not in v0.0.14.
+Available since v0.0.18-preview.
 
 Close Omarchy, save any Settings changes, then open Settings and choose **Move…**.
 Choose a local drive or parent folder. Try Omarchy creates a `TryOmarchy` folder
