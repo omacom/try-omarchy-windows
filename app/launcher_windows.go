@@ -3,12 +3,32 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
 )
+
+// Keep first-run location selection single-instance without occupying the VM
+// lifecycle port needed by recovery. Windows releases the object on process exit,
+// so a crashed launcher cannot leave a stale lock file behind.
+func acquireLauncherMenu(name string) (uintptr, error) {
+	label, err := syscall.UTF16PtrFromString(`Local\` + name + "-LauncherMenu")
+	if err != nil {
+		return 0, err
+	}
+	handle, _, callErr := kernel32.NewProc("CreateMutexW").Call(0, 0, uintptr(unsafe.Pointer(label)))
+	if handle == 0 {
+		return 0, fmt.Errorf("opening launcher lock: %w", callErr)
+	}
+	if callErr == syscall.Errno(183) { // ERROR_ALREADY_EXISTS
+		procCloseHandle.Call(handle)
+		return 0, nil
+	}
+	return handle, nil
+}
 
 var procMoveFileExW = kernel32.NewProc("MoveFileExW")
 

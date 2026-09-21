@@ -17,10 +17,12 @@ const (
 
 type config struct {
 	desktop                     desktopPreferences
+	audioDevices                audioPreferences
 	dir, hostDir, payloadDir    string
 	winqEmu, share              string
 	fresh, fullscreen, noGpu    bool
 	hostCursor                  bool
+	experimentalPinch           bool
 	lanPublic                   bool
 	instant, portable           bool
 	guestDir, vmDir, disk       string

@@ -24,17 +24,19 @@ import (
 // launch-omarchy.ps1 + winkey-forwarder.ps1 + clipboard-bridge.ps1:
 // launches QEMU (WINQ-EMU GPU stack when installed, stock CPU fallback),
 // supervises it through WHPX's rough edges, scopes the Windows key to the VM
-// window, keeps the window branded, and bridges the clipboard. The SDL window
-// IS the app - the shell itself shows nothing but error dialogs.
+// window, keeps the window branded, and bridges the clipboard. The native
+// launcher edits settings before handing off to the SDL guest window.
 
 const appTitle = "Try Omarchy"
 
 type config struct {
 	desktop                     desktopPreferences
+	audioDevices                audioPreferences
 	dir, hostDir, payloadDir    string
 	winqEmu, share              string
 	fresh, fullscreen, noGpu    bool
 	hostCursor                  bool
+	experimentalPinch           bool
 	lanPublic                   bool
 	instant, portable           bool
 	guestDir, vmDir, disk       string
@@ -148,6 +150,7 @@ func main() {
 	keyboardFlag := flag.String("keyboard", "", "guest keyboard layout: blank follows Windows, keep leaves the guest alone, or an XKB layout such as de or us:intl")
 	localeFlag := flag.String("locale", "", "guest language: blank follows Windows, keep leaves the guest alone, or a locale such as de_DE")
 	flag.BoolVar(&cfg.hostCursor, "host-cursor", false, "force the legacy Windows cursor over the guest")
+	flag.BoolVar(&cfg.experimentalPinch, "experimental-pinch", false, "test Precision Touchpad pinch with a supporting runtime and guest configuration")
 	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the trial account")
 	flag.BoolVar(&cfg.portable, "portable", false, "run entirely from data and payload folders beside the executable")
 	var forwards forwardList
@@ -164,6 +167,8 @@ func main() {
 	backupPath := flag.String("backup", "", "back up a stopped standard VM to a new ZIP file, then exit")
 	restorePath := flag.String("restore", "", "restore a trusted backup into a new folder selected with -dir, then exit")
 	openSettings := flag.Bool("settings", false, "open the settings window, then exit")
+	openLauncher := flag.Bool("launcher", false, "open the launcher before starting Omarchy")
+	startImmediately := flag.Bool("start", false, "start Omarchy immediately without the launcher window")
 	diagnostics := flag.Bool("diagnostics", false, "write a zip of logs, settings, and machine facts for a bug report, then exit")
 	sshKeyPath := flag.String("ssh-key", "", "public key to authorize for the Omarchy account (default: your ~/.ssh/id_*.pub when -ssh is used)")
 	noUpdate := flag.Bool("no-update", false, "do not check for launcher or guest updates")
@@ -247,9 +252,31 @@ func main() {
 	if *recoveryAction == "move-cleanup" && *updateWaitPID > 0 {
 		waitForProcess(*updateWaitPID)
 	}
-	// Bind before the first-run location prompt. Two quick launches must not
-	// race each other through the folder choice or write the same pointer and
-	// payload files. Settings, diagnostics, and update helpers remain usable
+	showLauncher := shouldOpenLauncher(explicitFlags, *openLauncher, *startImmediately) &&
+		!maintenance && !*openSettings && !*diagnostics && !*applyLauncherUpdateFlag && !*applyLauncherRollbackFlag
+	var releaseMenu func()
+	if showLauncher {
+		// The launcher edits preferences like Settings. It does not own the VM
+		// lifecycle port: recovery tools must remain usable before boot.
+		guard, err := acquireLauncherMenu(defaultDataDirectoryName)
+		if err != nil {
+			fatal("Cannot open the launcher: %v", err)
+		}
+		if guard == 0 {
+			infoBox("The Try Omarchy launcher is already open. Use its Launch Omarchy button to continue.")
+			return
+		}
+		releaseMenu = func() {
+			if guard != 0 {
+				procCloseHandle.Call(guard)
+				guard = 0
+			}
+		}
+		defer releaseMenu()
+		*openSettings = true
+	}
+	// Direct starts bind before the first-run location prompt. The menu has its
+	// own guard above. Settings, diagnostics, and update helpers remain usable
 	// while the VM owns the lifecycle port.
 	if !*openSettings && !*diagnostics && !*applyLauncherUpdateFlag && !*applyLauncherRollbackFlag {
 		runLifecycleListener()
@@ -373,8 +400,21 @@ func main() {
 	}
 
 	if *openSettings {
-		if runSettingsDialog(settingsPath(cfg.dir), cfg.dir, cfg.portable) {
+		if runLauncherSettings(settingsPath(cfg.dir), cfg.dir, cfg.portable, showLauncher, releaseMenu) {
 			logf("settings saved to %s", settingsPath(cfg.dir))
+			if showLauncher {
+				self, err := os.Executable()
+				if err != nil {
+					fatal("Cannot find the launcher: %v", err)
+				}
+				args := append(append([]string{}, os.Args[1:]...), "-dir", cfg.dir, "-start")
+				cmd := exec.Command(self, args...)
+				if err := cmd.Start(); err != nil {
+					fatal("Could not start Omarchy: %v", err)
+				}
+				procAllowSetForeground.Call(uintptr(cmd.Process.Pid))
+				_ = cmd.Process.Release()
+			}
 		}
 		return
 	}
@@ -383,6 +423,11 @@ func main() {
 	cfg.desktop, desktopErr = loadDesktopPreferences(cfg.dir)
 	if desktopErr != nil {
 		fatal("Cannot read device and update preferences: %v", desktopErr)
+	}
+
+	cfg.audioDevices, desktopErr = loadAudioPreferences(cfg.dir)
+	if desktopErr != nil {
+		fatal("Cannot read audio preferences: %v", desktopErr)
 	}
 
 	// settings.json holds the rows the settings window edits; explicit flags
@@ -785,6 +830,12 @@ func supervise(cfg *config, cmdline string) bool {
 		}
 		cfg.qmpDir = controlDir
 		proc = exec.Command(cfg.qemu, buildQemuArgs(cfg, cmdline)...)
+		audioSelection := cfg.audio == "sdl" && audioRuntimeSupportsSelection(cfg.qemu)
+		if !audioSelection && (cfg.audioDevices.Output != "" || (!cfg.desktop.MicrophoneDisabled && cfg.audioDevices.Input != "")) {
+			logf("Selected audio devices require the updated SDL runtime; this attempt uses Windows defaults")
+		}
+		proc.Env = audioEnvironment(os.Environ(), cfg.audioDevices, audioSelection, cfg.desktop.MicrophoneDisabled)
+		proc.Env = pinchEnvironment(proc.Env, pinchEnabled(cfg))
 		// The w-binary's startup errors (bad args, SDL init) only ever reach
 		// stderr; without this they vanish and a dead QEMU is undebuggable.
 		if ef, err := os.OpenFile(filepath.Join(cfg.vmDir, "qemu-stderr.log"),

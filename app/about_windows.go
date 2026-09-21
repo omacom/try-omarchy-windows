@@ -10,11 +10,32 @@ import (
 	"time"
 )
 
+const projectURL = "https://github.com/omacom/try-omarchy-windows"
+
 func runAbout() {
-	message := fmt.Sprintf("Try Omarchy %s\n\nRun Omarchy on Windows. Your files persist between sessions.\n\nLauncher updates and Linux updates are separate. For Linux packages and Omarchy, use Update > Omarchy inside the desktop.\n\nCheck for launcher updates now?", currentVersion)
-	if msgBox(message, mbYesNo|mbIconQuestion|mbDefbutton2) != idYes {
+	message := fmt.Sprintf("Try Omarchy %s\n\n"+
+		"Run the Omarchy desktop on Windows. Your files persist between sessions.\n\n"+
+		"Originally created by @martiano. Maintained under Omacom.\n\n"+
+		"Source, help and issue reporting:\n"+projectURL+"\n\n"+
+		"Open source under the MIT License. Built with Omarchy, Arch Linux and QEMU.\n\n"+
+		"Launcher updates and Linux updates are separate. For Linux packages and Omarchy, use Update > Omarchy inside the desktop.",
+		currentVersion)
+	action, err := chooseAction("About Try Omarchy", message, "Check for launcher updates", "Open project and support page", "Third-party notices", "Close")
+	if err != nil {
+		errorBox("Could not open About.\n\n" + err.Error())
 		return
 	}
+	switch action {
+	case 1:
+		checkForLauncherUpdates()
+	case 2:
+		openWindowsURL(projectURL)
+	case 3:
+		openWindowsURL(projectURL + "/blob/master/THIRD_PARTY_NOTICES.md")
+	}
+}
+
+func checkForLauncherUpdates() {
 	getUI().setStatus("Checking for updates...")
 	key, err := updatePublicKey()
 	var manifest *updateManifest
@@ -33,8 +54,9 @@ func runAbout() {
 	if msgBox("Update available: "+manifest.Version+"\nInstalled: "+currentVersion+"\n\nOpen the release notes and download page? Close Omarchy before opening the new launcher.", mbYesNo|mbIconQuestion) != idYes {
 		return
 	}
-	openWindowsURL("https://github.com/omacom/try-omarchy-windows/releases/tag/" + manifest.Version)
+	openWindowsURL(projectURL + "/releases/tag/" + manifest.Version)
 }
+
 func openWindowsURL(url string) {
 	cmd := exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", url)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}

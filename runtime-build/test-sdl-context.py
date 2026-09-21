@@ -60,6 +60,7 @@ static int SDL_GL_CreateContext(int window) {
 static void SDL_GL_SetSwapInterval(int interval) {}
 static int SDL_CreateRenderer(int window, int index, int flags) { return 1; }
 static void sdl_update_caption(struct sdl2_console *s) {}
+static void win_pinch_create(struct sdl2_console *s) {}
 ''' + create + r'''
 int main(void) {
     struct options opts = {0};

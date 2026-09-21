@@ -1,4 +1,7 @@
 app/testdata/SHA256SUMS.* text eol=lf
 
 # Runtime patches are digest-pinned and must be byte-identical on Windows.
-runtime-build/patches/**/*.patch text eol=lf
+runtime-build/patches/**/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+
+# Unified-diff context lines and format-patch trailers carry intentional spaces.
+guest-build/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof

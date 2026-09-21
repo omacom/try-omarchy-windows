@@ -39,6 +39,9 @@ func qemuStartupFailureTail(vmDir string) string {
 func buildQemuArgs(cfg *config, cmdline string) []string {
 	vm := cfg.vmDir
 	args := []string{}
+	if pinchEnabled(cfg) {
+		args = append(args, "-device", "virtio-pinch-pci")
+	}
 	// Guest RAM is sized to the machine (pickGuestMem + the memory ladder);
 	// hostmem for GPU blob resources scales with it.
 	mem := fmt.Sprintf("%dM", cfg.memMiB)

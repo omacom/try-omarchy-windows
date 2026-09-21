@@ -1,0 +1,673 @@
+From: Try Omarchy contributors
+Subject: [PATCH] SDL: opt-in Windows Precision Touchpad pinch bridge
+
+Virtio device and geometry adapted from the Try Omarchy Mac implementation.
+The native path is opt-in pending physical gesture acceptance.
+
+diff --git a/include/hw/virtio/virtio-input.h b/include/hw/virtio/virtio-input.h
+--- a/include/hw/virtio/virtio-input.h
++++ b/include/hw/virtio/virtio-input.h
+@@ -31,6 +31,7 @@
+ #define TYPE_VIRTIO_MOUSE      "virtio-mouse-device"
+ #define TYPE_VIRTIO_TABLET     "virtio-tablet-device"
+ #define TYPE_VIRTIO_MULTITOUCH "virtio-multitouch-device"
++#define TYPE_VIRTIO_PINCH      "virtio-pinch-device"
+ 
+ OBJECT_DECLARE_SIMPLE_TYPE(VirtIOInputHID, VIRTIO_INPUT_HID)
+ #define VIRTIO_INPUT_HID_GET_PARENT_CLASS(obj) \
+diff --git a/hw/input/virtio-input-hid.c b/hw/input/virtio-input-hid.c
+--- a/hw/input/virtio-input-hid.c
++++ b/hw/input/virtio-input-hid.c
+@@ -529,6 +529,134 @@
+     .instance_init = virtio_multitouch_init,
+ };
+ 
++/*
++ * A dedicated two-contact, indirect device for Cocoa magnification. It does
++ * not subscribe to BTN/ABS/REL events: the existing tablet retains all normal
++ * pointer input. Slot zero carries the two-contact lifecycle; slot one is
++ * always its symmetric partner. There is no persistent backend contact state,
++ * so virtio reset/migration uses the existing input device machinery.
++ */
++static void virtio_pinch_send(VirtIOInput *vinput, int type, int code, int value)
++{
++    virtio_input_event event = {
++        .type = cpu_to_le16(type),
++        .code = cpu_to_le16(code),
++        .value = cpu_to_le32(value),
++    };
++    virtio_input_send(vinput, &event);
++}
++
++static void virtio_pinch_event(DeviceState *dev, QemuConsole *src,
++                               InputEvent *evt)
++{
++    VirtIOInput *vinput = VIRTIO_INPUT(dev);
++    if (evt->type != INPUT_EVENT_KIND_MTT) {
++        return;
++    }
++    InputMultiTouchEvent *mtt = evt->u.mtt.data;
++    if (mtt->slot < 0 || mtt->slot > 1) {
++        return;
++    }
++    if (mtt->slot == 0) {
++        if (mtt->type != INPUT_MULTI_TOUCH_TYPE_DATA) {
++            /* BTN_TOUCH must precede the axes within the frame. */
++            bool down = mtt->tracking_id >= 0;
++            virtio_pinch_send(vinput, EV_KEY, BTN_TOUCH, down);
++            virtio_pinch_send(vinput, EV_KEY, BTN_TOOL_DOUBLETAP, down);
++        } else if (mtt->axis == INPUT_AXIS_X || mtt->axis == INPUT_AXIS_Y) {
++            virtio_pinch_send(vinput, EV_ABS, axismap_abs[mtt->axis],
++                              mtt->value);
++        }
++    }
++    virtio_input_handle_event(dev, src, evt);
++}
++
++static const QemuInputHandler virtio_pinch_handler = {
++    .name = "QEMU Virtio Pinch Touchpad",
++    .mask = INPUT_EVENT_MASK_MTT,
++    .event = virtio_pinch_event,
++    .sync = virtio_input_handle_sync,
++};
++
++static void virtio_pinch_init(Object *obj)
++{
++    VirtIOInputHID *vhid = VIRTIO_INPUT_HID(obj);
++    VirtIOInput *vinput = VIRTIO_INPUT(obj);
++    const unsigned short keys[] = {
++        BTN_LEFT, BTN_TOUCH, BTN_TOOL_FINGER, BTN_TOOL_DOUBLETAP,
++    };
++    /* ABS_X and INPUT_PROP_POINTER are zero: the bitmap helper skips zero. */
++    const unsigned short axes[] = {
++        ABS_Y, ABS_MT_SLOT, ABS_MT_TRACKING_ID,
++        ABS_MT_POSITION_X, ABS_MT_POSITION_Y,
++    };
++    const unsigned short position_axes[] = {
++        ABS_X, ABS_Y, ABS_MT_POSITION_X, ABS_MT_POSITION_Y,
++    };
++    virtio_input_config config = {
++        .select = VIRTIO_INPUT_CFG_ID_NAME,
++        .size = sizeof("QEMU Virtio Pinch Touchpad"),
++        .u.string = "QEMU Virtio Pinch Touchpad",
++    };
++
++    virtio_input_config empty = {0};
++
++    vhid->handler = &virtio_pinch_handler;
++    virtio_input_init_config(vinput, &empty);
++    virtio_input_add_config(vinput, &config);
++    memset(&config, 0, sizeof(config));
++    config.select = VIRTIO_INPUT_CFG_ID_DEVIDS;
++    config.size = sizeof(struct virtio_input_devids);
++    config.u.ids.bustype = const_le16(BUS_VIRTUAL);
++    config.u.ids.vendor = const_le16(0x0627);
++    config.u.ids.product = const_le16(0x0004);
++    config.u.ids.version = const_le16(1);
++    virtio_input_add_config(vinput, &config);
++
++    virtio_input_extend_config(vinput, keys, ARRAY_SIZE(keys),
++                               VIRTIO_INPUT_CFG_EV_BITS, EV_KEY);
++    memset(&config, 0, sizeof(config));
++    config.select = VIRTIO_INPUT_CFG_EV_BITS;
++    config.subsel = EV_ABS;
++    config.size = 1;
++    config.u.bitmap[0] = 1 << ABS_X;
++    /* Include ABS_X explicitly as the generic bitmap helper skips zero. */
++    for (int i = 0; i < ARRAY_SIZE(axes); i++) {
++        config.u.bitmap[axes[i] / 8] |= 1 << (axes[i] % 8);
++        config.size = MAX(config.size, axes[i] / 8 + 1);
++    }
++    virtio_input_add_config(vinput, &config);
++    memset(&config, 0, sizeof(config));
++    config.select = VIRTIO_INPUT_CFG_PROP_BITS;
++    config.size = 1;
++    config.u.bitmap[0] = (1 << INPUT_PROP_POINTER) | (1 << INPUT_PROP_BUTTONPAD);
++    virtio_input_add_config(vinput, &config);
++
++    memset(&config, 0, sizeof(config));
++    config.select = VIRTIO_INPUT_CFG_ABS_INFO;
++    config.size = sizeof(virtio_input_absinfo);
++    config.subsel = ABS_MT_SLOT;
++    config.u.abs.max = const_le32(1);
++    virtio_input_add_config(vinput, &config);
++    config.subsel = ABS_MT_TRACKING_ID;
++    config.u.abs.max = const_le32(65535);
++    virtio_input_add_config(vinput, &config);
++    /* A 100 mm square sensor, with explicit resolution for libinput. */
++    config.u.abs.max = const_le32(INPUT_EVENT_ABS_MAX);
++    config.u.abs.res = const_le32(327);
++    for (int i = 0; i < ARRAY_SIZE(position_axes); i++) {
++        config.subsel = position_axes[i];
++        virtio_input_add_config(vinput, &config);
++    }
++}
++
++static const TypeInfo virtio_pinch_info = {
++    .name = TYPE_VIRTIO_PINCH,
++    .parent = TYPE_VIRTIO_INPUT_HID,
++    .instance_size = sizeof(VirtIOInputHID),
++    .instance_init = virtio_pinch_init,
++};
++
+ /* ----------------------------------------------------------------- */
+ 
+ static void virtio_register_types(void)
+@@ -538,6 +666,7 @@
+     type_register_static(&virtio_mouse_info);
+     type_register_static(&virtio_tablet_info);
+     type_register_static(&virtio_multitouch_info);
++    type_register_static(&virtio_pinch_info);
+ }
+ 
+ type_init(virtio_register_types)
+diff --git a/hw/virtio/virtio-input-pci.c b/hw/virtio/virtio-input-pci.c
+--- a/hw/virtio/virtio-input-pci.c
++++ b/hw/virtio/virtio-input-pci.c
+@@ -30,6 +30,7 @@
+ #define TYPE_VIRTIO_MOUSE_PCI      "virtio-mouse-pci"
+ #define TYPE_VIRTIO_TABLET_PCI     "virtio-tablet-pci"
+ #define TYPE_VIRTIO_MULTITOUCH_PCI "virtio-multitouch-pci"
++#define TYPE_VIRTIO_PINCH_PCI     "virtio-pinch-pci"
+ OBJECT_DECLARE_SIMPLE_TYPE(VirtIOInputHIDPCI, VIRTIO_INPUT_HID_PCI)
+ 
+ struct VirtIOInputHIDPCI {
+@@ -111,6 +112,14 @@
+                                 TYPE_VIRTIO_MULTITOUCH);
+ }
+ 
++static void virtio_pinch_initfn(Object *obj)
++{
++    VirtIOInputHIDPCI *dev = VIRTIO_INPUT_HID_PCI(obj);
++
++    virtio_instance_init_common(obj, &dev->vdev, sizeof(dev->vdev),
++                                TYPE_VIRTIO_PINCH);
++}
++
+ static const TypeInfo virtio_input_pci_info = {
+     .name          = TYPE_VIRTIO_INPUT_PCI,
+     .parent        = TYPE_VIRTIO_PCI,
+@@ -156,6 +165,13 @@
+     .instance_init = virtio_multitouch_initfn,
+ };
+ 
++static const VirtioPCIDeviceTypeInfo virtio_pinch_pci_info = {
++    .generic_name  = TYPE_VIRTIO_PINCH_PCI,
++    .parent        = TYPE_VIRTIO_INPUT_HID_PCI,
++    .instance_size = sizeof(VirtIOInputHIDPCI),
++    .instance_init = virtio_pinch_initfn,
++};
++
+ static void virtio_pci_input_register(void)
+ {
+     /* Base types: */
+@@ -167,6 +183,7 @@
+     virtio_pci_types_register(&virtio_mouse_pci_info);
+     virtio_pci_types_register(&virtio_tablet_pci_info);
+     virtio_pci_types_register(&virtio_multitouch_pci_info);
++    virtio_pci_types_register(&virtio_pinch_pci_info);
+ }
+ 
+ type_init(virtio_pci_input_register)
+diff --git a/ui/sdl2.c b/ui/sdl2.c
+--- a/ui/sdl2.c
++++ b/ui/sdl2.c
+@@ -35,6 +35,7 @@
+ #include "qemu/log.h"
+ #include "qemu-main.h"
+ #include "qapi/qapi-events-ui.h"
++#include "sdl2-pinch-win32.h"
+ 
+ #ifdef CONFIG_X11
+ #include <X11/Xlib.h>
+@@ -149,6 +150,7 @@
+     }
+ #endif
+ 
++    win_pinch_create(scon);
+     sdl_update_caption(scon);
+ }
+ 
+@@ -158,6 +160,7 @@
+         return;
+     }
+ 
++    win_pinch_destroy(scon);
+     if (scon->winctx) {
+         SDL_GL_DeleteContext(scon->winctx);
+         scon->winctx = NULL;
+@@ -828,6 +831,8 @@
+         }
+     }
+ 
++    win_pinch_poll(scon);
++
+     if (idle) {
+         if (scon->idle_counter < SDL2_MAX_IDLE_COUNT) {
+             scon->idle_counter++;
+diff --git a/include/ui/windows-pinch.h b/include/ui/windows-pinch.h
+new file mode 100644
+--- /dev/null
++++ b/include/ui/windows-pinch.h
+@@ -0,0 +1,127 @@
++/*
++ * Windows pinch geometry, independent of Win32 for deterministic testing.
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++#ifndef QEMU_WINDOWS_PINCH_H
++#define QEMU_WINDOWS_PINCH_H
++
++#include <stdbool.h>
++#include <math.h>
++
++typedef struct WindowsPinch {
++    bool active;
++    double scale;
++} WindowsPinch;
++
++enum {
++    WINDOWS_PINCH_CENTER = 16384,
++    WINDOWS_PINCH_RADIUS = 4096,
++    WINDOWS_PINCH_AXIS_MAX = 32767,
++};
++
++static inline void windows_pinch_begin(WindowsPinch *pinch)
++{
++    pinch->active = true;
++    pinch->scale = 1.0;
++}
++
++static inline bool windows_pinch_end(WindowsPinch *pinch)
++{
++    bool active = pinch->active;
++    pinch->active = false;
++    pinch->scale = 1.0;
++    return active;
++}
++
++/* The recognized scale delta is the relative change since the previous event. */
++static inline bool windows_pinch_update(WindowsPinch *pinch, double delta)
++{
++    if (!pinch->active || !isfinite(delta) || delta <= -1.0) {
++        return false;
++    }
++    double scale = pinch->scale * (1.0 + delta);
++    pinch->scale = fmin(3.5, fmax(0.125, scale));
++    return true;
++}
++
++static inline int windows_pinch_x(const WindowsPinch *pinch, int slot)
++{
++    int radius = (int)lround(WINDOWS_PINCH_RADIUS * pinch->scale);
++    return WINDOWS_PINCH_CENTER + (slot == 0 ? -radius : radius);
++}
++
++typedef struct WindowsPinchFrame {
++    bool down;
++    int x[2];
++} WindowsPinchFrame;
++
++typedef void (*WindowsPinchEmit)(void *opaque, const WindowsPinchFrame *frame);
++
++enum {
++    WINDOWS_PINCH_BEGIN = 1,
++    WINDOWS_PINCH_END = 2,
++    WINDOWS_PINCH_CANCEL = 4,
++};
++
++static inline void windows_pinch_emit(const WindowsPinch *pinch,
++                                    WindowsPinchEmit emit, void *opaque)
++{
++    WindowsPinchFrame frame = {
++        .down = pinch->active,
++        .x = { windows_pinch_x(pinch, 0), windows_pinch_x(pinch, 1) },
++    };
++    emit(opaque, &frame);
++}
++
++static inline void windows_pinch_cancel(WindowsPinch *pinch,
++                                      WindowsPinchEmit emit, void *opaque)
++{
++    if (windows_pinch_end(pinch)) {
++        windows_pinch_emit(pinch, emit, opaque);
++    }
++}
++
++/* Input is dropped while QEMU is paused. Clear stale guest slots on resume,
++ * even if focus loss already cleared the local state during the pause. */
++static inline void windows_pinch_vm_state(WindowsPinch *pinch, bool running,
++                                        WindowsPinchEmit emit, void *opaque)
++{
++    windows_pinch_end(pinch);
++    if (running) {
++        windows_pinch_emit(pinch, emit, opaque);
++    }
++}
++
++/* Only a new begin can re-establish contacts after cancellation/focus loss. */
++static inline bool windows_pinch_event(WindowsPinch *pinch, unsigned phase,
++                                     bool eligible, double delta,
++                                     WindowsPinchEmit emit, void *opaque)
++{
++    if (!eligible) {
++        windows_pinch_cancel(pinch, emit, opaque);
++        return false;
++    }
++    if (phase & WINDOWS_PINCH_CANCEL) {
++        windows_pinch_cancel(pinch, emit, opaque);
++        return true;
++    }
++    if (!isfinite(delta) || delta <= -1.0) {
++        windows_pinch_cancel(pinch, emit, opaque);
++        return true;
++    }
++    if (phase & WINDOWS_PINCH_BEGIN) {
++        windows_pinch_cancel(pinch, emit, opaque);
++        windows_pinch_begin(pinch);
++        windows_pinch_emit(pinch, emit, opaque);
++    }
++    if (pinch->active && delta != 0.0) {
++        windows_pinch_update(pinch, delta);
++        windows_pinch_emit(pinch, emit, opaque);
++    }
++    if (phase & WINDOWS_PINCH_END) {
++        windows_pinch_cancel(pinch, emit, opaque);
++    }
++    return true;
++}
++
++#endif
+diff --git a/ui/sdl2-pinch-win32.h b/ui/sdl2-pinch-win32.h
+new file mode 100644
+--- /dev/null
++++ b/ui/sdl2-pinch-win32.h
+@@ -0,0 +1,289 @@
++/* Experimental Precision Touchpad bridge. SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef SDL2_PINCH_WIN32_H
++#define SDL2_PINCH_WIN32_H
++#ifdef CONFIG_WIN32
++#include <interactioncontext.h>
++#include "ui/windows-pinch.h"
++#include "system/reset.h"
++
++/* Resolve newer APIs at runtime: unsupported Windows keeps SDL's normal input. */
++typedef struct WinPinch {
++    HWND hwnd;
++    WNDPROC previous;
++    struct sdl2_console *scon;
++    HMODULE ninput;
++    HINTERACTIONCONTEXT context;
++    VMChangeStateEntry *vm_change;
++    WindowsPinch pinch;
++    WindowsPinchFrame queued;
++    bool have_queued;
++    bool consumed, blocked, stopping, pending_begin;
++    LONG reset_pending;
++    UINT32 frame;
++    bool have_frame;
++    BOOL (WINAPI *reg)(HWND, BOOL);
++    BOOL (WINAPI *history)(UINT32, UINT32 *, UINT32 *, POINTER_TOUCH_INFO *);
++    HRESULT (WINAPI *create)(HINTERACTIONCONTEXT *);
++    HRESULT (WINAPI *destroy)(HINTERACTIONCONTEXT);
++    HRESULT (WINAPI *configure)(HINTERACTIONCONTEXT, UINT32, const INTERACTION_CONTEXT_CONFIGURATION *);
++    HRESULT (WINAPI *callback)(HINTERACTIONCONTEXT, INTERACTION_CONTEXT_OUTPUT_CALLBACK, void *);
++    HRESULT (WINAPI *property)(HINTERACTIONCONTEXT, INTERACTION_CONTEXT_PROPERTY, UINT32);
++    HRESULT (WINAPI *process)(HINTERACTIONCONTEXT, UINT32, UINT32, const POINTER_TYPE_INFO *);
++    HRESULT (WINAPI *stop)(HINTERACTIONCONTEXT);
++} WinPinch;
++
++static const WCHAR win_pinch_property[] = L"TryOmarchy.PrecisionTouchpad";
++
++static void win_pinch_deliver(void *opaque, const WindowsPinchFrame *frame)
++{
++    WinPinch *p = opaque;
++    for (int slot = 0; slot < 2; slot++) {
++        qemu_input_queue_mtt(p->scon->dcl.con,
++            frame->down ? INPUT_MULTI_TOUCH_TYPE_UPDATE : INPUT_MULTI_TOUCH_TYPE_END,
++            slot, frame->down ? slot : -1);
++        if (frame->down) {
++            /* Diagonal contacts avoid libinput interpreting a slow inward
++             * gesture with horizontally aligned fingers as a scroll. */
++            qemu_input_queue_mtt_abs(p->scon->dcl.con, INPUT_AXIS_X,
++                frame->x[slot], 0, WINDOWS_PINCH_AXIS_MAX, slot, slot);
++            qemu_input_queue_mtt_abs(p->scon->dcl.con, INPUT_AXIS_Y,
++                frame->x[slot], 0, WINDOWS_PINCH_AXIS_MAX, slot, slot);
++        }
++    }
++    qemu_input_event_sync();
++}
++
++/* Native history can yield multiple callbacks in one SDL poll. Deliver one
++ * latest motion frame rather than microsecond-separated jumps to libinput.
++ * Contact transitions still flush, so releases cannot disappear in a batch. */
++static void win_pinch_flush(WinPinch *p)
++{
++    if (p->have_queued) {
++        win_pinch_deliver(p, &p->queued);
++        p->have_queued = false;
++    }
++}
++
++static void win_pinch_emit(void *opaque, const WindowsPinchFrame *frame)
++{
++    WinPinch *p = opaque;
++    if (p->have_queued && p->queued.down != frame->down) {
++        win_pinch_flush(p);
++    }
++    p->queued = *frame;
++    p->have_queued = true;
++}
++
++static bool win_pinch_eligible(WinPinch *p)
++{
++    return !p->blocked && !p->stopping && runstate_is_running() &&
++        GetForegroundWindow() == p->hwnd &&
++        qemu_console_is_graphic(p->scon->dcl.con);
++}
++
++static void CALLBACK win_pinch_output(void *opaque, const INTERACTION_CONTEXT_OUTPUT *out)
++{
++    WinPinch *p = opaque;
++    if (out->interactionId != INTERACTION_ID_MANIPULATION ||
++        out->inputType != (POINTER_INPUT_TYPE)5 || p->stopping) {
++        return;
++    }
++    /* Only scaling is configured; pans remain with DefWindowProc/SDL. */
++    unsigned phase = 0;
++    if (out->interactionFlags & INTERACTION_FLAG_BEGIN) phase |= WINDOWS_PINCH_BEGIN;
++    if (out->interactionFlags & INTERACTION_FLAG_END) phase |= WINDOWS_PINCH_END;
++    if (out->interactionFlags & (INTERACTION_FLAG_CANCEL | INTERACTION_FLAG_INERTIA)) phase |= WINDOWS_PINCH_CANCEL;
++    if (phase & WINDOWS_PINCH_BEGIN) p->pending_begin = true;
++    double delta = out->arguments.manipulation.delta.scale - 1.0;
++    /* Interaction Context also emits a zero-scale begin/end for a pure pan.
++     * Leave that entire stream with DefWindowProc so scrolling stays native. */
++    if (!p->pinch.active && fabs(delta) < 0.000001) {
++        if (phase & (WINDOWS_PINCH_END | WINDOWS_PINCH_CANCEL)) p->pending_begin = false;
++        return;
++    }
++    if (p->pending_begin && !(phase & WINDOWS_PINCH_CANCEL)) {
++        phase |= WINDOWS_PINCH_BEGIN;
++        p->pending_begin = false;
++    }
++    p->consumed |= windows_pinch_event(&p->pinch, phase,
++        win_pinch_eligible(p), delta, win_pinch_emit, p);
++}
++
++static void win_pinch_cancel(WinPinch *p)
++{
++    p->blocked = true;
++    p->have_frame = false;
++    p->pending_begin = false;
++    p->stopping = true;
++    p->stop(p->context);
++    p->stopping = false;
++    windows_pinch_cancel(&p->pinch, win_pinch_emit, p);
++    win_pinch_flush(p);
++}
++
++/* VM notifications can originate outside the SDL window thread. Defer
++ * Interaction Context calls; guest input state remains protected by the BQL. */
++static void win_pinch_vm_clear(WinPinch *p, bool running)
++{
++    p->blocked = true;
++    p->have_frame = false;
++    p->pending_begin = false;
++    InterlockedExchange(&p->reset_pending, 1);
++    p->have_queued = false;
++    windows_pinch_vm_state(&p->pinch, running, win_pinch_emit, p);
++    win_pinch_flush(p);
++}
++
++static void win_pinch_vm_change(void *opaque, bool running, RunState state)
++{
++    win_pinch_vm_clear(opaque, running);
++}
++
++static void win_pinch_reset(void *opaque)
++{
++    win_pinch_vm_clear(opaque, false);
++}
++
++static LRESULT CALLBACK win_pinch_wndproc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
++{
++    WinPinch *p = (WinPinch *)GetPropW(hwnd, win_pinch_property);
++    if (!p) return DefWindowProcW(hwnd, msg, w, l);
++    if (InterlockedExchange(&p->reset_pending, 0)) {
++        p->stopping = true;
++        p->stop(p->context);
++        p->stopping = false;
++    }
++    if (msg == WM_KILLFOCUS || msg == WM_CANCELMODE ||
++        msg == WM_POINTERCAPTURECHANGED ||
++        (msg == WM_ACTIVATEAPP && !w)) {
++        win_pinch_cancel(p);
++    }
++    if (msg == WM_POINTERDOWN || msg == WM_POINTERUPDATE || msg == WM_POINTERUP) {
++        UINT32 id = LOWORD(w);
++        POINTER_INPUT_TYPE type;
++        if (GetPointerType(id, &type) && type == (POINTER_INPUT_TYPE)5) {
++            enum { MAX_FRAMES = 64, MAX_CONTACTS = 10 };
++            UINT32 frames = MAX_FRAMES, contacts = MAX_CONTACTS;
++            g_autofree POINTER_TOUCH_INFO *touch = g_new0(POINTER_TOUCH_INFO, MAX_FRAMES * MAX_CONTACTS);
++            g_autofree POINTER_TYPE_INFO *packets = g_new0(POINTER_TYPE_INFO, MAX_FRAMES * MAX_CONTACTS);
++            p->consumed = p->pinch.active;
++            if (msg == WM_POINTERDOWN) p->blocked = false;
++            if (!win_pinch_eligible(p) ||
++                !p->history(id, &frames, &contacts, touch) ||
++                !frames || frames > MAX_FRAMES || !contacts || contacts > MAX_CONTACTS) {
++                win_pinch_cancel(p);
++            } else if (!p->have_frame || p->frame != touch[0].pointerInfo.frameId) {
++                p->frame = touch[0].pointerInfo.frameId;
++                p->have_frame = true;
++                for (UINT32 i = 0; i < frames * contacts; i++) {
++                    packets[i].type = (POINTER_INPUT_TYPE)5;
++                    packets[i].touchInfo = touch[i];
++                }
++                if (FAILED(p->process(p->context, frames, contacts, packets))) {
++                    win_pinch_cancel(p);
++                }
++            }
++            if (p->consumed) return 0;
++        }
++    }
++    return CallWindowProcW(p->previous, hwnd, msg, w, l);
++}
++
++static void win_pinch_poll(struct sdl2_console *scon)
++{
++    SDL_SysWMinfo info;
++    if (!scon->real_window) return;
++    SDL_VERSION(&info.version);
++    if (SDL_GetWindowWMInfo(scon->real_window, &info)) {
++        WinPinch *p = (WinPinch *)GetPropW(info.info.win.window, win_pinch_property);
++        if (p) win_pinch_flush(p);
++    }
++}
++
++static void win_pinch_destroy(struct sdl2_console *scon)
++{
++    SDL_SysWMinfo info;
++    SDL_VERSION(&info.version);
++    if (!SDL_GetWindowWMInfo(scon->real_window, &info)) return;
++    HWND hwnd = info.info.win.window;
++    WinPinch *p = (WinPinch *)GetPropW(hwnd, win_pinch_property);
++    if (!p) return;
++    win_pinch_cancel(p);
++    p->reg(hwnd, FALSE);
++    SetWindowLongPtrW(hwnd, GWLP_WNDPROC, (LONG_PTR)p->previous);
++    RemovePropW(hwnd, win_pinch_property);
++    qemu_del_vm_change_state_handler(p->vm_change);
++    qemu_unregister_reset(win_pinch_reset, p);
++    p->destroy(p->context);
++    FreeLibrary(p->ninput);
++    g_free(p);
++}
++
++static void win_pinch_create(struct sdl2_console *scon)
++{
++    SDL_SysWMinfo info;
++    WinPinch *p;
++    HMODULE user;
++    const char *enabled = g_getenv("OMARCHY_EXPERIMENTAL_PINCH");
++    if (!enabled || strcmp(enabled, "1")) return;
++    /* No host interception unless the dedicated device was explicitly added. */
++    if (!object_resolve_path_type("", "virtio-pinch-device", NULL)) return;
++    SDL_VERSION(&info.version);
++    if (!SDL_GetWindowWMInfo(scon->real_window, &info)) return;
++    p = g_new0(WinPinch, 1);
++    p->hwnd = info.info.win.window;
++    p->scon = scon;
++    user = GetModuleHandleW(L"user32.dll");
++    p->ninput = LoadLibraryExW(L"ninput.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
++    if (!p->ninput) goto fail;
++#define PINCH_LOAD(field, module, name) \
++    do { *(FARPROC *)&p->field = GetProcAddress(module, name); if (!p->field) goto fail; } while (0)
++    PINCH_LOAD(reg, user, "RegisterTouchpadCapableWindow");
++    PINCH_LOAD(history, user, "GetPointerFrameTouchpadInfoHistory");
++    PINCH_LOAD(create, p->ninput, "CreateInteractionContext");
++    PINCH_LOAD(destroy, p->ninput, "DestroyInteractionContext");
++    PINCH_LOAD(configure, p->ninput, "SetInteractionConfigurationInteractionContext");
++    PINCH_LOAD(callback, p->ninput, "RegisterOutputCallbackInteractionContext");
++    PINCH_LOAD(property, p->ninput, "SetPropertyInteractionContext");
++    *(FARPROC *)&p->process = GetProcAddress(p->ninput, "ProcessPointerFramesInteractionContext2");
++    /* The Windows 11 contract also publishes this API by ordinal. */
++    if (!p->process) {
++        *(FARPROC *)&p->process = GetProcAddress(p->ninput, MAKEINTRESOURCEA(2507));
++    }
++    if (!p->process) goto fail;
++    PINCH_LOAD(stop, p->ninput, "StopInteractionContext");
++#undef PINCH_LOAD
++    INTERACTION_CONTEXT_CONFIGURATION config = {
++        INTERACTION_ID_MANIPULATION,
++        INTERACTION_CONFIGURATION_FLAG_MANIPULATION |
++        INTERACTION_CONFIGURATION_FLAG_MANIPULATION_SCALING,
++    };
++    if (FAILED(p->create(&p->context)) ||
++        FAILED(p->property(p->context, INTERACTION_CONTEXT_PROPERTY_FILTER_POINTERS, FALSE)) ||
++        FAILED(p->configure(p->context, 1, &config)) ||
++        FAILED(p->callback(p->context, win_pinch_output, p))) goto fail;
++    if (!SetPropW(p->hwnd, win_pinch_property, p)) goto fail;
++    SetLastError(0);
++    p->previous = (WNDPROC)SetWindowLongPtrW(p->hwnd, GWLP_WNDPROC, (LONG_PTR)win_pinch_wndproc);
++    if (!p->previous) { RemovePropW(p->hwnd, win_pinch_property); goto fail; }
++    if (!p->reg(p->hwnd, TRUE)) {
++        SetWindowLongPtrW(p->hwnd, GWLP_WNDPROC, (LONG_PTR)p->previous);
++        RemovePropW(p->hwnd, win_pinch_property);
++        goto fail;
++    }
++    p->vm_change = qemu_add_vm_change_state_handler(win_pinch_vm_change, p);
++    qemu_register_reset(win_pinch_reset, p);
++    fprintf(stderr, "Try Omarchy: experimental Precision Touchpad bridge registered\n");
++    return;
++fail:
++    if (p->context) p->destroy(p->context);
++    if (p->ninput) FreeLibrary(p->ninput);
++    g_free(p);
++    fprintf(stderr, "Try Omarchy: Precision Touchpad bridge unavailable; keeping normal SDL input\n");
++}
++#else
++static inline void win_pinch_create(struct sdl2_console *scon) {}
++static inline void win_pinch_destroy(struct sdl2_console *scon) {}
++static inline void win_pinch_poll(struct sdl2_console *scon) {}
++#endif
++#endif

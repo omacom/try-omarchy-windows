@@ -1,0 +1,43 @@
+diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
+--- a/audio/sdlaudio.c
++++ b/audio/sdlaudio.c
+@@ -157,6 +157,30 @@
+     return 0;
+ }
+ 
++/* Launcher-selected routes are scoped to this process, never Windows defaults.
++ * An unplugged device falls back to the default for its own direction. */
++static SDL_AudioDeviceID sdl_open_selected_device(SDL_AudioSpec *req,
++                                                 SDL_AudioSpec *obt, int rec)
++{
++    const char *name = g_getenv(rec ? "OMARCHY_SDL_INPUT_DEVICE_NAME" :
++                                     "OMARCHY_SDL_OUTPUT_DEVICE_NAME");
++    SDL_AudioDeviceID devid;
++
++    if (name && (!*name || !g_utf8_validate(name, -1, NULL))) {
++        name = NULL;
++    }
++    /* Do not inherit SDL_AUDIO_DEVICE_NAME: SDL applies that one value to
++     * both playback and recording, which can silently break the microphone. */
++    devid = SDL_OpenAudioDevice(name, rec, req, obt, 0);
++    if (!devid && name) {
++        warn_report("Requested SDL %s device is unavailable; using Windows default",
++                    rec ? "recording" : "playback");
++        SDL_ClearError();
++        devid = SDL_OpenAudioDevice(NULL, rec, req, obt, 0);
++    }
++    return devid;
++}
++
+ static SDL_AudioDeviceID sdl_open(SDL_AudioSpec *req, SDL_AudioSpec *obt,
+                                   int rec)
+ {
+@@ -178,7 +202,7 @@
+     }
+ #endif
+ 
+-    devid = SDL_OpenAudioDevice(NULL, rec, req, obt, 0);
++    devid = sdl_open_selected_device(req, obt, rec);
+     if (!devid) {
+         error_report("SDL_OpenAudioDevice for %s failed: %s",
+                    rec ? "recording" : "playback", SDL_GetError());

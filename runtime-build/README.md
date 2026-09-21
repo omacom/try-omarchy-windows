@@ -21,6 +21,22 @@ runtime-build/build.sh runtime-output
 Do not update `guest-build/runtime.lock.json` until the resulting runtime has
 passed the Windows test checklist in `docs/RUNTIME-VALIDATION.md`.
 
+The r16 candidate adds independent startup SDL playback/recording selection via
+`0013-select-sdl-audio-devices.patch`, with per-direction Windows-default fallback.
+The build runs `test-sdl-audio.py` against the patched route function. On a
+signed-in Windows desktop, run `smoke-audio.py <qemu.exe> --output <SDL-name>
+--input <SDL-name>` to exercise real selected/default routes in a paused diskless
+VM. See [audio behavior](../docs/AUDIO-DEVICES.md) and
+[physical engineering acceptance](../docs/evidence/AUDIO-PARITY-2026-09-21.md).
+The engineering build does not replace complete release packaging and acceptance.
+
+The r17 candidate adds `0014-forward-windows-pinch.patch`: a dedicated virtio
+touchpad and an opt-in Windows Precision Touchpad bridge. The build runs its
+geometry/native-dispatch regression tests. `test-virtio-pinch.py` additionally
+tests the actual guest ABI when `QEMU_PINCH_TEST_BINARY` names a qtest-capable
+build; `smoke-memory.py --pinch` includes the device in the saved-RAM check.
+See [experimental pinch behavior and acceptance limits](../docs/PINCH-ZOOM.md).
+
 The r4 recipe enables libusb explicitly and includes its runtime DLL and license.
 The USB host patch adds `auto-reconnect=off` for explicit attachment: the selected
 bus/address must exist, vendor/product/port must still match, and opening the

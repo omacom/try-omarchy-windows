@@ -25,6 +25,7 @@ func TestWriteDiagnosticsBundlesLogsStateAndFactsOnly(t *testing.T) {
 	write("vm/qemu-stderr.log", "WHPX: Failed to enable nested virtualization, hr=80370302\n")
 	write("settings.json", `{"schemaVersion":1,"share":"C:\\Users\\secret\\Work","forwards":["tcp:2222:22"],"sshKey":"C:\\Users\\secret\\.ssh\\id.pub"}`)
 	write(desktopPreferencesFilename, `{"schemaVersion":1,"cameraID":"private-camera-serial","cameraDisabled":true}`)
+	write(audioPreferencesFilename, `{"schemaVersion":1,"output":"private-person-headphones"}`)
 	write("guest/install-state.json", `{"version":1}`)
 	write("runtime/runtime-install-state.json", `{"version":1}`)
 	write("guest/guest-manifest.json", `{"kind":"try-omarchy-guest-artifacts"}`)
@@ -65,7 +66,7 @@ func TestWriteDiagnosticsBundlesLogsStateAndFactsOnly(t *testing.T) {
 			t.Fatalf("bundle lacks %s; has %v", want, keys(contents))
 		}
 	}
-	for _, forbidden := range []string{"vm/disk.raw", "guest/rootfs.ext4"} {
+	for _, forbidden := range []string{"vm/disk.raw", "guest/rootfs.ext4", audioPreferencesFilename} {
 		if _, ok := contents[forbidden]; ok {
 			t.Fatalf("bundle includes %s", forbidden)
 		}
@@ -83,6 +84,9 @@ func TestWriteDiagnosticsBundlesLogsStateAndFactsOnly(t *testing.T) {
 	}
 	if data := contents["desktop-preferences.redacted.json"]; strings.Contains(data, "private-camera-serial") || !strings.Contains(data, `"cameraSelected": true`) || !strings.Contains(data, `"cameraDisabled": true`) {
 		t.Fatalf("device preferences were not safely summarized: %s", data)
+	}
+	if data := contents["audio-preferences.redacted.json"]; strings.Contains(data, "private-person") || !strings.Contains(data, `"outputSelected": true`) || !strings.Contains(data, `"inputSelected": false`) {
+		t.Fatalf("audio preferences were not safely summarized: %s", data)
 	}
 	serial := contents["vm/serial.log"]
 	if !strings.HasPrefix(serial, "[truncated: last") || !strings.HasSuffix(serial, "NEWEST!!\n") || len(serial) > diagnosticTailBytes+200 {

@@ -97,6 +97,20 @@ type trayLaunchConfig struct {
 	dataDir  string
 	portable bool
 	share    string
+	winqEmu  string
+}
+
+func trayControlArguments(cfg trayLaunchConfig, control string) []string {
+	args := []string{}
+	if cfg.portable {
+		args = append(args, "-portable")
+	} else {
+		args = append(args, "-dir", cfg.dataDir)
+		if control == "-settings" && cfg.winqEmu != "" {
+			args = append(args, "-winq", cfg.winqEmu)
+		}
+	}
+	return append(args, control)
 }
 
 var trayWindow atomic.Uintptr
@@ -135,7 +149,7 @@ func notificationText(dst []uint16, text string) {
 func startTray(cfg *config) func() {
 	ready := make(chan uintptr, 1)
 	done := make(chan struct{})
-	trayCfg := trayLaunchConfig{dataDir: cfg.dir, portable: cfg.portable, share: cfg.share}
+	trayCfg := trayLaunchConfig{dataDir: cfg.dir, portable: cfg.portable, share: cfg.share, winqEmu: cfg.winqEmu}
 	go runTray(trayCfg, ready, done)
 	hwnd := <-ready
 	if hwnd == 0 {
@@ -195,15 +209,11 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 			errorBox("Try Omarchy could not open " + flag + ".\n\n" + err.Error())
 			return
 		}
-		args := []string{}
-		if cfg.portable {
-			args = append(args, "-portable")
-		} else {
-			args = append(args, "-dir", cfg.dataDir)
-		}
-		args = append(args, flag)
+		args := trayControlArguments(cfg, flag)
 		cmd := exec.Command(self, args...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+		// Suppress a debug-build console without passing SW_HIDE to the
+		// requested Settings, About, recovery, or device window.
+		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
 		if err := cmd.Start(); err != nil {
 			running.Store(false)
 			errorBox("Try Omarchy could not open " + flag + ".\n\n" + err.Error())

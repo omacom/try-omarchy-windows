@@ -126,10 +126,12 @@ The next candidate adds General, Devices, Advanced and Recovery pages, camera
 selection and camera/microphone switches, and About and updates. These controls
 are in this source branch and are not yet part of the published v20 download.
 See [desktop controls](docs/DESKTOP-CONTROLS.md) for behavior and validation.
+[Separate audio device choices](docs/AUDIO-DEVICES.md) additionally require the
+unreleased r16 runtime; the current download continues to use Windows defaults.
 
 `settings.json` in the chosen data folder keeps the choices that survive a
-relaunch. Every row has a matching flag, and a flag given on the command line
-wins for that launch:
+relaunch. These core VM settings have matching flags, and a flag given on the
+command line wins for that launch:
 
 ```json
 {
@@ -300,6 +302,10 @@ WHPX and Hyper-V share the same Windows hypervisor and are designed to coexist. 
 - `guest-build/`: patches on jorge's guest builder that produce our image, plus build instructions
 - `docs/FINDINGS.md`: technical findings, gotchas, and their fixes
 - `docs/RELEASING.md` - the authenticated two-phase build, signing, and publishing process
+- `docs/PINCH-ZOOM.md`: opt-in Windows Precision Touchpad bridge and acceptance limits
+- `docs/MAC-PARITY.md`: current Mac comparison, development candidate changes, and remaining acceptance checks
+- `docs/NESTED-VIRTUALIZATION.md`: guest KVM probe and the limits of WHPX nesting
+- `THIRD_PARTY_NOTICES.md`: bundled components and their licenses
 
 The guest image (Omarchy 4.0.3, all upstream themes, screensavers, autologin, clipboard bridge) is built from [jorge-huxley/try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win)'s `win` branch guest builder (`guest/build-container.sh`, needs Docker on Linux), an x86_64 retarget of the upstream try-omarchy build system. The patches in `guest-build/` add Windows integration. Images are not committed; setup downloads the latest release artifact, or build your own.
 
@@ -318,4 +324,4 @@ Open to collaboration : if you're working on any of this, get in touch.
 
 ## License
 
-Scripts and docs in this repo: [MIT](LICENSE). Omarchy and the guest image contents carry their own licenses.
+Scripts and docs in this repo: [MIT](LICENSE). Omarchy and the guest image contents carry their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).

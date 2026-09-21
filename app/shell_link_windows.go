@@ -3,12 +3,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -145,23 +147,42 @@ func launcherShortcutPaths() ([]string, error) {
 // Read identity with the Unicode API before modifying a link. Never resolve or
 // execute the target; a different installation's shortcut must remain intact.
 func changeOwnedShortcuts(paths, targets []string, change func(string, string) error) error {
+	return changeOwnedShortcutsWithPause(paths, targets, change, time.Sleep)
+}
+
+func changeOwnedShortcutsWithPause(paths, targets []string, change func(string, string) error, pause func(time.Duration)) error {
 	for _, path := range paths {
-		if _, err := os.Lstat(path); os.IsNotExist(err) {
-			continue
-		} else if err != nil {
-			return err
-		}
-		target, args, err := readShellLink(path)
-		if err != nil {
-			return err
-		}
-		for _, owned := range targets {
-			if sameShortcutTarget(target, owned) {
-				if err := change(path, args); err != nil {
-					return err
+		for attempt := 0; ; attempt++ {
+			if _, err := os.Lstat(path); os.IsNotExist(err) {
+				break
+			} else if err != nil {
+				return err
+			}
+			// A transient Windows file-sharing lock can outlive our COM reader.
+			// Re-read ownership after every wait: another installation may have
+			// replaced the shortcut while it was locked.
+			target, args, err := readShellLink(path)
+			if err != nil {
+				return err
+			}
+			owned := false
+			for _, candidate := range targets {
+				if sameShortcutTarget(target, candidate) {
+					owned = true
+					break
 				}
+			}
+			if !owned {
 				break
 			}
+			err = change(path, args)
+			if err == nil {
+				break
+			}
+			if attempt >= 9 || (!errors.Is(err, syscall.Errno(32)) && !errors.Is(err, syscall.Errno(33))) {
+				return err
+			}
+			pause(100 * time.Millisecond)
 		}
 	}
 	return nil

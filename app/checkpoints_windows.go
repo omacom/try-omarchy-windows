@@ -279,6 +279,10 @@ func runCheckpointUI(dir string) error {
 	}
 	buttons = []uintptr{list, name, create, restore, rollback, remove}
 	refresh()
+	// Recovery is launched without a console. Explicitly show the window so
+	// inherited SW_HIDE startup flags cannot leave the parent disabled behind
+	// an invisible snapshots window.
+	procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, swpNoMove|swpNoSize|swpShowWindow|0x0004)
 	procSetForegroundWindow.Call(hwnd)
 	procSetFocus.Call(name)
 	var message msgStruct

@@ -91,6 +91,18 @@ func writeDiagnostics(dir string, facts map[string]string) (string, error) {
 			included = append(included, "desktop-preferences.redacted.json")
 		}
 	}
+	if info, err := os.Lstat(filepath.Join(dir, audioPreferencesFilename)); err == nil && info.Mode().IsRegular() {
+		if prefs, err := loadAudioPreferences(dir); err == nil {
+			// Friendly device names can contain a user's name. Report choices,
+			// not identities, just as we do for cameras.
+			value := map[string]bool{"outputSelected": prefs.Output != "", "inputSelected": prefs.Input != ""}
+			data, _ := json.MarshalIndent(value, "", "  ")
+			if err := addDiagnosticText(w, "audio-preferences.redacted.json", string(data)); err != nil {
+				return fail(err)
+			}
+			included = append(included, "audio-preferences.redacted.json")
+		}
+	}
 	redactions := diagnosticRedactions(dir)
 	for _, relative := range diagnosticFiles {
 		source := filepath.Join(dir, filepath.FromSlash(relative))

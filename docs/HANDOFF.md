@@ -1,5 +1,35 @@
 # Resume here
 
+For the September 21 parity continuation, start with [NEXT-SESSION.md](NEXT-SESSION.md).
+It records the branch, completed acceptance, cleanup state, and integration work
+needed against newer master changes. Earlier dated entries below are historical.
+
+September 21 pinch/nested continuation: the `pinch1` launcher and r17 runtime
+add an opt-in Windows Precision Touchpad bridge. Synthetic outward/inward pinch,
+scrolling, cancellation, focus loss and pause/resume passed on the laptop without
+libinput errors. The runtime regression suite passed after the final timing fix;
+the launcher suite passed 363 tests with 34 skips. Real nested Linux kernel/PID 1
+boot and clean exit also passed as the ordinary guest user. Guest patches `0083`
+and `0084` seed the device configuration and refresh eight package pins; the full
+factory image built and passed a separate physical Windows first boot, seeded
+configuration checks, Chromium zoom in/out and nested Linux acceptance. See [the continuation evidence](evidence/PINCH-NESTED-2026-09-21.md)
+and [pinch limits](PINCH-ZOOM.md). This remains unpublished engineering work.
+
+September 21 audio continuation: startup output/input choices now have a built
+and physically tested r16 engineering runtime. Native Windows suite: 361 passed,
+34 skipped. Built-in speaker/microphone sessions, microphone-off, startup fallback,
+GPU boot/shutdown and minimal nested KVM passed. See
+[audio acceptance](evidence/AUDIO-PARITY-2026-09-21.md) for hashes and limitations.
+The guest is stopped and audio preferences restored to Windows defaults. The
+public runtime/release lock is unchanged; this is not a published runtime package.
+
+September 21 local continuation: see [MAC-PARITY.md](MAC-PARITY.md) for the
+unpublished launcher/About/location changes, corrected Mac comparison, and the
+next physical checks. The laptop became available during this session; native
+tests, GPU boot/reboot/shutdown and minimal nested KVM execution passed. See
+[the September 21 evidence](evidence/MAC-PARITY-2026-09-21.md) for exact boundaries.
+Earlier release evidence below is retained.
+
 For driving the physical Windows laptop, read
 [Remote laptop testing](REMOTE-LAPTOP-TESTING.md). The machine-local runbook and
 persistent helpers are in `~/.local/share/try-omarchy-laptop-control/`.
