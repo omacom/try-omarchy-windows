@@ -18,7 +18,13 @@ func TestQMPWindowsUnixSocketRuntime(t *testing.T) {
 	if qemu == "" {
 		t.Skip("set QEMU_SYSTEM to test private Windows control sockets")
 	}
-	dir, err := os.MkdirTemp(os.TempDir(), "tom,qmp-")
+	dir := os.Getenv("QMP_CONTROL_TEST_DIR")
+	var err error
+	if dir == "" {
+		dir, err = os.MkdirTemp(os.TempDir(), "tom,qmp-")
+	} else {
+		err = os.MkdirAll(dir, 0o700)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
