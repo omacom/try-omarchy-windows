@@ -10,21 +10,22 @@ import (
 )
 
 func platformQMPControlDirectory() (string, error) {
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
-	if len([]byte(filepath.Join(cache, "TryOmarchyIPC", "supervisor.sock"))) > 103 {
-		name, err := syscall.UTF16PtrFromString(cache)
+	// QEMU's Windows AF_UNIX listener can be created directly below
+	// %LOCALAPPDATA%, yet every connect to it fails with WSAEINVAL on affected
+	// hosts. The per-user Windows temporary directory does not have that
+	// limitation and keeps the control sockets outside guest-accessible TCP.
+	base := os.TempDir()
+	if len([]byte(filepath.Join(base, "TryOmarchyIPC", "supervisor.sock"))) > 103 {
+		name, err := syscall.UTF16PtrFromString(base)
 		if err != nil {
 			return "", err
 		}
 		buffer := make([]uint16, 32768)
 		if n, err := syscall.GetShortPathName(name, &buffer[0], uint32(len(buffer))); err == nil && n > 0 && n < uint32(len(buffer)) {
-			cache = syscall.UTF16ToString(buffer[:n])
+			base = syscall.UTF16ToString(buffer[:n])
 		}
 	}
-	return filepath.Join(cache, "TryOmarchyIPC"), nil
+	return filepath.Join(base, "TryOmarchyIPC"), nil
 }
 
 func isQMPControlSocket(path string) bool {
