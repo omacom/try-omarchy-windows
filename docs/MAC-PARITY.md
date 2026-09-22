@@ -3,8 +3,8 @@
 Reviewed September 21, 2026 against Mac source commit
 [`2be19b154f99e3b019c42b3b78f11c01f0ebe6a8`](https://github.com/omacom/try-omarchy/tree/2be19b154f99e3b019c42b3b78f11c01f0ebe6a8).
 This is an implementation and acceptance tracker, not a claim that every feature
-is shipped or hardware-tested. The stable release gates in
-[V1-READINESS.md](V1-READINESS.md) still apply.
+is shipped or hardware-tested. The release gates in
+[RELEASING.md](RELEASING.md) and [TESTING.md](TESTING.md) still apply.
 
 ## Corrections to the previous handoff
 
