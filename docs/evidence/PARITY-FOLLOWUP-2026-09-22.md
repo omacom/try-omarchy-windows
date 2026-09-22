@@ -4,6 +4,8 @@ This pass refreshed the comparison against Mac source commit
 `d843f54a37346dbb08ee4610785836194ca7e3bd` and added two bounded Windows
 features that fit the existing launcher architecture.
 
+Source commit: `e7bf0a6` on `codex/parity-master-integration`.
+
 ## Implemented
 
 - General Settings can make owned Start-menu and Desktop launch shortcuts use
