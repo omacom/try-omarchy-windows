@@ -381,7 +381,7 @@ diff --git a/ui/sdl2-pinch-win32.h b/ui/sdl2-pinch-win32.h
 new file mode 100644
 --- /dev/null
 +++ b/ui/sdl2-pinch-win32.h
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,311 @@
 +/* Experimental Precision Touchpad bridge. SPDX-License-Identifier: GPL-2.0-or-later */
 +#ifndef SDL2_PINCH_WIN32_H
 +#define SDL2_PINCH_WIN32_H
@@ -401,7 +401,7 @@ new file mode 100644
 +    WindowsPinch pinch;
 +    WindowsPinchFrame queued;
 +    bool have_queued;
-+    bool consumed, blocked, stopping, pending_begin;
++    bool consumed, blocked, stopping, pending_begin, trace;
 +    LONG reset_pending;
 +    UINT32 frame;
 +    bool have_frame;
@@ -546,26 +546,47 @@ new file mode 100644
 +        UINT32 id = LOWORD(w);
 +        POINTER_INPUT_TYPE type;
 +        if (GetPointerType(id, &type) && type == (POINTER_INPUT_TYPE)5) {
-+            enum { MAX_FRAMES = 64, MAX_CONTACTS = 10 };
-+            UINT32 frames = MAX_FRAMES, contacts = MAX_CONTACTS;
-+            g_autofree POINTER_TOUCH_INFO *touch = g_new0(POINTER_TOUCH_INFO, MAX_FRAMES * MAX_CONTACTS);
-+            g_autofree POINTER_TYPE_INFO *packets = g_new0(POINTER_TYPE_INFO, MAX_FRAMES * MAX_CONTACTS);
++            enum { MAX_FRAMES = 1024, MAX_CONTACTS = 10 };
++            UINT32 frames = 0, contacts = 0;
++            g_autofree POINTER_TOUCH_INFO *touch = NULL;
++            g_autofree POINTER_TYPE_INFO *packets = NULL;
 +            p->consumed = p->pinch.active;
 +            if (msg == WM_POINTERDOWN) p->blocked = false;
 +            if (!win_pinch_eligible(p) ||
-+                !p->history(id, &frames, &contacts, touch) ||
++                !p->history(id, &frames, &contacts, NULL) ||
 +                !frames || frames > MAX_FRAMES || !contacts || contacts > MAX_CONTACTS) {
++                if (p->trace) fprintf(stderr,
++                    "Try Omarchy pinch: history query rejected msg=%u frames=%u contacts=%u error=%lu blocked=%d\n",
++                    msg, frames, contacts, GetLastError(), p->blocked);
 +                win_pinch_cancel(p);
-+            } else if (!p->have_frame || p->frame != touch[0].pointerInfo.frameId) {
-+                p->frame = touch[0].pointerInfo.frameId;
-+                p->have_frame = true;
-+                for (UINT32 i = 0; i < frames * contacts; i++) {
-+                    packets[i].type = (POINTER_INPUT_TYPE)5;
-+                    packets[i].touchInfo = touch[i];
-+                }
-+                if (FAILED(p->process(p->context, frames, contacts, packets))) {
++            } else {
++                /* Windows reports the required history size first. A fixed
++                 * buffer can return truncated history, dropping the beginning
++                 * of a gesture before Interaction Context recognizes it. */
++                touch = g_new0(POINTER_TOUCH_INFO, frames * contacts);
++                packets = g_new0(POINTER_TYPE_INFO, frames * contacts);
++                if (!p->history(id, &frames, &contacts, touch) ||
++                    !frames || frames > MAX_FRAMES ||
++                    !contacts || contacts > MAX_CONTACTS) {
++                    if (p->trace) fprintf(stderr,
++                        "Try Omarchy pinch: history read rejected msg=%u frames=%u contacts=%u error=%lu\n",
++                        msg, frames, contacts, GetLastError());
 +                    win_pinch_cancel(p);
++                } else if (!p->have_frame || p->frame != touch[0].pointerInfo.frameId) {
++                    p->frame = touch[0].pointerInfo.frameId;
++                    p->have_frame = true;
++                    for (UINT32 i = 0; i < frames * contacts; i++) {
++                        packets[i].type = (POINTER_INPUT_TYPE)5;
++                        packets[i].touchInfo = touch[i];
++                    }
++                    if (FAILED(p->process(p->context, frames, contacts, packets))) {
++                        if (p->trace) fprintf(stderr, "Try Omarchy pinch: interaction processing failed\n");
++                        win_pinch_cancel(p);
++                    }
 +                }
++                if (p->trace) fprintf(stderr,
++                    "Try Omarchy pinch: msg=%u frames=%u contacts=%u active=%d consumed=%d blocked=%d\n",
++                    msg, frames, contacts, p->pinch.active, p->consumed, p->blocked);
 +            }
 +            if (p->consumed) return 0;
 +        }
@@ -617,6 +638,7 @@ new file mode 100644
 +    p = g_new0(WinPinch, 1);
 +    p->hwnd = info.info.win.window;
 +    p->scon = scon;
++    p->trace = g_strcmp0(g_getenv("OMARCHY_PINCH_TRACE"), "1") == 0;
 +    user = GetModuleHandleW(L"user32.dll");
 +    p->ninput = LoadLibraryExW(L"ninput.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
 +    if (!p->ninput) goto fail;

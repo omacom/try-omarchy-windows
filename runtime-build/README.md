@@ -35,6 +35,10 @@ touchpad and an opt-in Windows Precision Touchpad bridge. The build runs its
 geometry/native-dispatch regression tests. `test-virtio-pinch.py` additionally
 tests the actual guest ABI when `QEMU_PINCH_TEST_BINARY` names a qtest-capable
 build; `smoke-memory.py --pinch` includes the device in the saved-RAM check.
+The r18 recipe queries the exact Windows touchpad history size before reading
+it, so a large first frame cannot be dropped by a fixed buffer. Set
+`OMARCHY_PINCH_TRACE=1` during a physical test to log recognition and history
+failures to QEMU stderr; it is off during normal use.
 See [experimental pinch behavior and acceptance limits](../docs/PINCH-ZOOM.md).
 
 The r4 recipe enables libusb explicitly and includes its runtime DLL and license.

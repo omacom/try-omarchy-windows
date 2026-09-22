@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "name": "winq-emu-alpha10-source-r17",
+  "name": "winq-emu-alpha10-source-r18",
   "sourceDateEpoch": 1777269494,
   "qemu": {
     "repository": "https://github.com/cmspam/winq-emu-qemu.git",
@@ -64,7 +64,7 @@
       },
       {
         "file": "patches/qemu/0014-forward-windows-pinch.patch",
-        "sha256": "9bbd574874b30ec8eab243543fd09d0c8ba8a30052fd642d436287aaca7897d6"
+        "sha256": "78ab8edc25822a0073b32ac2a99da92e7ff8b1b481c31651337ded4c169dbbd2"
       }
     ]
   },
