@@ -25,11 +25,13 @@ type forwardedKey struct {
 }
 
 var (
-	qemuPid   atomic.Uint32 // current QEMU child, set by the supervisor
-	guestUp   atomic.Bool   // supervisor handshake succeeded for this launch
-	winDown   bool          // hook-thread only
-	printDown bool          // hook-thread only
-	keyEvents = make(chan forwardedKey, 64)
+	qemuPid    atomic.Uint32 // current QEMU child, set by the supervisor
+	guestUp    atomic.Bool   // supervisor handshake succeeded for this launch
+	winDown    bool          // hook-thread only
+	printDown  bool          // hook-thread only
+	tabDown    bool          // hook-thread only
+	altTabDown bool          // hook-thread only
+	keyEvents  = make(chan forwardedKey, 64)
 )
 
 // forwardKey hands a key state change to the QMP drain without blocking the
@@ -85,6 +87,26 @@ func hookCallback(nCode, wParam, lParam uintptr) uintptr {
 				return forwardKey(&printDown, "print", down)
 			}
 			releaseKey(&printDown, "print")
+		}
+		// Windows consumes Alt+Tab before SDL can deliver the chord to the
+		// guest. Forward Alt and Tab together while the VM has focus.
+		if vk == vkTab {
+			pid := qemuPid.Load()
+			control, _, _ := procGetAsyncKeyState.Call(vkControl)
+			// Ctrl+Alt+Tab is Windows' keyboard-only escape to its task
+			// switcher. A plain Ctrl+Alt release would conflict with AltGr.
+			if pid != 0 && foregroundPid() == pid &&
+				(tabDown || control&0x8000 == 0 && (wParam == wmSyskeydown || wParam == wmSyskeyup)) {
+				if wParam == wmKeydown || wParam == wmSyskeydown {
+					forwardKey(&altTabDown, "alt", true)
+					return forwardKey(&tabDown, "tab", true)
+				}
+				releaseKey(&tabDown, "tab")
+				releaseKey(&altTabDown, "alt")
+				return 1
+			}
+			releaseKey(&tabDown, "tab")
+			releaseKey(&altTabDown, "alt")
 		}
 	}
 	r, _, _ := procCallNextHookEx.Call(0, nCode, wParam, lParam)
