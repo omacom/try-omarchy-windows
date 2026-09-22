@@ -1,12 +1,12 @@
 {
   "runtime": {
-    "url": "https://github.com/omacom/try-omarchy-windows/releases/download/v0.0.18-preview/winq-emu-alpha10-portable.zip",
+    "url": "https://github.com/omacom/try-omarchy-windows/releases/download/runtime-v1-r18/winq-emu-alpha10-portable.zip",
     "filename": "winq-emu-alpha10-portable.zip",
-    "sha256": "8b0e198356dd4362478f91f6cebf0e71e7b59558829233f6ebd9b35e9b4debdc"
+    "sha256": "a482adf13229bb172fcf7a7ccf1d1684c518742f8c367fca63cde74c117e0198"
   },
   "source": {
-    "url": "https://github.com/omacom/try-omarchy-windows/releases/download/v0.0.18-preview/winq-emu-alpha10-source.zip",
+    "url": "https://github.com/omacom/try-omarchy-windows/releases/download/runtime-v1-r18/winq-emu-alpha10-source.zip",
     "filename": "winq-emu-alpha10-source.zip",
-    "sha256": "2fa9fa8d57cccbd703523935a9fd44a5b4d6ed82f8259b7302d2303a55a65dd6"
+    "sha256": "45d41e963af6690f25297e24280818885471670f46faba029990a515e0b7fe95"
   }
 }

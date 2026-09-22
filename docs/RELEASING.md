@@ -36,7 +36,7 @@ artifact for verification. Use it after changing the OIDC or signing configurati
 ## Prepare the guest
 
 1. Add the new version section to `CHANGELOG.md` and push it to `master`.
-2. Run the `Release` workflow with phase `prepare` and the new preview tag.
+2. Run the `Release` workflow with phase `prepare` and the new release tag.
 3. The workflow applies the locked guest patches, runs the guest contract tests,
    rebuilds the image, boots the instant account headlessly, authenticates every
    artifact, and creates a draft release.

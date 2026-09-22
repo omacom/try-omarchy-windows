@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v1.0.0 - 2026-09-22
+
+- Open a pre-boot launcher with General, Devices, Advanced, and Recovery pages,
+  then start Omarchy from the same window. Shortcuts can optionally start the
+  desktop directly while keeping a separate Settings shortcut.
+- Choose Windows playback and recording devices before boot, with safe fallback
+  to the default device when a saved endpoint is unavailable.
+- Send Alt+Tab and Alt+Shift+Tab to the focused Omarchy desktop; use Ctrl+Alt+Tab
+  to reach the Windows task switcher.
+- Offer an experimental, opt-in Precision Touchpad pinch bridge on supported
+  Windows 11 laptops. It remains disabled by default while physical acceptance
+  and broader hardware testing continue.
+- Support nested Linux virtualization on hosts that provide it while retaining
+  a normal boot when the host refuses nested virtualization.
 - Optionally start Omarchy immediately from its Windows Start-menu and Desktop
   shortcuts while keeping the separate Settings shortcut available.
 - Choose a camera and turn camera or microphone access off in Settings.

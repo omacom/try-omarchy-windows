@@ -20,11 +20,11 @@ The Omarchy mark in the app icon is sourced from the
 [official Omarchy brand kit](https://omarchy.org/brand/) and remains subject to
 Omarchy's trademark rights.
 
-The current release is [v0.0.20-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.20-preview),
-including Omarchy 4.0.3, working camera and microphone capture, quiet file drops, snapshots and installation moves.
-The project remains a preview while broader host coverage is completed. See the
-[Windows testing instructions](docs/TESTING.md). Physical acceptance currently
-centers on an AMD Windows 11 laptop; broader host coverage remains open.
+The current release is [v1.0.0](https://github.com/omacom/try-omarchy-windows/releases/tag/v1.0.0),
+including Omarchy 4.0.3, working camera and microphone capture, quiet file drops,
+snapshots, installation moves, and a pre-boot launcher. See the
+[Windows testing instructions](docs/TESTING.md). Physical acceptance for this
+release centers on an AMD Windows 11 laptop; Intel and NVIDIA coverage remains open.
 
 ## What works today
 

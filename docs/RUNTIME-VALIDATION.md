@@ -43,3 +43,13 @@ until a replacement passes these checks on supported Windows versions.
   instead of `Failed to enable nested virtualization` (issue #19).
 
 Test at least one AMD, Intel, and NVIDIA graphics configuration before changing the public pin. Record the launcher version, runtime hash, Windows build, and driver version using [TESTING.md](TESTING.md).
+
+For v1.0.0, the exact r18 runtime was available for physical acceptance only on
+the AMD Windows 11 laptop; the user kept the Intel/NVIDIA PC booted into Omarchy
+and declined a Windows switch. The [r18 laptop record](evidence/PINCH-R18-PHYSICAL-2026-09-22.md)
+records its package hashes, GPU boot, and touchpad test. The earlier
+[Intel/NVIDIA test](evidence/RESOURCE-PROFILES-INTEL-NVIDIA-2026-09-20.md)
+used the v0.0.20-preview runtime: VirGL OpenGL worked, while Venus Vulkan
+initialization failed. This is a documented v1.0.0 hardware-coverage exception,
+not evidence that r18's NVIDIA Vulkan path passes. The v1 release notes state
+the limitation; later runtime pins return to the full hardware checklist.
