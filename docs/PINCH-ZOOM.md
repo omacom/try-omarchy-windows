@@ -80,8 +80,10 @@ directions, scrolling, cancellation, focus loss and pause/resume, with no libinp
 errors on the final candidate. Coalescing fixed the earlier touch-jump warnings.
 A fresh guest also passed native Wayland Chromium zoom: synthetic outward pinch
 changed the measured viewport scale from 1.00 to 1.66, and inward pinch restored
-1.00. Physical finger gestures, subjective smoothness, Firefox, mixed DPI,
-fullscreen, and broader hardware remain acceptance work. Synthetic injection
-cannot establish their usability. Pinch remains experimental.
+1.00. On September 22, physical fingers zoomed Chromium and normal scrolling
+still worked, but starting the pinch took too much effort. The r18 recipe now
+uses a size query before reading Windows pointer history; physical retesting is
+required to see whether that improves the start. Firefox, mixed DPI, fullscreen,
+and broader hardware also remain acceptance work. Pinch remains experimental.
 
 See [the September 21 continuation record](evidence/PINCH-NESTED-2026-09-21.md).
