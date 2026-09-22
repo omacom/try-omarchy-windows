@@ -20,6 +20,7 @@ import (
 // bundle mirror the data directory so a reader knows where each file lived.
 var diagnosticFiles = []string{
 	storageSettingsFilename,
+	resourcePreferencesFilename,
 	"guest/" + installReceiptFilename,
 	"runtime/" + runtimeReceiptFilename,
 	updateStateFilename,

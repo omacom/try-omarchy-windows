@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -66,12 +65,6 @@ type config struct {
 	renderMode    string
 	runtimeID     string
 	displayDriver string
-}
-
-// pickGuestMem sizes the guest RAM to this machine; see resources.go.
-func pickGuestMem(gpu bool) int {
-	total, avail := availMemMiB()
-	return pickGuestMemMiB(gpu, total, avail)
 }
 
 // memoryStarved reports whether the current attempt's QEMU died because the
@@ -143,6 +136,7 @@ func main() {
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen (Immersive)")
 	flag.IntVar(&cfg.memOverrideMiB, "memory", 0, "guest RAM in MiB (default: sized to this PC)")
 	flag.IntVar(&cfg.cpuOverride, "cpus", 0, "guest CPUs (default: sized to this PC)")
+	resourceProfileFlag := flag.String("resource-profile", "", "resource preset: balanced, maximum-performance, or manual; -cpus and -memory override individual resources")
 	flag.IntVar(&cfg.diskGiB, "disk-size", 0, "guest disk capacity in GiB (0: default; grows existing disks, never shrinks)")
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed (same as -render cpu)")
 	renderFlag := flag.String("render", "", "rendering path: auto (default), gpu, or cpu")
@@ -444,6 +438,16 @@ func main() {
 	if err := applySettings(cfg, userSettings, explicitFlags, &forwards, sshKeyPath); err != nil {
 		fatal("Try Omarchy cannot use its settings: %v", err)
 	}
+	resourcePrefs, err := loadResourcePreferences(cfg.dir)
+	if err != nil {
+		fatal("Cannot read resource preferences: %v", err)
+	}
+	if explicitFlags["resource-profile"] {
+		resourcePrefs.Profile = *resourceProfileFlag
+	}
+	if err := validateResourceProfile(resourcePrefs.Profile); err != nil {
+		fatal("%v", err)
+	}
 	if explicitFlags["render"] {
 		mode, err := parseRenderMode(*renderFlag)
 		if err != nil {
@@ -740,18 +744,17 @@ func main() {
 	if finishSetupCancellation(cfg, checkSetupCancelled()) {
 		return
 	}
-	cfg.memMiB = pickGuestMem(cfg.useGpu)
-	if cfg.memOverrideMiB != 0 {
-		// The user's choice stands; the startup memory ladder still halves it
-		// if Windows cannot actually provide that much.
-		cfg.memMiB = cfg.memOverrideMiB
+	profile := effectiveResourceProfile(resourcePrefs.Profile, cfg.cpuOverride, cfg.memOverrideMiB)
+	getUI().setStatus("Measuring available resources...")
+	host := measureHostResources(profile == resourceMaximum)
+	allocation, err := planGuestResources(profile, host, cfg.useGpu, cfg.cpuOverride, cfg.memOverrideMiB,
+		explicitFlags["cpus"], explicitFlags["memory"])
+	if err != nil {
+		fatal("Cannot allocate resources: %v", err)
 	}
-	cfg.hostTotalMiB, _ = availMemMiB()
-	cfg.cpus = pickGuestCPUs(runtime.NumCPU())
-	if cfg.cpuOverride != 0 {
-		cfg.cpus = cfg.cpuOverride
-	}
-	logf("resources: %d of %d logical processors, %d MiB guest RAM", cfg.cpus, runtime.NumCPU(), cfg.memMiB)
+	cfg.cpus, cfg.memMiB, cfg.hostTotalMiB = allocation.CPUs, allocation.MemoryMiB, host.TotalMiB
+	logf("resources: profile=%s, %d of %d logical processors, %d MiB guest RAM; Windows available=%d MiB, CPU sample known=%t busy=%.1f%%",
+		profile, cfg.cpus, host.LogicalCPUs, cfg.memMiB, host.AvailableMiB, host.CPUKnown, host.CPUBusy*100)
 	getUI().setStatus("Starting Omarchy...")
 	stopTray := startTray(cfg)
 	defer stopTray()

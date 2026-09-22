@@ -5,3 +5,5 @@ runtime-build/patches/**/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-
 
 # Unified-diff context lines and format-patch trailers carry intentional spaces.
 guest-build/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+scripts/gpu/blender/*.sh text eol=lf
+scripts/gpu/blender/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof

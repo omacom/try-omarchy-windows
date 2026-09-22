@@ -120,10 +120,9 @@ and the dated checkpoints above supersede its PR counts and candidate references
 
 Updated September 15, 2026, after merged PRs #115, #117, #118, #120, #121, #123,
 #125 and #126. The user is working toward an official v1 and approved a focused
-reliability, recovery and hardware-validation plan. Use
-[V1-READINESS.md](V1-READINESS.md) and
-[issue #77](https://github.com/omacom/try-omarchy-windows/issues/77) for scope and
-remaining gates. The older full-feature plan is historical, not the v1 requirement.
+reliability, recovery and hardware-validation plan. Current scope and remaining
+release gates are managed internally. The older full-feature plan is historical,
+not the v1 requirement.
 
 ## Repository and release state
 
@@ -343,7 +342,7 @@ Reproduction entry points:
    microphone behavior remain open. Use [TESTING.md](TESTING.md). Also complete
    native Omarchy export/restore acceptance and final support/distribution docs.
 
-Open issues at this checkpoint: #77, #90. No open pull requests; #111 (borderless)
+Historical open issues at this checkpoint: #77, #90. No open pull requests; #111 (borderless)
 was closed without merging and remains optional for v1. Recheck GitHub before
 acting; counts and states can change.
 
@@ -374,6 +373,6 @@ large portable tests. A current session's user instructions take precedence over
 historical plans, but old evidence is not permission for new publication, cleanup
 or messages to other people.
 
-Use this document and the v1 tracker for the current direction. Historical session
+Use this document and the internal release board for the current direction. Historical session
 and candidate notes were removed from the repo during the docs cleanup; git history
 retains them if an old path or recovery detail is ever needed.

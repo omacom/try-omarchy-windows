@@ -4,18 +4,17 @@ Use a separate data folder and a copy of any existing guest. Keep the original
 backup untouched. Follow [RELEASING.md](RELEASING.md) for running a signed draft
 candidate against locally served, authenticated assets.
 
-## Help complete the v1 hardware matrix
+## Hardware testing
 
-The published baseline is [v0.0.19-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.19-preview).
-The next candidate has not been published. Reports on v19 are useful, but must
-not be recorded as acceptance of unreleased master changes. Maintainers should
-pin one signed candidate and its launcher/runtime/guest hashes in
-[issue #77](https://github.com/omacom/try-omarchy-windows/issues/77) before the
-combined candidate round.
+The published baseline is [v0.0.20-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.20-preview).
+Reports on earlier previews remain useful, but must not be recorded as acceptance
+of unreleased master changes. Maintainers pin signed candidates and exact
+launcher/runtime/guest hashes before combined candidate rounds.
 
 Most useful additional hosts: Intel or NVIDIA graphics, full Hyper-V enabled,
 Core Ultra, Windows 10, and physical monitors with different scaling. The existing
-AMD Windows 11 evidence is linked in [V1-READINESS.md](V1-READINESS.md).
+AMD Windows 11 evidence is recorded in
+[the v20 laptop acceptance](evidence/V1-LAPTOP-2026-09-19.md).
 
 For an initial report, record the details below and test boot, GPU/CPU rendering,
 keyboard focus, clipboard, video/audio, shutdown and relaunch. If available, add
@@ -25,7 +24,7 @@ run destructive interruption tests only on disposable copies.
 
 ## Report details
 
-Copy this into #77 or the relevant issue. Mark untested items as untested.
+Copy this into the relevant issue. Mark untested items as untested.
 
 ```text
 Launcher version and SHA256:

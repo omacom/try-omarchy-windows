@@ -64,6 +64,7 @@ const (
 	settingsSoundID             = 2117
 	settingsAudioOutputID       = 2118
 	settingsAudioInputID        = 2119
+	settingsResourceProfileID   = 2120
 	settingsSaveID              = 2001
 	settingsCancelID            = 2002
 	settingsBrowseID            = 2003
@@ -177,6 +178,12 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	}
 	audioDevices.Output = retainAudio(audioDevices.Output, audioPrefs.Output)
 	audioDevices.Input = retainAudio(audioDevices.Input, audioPrefs.Input)
+	resourcePrefs, err := loadResourcePreferences(dataDir)
+	if err != nil {
+		errorBox("Cannot read resource preferences:\n\n" + err.Error())
+		return false
+	}
+	hostSnapshot := measureHostResources(true)
 	cameras, cameraErr := listCameraDevices()
 	if prefs.CameraID != "" {
 		found := false
@@ -207,6 +214,16 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	var hRenderAuto, hRenderGPU, hRenderCPU, hDisplays, hLANPublic uintptr
 	var hCameraOn, hMicrophoneOn, hCamera, hUpdateOn uintptr
 	var hAudioOutput, hAudioInput uintptr
+	var hResourceProfile, hResourceHelp uintptr
+	var updateResourceControls func()
+	profileValues := []string{resourceBalanced, resourceMaximum, resourceManual}
+	selectedProfile := func() string {
+		index, _, _ := procSendMessageW.Call(hResourceProfile, 0x147, 0, 0) // CB_GETCURSEL
+		if index >= uintptr(len(profileValues)) {
+			return ""
+		}
+		return profileValues[index]
+	}
 	var selectPage func(int)
 	var pages [4][]settingsScrollControl
 	var pageHeights [4]int32
@@ -231,14 +248,26 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		} else if r, _, _ := procSendMessageW.Call(hRenderCPU, bmGetcheck, 0, 0); r == bstChecked {
 			render = renderCPU
 		}
-		memory, err := memoryMiBFromGiB(text(hMem))
-		if err != nil {
-			return settings{}, err
+		memory, cpus := strconv.Itoa(current.MemoryMiB), strconv.Itoa(current.CPUs)
+		if selectedProfile() == resourceManual {
+			var err error
+			memory, err = memoryMiBFromGiB(text(hMem))
+			if err != nil {
+				return settings{}, err
+			}
+			cpus = text(hCPUs)
 		}
 		s, err := settingsFromForm(checked == bstChecked, shareChecked == bstChecked,
-			memory, text(hCPUs), text(hShare), text(hFwd), text(hKey), render)
+			memory, cpus, text(hShare), text(hFwd), text(hKey), render)
 		if err != nil {
 			return s, err
+		}
+		// Presets are launch-time intent: current memory pressure (including
+		// a running guest) must not prevent saving them for the next boot.
+		if selectedProfile() == resourceManual {
+			if _, err := planGuestResources(resourceManual, hostSnapshot, render != renderCPU, s.CPUs, s.MemoryMiB, false, false); err != nil {
+				return s, err
+			}
 		}
 		s.Displays, err = strconv.Atoi(strings.TrimSpace(text(hDisplays)))
 		if err != nil || s.Displays < 1 || s.Displays > maximumGuestDisplays {
@@ -295,6 +324,10 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 				return 0
 			}
 			switch wParam & 0xffff {
+			case settingsResourceProfileID:
+				if wParam>>16 == 1 && updateResourceControls != nil { // CBN_SELCHANGE
+					updateResourceControls()
+				}
 			case settingsAboutID:
 				self, err := os.Executable()
 				if err == nil {
@@ -401,6 +434,10 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 						errorBox("Audio preferences could not be saved:\n\n" + err.Error())
 						return 0
 					}
+				}
+				if err := saveResourcePreferences(dataDir, selectedProfile()); err != nil {
+					errorBox("Other settings were saved, but the resource profile could not be saved:\n\n" + err.Error())
+					return 0
 				}
 				saved = true
 				procDestroyWindow.Call(h)
@@ -552,10 +589,50 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		procSendMessageW.Call(hFull, bmSetcheck, bstChecked, 0)
 	}
 	y += 30
-	mk("STATIC", "Memory (GB)", left, y+3, labelW, 20, ssNoprefix, 0)
+	mk("STATIC", "Resource profile", left, y+3, labelW, 20, ssNoprefix, 0)
+	hResourceProfile = mk("COMBOBOX", "", fieldX, y, fieldW, 130, 0x0003|wsVscroll|wsTabstop, settingsResourceProfileID)
+	for i, label := range []string{"Balanced", "Maximum performance", "Manual"} {
+		t, _ := syscall.UTF16PtrFromString(label)
+		procSendMessageW.Call(hResourceProfile, 0x143, 0, uintptr(unsafe.Pointer(t))) // CB_ADDSTRING
+		if profileValues[i] == effectiveResourceProfile(resourcePrefs.Profile, current.CPUs, current.MemoryMiB) {
+			procSendMessageW.Call(hResourceProfile, 0x14e, uintptr(i), 0) // CB_SETCURSEL
+		}
+	}
+	y += 34
+	mk("STATIC", "Memory (GiB)", left, y+3, labelW, 20, ssNoprefix, 0)
 	hMem = mk("EDIT", memoryGiBText(current.MemoryMiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsMemID)
 	mk("STATIC", "0 = automatic", fieldX+112, y+3, fieldW-112, 20, ssNoprefix, 0)
 	y += 34
+	mk("STATIC", "Guest CPUs", left, y+3, labelW, 20, ssNoprefix, 0)
+	hCPUs = mk("EDIT", strconv.Itoa(current.CPUs), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsCPUsID)
+	mk("STATIC", fmt.Sprintf("0 = automatic; up to %d", min(maximumGuestCPUs, hostSnapshot.LogicalCPUs)), fieldX+112, y+3, fieldW-112, 20, ssNoprefix, 0)
+	y += 34
+	hResourceHelp = mk("STATIC", "", left, y, clientW-2*left, 92, ssNoprefix, 0)
+	updateResourceControls = func() {
+		profile := selectedProfile()
+		enabled := uintptr(0)
+		if profile == resourceManual {
+			enabled = 1
+		}
+		procEnableWindow.Call(hMem, enabled)
+		procEnableWindow.Call(hCPUs, enabled)
+		help := "Manual uses your CPU and RAM choices; 0 uses Balanced sizing."
+		if profile != resourceManual {
+			plan, err := planGuestResources(profile, hostSnapshot, current.Render != renderCPU, 0, 0, false, false)
+			if err != nil {
+				help = err.Error()
+			} else {
+				help = fmt.Sprintf("Estimated next boot: %d vCPUs, %s GiB RAM.", plan.CPUs, memoryGiBText(plan.MemoryMiB))
+			}
+			if profile == resourceMaximum {
+				help += " Measures Windows usage again at launch and leaves extra headroom."
+			}
+		}
+		help += fmt.Sprintf("\nPC: %d logical CPUs, %.1f GiB RAM; %.1f GiB available when Settings opened. Applies next boot; no live resizing.", hostSnapshot.LogicalCPUs, float64(hostSnapshot.TotalMiB)/1024, float64(hostSnapshot.AvailableMiB)/1024)
+		setText(hResourceHelp, help)
+	}
+	updateResourceControls()
+	y += 100
 	mk("STATIC", "Disk capacity (GiB)", left, y+3, labelW, 20, ssNoprefix, 0)
 	hDisk = mk("EDIT", strconv.Itoa(storage.DiskGiB), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsDiskID)
 	y += 28
@@ -684,10 +761,12 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	y += 24
 	mk("STATIC", "Automatic tries the GPU and remembers when this PC cannot use it. GPU retries every launch.", left, y, clientW-2*left, 36, ssNoprefix, 0)
 	y += 44
-	mk("STATIC", "Guest CPUs", left, y+3, labelW, 20, ssNoprefix, 0)
-	hCPUs = mk("EDIT", strconv.Itoa(current.CPUs), fieldX, y, 100, 24, wsBorder|wsTabstop|esAutohscroll, settingsCPUsID)
-	mk("STATIC", fmt.Sprintf("0 = automatic (%d of %d)", pickGuestCPUs(runtime.NumCPU()), runtime.NumCPU()), fieldX+112, y+3, fieldW-112, 20, ssNoprefix, 0)
-	y += 34
+	graphics := "GPU shares Windows graphics through OpenGL / Vulkan. Full GPU passthrough and NVIDIA CUDA / OptiX are not available in this runtime."
+	if probe, err := loadRenderProbe(dataDir); err == nil && probe != nil {
+		graphics += "\nLast successful boot: " + strings.ToUpper(probe.Result) + " rendering (" + probe.RecordedAt.Local().Format("2006-01-02 15:04") + ")."
+	}
+	mk("STATIC", graphics, left, y, clientW-2*left, 76, ssNoprefix, 0)
+	y += 84
 	mk("STATIC", "Port forwards\nLocal: tcp:2222:22\nLAN: tcp:IP:8080:80", left, y+3, labelW, 60, ssNoprefix, 0)
 	hFwd = mk("EDIT", strings.Join(current.Forwards, "\r\n"), fieldX, y, fieldW, 72,
 		wsBorder|wsTabstop|wsVscroll|esMultiline|esAutovscroll, settingsFwdID)
