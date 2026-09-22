@@ -1,10 +1,16 @@
 # Windows and Mac feature review
 
-Reviewed September 21 and updated September 22, 2026 against Mac source commit
-[`2be19b154f99e3b019c42b3b78f11c01f0ebe6a8`](https://github.com/omacom/try-omarchy/tree/2be19b154f99e3b019c42b3b78f11c01f0ebe6a8).
+Reviewed September 21 and refreshed September 22, 2026 against Mac source commit
+[`d843f54a37346dbb08ee4610785836194ca7e3bd`](https://github.com/omacom/try-omarchy/tree/d843f54a37346dbb08ee4610785836194ca7e3bd).
 This is an implementation and acceptance tracker, not a claim that every feature
 is shipped or hardware-tested. The release gates in
 [RELEASING.md](RELEASING.md) and [TESTING.md](TESTING.md) still apply.
+
+The refreshed Mac baseline is 25 commits newer than the original comparison.
+It adds automatic startup with in-guest settings access, host battery mirroring,
+guest-memory reclamation, precise trackpad scrolling, stable bridged identities,
+keyboard-geometry and language work, update discovery, and runtime reliability
+fixes. Equivalent behavior is tracked below only where it makes sense on Windows.
 
 ## Corrections to the previous handoff
 
@@ -31,6 +37,7 @@ is shipped or hardware-tested. The release gates in
 | Area | Windows status | Acceptance or implementation remaining |
 | --- | --- | --- |
 | Pre-boot launcher | Native pages and save-and-launch; physical GPU boot/reboot/shutdown and keyboard regression tests pass | Mixed-DPI and broader hardware, moved-installation acceptance and final signed candidate |
+| Automatic startup and in-guest settings | Owned Windows shortcuts can opt into direct startup; `Try Omarchy Settings` opens the native host window from inside the guest | Native Windows acceptance with the final guest and signed launcher |
 | Branding and About | Omacom resource metadata, retained original copyright plus contributor credit, notices, labelled About actions; native visibility tested | URL actions and final signed candidate acceptance |
 | Camera, clipboard, shared folders, transfers | Implemented, with existing physical evidence in the handoff | Retest the selected final candidate; device coverage remains bounded |
 | Resources, updates, storage and recovery | Existing implementation; available before boot in this candidate | Existing v1 gates, plus recovery from the new launcher |
@@ -39,9 +46,12 @@ is shipped or hardware-tested. The release gates in
 | Trackpad pinch | [Opt-in r17 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; fresh-image and synthetic Windows-to-Chromium zoom tests pass | Physical gestures, Firefox and broader host/DPI/fullscreen acceptance; experimental only |
 | Windows Hello sudo | Not implemented; guest password authentication remains | Host Hello availability and verification, authenticated request bridge and fail-closed PAM integration; rejection, timeout, cancellation and unsupported-host tests |
 | Bridged networking | NAT and explicit port forwarding exist | Supported adapter/driver implementation and distribution, privilege boundary, reconnect and firewall behavior; no silent installation or adapter reconfiguration |
+| Host battery | Not implemented | Windows power-source bridge and guest device behavior, including desktops without batteries |
+| Guest RAM reclamation | Disk reclaim exists; unused guest RAM is not returned live to Windows | Runtime support and measured Windows host-memory acceptance |
+| Keyboard and language | Windows time zone, keyboard layout and display language follow the host | Physical ANSI/ISO/JIS geometry and broader input-method acceptance |
 
-Windows Hello, live audio routing and bridging remain feature work; pinch still
-needs acceptance before default enablement. A
+Windows Hello, live audio routing, bridging, battery mirroring and live memory
+reclamation remain feature work; pinch still needs acceptance before default enablement. A
 settings link, source-only runtime patch, or build success does not close those
 rows. Keep native platform differences explicit instead of adding controls that
 cannot deliver their labelled behavior.

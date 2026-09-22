@@ -92,6 +92,15 @@ func writeDiagnostics(dir string, facts map[string]string) (string, error) {
 			included = append(included, "desktop-preferences.redacted.json")
 		}
 	}
+	if info, err := os.Lstat(filepath.Join(dir, launchPreferencesFilename)); err == nil && info.Mode().IsRegular() {
+		if prefs, err := loadLaunchPreferences(dir); err == nil {
+			data, _ := json.MarshalIndent(map[string]bool{"startAutomatically": prefs.StartAutomatically}, "", "  ")
+			if err := addDiagnosticText(w, launchPreferencesFilename, string(data)); err != nil {
+				return fail(err)
+			}
+			included = append(included, launchPreferencesFilename)
+		}
+	}
 	if info, err := os.Lstat(filepath.Join(dir, audioPreferencesFilename)); err == nil && info.Mode().IsRegular() {
 		if prefs, err := loadAudioPreferences(dir); err == nil {
 			// Friendly device names can contain a user's name. Report choices,

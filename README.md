@@ -72,6 +72,11 @@ After the first successful setup, Try Omarchy offers optional Start-menu and Des
 
 While Omarchy is running, the Try Omarchy tray icon can reopen its window, open the active shared folder, open Settings, create a diagnostics bundle, or request a clean shutdown.
 
+Settings can also make the primary Start-menu and Desktop shortcuts start
+Omarchy immediately. The separate Settings shortcut remains available. Inside
+Omarchy, search for **Try Omarchy Settings** or run `omarchy-native-settings` to
+open the same native Windows settings window without stopping the guest.
+
 Try Omarchy checks for updates when it starts. Release metadata is signed with a separate Ed25519 update key, and its authenticated hashes cover the signed launcher and the guest payload manifest. New files are fully downloaded and verified before they replace anything. The previous launcher, bundled runtime, and factory image remain available until the updated VM reaches a healthy boot, while `vm\disk.raw` is left untouched. If the first boot fails or is interrupted, the next launch restores the previous files automatically. Use `-no-update` when an offline or version-pinned launch is required.
 
 For the full guest OS update, open **Update > Omarchy** inside the guest after updating the launcher. Existing files and the writable guest disk are preserved; launcher rollback does not roll back guest package transactions. See [updating an existing guest](docs/GUEST-UPGRADES.md).

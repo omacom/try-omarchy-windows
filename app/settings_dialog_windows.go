@@ -35,65 +35,66 @@ var (
 )
 
 const (
-	wsCaption                   = 0x00C00000
-	wsSysmenu                   = 0x00080000
-	wsBorder                    = 0x00800000
-	wsTabstop                   = 0x00010000
-	wsVscroll                   = 0x00200000
-	esAutohscroll               = 0x0080
-	esMultiline                 = 0x0004
-	esAutovscroll               = 0x0040
-	bsAutocheckbox              = 0x0003
-	bsDefpushbutton             = 0x0001
-	bmGetcheck                  = 0x00F0
-	bmSetcheck                  = 0x00F1
-	bstChecked                  = 1
-	idcArrow                    = 32512
-	colorBtnface                = 15
-	defaultGuiFont              = 17
-	wmGettextlength             = 0x000E
-	wmGettext                   = 0x000D
-	settingsPageBase            = 2100
-	settingsCameraOnID          = 2110
-	settingsMicrophoneOnID      = 2111
-	settingsCameraID            = 2112
-	settingsUpdateOnID          = 2113
-	settingsAboutID             = 2114
-	settingsPrivacyID           = 2115
-	settingsMicrophonePrivacyID = 2116
-	settingsSoundID             = 2117
-	settingsAudioOutputID       = 2118
-	settingsAudioInputID        = 2119
-	settingsResourceProfileID   = 2120
-	settingsSaveID              = 2001
-	settingsCancelID            = 2002
-	settingsBrowseID            = 2003
-	settingsFullID              = 2010
-	settingsMemID               = 2011
-	settingsShareID             = 2012
-	settingsFwdID               = 2013
-	settingsKeyID               = 2014
-	settingsShareOnID           = 2015
-	settingsDiskID              = 2016
-	settingsBackupID            = 2020
-	settingsRestoreID           = 2021
-	settingsResetID             = 2022
-	settingsRenderAutoID        = 2023
-	settingsRenderGPUID         = 2024
-	settingsRenderCPUID         = 2025
-	settingsCPUsID              = 2026
-	settingsUninstallID         = 2027
-	settingsMoveID              = 2028
-	settingsMoveCleanupID       = 2029
-	settingsHelpID              = 2030
-	settingsSnapshotsID         = 2031
-	settingsPortableID          = 2032
-	settingsDisplaysID          = 2033
-	settingsLANPublicID         = 2034
-	settingsLANAddID            = 2035
-	bsAutoradiobutton           = 0x0009
-	wsGroup                     = 0x00020000
-	settingsRecoveryDone        = 0x8010
+	wsCaption                    = 0x00C00000
+	wsSysmenu                    = 0x00080000
+	wsBorder                     = 0x00800000
+	wsTabstop                    = 0x00010000
+	wsVscroll                    = 0x00200000
+	esAutohscroll                = 0x0080
+	esMultiline                  = 0x0004
+	esAutovscroll                = 0x0040
+	bsAutocheckbox               = 0x0003
+	bsDefpushbutton              = 0x0001
+	bmGetcheck                   = 0x00F0
+	bmSetcheck                   = 0x00F1
+	bstChecked                   = 1
+	idcArrow                     = 32512
+	colorBtnface                 = 15
+	defaultGuiFont               = 17
+	wmGettextlength              = 0x000E
+	wmGettext                    = 0x000D
+	settingsPageBase             = 2100
+	settingsCameraOnID           = 2110
+	settingsMicrophoneOnID       = 2111
+	settingsCameraID             = 2112
+	settingsUpdateOnID           = 2113
+	settingsAboutID              = 2114
+	settingsPrivacyID            = 2115
+	settingsMicrophonePrivacyID  = 2116
+	settingsSoundID              = 2117
+	settingsAudioOutputID        = 2118
+	settingsAudioInputID         = 2119
+	settingsResourceProfileID    = 2120
+	settingsStartAutomaticallyID = 2121
+	settingsSaveID               = 2001
+	settingsCancelID             = 2002
+	settingsBrowseID             = 2003
+	settingsFullID               = 2010
+	settingsMemID                = 2011
+	settingsShareID              = 2012
+	settingsFwdID                = 2013
+	settingsKeyID                = 2014
+	settingsShareOnID            = 2015
+	settingsDiskID               = 2016
+	settingsBackupID             = 2020
+	settingsRestoreID            = 2021
+	settingsResetID              = 2022
+	settingsRenderAutoID         = 2023
+	settingsRenderGPUID          = 2024
+	settingsRenderCPUID          = 2025
+	settingsCPUsID               = 2026
+	settingsUninstallID          = 2027
+	settingsMoveID               = 2028
+	settingsMoveCleanupID        = 2029
+	settingsHelpID               = 2030
+	settingsSnapshotsID          = 2031
+	settingsPortableID           = 2032
+	settingsDisplaysID           = 2033
+	settingsLANPublicID          = 2034
+	settingsLANAddID             = 2035
+	bsAutoradiobutton            = 0x0009
+	wsGroup                      = 0x00020000
+	settingsRecoveryDone         = 0x8010
 )
 
 // runSettingsDialog shows the window and returns once it closes. saved is
@@ -148,6 +149,11 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	prefs, err := loadDesktopPreferences(dataDir)
 	if err != nil {
 		errorBox("Cannot read device and update preferences:\n\n" + err.Error())
+		return false
+	}
+	launchPrefs, err := loadLaunchPreferences(dataDir)
+	if err != nil {
+		errorBox("Cannot read launch preferences:\n\n" + err.Error())
 		return false
 	}
 	audioPrefs, err := loadAudioPreferences(dataDir)
@@ -220,7 +226,7 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	className, _ := syscall.UTF16PtrFromString("TryOmarchySettings")
 	var hwnd uintptr
 	var scroll settingsScroll
-	var hFull, hMem, hCPUs, hDisk, hShare, hShareOn, hFwd, hKey uintptr
+	var hFull, hStartAutomatically, hMem, hCPUs, hDisk, hShare, hShareOn, hFwd, hKey uintptr
 	var hRenderAuto, hRenderGPU, hRenderCPU, hDisplays, hLANPublic uintptr
 	var hCameraOn, hMicrophoneOn, hCamera, hUpdateOn uintptr
 	var hAudioOutput, hAudioInput uintptr
@@ -419,6 +425,20 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 						errorBox("Other settings were saved, but device and update preferences could not be saved:\n\n" + err.Error())
 						return 0
 					}
+					v, _, _ = procSendMessageW.Call(hStartAutomatically, bmGetcheck, 0, 0)
+					updatedLaunch := launchPrefs
+					updatedLaunch.StartAutomatically = v == bstChecked
+					if err = saveLaunchPreferences(dataDir, updatedLaunch); err != nil {
+						errorBox("Other settings were saved, but automatic startup could not be saved:\n\n" + err.Error())
+						return 0
+					}
+					if !portable {
+						target := filepath.Join(dataDir, stableLauncherName)
+						if err = updateLaunchShortcuts(target, dataDir, updatedLaunch.StartAutomatically); err != nil {
+							errorBox("Other settings were saved, but Windows shortcuts could not be updated:\n\n" + err.Error())
+							return 0
+						}
+					}
 				}
 				if audioSupported {
 					updated := audioPrefs
@@ -604,6 +624,14 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	hFull = mk("BUTTON", "Open fullscreen (Immersive)", left, y, 300, 22, bsAutocheckbox|wsTabstop, settingsFullID)
 	if current.Fullscreen {
 		procSendMessageW.Call(hFull, bmSetcheck, bstChecked, 0)
+	}
+	y += 30
+	hStartAutomatically = mk("BUTTON", "Start automatically from Windows shortcuts", left, y, 360, 22, bsAutocheckbox|wsTabstop, settingsStartAutomaticallyID)
+	if launchPrefs.StartAutomatically {
+		procSendMessageW.Call(hStartAutomatically, bmSetcheck, bstChecked, 0)
+	}
+	if portable {
+		procEnableWindow.Call(hStartAutomatically, 0)
 	}
 	y += 30
 	mk("STATIC", "Resource profile", left, y+3, labelW, 20, ssNoprefix, 0)

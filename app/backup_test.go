@@ -17,7 +17,7 @@ func backupFixture(t *testing.T) (string, string) {
 	configureSetupCancellation(false)
 	root := t.TempDir()
 	dir := filepath.Join(root, "original")
-	for _, name := range []string{"vm/disk.raw", "guest/build-spec.json", "guest/rootfs.ext4", "guest/vmlinuz-linux", "guest/initramfs-linux.img", "runtime/bin/qemu.exe", "settings.json", storageSettingsFilename, desktopPreferencesFilename, audioPreferencesFilename, audioEndpointsFilename, resourcePreferencesFilename} {
+	for _, name := range []string{"vm/disk.raw", "guest/build-spec.json", "guest/rootfs.ext4", "guest/vmlinuz-linux", "guest/initramfs-linux.img", "runtime/bin/qemu.exe", "settings.json", storageSettingsFilename, desktopPreferencesFilename, launchPreferencesFilename, audioPreferencesFilename, audioEndpointsFilename, resourcePreferencesFilename} {
 		target := filepath.Join(dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
 			t.Fatal(err)

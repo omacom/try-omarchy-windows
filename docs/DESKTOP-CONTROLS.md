@@ -5,7 +5,7 @@ is still v0.0.20-preview; it does not yet include these Settings changes.
 
 Settings has four pages:
 
-- **General:** fullscreen, memory in GB, disk capacity, installation location and shared folder.
+- **General:** fullscreen, automatic startup from Windows shortcuts, memory in GB, disk capacity, installation location and shared folder.
 - **Devices:** camera selection and access, microphone access, playback/recording choices with the r16 runtime, plus Windows privacy and sound settings links.
 - **Advanced:** guest displays, rendering, CPUs, port forwards, SSH and automatic launcher update checks.
 - **Recovery:** backup, restore, snapshots, reset, move, cleanup, portable copy and uninstall.
@@ -19,6 +19,13 @@ desktop launch. **Launch Omarchy** saves preferences and starts the guest;
 without launching. Runtime command-line options keep direct startup; `-start`
 explicitly bypasses the menu and `-launcher` explicitly opens it. Command-line
 resource overrides still take precedence over saved settings for that launch.
+
+When **Start automatically from Windows shortcuts** is enabled, owned Start-menu
+and Desktop launch shortcuts use `-start`. The separate Settings shortcut still
+opens the native controls. Inside Omarchy, launch **Try Omarchy Settings** or run
+`omarchy-native-settings`. The guest sends a fixed `settings` request over the
+existing private launcher lifecycle channel. It cannot pass paths, commands or
+other host arguments.
 See [the Mac parity tracker](MAC-PARITY.md) for implementation and test boundaries.
 
 Camera selection uses the Windows device identity, not its position in a list.
@@ -44,6 +51,8 @@ checks can be disabled in Advanced; Linux package updates remain separate inside
 Omarchy under Update > Omarchy.
 
 Camera, microphone-access and update choices live in `desktop-preferences.json`.
+Automatic shortcut startup lives in `launch-preferences.json`, so older
+launchers can ignore it safely after a rollback.
 Audio routes live separately in `audio-preferences.json`, with stable Windows IDs
 in `audio-endpoints.json`. Older launchers can
 still read `settings.json` after rollback. Older launchers do not implement the

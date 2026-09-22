@@ -149,8 +149,12 @@ func activateMovedInstallation(m *installationMove) error {
 		return err
 	}
 	paths = append(paths, filepath.Join(m.Destination, "Start Omarchy.lnk"), filepath.Join(m.Destination, "Settings.lnk"))
+	prefs, err := loadLaunchPreferences(m.Destination)
+	if err != nil {
+		return err
+	}
 	if err := changeOwnedShortcuts(paths, []string{filepath.Join(m.Source, stableLauncherName), target}, func(path, args string) error {
-		newArgs := shortcutArguments(m.Destination)
+		newArgs := launchShortcutArguments(m.Destination, prefs.StartAutomatically)
 		for _, arg := range strings.Fields(args) {
 			if arg == "-settings" {
 				newArgs = settingsShortcutArguments(m.Destination)

@@ -9,6 +9,13 @@ top-level passes, 32 skips and zero failures. See
 [the integration evidence](evidence/PARITY-MASTER-INTEGRATION-2026-09-22.md).
 No release was published and the active laptop guest was not changed.
 
+The later September 22 focused follow-up refreshed the comparison against Mac
+commit `d843f54a37346dbb08ee4610785836194ca7e3bd`. It adds direct startup for owned
+Windows shortcuts and an in-guest **Try Omarchy Settings** action backed by the
+existing private lifecycle channel. Guest patch `0085` delivers the command and
+desktop entry as compatibility revision 30. See
+[the follow-up evidence](evidence/PARITY-FOLLOWUP-2026-09-22.md).
+
 For the September 21 parity continuation, start with [NEXT-SESSION.md](NEXT-SESSION.md).
 It records the current branch, completed acceptance, cleanup state and remaining
 boundaries after the master integration. Earlier dated entries below are historical.

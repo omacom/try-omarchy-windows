@@ -1,0 +1,106 @@
+From d0f5a3c27659c0feb0d50fb7903bd17b8979e83a Mon Sep 17 00:00:00 2001
+From: Try Omarchy contributors <contributors@try-omarchy.invalid>
+Date: Tue, 22 Sep 2026 07:42:34 -0400
+Subject: [PATCH] Open Windows settings from inside Omarchy
+
+---
+ .../usr/local/bin/omarchy-native-settings           | 11 +++++++++++
+ .../share/applications/try-omarchy-settings.desktop |  8 ++++++++
+ guest/scripts/finalize-rootfs.sh                    |  6 +++++-
+ guest/tests/verify.py                               | 13 ++++++++++++-
+ 4 files changed, 36 insertions(+), 2 deletions(-)
+ create mode 100755 guest/factory-overlay/usr/local/bin/omarchy-native-settings
+ create mode 100644 guest/factory-overlay/usr/share/applications/try-omarchy-settings.desktop
+
+diff --git a/guest/factory-overlay/usr/local/bin/omarchy-native-settings b/guest/factory-overlay/usr/local/bin/omarchy-native-settings
+new file mode 100755
+index 0000000..f5c01cf
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/bin/omarchy-native-settings
+@@ -0,0 +1,11 @@
++#!/bin/bash
++set -u
++
++host=${TRY_OMARCHY_LAUNCHER_HOST:-10.0.2.2}
++port=${TRY_OMARCHY_LAUNCHER_PORT:-4450}
++reply=$(printf 'settings\n' | socat -T 3 - "TCP:${host}:${port},connect-timeout=3" 2>/dev/null || true)
++if [[ $reply == ok* ]]; then
++  exit 0
++fi
++notify-send "Try Omarchy Settings" "The Windows launcher is not available." 2>/dev/null || true
++exit 1
+diff --git a/guest/factory-overlay/usr/share/applications/try-omarchy-settings.desktop b/guest/factory-overlay/usr/share/applications/try-omarchy-settings.desktop
+new file mode 100644
+index 0000000..abe70c8
+--- /dev/null
++++ b/guest/factory-overlay/usr/share/applications/try-omarchy-settings.desktop
+@@ -0,0 +1,8 @@
++[Desktop Entry]
++Name=Try Omarchy Settings
++Comment=Open Windows host settings for Try Omarchy
++Exec=omarchy-native-settings
++Icon=preferences-system
++Terminal=false
++Type=Application
++Categories=Settings;System;
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 285fd5d..c31d8d5 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -103,6 +103,8 @@ compat_paths=(
+   etc/modules-load.d/90-try-omarchy-camera.conf
+   etc/modprobe.d/90-try-omarchy-camera.conf
+   usr/local/bin/try-omarchy-drop
++  usr/local/bin/omarchy-native-settings
++  usr/share/applications/try-omarchy-settings.desktop
+   etc/systemd/user/clipboard-bridge.service
+   etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf
+   etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service
+@@ -153,7 +155,9 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ # Revision 27 delivers the complete matching kernel modules and preserves
+ # the transfer fallback when a direct paste cannot be confirmed.
+ # Revision 28 receives file drops in the background directly into folders.
+-compat_revision=29
++# Revision 29 validates a drop destination before consuming its transfer.
++# Revision 30 adds the in-guest launcher for native Windows settings.
++compat_revision=30
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index a8bf9d4..68ed2a6 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -266,7 +266,7 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=29" in finalize_rootfs
++        "compat_revision=30" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in compat_paths
+         and "etc/skel/.config/nvim/lua/plugins/theme.lua" in compat_paths
+@@ -276,9 +276,20 @@ def main() -> None:
+         and "usr/local/lib/try-omarchy/apply-host-locale" in compat_paths
+         and "etc/systemd/system/sysinit.target.wants/try-omarchy-host-locale.service" in compat_paths
+         and "usr/local/bin/clipboard-bridge" in compat_paths
++        and "usr/local/bin/omarchy-native-settings" in compat_paths
++        and "usr/share/applications/try-omarchy-settings.desktop" in compat_paths
+         and "etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service" in compat_paths,
+         "launcher integration has an explicit revision for persistent-disk upgrades",
+     )
++    native_settings = GUEST / "factory-overlay/usr/local/bin/omarchy-native-settings"
++    native_settings_desktop = read(GUEST / "factory-overlay/usr/share/applications/try-omarchy-settings.desktop")
++    check(
++        native_settings.stat().st_mode & stat.S_IXUSR != 0
++        and "settings\\n" in read(native_settings)
++        and "Name=Try Omarchy Settings" in native_settings_desktop
++        and "Exec=omarchy-native-settings" in native_settings_desktop,
++        "the guest can request native Windows settings",
++    )
+     check(
+         "usr/local/lib/try-omarchy/clear-stale-pacman-lock" in compat_paths
+         and "etc/systemd/system/try-omarchy-pacman-lock.service" in compat_paths
+-- 
+2.55.0
+
