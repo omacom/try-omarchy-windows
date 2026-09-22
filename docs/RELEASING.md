@@ -151,11 +151,15 @@ check uses the current feed and can install stable. The normal Latest launcher
 link always serves the current executable. Signature verification, pinned
 payload hashes, and rollback remain required at both steps.
 
-Before v1, test an old preview against a candidate stable release with both
-feeds, then verify bridge installation, stable installation, and forced
-rollback on physical Windows with a copied guest disk. Also test a direct
-stable download and a subsequent stable update. Automated tests cover feed
-routing and recovery-state parsing, but do not replace these Windows checks.
+Before publishing v1, test an old preview against the public bridge feed and
+verify that it installs the bridge on a copied guest disk. Test the exact signed
+v1 candidate against locally served, hash-pinned draft assets, including direct
+install, preservation, and forced rollback. The updater intentionally accepts
+only GitHub release URLs, so the bridge-to-stable update cannot fetch a private
+draft through a local test URL. Immediately after publication, verify the
+bridge-to-stable update and both public feeds on physical Windows. Automated
+tests cover feed routing and recovery-state parsing, but do not replace these
+Windows checks.
 
 Stable installations never automatically switch to a preview. The workflow
 also prevents a later preview or older version from replacing a newer stable
