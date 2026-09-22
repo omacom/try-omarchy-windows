@@ -25,6 +25,7 @@ var (
 	procCallNextHookEx           = user32.NewProc("CallNextHookEx")
 	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
 	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
+	procGetAsyncKeyState         = user32.NewProc("GetAsyncKeyState")
 	procClipCursor               = user32.NewProc("ClipCursor")
 	procMsgWaitForMultipleObj    = user32.NewProc("MsgWaitForMultipleObjects")
 	procPeekMessageW             = user32.NewProc("PeekMessageW")
@@ -54,6 +55,9 @@ const (
 	whKeyboardLL     = 13
 	wmKeydown        = 0x100
 	wmSyskeydown     = 0x104
+	wmSyskeyup       = 0x105
+	vkTab            = 0x09
+	vkControl        = 0x11
 	vkLwin           = 0x5B
 	vkRwin           = 0x5C
 	vkSnapshot       = 0x2C
