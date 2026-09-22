@@ -22,10 +22,7 @@ resource overrides still take precedence over saved settings for that launch.
 
 When **Start automatically from Windows shortcuts** is enabled, owned Start-menu
 and Desktop launch shortcuts use `-start`. The separate Settings shortcut still
-opens the native controls. Inside Omarchy, launch **Try Omarchy Settings** or run
-`omarchy-native-settings`. The guest sends a fixed `settings` request over the
-existing private launcher lifecycle channel. It cannot pass paths, commands or
-other host arguments.
+opens the native controls.
 See [the Mac parity tracker](MAC-PARITY.md) for implementation and test boundaries.
 
 Camera selection uses the Windows device identity, not its position in a list.

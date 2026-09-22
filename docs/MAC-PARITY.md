@@ -37,7 +37,8 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Area | Windows status | Acceptance or implementation remaining |
 | --- | --- | --- |
 | Pre-boot launcher | Native pages and save-and-launch; physical GPU boot/reboot/shutdown and keyboard regression tests pass | Mixed-DPI and broader hardware, moved-installation acceptance and final signed candidate |
-| Automatic startup and in-guest settings | Owned Windows shortcuts can opt into direct startup; `Try Omarchy Settings` opens the native host window from inside the guest | Native Windows acceptance with the final guest and signed launcher |
+| Automatic startup | Owned Windows shortcuts can opt into direct startup while the Settings shortcut remains available | Final signed-candidate acceptance |
+| In-guest host settings | Not implemented | A Windows desktop-safe request path that reliably presents the native window |
 | Branding and About | Omacom resource metadata, retained original copyright plus contributor credit, notices, labelled About actions; native visibility tested | URL actions and final signed candidate acceptance |
 | Camera, clipboard, shared folders, transfers | Implemented, with existing physical evidence in the handoff | Retest the selected final candidate; device coverage remains bounded |
 | Resources, updates, storage and recovery | Existing implementation; available before boot in this candidate | Existing v1 gates, plus recovery from the new launcher |

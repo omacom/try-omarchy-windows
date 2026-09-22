@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -274,7 +273,7 @@ func main() {
 	// own guard above. Settings, diagnostics, and update helpers remain usable
 	// while the VM owns the lifecycle port.
 	if !*openSettings && !*diagnostics && !*applyLauncherUpdateFlag && !*applyLauncherRollbackFlag {
-		runLifecycleListener(cfg)
+		runLifecycleListener()
 	}
 	if !cfg.portable {
 		resolved, moveErr := prepareMovedLocation(cfg.dir, !*openSettings && !*diagnostics && !*applyLauncherUpdateFlag && !*applyLauncherRollbackFlag)
@@ -1096,34 +1095,7 @@ var (
 // try-omarchy-reboot-notify unit connects to 10.0.2.2:4450 (this listener via
 // user-net) and says "reboot" when the guest is rebooting rather than
 // powering off.
-var guestSettingsOpen atomic.Bool
-
-func openSettingsFromGuest(cfg *config) {
-	if !guestSettingsOpen.CompareAndSwap(false, true) {
-		return
-	}
-	self, err := os.Executable()
-	if err != nil {
-		guestSettingsOpen.Store(false)
-		logf("guest settings: %v", err)
-		return
-	}
-	args := trayControlArguments(trayLaunchConfig{dataDir: cfg.dir, portable: cfg.portable, winqEmu: cfg.winqEmu}, "-settings")
-	cmd := exec.Command(self, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
-	if err = cmd.Start(); err != nil {
-		guestSettingsOpen.Store(false)
-		logf("guest settings: %v", err)
-		return
-	}
-	procAllowSetForeground.Call(uintptr(cmd.Process.Pid))
-	go func() {
-		_ = cmd.Wait()
-		guestSettingsOpen.Store(false)
-	}()
-}
-
-func runLifecycleListener(cfg *config) {
+func runLifecycleListener() {
 	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", lifecyclePort))
 	if err != nil {
 		fatal("Try Omarchy looks like it's already running (port %d is in use).", lifecyclePort)
@@ -1155,9 +1127,6 @@ func runLifecycleListener(cfg *config) {
 					} else {
 						fmt.Fprintln(c, "ok: Preparing free space. Check Reclaim status in the tray before shutting down.")
 					}
-				case "settings":
-					fmt.Fprintln(c, "ok")
-					go openSettingsFromGuest(cfg)
 				}
 			}(c)
 		}

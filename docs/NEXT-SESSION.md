@@ -17,9 +17,8 @@ tooling and removal of the public v1 roadmap. The integration and stable endpoin
 work passed Linux race/vet, Windows vet/build and a complete physical native suite.
 See [the September 22 evidence](evidence/PARITY-MASTER-INTEGRATION-2026-09-22.md).
 
-The focused parity follow-up also refreshes the Mac comparison to current source,
-adds automatic startup for owned Windows shortcuts, and lets the guest open the
-native Windows Settings window. See
+The focused parity follow-up also refreshes the Mac comparison to current source
+and adds automatic startup for owned Windows shortcuts. See
 [the follow-up evidence](evidence/PARITY-FOLLOWUP-2026-09-22.md).
 
 ## Implemented and accepted
@@ -35,8 +34,6 @@ native Windows Settings window. See
 - Nested KVM probes and a diskless real Linux kernel/PID 1 acceptance fixture.
 - Guest patches `0083` and `0084`: seeded device configuration and an eight-package
   version refresh, with unchanged package membership/requested-input hashes.
-- Guest patch `0085`: searchable in-guest Windows Settings launcher, delivered
-  to existing disks as compatibility revision 30.
 
 Evidence:
 
@@ -118,8 +115,8 @@ The checked-in Windows `.syso` resource is intentionally regenerated source outp
    install drivers or reconfigure the user's host networking.
 6. Reconcile release packaging/provenance and final-candidate acceptance before
    proposing a release. Committing/pushing this branch does not publish anything.
-7. Native-test the shortcut rewrite and in-guest Settings request with the exact
-   candidate. These are suitable for the next preview once that acceptance passes.
+7. Retest the shortcut rewrite with the exact signed candidate. The unsigned
+   native suite already accepted the control and saved preference.
 
 Continue useful implementation and tests autonomously. Preserve guest data,
 recovery copies and credential pins. Ask only when genuinely blocked by missing
