@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -34,71 +35,88 @@ var (
 )
 
 const (
-	wsCaption                   = 0x00C00000
-	wsSysmenu                   = 0x00080000
-	wsBorder                    = 0x00800000
-	wsTabstop                   = 0x00010000
-	wsVscroll                   = 0x00200000
-	esAutohscroll               = 0x0080
-	esMultiline                 = 0x0004
-	esAutovscroll               = 0x0040
-	bsAutocheckbox              = 0x0003
-	bsDefpushbutton             = 0x0001
-	bmGetcheck                  = 0x00F0
-	bmSetcheck                  = 0x00F1
-	bstChecked                  = 1
-	idcArrow                    = 32512
-	colorBtnface                = 15
-	defaultGuiFont              = 17
-	wmGettextlength             = 0x000E
-	wmGettext                   = 0x000D
-	settingsPageBase            = 2100
-	settingsCameraOnID          = 2110
-	settingsMicrophoneOnID      = 2111
-	settingsCameraID            = 2112
-	settingsUpdateOnID          = 2113
-	settingsAboutID             = 2114
-	settingsPrivacyID           = 2115
-	settingsMicrophonePrivacyID = 2116
-	settingsResourceProfileID   = 2117
-	settingsSaveID              = 2001
-	settingsCancelID            = 2002
-	settingsBrowseID            = 2003
-	settingsFullID              = 2010
-	settingsMemID               = 2011
-	settingsShareID             = 2012
-	settingsFwdID               = 2013
-	settingsKeyID               = 2014
-	settingsShareOnID           = 2015
-	settingsDiskID              = 2016
-	settingsBackupID            = 2020
-	settingsRestoreID           = 2021
-	settingsResetID             = 2022
-	settingsRenderAutoID        = 2023
-	settingsRenderGPUID         = 2024
-	settingsRenderCPUID         = 2025
-	settingsCPUsID              = 2026
-	settingsUninstallID         = 2027
-	settingsMoveID              = 2028
-	settingsMoveCleanupID       = 2029
-	settingsHelpID              = 2030
-	settingsSnapshotsID         = 2031
-	settingsPortableID          = 2032
-	settingsDisplaysID          = 2033
-	settingsLANPublicID         = 2034
-	settingsLANAddID            = 2035
-	bsAutoradiobutton           = 0x0009
-	wsGroup                     = 0x00020000
-	settingsRecoveryDone        = 0x8010
+	wsCaption                    = 0x00C00000
+	wsSysmenu                    = 0x00080000
+	wsBorder                     = 0x00800000
+	wsTabstop                    = 0x00010000
+	wsVscroll                    = 0x00200000
+	esAutohscroll                = 0x0080
+	esMultiline                  = 0x0004
+	esAutovscroll                = 0x0040
+	bsAutocheckbox               = 0x0003
+	bsDefpushbutton              = 0x0001
+	bmGetcheck                   = 0x00F0
+	bmSetcheck                   = 0x00F1
+	bstChecked                   = 1
+	idcArrow                     = 32512
+	colorBtnface                 = 15
+	defaultGuiFont               = 17
+	wmGettextlength              = 0x000E
+	wmGettext                    = 0x000D
+	settingsPageBase             = 2100
+	settingsCameraOnID           = 2110
+	settingsMicrophoneOnID       = 2111
+	settingsCameraID             = 2112
+	settingsUpdateOnID           = 2113
+	settingsAboutID              = 2114
+	settingsPrivacyID            = 2115
+	settingsMicrophonePrivacyID  = 2116
+	settingsSoundID              = 2117
+	settingsAudioOutputID        = 2118
+	settingsAudioInputID         = 2119
+	settingsResourceProfileID    = 2120
+	settingsStartAutomaticallyID = 2121
+	settingsSaveID               = 2001
+	settingsCancelID             = 2002
+	settingsBrowseID             = 2003
+	settingsFullID               = 2010
+	settingsMemID                = 2011
+	settingsShareID              = 2012
+	settingsFwdID                = 2013
+	settingsKeyID                = 2014
+	settingsShareOnID            = 2015
+	settingsDiskID               = 2016
+	settingsBackupID             = 2020
+	settingsRestoreID            = 2021
+	settingsResetID              = 2022
+	settingsRenderAutoID         = 2023
+	settingsRenderGPUID          = 2024
+	settingsRenderCPUID          = 2025
+	settingsCPUsID               = 2026
+	settingsUninstallID          = 2027
+	settingsMoveID               = 2028
+	settingsMoveCleanupID        = 2029
+	settingsHelpID               = 2030
+	settingsSnapshotsID          = 2031
+	settingsPortableID           = 2032
+	settingsDisplaysID           = 2033
+	settingsLANPublicID          = 2034
+	settingsLANAddID             = 2035
+	bsAutoradiobutton            = 0x0009
+	wsGroup                      = 0x00020000
+	settingsRecoveryDone         = 0x8010
 )
 
 // runSettingsDialog shows the window and returns once it closes. saved is
 // true when the file was written.
 func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
+	return runLauncherSettings(path, dataDir, portable, false, nil)
+}
+
+func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRelaunch func()) (saved bool) {
+	modeFlag := "-settings"
+	if launcher {
+		modeFlag = "-launcher"
+	}
 	if !portable {
 		if self, err := os.Executable(); err == nil {
 			if resolved, err := prepareMovedLocation(filepath.Dir(self), false); err == nil && !pathsEqual(resolved, filepath.Dir(self)) {
-				cmd := exec.Command(filepath.Join(resolved, stableLauncherName), "-dir", dataDir, "-settings")
+				// Transfer launcher ownership before the moved process starts;
+				// otherwise it can race this process's deferred mutex close.
+				if beforeRelaunch != nil {
+					beforeRelaunch()
+				}
+				cmd := exec.Command(filepath.Join(resolved, stableLauncherName), "-dir", dataDir, modeFlag)
 				if err := cmd.Start(); err != nil {
 					errorBox("Could not reopen moved Settings: " + err.Error())
 				}
@@ -133,6 +151,49 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		errorBox("Cannot read device and update preferences:\n\n" + err.Error())
 		return false
 	}
+	launchPrefs, err := loadLaunchPreferences(dataDir)
+	if err != nil {
+		errorBox("Cannot read launch preferences:\n\n" + err.Error())
+		return false
+	}
+	audioPrefs, err := loadAudioPreferences(dataDir)
+	if err != nil {
+		errorBox("Cannot read audio preferences:\n\n" + err.Error())
+		return false
+	}
+	endpointPrefs, err := loadAudioEndpoints(dataDir)
+	if err != nil {
+		errorBox("Cannot read audio endpoint preferences:\n\n" + err.Error())
+		return false
+	}
+	audioEndpointDevices, endpointErr := listAudioEndpoints()
+	audioPrefs.Output, endpointPrefs.OutputID = resolveAudioSelection(
+		audioPrefs.Output, endpointPrefs.OutputID, audioEndpointDevices.Output)
+	audioPrefs.Input, endpointPrefs.InputID = resolveAudioSelection(
+		audioPrefs.Input, endpointPrefs.InputID, audioEndpointDevices.Input)
+	audioQEMU := filepath.Join(dataDir, "runtime", "bin", "qemu-system-x86_64w.exe")
+	if f := flag.Lookup("winq"); f != nil && guestDisplayCount(current.Displays) == 1 && !portable {
+		candidate := filepath.Join(f.Value.String(), "bin", "qemu-system-x86_64w.exe")
+		if info, e := os.Stat(candidate); e == nil && info.Mode().IsRegular() {
+			audioQEMU = candidate
+		}
+	}
+	audioSupported := audioRuntimeSupportsSelection(audioQEMU)
+	audioDevices, audioErr := listAudioDevices(audioQEMU)
+	// Keep a disconnected selection intact until the user chooses another.
+	retainAudio := func(devices []string, selected string) []string {
+		if selected == "" {
+			return devices
+		}
+		for _, name := range devices {
+			if name == selected {
+				return devices
+			}
+		}
+		return append(devices, selected)
+	}
+	audioDevices.Output = retainAudio(audioDevices.Output, audioPrefs.Output)
+	audioDevices.Input = retainAudio(audioDevices.Input, audioPrefs.Input)
 	resourcePrefs, err := loadResourcePreferences(dataDir)
 	if err != nil {
 		errorBox("Cannot read resource preferences:\n\n" + err.Error())
@@ -165,9 +226,10 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	className, _ := syscall.UTF16PtrFromString("TryOmarchySettings")
 	var hwnd uintptr
 	var scroll settingsScroll
-	var hFull, hMem, hCPUs, hDisk, hShare, hShareOn, hFwd, hKey uintptr
+	var hFull, hStartAutomatically, hMem, hCPUs, hDisk, hShare, hShareOn, hFwd, hKey uintptr
 	var hRenderAuto, hRenderGPU, hRenderCPU, hDisplays, hLANPublic uintptr
 	var hCameraOn, hMicrophoneOn, hCamera, hUpdateOn uintptr
+	var hAudioOutput, hAudioInput uintptr
 	var hResourceProfile, hResourceHelp uintptr
 	var updateResourceControls func()
 	profileValues := []string{resourceBalanced, resourceMaximum, resourceManual}
@@ -255,7 +317,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 			args = append(args, "-portable")
 		}
 		cmd := exec.Command(self, args...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
 		if err = cmd.Start(); err != nil {
 			errorBox("Could not open recovery controls:\n\n" + err.Error())
 			return
@@ -286,7 +348,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 				self, err := os.Executable()
 				if err == nil {
 					cmd := exec.Command(self, "-about")
-					cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+					cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
 					err = cmd.Start()
 					if err == nil {
 						_ = cmd.Process.Release()
@@ -297,6 +359,8 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 				}
 			case settingsMicrophonePrivacyID:
 				openWindowsURL("ms-settings:privacy-microphone")
+			case settingsSoundID:
+				openWindowsURL("ms-settings:sound")
 			case settingsPrivacyID:
 				openWindowsURL("ms-settings:privacy-webcam")
 			case settingsHelpID:
@@ -361,6 +425,52 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 						errorBox("Other settings were saved, but device and update preferences could not be saved:\n\n" + err.Error())
 						return 0
 					}
+					v, _, _ = procSendMessageW.Call(hStartAutomatically, bmGetcheck, 0, 0)
+					updatedLaunch := launchPrefs
+					updatedLaunch.StartAutomatically = v == bstChecked
+					if err = saveLaunchPreferences(dataDir, updatedLaunch); err != nil {
+						errorBox("Other settings were saved, but automatic startup could not be saved:\n\n" + err.Error())
+						return 0
+					}
+					if !portable {
+						target := filepath.Join(dataDir, stableLauncherName)
+						if err = updateLaunchShortcuts(target, dataDir, updatedLaunch.StartAutomatically); err != nil {
+							errorBox("Other settings were saved, but Windows shortcuts could not be updated:\n\n" + err.Error())
+							return 0
+						}
+					}
+				}
+				if audioSupported {
+					updated := audioPrefs
+					updatedEndpoints := endpointPrefs
+					for _, row := range []struct {
+						control        uintptr
+						names          []string
+						value          *string
+						rememberedName string
+						endpointValue  *string
+						rememberedID   string
+						endpoints      []audioEndpointInfo
+					}{
+						{hAudioOutput, audioDevices.Output, &updated.Output, audioPrefs.Output, &updatedEndpoints.OutputID, endpointPrefs.OutputID, audioEndpointDevices.Output},
+						{hAudioInput, audioDevices.Input, &updated.Input, audioPrefs.Input, &updatedEndpoints.InputID, endpointPrefs.InputID, audioEndpointDevices.Input},
+					} {
+						index, _, _ := procSendMessageW.Call(row.control, 0x147, 0, 0)
+						if index > uintptr(len(row.names)) {
+							errorBox("Choose an audio device before saving.")
+							return 0
+						}
+						*row.value = ""
+						if index > 0 {
+							*row.value = row.names[index-1]
+						}
+						*row.endpointValue = endpointIDForSelection(
+							*row.value, row.rememberedName, row.rememberedID, row.endpoints)
+					}
+					if err := saveAudioSelection(dataDir, updated, updatedEndpoints); err != nil {
+						errorBox("Audio preferences could not be saved:\n\n" + err.Error())
+						return 0
+					}
 				}
 				if err := saveResourcePreferences(dataDir, selectedProfile()); err != nil {
 					errorBox("Other settings were saved, but the resource profile could not be saved:\n\n" + err.Error())
@@ -419,7 +529,10 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		case settingsRecoveryDone:
 			if !portable {
 				if resolved, err := prepareMovedLocation(dataDir, false); err == nil && !pathsEqual(resolved, dataDir) {
-					cmd := exec.Command(filepath.Join(resolved, stableLauncherName), "-dir", resolved, "-settings")
+					if beforeRelaunch != nil {
+						beforeRelaunch()
+					}
+					cmd := exec.Command(filepath.Join(resolved, stableLauncherName), "-dir", resolved, modeFlag)
 					if err := cmd.Start(); err != nil {
 						errorBox("Open Settings at " + resolved + ": " + err.Error())
 					}
@@ -477,7 +590,11 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	scroll.content = clientH
 	x := work[0] + (work[2]-work[0]-w)/2
 	yWindow := work[1] + (work[3]-work[1]-hgt)/2
-	title, _ := syscall.UTF16PtrFromString(appTitle + " settings")
+	windowTitle := appTitle + " settings"
+	if launcher {
+		windowTitle = appTitle
+	}
+	title, _ := syscall.UTF16PtrFromString(windowTitle)
 	var err2 error
 	hwnd, _, err2 = procCreateWindowExW.Call(0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(title)),
 		style|wsVisible, uintptr(x), uintptr(yWindow), uintptr(w), uintptr(hgt), 0, 0, hInst, 0)
@@ -507,6 +624,14 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	hFull = mk("BUTTON", "Open fullscreen (Immersive)", left, y, 300, 22, bsAutocheckbox|wsTabstop, settingsFullID)
 	if current.Fullscreen {
 		procSendMessageW.Call(hFull, bmSetcheck, bstChecked, 0)
+	}
+	y += 30
+	hStartAutomatically = mk("BUTTON", "Start automatically from Windows shortcuts", left, y, 360, 22, bsAutocheckbox|wsTabstop, settingsStartAutomaticallyID)
+	if launchPrefs.StartAutomatically {
+		procSendMessageW.Call(hStartAutomatically, bmSetcheck, bstChecked, 0)
+	}
+	if portable {
+		procEnableWindow.Call(hStartAutomatically, 0)
 	}
 	y += 30
 	mk("STATIC", "Resource profile", left, y+3, labelW, 20, ssNoprefix, 0)
@@ -585,7 +710,7 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	pageHeights[0] = y
 	scroll.controls = nil
 	y = 56
-	mk("STATIC", "Camera and microphone", left, y, 450, 24, ssNoprefix, 0)
+	mk("STATIC", "Camera and audio", left, y, 450, 24, ssNoprefix, 0)
 	y += 30
 	hCameraOn = mk("BUTTON", "Allow camera access", left, y, 440, 24, bsAutocheckbox|wsTabstop, settingsCameraOnID)
 	if !prefs.CameraDisabled {
@@ -621,7 +746,41 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		procSendMessageW.Call(hMicrophoneOn, bmSetcheck, bstChecked, 0)
 	}
 	y += 34
-	mk("STATIC", "Uses the Windows default recording device. Turning input off keeps sound playback enabled.", left, y, 450, 42, ssNoprefix, 0)
+	mk("STATIC", "Turning microphone access off keeps sound playback enabled.", left, y, 450, 42, ssNoprefix, 0)
+	y += 50
+	addAudioCombo := func(label string, id uintptr, names []string, value string) uintptr {
+		mk("STATIC", label, left, y+3, labelW, 24, ssNoprefix, 0)
+		h := mk("COMBOBOX", "", fieldX, y, fieldW, 180, 0x0003|wsVscroll|wsTabstop, id)
+		selected := 0
+		for i, name := range append([]string{"Windows default"}, names...) {
+			t, _ := syscall.UTF16PtrFromString(name)
+			procSendMessageW.Call(h, 0x143, 0, uintptr(unsafe.Pointer(t)))
+			if i > 0 && name == value {
+				selected = i
+			}
+		}
+		procSendMessageW.Call(h, 0x14E, uintptr(selected), 0)
+		if !audioSupported {
+			procEnableWindow.Call(h, 0)
+		}
+		y += 38
+		return h
+	}
+	hAudioOutput = addAudioCombo("Sound output", settingsAudioOutputID, audioDevices.Output, audioPrefs.Output)
+	hAudioInput = addAudioCombo("Microphone", settingsAudioInputID, audioDevices.Input, audioPrefs.Input)
+	audioHelp := "Changes apply at next VM start. Missing devices use Windows defaults at startup."
+	if !audioSupported {
+		audioHelp = "This graphics engine does not support separate audio choices. Windows defaults are used."
+	} else if audioErr != nil {
+		audioHelp = "Windows could not list audio devices. Saved choices are retained; reconnect devices and reopen Settings."
+	} else if endpointErr != nil {
+		audioHelp = "Stable Windows audio IDs are unavailable. Choices still apply by device name at next start."
+	}
+	mk("STATIC", audioHelp, left, y, 450, 42, ssNoprefix, 0)
+	y += 50
+	mk("BUTTON", "Windows sound devices...", left, y, 260, 28, wsTabstop, settingsSoundID)
+	y += 36
+	mk("STATIC", "Choose Windows playback and recording defaults before launching. Restart Omarchy if a device change is not picked up.", left, y, 450, 42, ssNoprefix, 0)
 	y += 50
 	mk("BUTTON", "Camera privacy...", left, y, 210, 28, wsTabstop, settingsPrivacyID)
 	mk("BUTTON", "Microphone privacy...", left+224, y, 224, 28, wsTabstop, settingsMicrophonePrivacyID)
@@ -717,10 +876,14 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 	pages[3] = append(pages[3], scroll.controls...)
 	pageHeights[3] = y + 40
 	scroll.controls = nil
-	mk("STATIC", "Save, then restart Omarchy to apply changes.", left, 0, 460, 24, ssNoprefix, 0)
+	footerText, saveText, cancelText := "Save, then restart Omarchy to apply changes.", "Save", "Cancel"
+	if launcher {
+		footerText, saveText, cancelText = "Your files persist between sessions. Choose your settings, then launch.", "Launch Omarchy", "Close"
+	}
+	mk("STATIC", footerText, left, 0, 460, 24, ssNoprefix, 0)
 	mk("BUTTON", "Help and shortcuts", left, 30, 150, 26, wsTabstop, settingsHelpID)
-	mk("BUTTON", "Save", clientW-16-180, 30, 84, 26, bsDefpushbutton|wsTabstop, settingsSaveID)
-	mk("BUTTON", "Cancel", clientW-16-84, 30, 84, 26, wsTabstop, settingsCancelID)
+	mk("BUTTON", saveText, clientW-16-246, 30, 150, 26, bsDefpushbutton|wsTabstop, settingsSaveID)
+	mk("BUTTON", cancelText, clientW-16-84, 30, 84, 26, wsTabstop, settingsCancelID)
 	footer := append([]settingsScrollControl{}, scroll.controls...)
 	selectPage = func(index int) {
 		for _, page := range pages {
@@ -755,6 +918,26 @@ func runSettingsDialog(path, dataDir string, portable bool) (saved bool) {
 		r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
 		if r == 0 || int32(r) == -1 {
 			break
+		}
+		// This is a registered window, not a dialog resource. DefWindowProc
+		// does not supply dialog default-button handling: Enter otherwise sends
+		// IDOK instead of our Save/Launch ID, or ignores the focused button.
+		if m.message == wmKeydown && m.wParam == 13 && m.hwnd != hFwd {
+			var class [32]uint16
+			procGetClassNameW.Call(m.hwnd, uintptr(unsafe.Pointer(&class[0])), uintptr(len(class)))
+			switch strings.ToLower(syscall.UTF16ToString(class[:])) {
+			case "button":
+				style, _, _ := user32.NewProc("GetWindowLongW").Call(m.hwnd, ^uintptr(15)) // GWL_STYLE
+				if style&0xf <= bsDefpushbutton {
+					procSendMessageW.Call(m.hwnd, 0x00f5, 0, 0) // BM_CLICK
+				} else {
+					procSendMessageW.Call(hwnd, wmCommand, settingsSaveID, 0)
+				}
+				continue
+			case "edit":
+				procSendMessageW.Call(hwnd, wmCommand, settingsSaveID, 0)
+				continue
+			}
 		}
 		// The multiline port-forward editor consumes Tab by default. Port
 		// entries use newlines, so keep Tab and Shift+Tab for form navigation.

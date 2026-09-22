@@ -3,12 +3,32 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
 )
+
+// Keep first-run location selection single-instance without occupying the VM
+// lifecycle port needed by recovery. Windows releases the object on process exit,
+// so a crashed launcher cannot leave a stale lock file behind.
+func acquireLauncherMenu(name string) (uintptr, error) {
+	label, err := syscall.UTF16PtrFromString(`Local\` + name + "-LauncherMenu")
+	if err != nil {
+		return 0, err
+	}
+	handle, _, callErr := kernel32.NewProc("CreateMutexW").Call(0, 0, uintptr(unsafe.Pointer(label)))
+	if handle == 0 {
+		return 0, fmt.Errorf("opening launcher lock: %w", callErr)
+	}
+	if callErr == syscall.Errno(183) { // ERROR_ALREADY_EXISTS
+		procCloseHandle.Call(handle)
+		return 0, nil
+	}
+	return handle, nil
+}
 
 var procMoveFileExW = kernel32.NewProc("MoveFileExW")
 
@@ -61,11 +81,19 @@ func shortcutArguments(dir string) string {
 	return `-dir "` + dir + `"`
 }
 
+func launchShortcutArguments(dir string, startAutomatically bool) string {
+	args := shortcutArguments(dir)
+	if startAutomatically {
+		args = strings.TrimSpace(args + " -start")
+	}
+	return args
+}
+
 func settingsShortcutArguments(dir string) string {
 	return strings.TrimSpace(shortcutArguments(dir) + " -settings")
 }
 
-func createLauncherShortcuts(target, dir string, startMenu, desktop bool) error {
+func createLauncherShortcuts(target, dir string, startMenu, desktop, startAutomatically bool) error {
 	if !startMenu && !desktop {
 		return nil
 	}
@@ -77,7 +105,7 @@ func createLauncherShortcuts(target, dir string, startMenu, desktop bool) error 
 		if i < 2 && !startMenu || i == 2 && !desktop {
 			continue
 		}
-		args := shortcutArguments(dir)
+		args := launchShortcutArguments(dir, startAutomatically)
 		if i == 1 {
 			args = settingsShortcutArguments(dir)
 		}
@@ -86,6 +114,17 @@ func createLauncherShortcuts(target, dir string, startMenu, desktop bool) error 
 		}
 	}
 	return nil
+}
+
+func updateLaunchShortcuts(target, dir string, startAutomatically bool) error {
+	paths, err := launcherShortcutPaths()
+	if err != nil {
+		return err
+	}
+	paths = []string{paths[0], paths[2], filepath.Join(dir, "Start Omarchy.lnk")}
+	return changeOwnedShortcuts(paths, []string{target}, func(path, _ string) error {
+		return writeShellLink(path, target, launchShortcutArguments(dir, startAutomatically), dir)
+	})
 }
 
 func ensureSettingsShortcutForExistingInstall(target, dir string) error {
@@ -165,7 +204,11 @@ func offerLauncherShortcuts(dir string) {
 	if setupCancelled() {
 		return
 	}
-	if err := createLauncherShortcuts(target, installDir, startMenu, desktop); err != nil {
+	prefs, err := loadLaunchPreferences(installDir)
+	if err != nil {
+		logf("shortcut preferences: %v", err)
+	}
+	if err := createLauncherShortcuts(target, installDir, startMenu, desktop, prefs.StartAutomatically); err != nil {
 		logf("shortcuts: %v", err)
 		errorBox("Try Omarchy is ready, but Windows could not create the requested shortcut. You can keep using the downloaded launcher.\n\n" + err.Error())
 		return

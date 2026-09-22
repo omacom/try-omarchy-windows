@@ -175,8 +175,12 @@ func createRestoredLaunchers(dir string) error {
 	if err != nil {
 		return err
 	}
+	prefs, err := loadLaunchPreferences(dir)
+	if err != nil {
+		return err
+	}
 	for _, item := range []struct{ name, arguments string }{
-		{"Start Omarchy.lnk", shortcutArguments(dir)},
+		{"Start Omarchy.lnk", launchShortcutArguments(dir, prefs.StartAutomatically)},
 		{"Settings.lnk", settingsShortcutArguments(dir)},
 	} {
 		path := filepath.Join(dir, item.name)

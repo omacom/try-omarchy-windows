@@ -97,7 +97,7 @@ func TestDirectPortableCopyDetachesAndPreservesBacking(t *testing.T) {
 		t.Fatal(err)
 	}
 	previous := diskFreeBytes
-	diskFreeBytes = func(string) (int64, error) { return diskSpaceReserve + (4 << 20), nil }
+	diskFreeBytes = func(string) (int64, error) { return diskSpaceReserve + (8 << 20), nil }
 	t.Cleanup(func() { diskFreeBytes = previous })
 	output := filepath.Join(t.TempDir(), "data")
 	if err := stagePortableData(dir, output, tool, nil); err != nil {

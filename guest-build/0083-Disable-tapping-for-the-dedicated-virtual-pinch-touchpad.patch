@@ -1,0 +1,43 @@
+From 36e18f84b25fafc6171be64edd08db432ff1a60a Mon Sep 17 00:00:00 2001
+From: Try Omarchy contributors <contributors@try-omarchy.invalid>
+Date: Mon, 21 Sep 2026 11:06:59 -0400
+Subject: [PATCH] Disable tapping for the dedicated virtual pinch touchpad
+
+---
+ guest/native-overlay/usr/share/try-omarchy/pinch-input.lua | 6 ++++++
+ guest/scripts/materialize-omarchy.sh                       | 6 ++++++
+ 2 files changed, 12 insertions(+)
+ create mode 100644 guest/native-overlay/usr/share/try-omarchy/pinch-input.lua
+
+diff --git a/guest/native-overlay/usr/share/try-omarchy/pinch-input.lua b/guest/native-overlay/usr/share/try-omarchy/pinch-input.lua
+new file mode 100644
+index 0000000..e0611bc
+--- /dev/null
++++ b/guest/native-overlay/usr/share/try-omarchy/pinch-input.lua
+@@ -0,0 +1,6 @@
++-- Gesture-only device: never turn synthetic contacts into clicks.
++hl.device({
++  name = "qemu-virtio-pinch-touchpad",
++  tap_to_click = false,
++  disable_while_typing = false,
++})
+diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
+index 82df852..cfd1d90 100755
+--- a/guest/scripts/materialize-omarchy.sh
++++ b/guest/scripts/materialize-omarchy.sh
+@@ -161,6 +161,12 @@ nvim_stash=$(mktemp -d)
+ mv "$nvim_skel" "$nvim_stash/nvim"
+ rm -rf "$root/etc/skel/.config"
+ copy_tree "$source_dir/config" "$root/etc/skel/.config"
++# Only the dedicated virtual pinch device is affected; normal input is unchanged.
++cat >> "$root/etc/skel/.config/hypr/input.lua" <<'EOF'
++
++-- Try Omarchy's host pinch device carries gestures only.
++dofile("/usr/share/try-omarchy/pinch-input.lua")
++EOF
+ copy_tree "$nvim_stash/nvim" "$root/etc/skel/.config/nvim"
+ rm -rf "$nvim_stash"
+ install_file 0644 "$source_dir/default/bashrc" "$root/etc/skel/.bashrc"
+-- 
+2.55.0
+

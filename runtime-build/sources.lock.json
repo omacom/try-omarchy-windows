@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "name": "winq-emu-alpha10-source-r15",
+  "name": "winq-emu-alpha10-source-r17",
   "sourceDateEpoch": 1777269494,
   "qemu": {
     "repository": "https://github.com/cmspam/winq-emu-qemu.git",
@@ -57,6 +57,14 @@
       {
         "file": "patches/qemu/0012-share-secondary-sdl-gl-contexts.patch",
         "sha256": "ae3aea46f9ab12f06b9efde0f874f94c4515009c933ebc138abf4bb00f1057e8"
+      },
+      {
+        "file": "patches/qemu/0013-select-sdl-audio-devices.patch",
+        "sha256": "7892f3acacb15b7c929af94989fc3d249e329e147b1467d31f8907f57e088be7"
+      },
+      {
+        "file": "patches/qemu/0014-forward-windows-pinch.patch",
+        "sha256": "9bbd574874b30ec8eab243543fd09d0c8ba8a30052fd642d436287aaca7897d6"
       }
     ]
   },

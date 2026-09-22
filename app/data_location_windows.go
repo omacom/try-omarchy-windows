@@ -101,22 +101,24 @@ func validateStandardDataDrive(path string) error {
 // its files together in a TryOmarchy child directory.
 func chooseFirstRunDataDirectory(defaultDir string) (string, bool, error) {
 	for {
-		answer := msgBox(
+		answer, err := chooseAction("Choose where to keep Omarchy",
 			"Choose where Try Omarchy stores its virtual machine, graphics runtime, and downloads.\n\n"+
-				"Default location:\n"+defaultDir+"\n\n"+
-				"Choose Yes to select another local drive or folder. Choose No to use the default location.",
-			mbYesNoCancel|mbIconQuestion,
+				"Default location:\n"+defaultDir+"\n\nChoose a local NTFS or ReFS drive with room for your files.",
+			"Use default location", "Choose another drive or folder", "Cancel",
 		)
+		if err != nil {
+			return "", false, err
+		}
 		switch answer {
-		case idCancel:
+		case 0, 3:
 			return "", false, nil
-		case idNo:
+		case 1:
 			if err := validateStandardDataDrive(defaultDir); err != nil {
 				errorBox("Try Omarchy cannot use the default location.\n\n" + err.Error() + "\n\nChoose another local drive or folder.")
 				continue
 			}
 			return defaultDir, true, nil
-		case idYes:
+		case 2:
 			parent, ok := browseForFolder(0, "Choose a local drive or parent folder. Try Omarchy will create a TryOmarchy folder inside it.")
 			if !ok {
 				continue

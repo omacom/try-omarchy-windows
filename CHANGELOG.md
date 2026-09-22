@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Optionally start Omarchy immediately from its Windows Start-menu and Desktop
+  shortcuts while keeping the separate Settings shortcut available.
 - Choose a camera and turn camera or microphone access off in Settings.
 - Find everyday controls in General, Devices, Advanced and Recovery pages, with
   memory shown in GB and keyboard navigation through the full form.

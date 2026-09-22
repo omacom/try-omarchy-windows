@@ -1,5 +1,54 @@
 # Resume here
 
+September 22 integration: `codex/parity-master-integration` merges current master
+into the tested parity checkpoint, preserving resource profiles, GPU tooling,
+launcher/audio/pinch behavior and nested-Linux support. Stable Windows audio
+endpoint IDs were added without changing startup-only routing. Linux race/vet,
+Windows vet/build and the physical native suite passed; the latter recorded 378
+top-level passes, 32 skips and zero failures. See
+[the integration evidence](evidence/PARITY-MASTER-INTEGRATION-2026-09-22.md).
+No release was published and the active laptop guest was not changed.
+
+The later September 22 focused follow-up refreshed the comparison against Mac
+commit `d843f54a37346dbb08ee4610785836194ca7e3bd` and adds direct startup for owned
+Windows shortcuts. The attempted in-guest host Settings request was removed after
+the live request did not present a window reliably. See
+[the follow-up evidence](evidence/PARITY-FOLLOWUP-2026-09-22.md).
+
+For the September 21 parity continuation, start with [NEXT-SESSION.md](NEXT-SESSION.md).
+It records the current branch, completed acceptance, cleanup state and remaining
+boundaries after the master integration. Earlier dated entries below are historical.
+
+September 21 pinch/nested continuation: the `pinch1` launcher and r17 runtime
+add an opt-in Windows Precision Touchpad bridge. Synthetic outward/inward pinch,
+scrolling, cancellation, focus loss and pause/resume passed on the laptop without
+libinput errors. The runtime regression suite passed after the final timing fix;
+the launcher suite passed 363 tests with 34 skips. Real nested Linux kernel/PID 1
+boot and clean exit also passed as the ordinary guest user. Guest patches `0083`
+and `0084` seed the device configuration and refresh eight package pins; the full
+factory image built and passed a separate physical Windows first boot, seeded
+configuration checks, Chromium zoom in/out and nested Linux acceptance. See [the continuation evidence](evidence/PINCH-NESTED-2026-09-21.md)
+and [pinch limits](PINCH-ZOOM.md). This remains unpublished engineering work.
+
+September 21 audio continuation: startup output/input choices now have a built
+and physically tested r16 engineering runtime. Native Windows suite: 361 passed,
+34 skipped. Built-in speaker/microphone sessions, microphone-off, startup fallback,
+GPU boot/shutdown and minimal nested KVM passed. See
+[audio acceptance](evidence/AUDIO-PARITY-2026-09-21.md) for hashes and limitations.
+The guest is stopped and audio preferences restored to Windows defaults. The
+public runtime/release lock is unchanged; this is not a published runtime package.
+
+September 21 local continuation: see [MAC-PARITY.md](MAC-PARITY.md) for the
+unpublished launcher/About/location changes, corrected Mac comparison, and the
+next physical checks. The laptop became available during this session; native
+tests, GPU boot/reboot/shutdown and minimal nested KVM execution passed. See
+[the September 21 evidence](evidence/MAC-PARITY-2026-09-21.md) for exact boundaries.
+Earlier release evidence below is retained.
+
+For driving the physical Windows laptop, read
+[Remote laptop testing](REMOTE-LAPTOP-TESTING.md). The machine-local runbook and
+persistent helpers are in `~/.local/share/try-omarchy-laptop-control/`.
+
 Updated September 19, 2026. PR #135 merged as `58f5b70`; PR #136 merged as
 `e1341df`. **v0.0.20-preview is published and Latest**, from source `98cce48`.
 [Release](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.20-preview)

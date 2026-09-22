@@ -23,9 +23,10 @@ def reserve():
 
 
 class VM:
-    def __init__(self, qemu, extra):
+    def __init__(self, qemu, extra, *, env=None):
         self.qemu = qemu
         self.extra = extra
+        self.env = env
         self.process = self.connection = self.stream = self.log = None
         self.sequence = 0
 
@@ -38,7 +39,7 @@ class VM:
         if firmware.is_dir():
             args += ["-L", str(firmware)]
         args += ["-machine", "q35,accel=tcg", "-m", "32", "-nodefaults", "-display", "none", "-S", "-qmp", f"tcp:{address[0]}:{address[1]},server=on,wait=off", *self.extra]
-        self.process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=self.log)
+        self.process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=self.log, env=self.env)
         try:
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline and self.process.poll() is None:
@@ -104,15 +105,17 @@ class VM:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("qemu", type=Path)
+    parser.add_argument("--pinch", action="store_true", help="include the dedicated pinch device")
     args = parser.parse_args()
     qemu = args.qemu.resolve()
+    devices = ["-device", "virtio-pinch-pci"] if args.pinch else []
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         seed = root / "seed.bin"
         pattern = b"unsaved application memory\x00\xff" * 1024
         seed.write_bytes(pattern)
         memory = root / "saved-memory.bin"
-        with VM(qemu, ["-device", f"loader,file={str(seed).replace(',', ',,')},addr=1048576,force-raw=on"]) as source, reserve() as server:
+        with VM(qemu, devices + ["-device", f"loader,file={str(seed).replace(',', ',,')},addr=1048576,force-raw=on"]) as source, reserve() as server:
             server.listen(1)
             server.settimeout(20)
 
@@ -138,7 +141,7 @@ def main():
                 if received.result(timeout=20) <= 0:
                     raise RuntimeError("empty memory stream")
         # The original process is gone. No loader supplies the destination RAM.
-        with VM(qemu, ["-incoming", "defer"]) as target:
+        with VM(qemu, devices + ["-incoming", "defer"]) as target:
             with reserve() as reservation:
                 address = reservation.getsockname()
             incoming = socket_address(address)
