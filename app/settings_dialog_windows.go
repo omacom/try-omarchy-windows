@@ -155,6 +155,16 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		errorBox("Cannot read audio preferences:\n\n" + err.Error())
 		return false
 	}
+	endpointPrefs, err := loadAudioEndpoints(dataDir)
+	if err != nil {
+		errorBox("Cannot read audio endpoint preferences:\n\n" + err.Error())
+		return false
+	}
+	audioEndpointDevices, endpointErr := listAudioEndpoints()
+	audioPrefs.Output, endpointPrefs.OutputID = resolveAudioSelection(
+		audioPrefs.Output, endpointPrefs.OutputID, audioEndpointDevices.Output)
+	audioPrefs.Input, endpointPrefs.InputID = resolveAudioSelection(
+		audioPrefs.Input, endpointPrefs.InputID, audioEndpointDevices.Input)
 	audioQEMU := filepath.Join(dataDir, "runtime", "bin", "qemu-system-x86_64w.exe")
 	if f := flag.Lookup("winq"); f != nil && guestDisplayCount(current.Displays) == 1 && !portable {
 		candidate := filepath.Join(f.Value.String(), "bin", "qemu-system-x86_64w.exe")
@@ -412,13 +422,18 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 				}
 				if audioSupported {
 					updated := audioPrefs
+					updatedEndpoints := endpointPrefs
 					for _, row := range []struct {
-						control uintptr
-						names   []string
-						value   *string
+						control        uintptr
+						names          []string
+						value          *string
+						rememberedName string
+						endpointValue  *string
+						rememberedID   string
+						endpoints      []audioEndpointInfo
 					}{
-						{hAudioOutput, audioDevices.Output, &updated.Output},
-						{hAudioInput, audioDevices.Input, &updated.Input},
+						{hAudioOutput, audioDevices.Output, &updated.Output, audioPrefs.Output, &updatedEndpoints.OutputID, endpointPrefs.OutputID, audioEndpointDevices.Output},
+						{hAudioInput, audioDevices.Input, &updated.Input, audioPrefs.Input, &updatedEndpoints.InputID, endpointPrefs.InputID, audioEndpointDevices.Input},
 					} {
 						index, _, _ := procSendMessageW.Call(row.control, 0x147, 0, 0)
 						if index > uintptr(len(row.names)) {
@@ -429,8 +444,10 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 						if index > 0 {
 							*row.value = row.names[index-1]
 						}
+						*row.endpointValue = endpointIDForSelection(
+							*row.value, row.rememberedName, row.rememberedID, row.endpoints)
 					}
-					if err := saveAudioPreferences(dataDir, updated); err != nil {
+					if err := saveAudioSelection(dataDir, updated, updatedEndpoints); err != nil {
 						errorBox("Audio preferences could not be saved:\n\n" + err.Error())
 						return 0
 					}
@@ -728,6 +745,8 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		audioHelp = "This graphics engine does not support separate audio choices. Windows defaults are used."
 	} else if audioErr != nil {
 		audioHelp = "Windows could not list audio devices. Saved choices are retained; reconnect devices and reopen Settings."
+	} else if endpointErr != nil {
+		audioHelp = "Stable Windows audio IDs are unavailable. Choices still apply by device name at next start."
 	}
 	mk("STATIC", audioHelp, left, y, 450, 42, ssNoprefix, 0)
 	y += 50

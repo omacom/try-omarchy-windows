@@ -38,6 +38,45 @@ func TestNativeAudioDeviceEnumeration(t *testing.T) {
 	}
 }
 
+func TestNativeStableAudioEndpointEnumeration(t *testing.T) {
+	qemu := os.Getenv("TRYOMARCHY_AUDIO_TEST_QEMU")
+	if qemu == "" {
+		t.Skip("requires installed runtime and Windows audio endpoints")
+	}
+	endpoints, err := listAudioEndpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := listAudioDevices(qemu)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for direction, row := range []struct {
+		endpoints []audioEndpointInfo
+		names     []string
+	}{{endpoints.Output, catalog.Output}, {endpoints.Input, catalog.Input}} {
+		if direction == 0 && len(row.endpoints) == 0 {
+			t.Fatal("Windows reported no active output endpoints")
+		}
+		seen := map[string]bool{}
+		matchingNames := 0
+		for _, endpoint := range row.endpoints {
+			if endpoint.ID == "" || endpoint.Name == "" || seen[endpoint.ID] {
+				t.Fatalf("invalid or duplicate endpoint: %+v", endpoint)
+			}
+			seen[endpoint.ID] = true
+			for _, name := range row.names {
+				if endpoint.Name == name {
+					matchingNames++
+				}
+			}
+		}
+		if len(row.names) > 0 && matchingNames == 0 {
+			t.Fatalf("SDL names %q do not match stable endpoint names %+v", row.names, row.endpoints)
+		}
+	}
+}
+
 // Exercise real controls and persistence against the selected test runtime.
 // With v20 the choices must be disabled; with r16 both directions must save.
 func TestAudioSettingsNative(t *testing.T) {
@@ -51,6 +90,10 @@ func TestAudioSettingsNative(t *testing.T) {
 	}
 	dir := t.TempDir()
 	supported := audioRuntimeSupportsSelection(qemu)
+	stable, err := listAudioEndpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, defaults := range []bool{false, true} {
 		cmd := exec.Command(launcher, "-dir", dir, "-settings", "-winq", filepath.Dir(filepath.Dir(qemu)))
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -133,6 +176,18 @@ func TestAudioSettingsNative(t *testing.T) {
 		}
 		if prefs != want {
 			t.Fatalf("saved %+v want %+v", prefs, want)
+		}
+		endpointPrefs, err := loadAudioEndpoints(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantEndpoints := audioEndpoints{SchemaVersion: 1}
+		if supported && !defaults {
+			wantEndpoints.OutputID = endpointIDForSelection(want.Output, "", "", stable.Output)
+			wantEndpoints.InputID = endpointIDForSelection(want.Input, "", "", stable.Input)
+		}
+		if endpointPrefs != wantEndpoints {
+			t.Fatalf("saved endpoints %+v want %+v", endpointPrefs, wantEndpoints)
 		}
 	}
 }

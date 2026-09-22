@@ -25,22 +25,26 @@ release packaging are complete.
 - Reopen Settings to refresh the device list. A disconnected choice is retained
   until changed. Hot-unplug and default-device changes during playback still
   depend on SDL/Windows; restart the VM if routing is not recovered.
-- Preferences identify SDL device names, including SDL's duplicate-name suffixes.
-  Renaming a Windows device or reordering identically named devices may require
-  selecting it again. Stable endpoint IDs and live guest-driven switching remain
-  follow-up work; this is not full Mac audio parity.
+- Preferences retain SDL device names and, when a name uniquely matches an active
+  Core Audio endpoint, its stable Windows endpoint ID. The ID resolves the current
+  friendly name at each start, so ordinary renames and reboots do not discard the
+  selection. Ambiguous duplicate names remain name-based. Live guest-driven
+  switching remains follow-up work; this is not full Mac audio parity.
 
-`audio-preferences.json` lives beside `settings.json` and is included in current
-backups and recovery copies. Keeping it separate lets older launchers continue
-reading their existing preference files during rollback. Older launchers ignore
-these selections. Device enumeration does not open playback or recording streams. Diagnostic
-bundles report whether a selection exists and omit device names.
+`audio-preferences.json` and the separate `audio-endpoints.json` live beside
+`settings.json` and are included in current backups and recovery copies. Keeping
+the IDs separate lets older launchers continue reading the name preferences during
+rollback. Older launchers ignore the ID file. Device enumeration does not open
+playback or recording streams. Diagnostic bundles report whether a selection
+exists and omit device names and endpoint IDs.
 
 ## Validation
 
 The [September 21 physical acceptance](evidence/AUDIO-PARITY-2026-09-21.md)
 passed built-in speaker/microphone routing, startup fallback and microphone-off
-checks on the r16 engineering runtime. Two-device switching remains untested.
+checks on the r16 engineering runtime. The [September 22 integration pass](evidence/PARITY-MASTER-INTEGRATION-2026-09-22.md)
+passed stable endpoint enumeration and persistence on the same laptop. A physical
+rename and two-device switching remain untested.
 
 Local regression coverage includes preference round-trip/corruption, backup
 round-trip, direction separation, microphone disablement, inherited environment
@@ -58,8 +62,9 @@ $env:TRYOMARCHY_AUDIO_TEST_QEMU='<runtime>\bin\qemu-system-x86_64w.exe'
 ```
 
 Run these on the signed-in desktop with no other launcher window. Native tests
-check enumeration, disabled choices with an older runtime, independent choices
-with a supporting runtime, persistence on reopening, and return to defaults.
+check SDL and stable endpoint enumeration, disabled choices with an older runtime,
+independent choices with a supporting runtime, persistence on reopening, and
+return to defaults.
 The settings test uses a temporary installation and does not boot a VM.
 
 Hardware acceptance for each release candidate must additionally boot the existing guest with the rebuilt

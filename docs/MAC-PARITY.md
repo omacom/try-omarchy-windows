@@ -1,6 +1,6 @@
 # Windows and Mac feature review
 
-Reviewed September 21, 2026 against Mac source commit
+Reviewed September 21 and updated September 22, 2026 against Mac source commit
 [`2be19b154f99e3b019c42b3b78f11c01f0ebe6a8`](https://github.com/omacom/try-omarchy/tree/2be19b154f99e3b019c42b3b78f11c01f0ebe6a8).
 This is an implementation and acceptance tracker, not a claim that every feature
 is shipped or hardware-tested. The release gates in
@@ -35,7 +35,7 @@ is shipped or hardware-tested. The release gates in
 | Camera, clipboard, shared folders, transfers | Implemented, with existing physical evidence in the handoff | Retest the selected final candidate; device coverage remains bounded |
 | Resources, updates, storage and recovery | Existing implementation; available before boot in this candidate | Existing v1 gates, plus recovery from the new launcher |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
-| Audio endpoint selection | Startup playback/recording choices implemented for the r16 candidate; [behavior and acceptance](AUDIO-DEVICES.md) | Stable endpoint IDs, live guest selection bridge, and switching between two physical devices |
+| Audio endpoint selection | Startup playback/recording choices and stable Windows endpoint IDs implemented; [behavior and acceptance](AUDIO-DEVICES.md) | Live guest selection bridge, physical rename/unplug acceptance, and switching between two physical devices |
 | Trackpad pinch | [Opt-in r17 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; fresh-image and synthetic Windows-to-Chromium zoom tests pass | Physical gestures, Firefox and broader host/DPI/fullscreen acceptance; experimental only |
 | Windows Hello sudo | Not implemented; guest password authentication remains | Host Hello availability and verification, authenticated request bridge and fail-closed PAM integration; rejection, timeout, cancellation and unsupported-host tests |
 | Bridged networking | NAT and explicit port forwarding exist | Supported adapter/driver implementation and distribution, privilege boundary, reconnect and firewall behavior; no silent installation or adapter reconfiguration |

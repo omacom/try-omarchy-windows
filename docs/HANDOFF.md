@@ -1,8 +1,17 @@
 # Resume here
 
+September 22 integration: `codex/parity-master-integration` merges current master
+into the tested parity checkpoint, preserving resource profiles, GPU tooling,
+launcher/audio/pinch behavior and nested-Linux support. Stable Windows audio
+endpoint IDs were added without changing startup-only routing. Linux race/vet,
+Windows vet/build and the physical native suite passed; the latter recorded 378
+top-level passes, 32 skips and zero failures. See
+[the integration evidence](evidence/PARITY-MASTER-INTEGRATION-2026-09-22.md).
+No release was published and the active laptop guest was not changed.
+
 For the September 21 parity continuation, start with [NEXT-SESSION.md](NEXT-SESSION.md).
-It records the branch, completed acceptance, cleanup state, and integration work
-needed against newer master changes. Earlier dated entries below are historical.
+It records the current branch, completed acceptance, cleanup state and remaining
+boundaries after the master integration. Earlier dated entries below are historical.
 
 September 21 pinch/nested continuation: the `pinch1` launcher and r17 runtime
 add an opt-in Windows Precision Touchpad bridge. Synthetic outward/inward pinch,

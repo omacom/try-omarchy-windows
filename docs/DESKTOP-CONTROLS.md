@@ -33,8 +33,9 @@ while keeping playback enabled. Both device switches retain the existing enabled
 behavior unless changed. The unreleased r16 runtime adds separate **Sound output**
 and **Microphone** choices, applied on the next VM start. Older runtimes keep
 these choices disabled and use Windows defaults. **Windows sound devices** opens
-the host's sound settings. See [audio device behavior and validation](AUDIO-DEVICES.md);
-live guest-driven routing and stable endpoint identities remain follow-up work.
+the host's sound settings. Stable endpoint IDs retain uniquely named selections
+across ordinary renames and reboots. See [audio device behavior and validation](AUDIO-DEVICES.md);
+live guest-driven routing remains follow-up work.
 
 About and updates is available from Settings and the tray. Manual checks verify
 the signed release metadata and offer the release notes/download page when a
@@ -43,7 +44,8 @@ checks can be disabled in Advanced; Linux package updates remain separate inside
 Omarchy under Update > Omarchy.
 
 Camera, microphone-access and update choices live in `desktop-preferences.json`.
-Audio routes live separately in `audio-preferences.json`. Older launchers can
+Audio routes live separately in `audio-preferences.json`, with stable Windows IDs
+in `audio-endpoints.json`. Older launchers can
 still read `settings.json` after rollback. Older launchers do not implement the
 new device restrictions; if you deliberately run an older release, use Windows
 privacy settings to block access. Backups, snapshots and portable copies include

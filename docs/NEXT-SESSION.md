@@ -1,25 +1,21 @@
-# September 21 parity handoff
+# September 22 parity integration handoff
 
 ## Source and integration state
 
 Repository: `omacom/try-omarchy-windows`. Working branch:
-`codex/laptop-control-handoff`. The parity implementation and this handoff are
-committed together; use the branch HEAD as the source checkpoint. No release or
-runtime archive was published, and the public release/runtime lock is unchanged.
+`codex/parity-master-integration`. It starts from the tested parity checkpoint
+`67f27b4`, merges `origin/master` at `3c0e532` in `dca2901`, and adds the
+September 22 stable-audio-ID continuation. No release or runtime archive was
+published, and the public release/runtime lock is unchanged.
 
 The tested launcher/runtime were built before the source commit; their exact
 hashes are in the evidence documents. Committing the source does not turn them
 into signed release artifacts.
 
-At handoff, this branch starts from `2978be6` (remote-control documentation) over
-`b1d3b65`. Fetched `origin/master` is `3c0e532`, with six newer commits including
-host-aware resource profiles, GPU/WSL tooling, and removal of the public v1 roadmap.
-Those changes overlap `main.go`, Settings, backup/restore and documentation.
-They were deliberately not merged during this handoff: preserve the physically
-tested checkpoint, then integrate current master on a continuation branch and
-rerun checks for the actual combined changes. Do not reintroduce the removed
-public roadmap or overwrite the newer resource controls. Existing older docs
-may refer to that roadmap until integration reconciles them.
+The combined branch preserves master's host-aware resource profiles, GPU/WSL
+tooling and removal of the public v1 roadmap. The integration and stable endpoint
+work passed Linux race/vet, Windows vet/build and a complete physical native suite.
+See [the September 22 evidence](evidence/PARITY-MASTER-INTEGRATION-2026-09-22.md).
 
 ## Implemented and accepted
 
@@ -37,6 +33,7 @@ may refer to that roadmap until integration reconciles them.
 
 Evidence:
 
+- [Master integration and stable audio IDs](evidence/PARITY-MASTER-INTEGRATION-2026-09-22.md)
 - [Launcher and branding](evidence/MAC-PARITY-2026-09-21.md)
 - [Audio](evidence/AUDIO-PARITY-2026-09-21.md)
 - [Pinch, fresh image and nested Linux](evidence/PINCH-NESTED-2026-09-21.md)
@@ -96,15 +93,17 @@ The checked-in Windows `.syso` resource is intentionally regenerated source outp
 
 ## Remaining work and guardrails
 
-1. Integrate current master and preserve both resource-profile and parity behavior.
-   Keep the existing candidate/evidence as a rollback reference; use a fresh
-   filename for any rebuilt Windows candidate.
+1. The master integration is complete on `codex/parity-master-integration` at
+   merge commit `dca2901`; combined Linux and native Windows validation passed.
+   See [the September 22 integration evidence](evidence/PARITY-MASTER-INTEGRATION-2026-09-22.md).
+   Keep the earlier candidates as rollback references.
 2. Pinch remains opt-in (`-experimental-pinch`, supporting r17 runtime, GPU,
    one display). Physical fingers, subjective smoothness, Firefox, fullscreen,
    mixed DPI, Windows 10 and other touchpads remain untested. Synthetic acceptance
    is not evidence of all those behaviors. Do not silently enable it by default.
-3. Audio selection is startup-only. Live routing and stable endpoint IDs remain
-   feature work; switching between two physical endpoints remains untested.
+3. Audio selection is startup-only. Stable endpoint IDs now persist uniquely
+   named choices and passed native enumeration/persistence tests. Live routing,
+   physical rename/unplug acceptance and two-endpoint switching remain open.
 4. Windows Hello sudo is unimplemented. This laptop reported `DeviceNotPresent`;
    retain password authentication and do not substitute an unverified PAM bridge.
 5. Bridged networking is unimplemented. NAT/explicit forwarding work. No TAP,

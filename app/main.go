@@ -423,6 +423,18 @@ func main() {
 	if desktopErr != nil {
 		fatal("Cannot read audio preferences: %v", desktopErr)
 	}
+	audioEndpointPrefs, desktopErr := loadAudioEndpoints(cfg.dir)
+	if desktopErr != nil {
+		fatal("Cannot read audio endpoint preferences: %v", desktopErr)
+	}
+	if endpoints, err := listAudioEndpoints(); err != nil {
+		logf("Stable audio endpoint lookup is unavailable; using saved device names: %v", err)
+	} else {
+		cfg.audioDevices.Output, _ = resolveAudioSelection(
+			cfg.audioDevices.Output, audioEndpointPrefs.OutputID, endpoints.Output)
+		cfg.audioDevices.Input, _ = resolveAudioSelection(
+			cfg.audioDevices.Input, audioEndpointPrefs.InputID, endpoints.Input)
+	}
 
 	// settings.json holds the rows the settings window edits; explicit flags
 	// win for this launch only.

@@ -48,6 +48,13 @@ func TestLauncherWindowKeyboard(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
+			if settingsOnly {
+				// The memory field only feeds settings in the Manual profile;
+				// presets size the guest at launch instead.
+				if err := saveResourcePreferences(dir, resourceManual); err != nil {
+					t.Fatal(err)
+				}
+			}
 			args := []string{"-dir", dir}
 			titleText := appTitle
 			if settingsOnly {
