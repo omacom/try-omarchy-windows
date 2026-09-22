@@ -4,7 +4,9 @@ This pass refreshed the comparison against Mac source commit
 `d843f54a37346dbb08ee4610785836194ca7e3bd` and added two bounded Windows
 feature that fits the existing launcher architecture.
 
-Source commit: `e7bf0a6` on `codex/parity-master-integration`.
+Accepted implementation boundary: `655d6ac` on
+`codex/parity-master-integration`. The earlier `e7bf0a6` attempt also contained
+the in-guest Settings bridge that was later removed.
 
 ## Implemented
 
