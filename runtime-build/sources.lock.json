@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "name": "winq-emu-alpha10-source-r20",
+  "name": "winq-emu-alpha10-source-r20c",
   "sourceDateEpoch": 1777269494,
   "qemu": {
     "repository": "https://github.com/cmspam/winq-emu-qemu.git",
@@ -73,6 +73,10 @@
       {
         "file": "patches/qemu/0016-live-sdl-audio-routes.patch",
         "sha256": "f7ea4393afdc6bd97604c4d2dbb015600c4ffd98cbcffc05d2bcdfd7493e6eb2"
+      },
+      {
+        "file": "patches/qemu/0017-defer-idle-sdl-playback-open.patch",
+        "sha256": "81a20e6bb025eccaf9edc5f4f13a0b3d3d3a4a799a377ac00eb64dabce2ed221"
       }
     ]
   },

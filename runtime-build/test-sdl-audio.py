@@ -9,6 +9,11 @@ import tempfile
 parser = argparse.ArgumentParser()
 parser.add_argument('source', type=Path)
 source = parser.parse_args().source.read_text(encoding='utf-8')
+playback_init = source[source.index('static int sdl_init_out('):
+                       source.index('static void sdl_enable_out(')]
+assert 'sdl_open(' not in playback_init
+assert 'SDL_OpenAudioDevice(' not in playback_init
+assert 'obt = req;' in playback_init
 helper = source[source.index('static char *sdl_initial_device_name('):
                 source.index('static void sdl_close_out(')]
 harness = r'''

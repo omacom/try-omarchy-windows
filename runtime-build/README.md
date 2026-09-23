@@ -69,6 +69,11 @@ PipeWire picker integration, a signed runtime pin and real two-endpoint/hotplug
 acceptance remain. The route-file parser and SDL open/fallback behavior are
 compiled by `test-sdl-audio.py` during the runtime build.
 
+The r20c follow-up defers the initial SDL playback open until the guest starts
+a stream. The r20b physical candidate kept a Realtek render session active
+while the guest was idle after boot, even though subsequent idle periods closed
+it. The physical idle and first-playback checks must pass before r20c is pinned.
+
 The r5 recipe restores the Windows socket handle protection bit with an explicit
 mask before closing the socket. The old zero-mask call left protection enabled
 when the original flags were zero. A compiled source fixture covers all original
