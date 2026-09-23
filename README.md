@@ -54,7 +54,7 @@ See [app compatibility](docs/COMPATIBILITY.md) for package support and current V
 
 ## Architecture
 
-Same recipe as the excellent macOS [try-omarchy](https://github.com/themartiano/try-omarchy) (QEMU + Apple Hypervisor Framework + VirGL), translated to Windows:
+Same recipe as the excellent macOS [try-omarchy](https://github.com/omacom/try-omarchy) (QEMU + Apple Hypervisor Framework + VirGL), translated to Windows:
 
 | Piece | macOS (try-omarchy) | This project |
 |---|---|---|
@@ -379,7 +379,7 @@ The guest image (Omarchy 4.0.3, all upstream themes, screensavers, autologin, cl
 This project stands on a lot of shoulders:
 
 - [Omarchy](https://github.com/basecamp/omarchy) by DHH / Basecamp: the desktop this is all about
-- [try-omarchy](https://github.com/themartiano/try-omarchy) by Eduardo (themartiano): the original macOS app and the architecture this follows
+- [try-omarchy](https://github.com/omacom/try-omarchy) by Eduardo (themartiano): the original macOS app and the architecture this follows
 - [try-omarchy-win](https://github.com/jorge-huxley/try-omarchy-win) by Jorge Silva: the x86_64 guest builder retarget and the proven WHPX boot recipe this project reuses
 - [WINQ-EMU](https://github.com/cmspam/winq-emu) by cmspam: Venus Vulkan GPU forwarding for QEMU on Windows, the graphics path
 - [omarchy-windows-hyperv-gpu](https://github.com/Chainfire/omarchy-windows-hyperv-gpu) by Chainfire: prior art proving GPU-accelerated Omarchy on Windows, plus the QEMU 11 WHPX interrupt findings
