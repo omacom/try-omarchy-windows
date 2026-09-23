@@ -1,0 +1,157 @@
+diff --git i/accel/stubs/whpx-stub.c w/accel/stubs/whpx-stub.c
+index 4529dc4f78..9aa0e5921d 100644
+--- i/accel/stubs/whpx-stub.c
++++ w/accel/stubs/whpx-stub.c
+@@ -9,5 +9,10 @@
+ #include "qemu/osdep.h"
+ #include "system/whpx.h"
+ 
++void whpx_report_free_pages(hwaddr gpa, void *host, size_t size)
++{
++    g_assert_not_reached();
++}
++
+ bool whpx_allowed;
+ bool whpx_irqchip_in_kernel;
+diff --git i/accel/whpx/whpx-common.c w/accel/whpx/whpx-common.c
+index 2ab6830911..129c45b254 100644
+--- i/accel/whpx/whpx-common.c
++++ w/accel/whpx/whpx-common.c
+@@ -26,12 +26,14 @@
+ #include "migration/blocker.h"
+ #include "host-cpu.h"
+ #include "accel/accel-cpu-target.h"
++#include <windows.h>
+ #include <winerror.h>
+ 
+ #include "system/whpx-internal.h"
+ #include "system/whpx-accel-ops.h"
+ #include "system/whpx-common.h"
+ #include "system/whpx-all.h"
++#include "system/ramblock.h"
+ 
+ #include <winhvplatform.h>
+ #include <winhvplatformdefs.h>
+@@ -285,6 +287,71 @@ void whpx_vcpu_kick(CPUState *cpu)
+  * Memory support.
+  */
+ 
++void whpx_report_free_pages(hwaddr gpa, void *host, size_t size)
++{
++    MemoryRegionSection section;
++    MemoryRegion *mr;
++    RAMBlock *rb;
++    size_t page_size = qemu_real_host_page_size();
++    HRESULT hr;
++    void *committed;
++
++    assert(bql_locked());
++    if (!size || !QEMU_IS_ALIGNED(gpa | (uintptr_t)host | size, page_size)) {
++        return;
++    }
++
++    /* Only QEMU-owned, private, writable anonymous RAM can be safely
++     * decommitted. The complete GPA range must resolve to these host pages.
++     * Leave file-backed, external, ROM and dirty-logged memory alone.
++     */
++    section = memory_region_find(get_system_memory(), gpa, size);
++    mr = section.mr;
++    if (!mr) {
++        return;
++    }
++    rb = mr->ram_block;
++    if (!memory_region_is_ram(mr) || mr->readonly || mr->rom_device ||
++        memory_region_is_ram_device(mr) || !rb || rb->fd >= 0 ||
++        (rb->flags & (RAM_SHARED | RAM_PREALLOC)) ||
++        memory_region_get_dirty_log_mask(mr) ||
++        int128_get64(section.size) != size ||
++        section.offset_within_address_space != gpa ||
++        memory_region_get_ram_ptr(mr) + section.offset_within_region != host) {
++        memory_region_unref(mr);
++        return;
++    }
++
++    /* The guest has surrendered these free pages until the queue reply.
++     * Unmap their GPA, decommit their private VirtualAlloc backing, then
++     * recommit at the same VA. MEM_COMMIT guarantees zeroes on the next
++     * access while physical pages remain unallocated until they are used.
++     * Do not acknowledge the report if any step leaves an invalid mapping.
++     */
++    hr = whp_dispatch.WHvUnmapGpaRange(whpx_global.partition, gpa, size);
++    if (FAILED(hr)) {
++        error_report("WHPX free-page unmap failed: %08lx", hr);
++        abort();
++    }
++    if (!VirtualFree(host, size, MEM_DECOMMIT)) {
++        error_report("WHPX free-page decommit failed: %lu", GetLastError());
++        abort();
++    }
++    committed = VirtualAlloc(host, size, MEM_COMMIT, PAGE_READWRITE);
++    if (committed != host) {
++        error_report("WHPX free-page recommit failed: %lu", GetLastError());
++        abort();
++    }
++    hr = whp_dispatch.WHvMapGpaRange(whpx_global.partition, host, gpa, size,
++            WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite |
++            WHvMapGpaRangeFlagExecute);
++    if (FAILED(hr)) {
++        error_report("WHPX free-page remap failed: %08lx", hr);
++        abort();
++    }
++    memory_region_unref(mr);
++}
++
+ static void whpx_set_phys_mem(MemoryRegionSection *section, bool add)
+ {
+     struct whpx_state *whpx = &whpx_global;
+diff --git i/hw/virtio/virtio-balloon.c w/hw/virtio/virtio-balloon.c
+index 4c5f486ba2..9c9c976561 100644
+--- i/hw/virtio/virtio-balloon.c
++++ w/hw/virtio/virtio-balloon.c
+@@ -23,6 +23,7 @@
+ #include "hw/core/qdev-properties.h"
+ #include "hw/core/boards.h"
+ #include "system/balloon.h"
++#include "system/whpx.h"
+ #include "system/ramblock.h"
+ #include "hw/virtio/virtio-balloon.h"
+ #include "system/address-spaces.h"
+@@ -389,7 +390,14 @@ static void virtio_balloon_handle_report(VirtIODevice *vdev, VirtQueue *vq)
+                 continue;
+             }
+ 
+-            ram_block_discard_range(rb, ram_offset, size);
++            if (whpx_enabled()) {
++                /* in_addr is a GPA only without an intervening IOMMU. */
++                if (vdev->dma_as == &address_space_memory) {
++                    whpx_report_free_pages(elem->in_addr[i], addr, size);
++                }
++            } else {
++                ram_block_discard_range(rb, ram_offset, size);
++            }
+         }
+ 
+ skip_element:
+diff --git i/include/system/whpx.h w/include/system/whpx.h
+index 964bf3cb5a..fcb030eaea 100644
+--- i/include/system/whpx.h
++++ w/include/system/whpx.h
+@@ -15,6 +15,8 @@
+ #ifndef QEMU_WHPX_H
+ #define QEMU_WHPX_H
+ 
++#include "exec/hwaddr.h"
++
+ #ifdef COMPILING_PER_TARGET
+ # ifdef CONFIG_WHPX
+ #  define CONFIG_WHPX_IS_POSSIBLE
+@@ -31,6 +33,9 @@ extern bool whpx_irqchip_in_kernel;
+ 
+ uint32_t whpx_get_supported_cpuid(uint32_t func, uint32_t idx, int reg);
+ 
++/* Discard a guest free-page report under the QEMU global lock. */
++void whpx_report_free_pages(hwaddr gpa, void *host, size_t size);
++
+ #else /* !CONFIG_WHPX_IS_POSSIBLE */
+ #define whpx_enabled() 0
+ #define whpx_irqchip_in_kernel() (0)
