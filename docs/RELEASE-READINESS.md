@@ -1,14 +1,14 @@
-# Release readiness review — September 22, 2026
+# Release readiness review — September 23, 2026
 
 ## Current decision
 
-The latest public launcher is `v0.0.20-preview`. A new `v0.1.0` private draft
-has passed guest build and headless boot smoke, and its source pin matches the
-draft manifest. It still needs an exact signed launcher and physical Windows
-acceptance before a publication decision. The older `v1.0.0` draft and its
-signed candidate passed substantial laptop acceptance, but current source
-contains fixes newer than that binary. No normal version has been approved or
-published.
+The latest public launcher is `v0.0.20-preview`. The `v0.1.0` private draft
+has passed guest build, headless boot smoke, asset verification, signing, and
+physical Windows acceptance on the available AMD laptop. Its pinned source is
+commit `9ae72c386f3d7aebc353b2924112c35e77a4475c`. The
+[signed candidate record](evidence/V0.1.0-SIGNED-CANDIDATE-2026-09-23.md)
+documents the exact test binary, upgrade, clean boot, recovery, backup,
+restore, and uninstall. No normal version has been approved or published.
 
 Dropping `-preview` need not mean claiming 1.0 completeness. `v0.1.0` is the
 current normal-version candidate, subject to the gates below and a release
@@ -69,9 +69,10 @@ command-line restores folder-local launchers (PRs
 [#156](https://github.com/omacom/try-omarchy-windows/pull/156)). These fixes
 postdate the old signed draft. The first signed `v0.1.0` candidate preserved the
 existing links during a clean install, but offered the same unavailable Start
-Menu choice again on the next boot. The source now places launchers beside a
-second installation and records the choice. Rebuild and sign this fix before
-calling the exact binary accepted.
+Menu choice again on the next boot. [PR #162](https://github.com/omacom/try-omarchy-windows/pull/162)
+placed launchers beside a second installation and recorded the choice. The
+re-signed binary passed both the first-run collision and repeat-launch checks
+on the laptop.
 
 ## Gates for a first normal 0.x release
 
@@ -93,12 +94,14 @@ calling the exact binary accepted.
    promotion. Publish only after the draft asset hashes, Authenticode signature,
    public download, rollback, and latest-release pointer have been checked.
 
-The old signed draft has passed the clean-install, backup/restore, uninstall,
-GPU, CPU and update-rollback checks recorded above. Its binary predates the
-latest product fixes, so the next practical gate is a signed `v0.1.0` candidate
-with final visual and core integration checks. The public download and update
-feed still point to `v0.0.20-preview`. Broader hardware and Windows 10
-coverage remain post-release compatibility work, not promotion gates.
+The `v0.1.0` candidate passed the available physical tests, including visual
+inspection, GPU and CPU boots, core integrations, update rollback, backup,
+restore, and uninstall. The original installation and shortcuts were preserved.
+The remaining gate is a publication decision followed by the publish workflow's
+public asset and feed checks, a physical preview-bridge-to-`v0.1.0` update, and
+switching the prepared site PR to the newly public download. The public
+download and update feed still point to `v0.0.20-preview`. Broader hardware
+and Windows 10 coverage remain post-release compatibility work.
 
 ## 1.0 quality bar
 
