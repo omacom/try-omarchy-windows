@@ -60,6 +60,48 @@ func TestNewInstallPreservesForeignShortcuts(t *testing.T) {
 	}
 }
 
+func TestSecondInstallGetsFolderShortcutsAfterGlobalConflict(t *testing.T) {
+	root := t.TempDir()
+	oldTarget := filepath.Join(root, "old-install", stableLauncherName)
+	dir := filepath.Join(root, "new-install")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	newTarget := filepath.Join(dir, stableLauncherName)
+	paths := []string{
+		filepath.Join(root, "Try Omarchy.lnk"),
+		filepath.Join(root, "Try Omarchy Settings.lnk"),
+		filepath.Join(root, "Desktop Try Omarchy.lnk"),
+	}
+	if err := writeShellLink(paths[0], oldTarget, "-dir old", root); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := finishLauncherShortcutChoice(paths, newTarget, dir, true, false, true)
+	if err != nil || !strings.Contains(message, "beside this installation") {
+		t.Fatalf("folder fallback: message=%q err=%v", message, err)
+	}
+	if !shortcutOfferRecorded(dir) {
+		t.Fatal("choice was not recorded; the prompt would return on the next launch")
+	}
+	after, err := os.ReadFile(paths[0])
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("foreign Start Menu shortcut changed: %v", err)
+	}
+	for _, item := range []struct{ name, arguments string }{
+		{"Start Omarchy.lnk", launchShortcutArguments(dir, true)},
+		{"Settings.lnk", settingsShortcutArguments(dir)},
+	} {
+		target, arguments, err := readShellLink(filepath.Join(dir, item.name))
+		if err != nil || !sameShortcutTarget(target, newTarget) || arguments != item.arguments {
+			t.Fatalf("folder shortcut %s: target=%q arguments=%q err=%v", item.name, target, arguments, err)
+		}
+	}
+}
+
 func TestNewInstallRefreshesItsOwnShortcuts(t *testing.T) {
 	dir := t.TempDir()
 	paths := []string{
