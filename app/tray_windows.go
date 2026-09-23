@@ -67,6 +67,7 @@ const (
 	wmNull                = 0x0000
 	wmLButtonDblClk       = 0x0203
 	wmRButtonUp           = 0x0205
+	swRestore             = 9
 )
 
 type trayGUID struct {
@@ -300,7 +301,9 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 		switch command {
 		case trayCommandShow:
 			if qemuWindow := qemuHwnd.Load(); qemuWindow != 0 {
-				procShowWindow.Call(qemuWindow, swShow)
+				// Approved Windows apps minimize a fullscreen VM. SW_SHOW leaves
+				// a minimized window minimized; restore it before focusing it.
+				procShowWindow.Call(qemuWindow, swRestore)
 				procSetForegroundWindow.Call(qemuWindow)
 			}
 		case trayCommandShare:
@@ -377,7 +380,7 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 			switch event {
 			case wmLButtonDblClk:
 				if qemuWindow := qemuHwnd.Load(); qemuWindow != 0 {
-					procShowWindow.Call(qemuWindow, swShow)
+					procShowWindow.Call(qemuWindow, swRestore)
 					procSetForegroundWindow.Call(qemuWindow)
 				}
 			case wmRButtonUp, wmContextMenu:
