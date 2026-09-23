@@ -37,6 +37,14 @@ func recoveryCOMError(result uintptr) error {
 // Common Item Dialog uses the standard Windows file browser, including current
 // locations, search, keyboard navigation, and accessible system controls.
 func chooseRecoveryPath(owner uintptr, title, filename string, save, folder bool) (string, bool, error) {
+	return chooseWindowsPath(owner, title, filename, save, folder, false)
+}
+
+func chooseExecutablePath(owner uintptr) (string, bool, error) {
+	return chooseWindowsPath(owner, "Choose a Windows app to make available in Omarchy", "", false, false, true)
+}
+
+func chooseWindowsPath(owner uintptr, title, filename string, save, folder, executable bool) (string, bool, error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	init, _, _ := ole32.NewProc("CoInitializeEx").Call(0, 2)
@@ -87,13 +95,17 @@ func chooseRecoveryPath(owner uintptr, title, filename string, save, folder bool
 		}
 	}
 	if !folder {
-		label, _ := syscall.UTF16PtrFromString("Omarchy backups (*.zip)")
-		pattern, _ := syscall.UTF16PtrFromString("*.zip")
+		filterLabel, filterPattern, extension := "Omarchy backups (*.zip)", "*.zip", "zip"
+		if executable {
+			filterLabel, filterPattern, extension = "Windows apps (*.exe)", "*.exe", "exe"
+		}
+		label, _ := syscall.UTF16PtrFromString(filterLabel)
+		pattern, _ := syscall.UTF16PtrFromString(filterPattern)
 		filter := struct{ label, pattern *uint16 }{label, pattern}
 		if err = recoveryCOMError(recoveryCOMCall(dialog, 4, 1, uintptr(unsafe.Pointer(&filter)))); err != nil {
 			return "", false, err
 		}
-		ext, _ := syscall.UTF16PtrFromString("zip")
+		ext, _ := syscall.UTF16PtrFromString(extension)
 		if err = recoveryCOMError(recoveryCOMCall(dialog, 22, uintptr(unsafe.Pointer(ext)))); err != nil {
 			return "", false, err
 		}

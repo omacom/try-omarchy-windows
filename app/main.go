@@ -791,7 +791,7 @@ func main() {
 
 	reclaimDir.Store(&cfg.dir)
 	reclaimSupported.Store(cfg.diskFormat == "raw")
-	go runGuestAgent()
+	go runGuestAgent(cfg.dir)
 	go runWinKeyHook()
 	go runWinKeyQmp()
 	go runTitleEnforcer(cfg.dir, cfg.fullscreen)
@@ -1183,7 +1183,7 @@ var hostResumed = make(chan struct{}, 1)
 // listening.
 var theAgent atomic.Pointer[guestAgent]
 
-func runGuestAgent() {
+func runGuestAgent(dir string) {
 	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", agentPort))
 	if err != nil {
 		logf("agent: port %d unavailable, guest clock sync disabled: %v", agentPort, err)
@@ -1191,6 +1191,8 @@ func runGuestAgent() {
 	}
 	logf("agent: listening on %d", agentPort)
 	a := newGuestAgent()
+	a.appsDir = dir
+	a.launchApp = func(id string) error { return launchApprovedWindowsApp(dir, id) }
 	theAgent.Store(a)
 	a.run(l, hostResumed)
 }

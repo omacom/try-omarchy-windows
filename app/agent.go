@@ -19,6 +19,7 @@ import (
 //   guest -> host: "hello <version>"       the agent connected
 //   guest -> host: "zero-fill done|failed" the fill finished
 //   guest -> host: "open-settings"     one-shot request on a separate connection
+//   guest -> host: "launch-app <approved ID>" one-shot allowlisted Windows app request
 // The host sends the time on connect, every few minutes, and after Windows
 // resumes from sleep, when the guest clock is the thing most likely to be wrong.
 
@@ -26,11 +27,14 @@ const agentTimeInterval = 5 * time.Minute
 const agentBatteryInterval = 30 * time.Second
 
 type guestAgent struct {
-	mu           sync.Mutex
-	conn         net.Conn
-	now          func() time.Time
-	openSettings func() bool
-	batteryLine  func() (string, error)
+	mu            sync.Mutex
+	conn          net.Conn
+	now           func() time.Time
+	openSettings  func() bool
+	batteryLine   func() (string, error)
+	appsDir       string
+	launchApp     func(string) error
+	lastAppLaunch time.Time
 	// zeroFilled is set when the guest reports that it zero-filled its free
 	// space, so the launcher compacts disk.raw after the guest powers off.
 	zeroFilled      bool
@@ -81,6 +85,15 @@ func (a *guestAgent) serve(c net.Conn) {
 		_, _ = c.Write([]byte(status))
 		return
 	}
+	if strings.HasPrefix(first, "launch-app ") {
+		status := "unavailable\n"
+		if a.requestAppLaunch(strings.TrimSpace(strings.TrimPrefix(first, "launch-app "))) == nil {
+			status = "ok\n"
+		}
+		_ = c.SetWriteDeadline(time.Now().Add(3 * time.Second))
+		_, _ = c.Write([]byte(status))
+		return
+	}
 	if !strings.HasPrefix(first, "hello ") {
 		return
 	}
@@ -97,7 +110,35 @@ func (a *guestAgent) serve(c net.Conn) {
 	logf("agent: guest agent connected (%s)", strings.TrimSpace(strings.TrimPrefix(first, "hello ")))
 	a.sendTime("connect")
 	a.sendBattery()
+	a.sendApprovedApps()
 	a.read(c, r)
+}
+
+func (a *guestAgent) requestAppLaunch(id string) error {
+	if !validApprovedAppID(id) || a.launchApp == nil {
+		return fmt.Errorf("invalid or unavailable Windows app")
+	}
+	a.mu.Lock()
+	if !a.lastAppLaunch.IsZero() && a.now().Sub(a.lastAppLaunch) < time.Second {
+		a.mu.Unlock()
+		return fmt.Errorf("Windows app launch rate limit")
+	}
+	a.lastAppLaunch = a.now()
+	a.mu.Unlock()
+	return a.launchApp(id)
+}
+
+func (a *guestAgent) sendApprovedApps() bool {
+	if a.appsDir == "" {
+		return false
+	}
+	prefs, err := loadApprovedWindowsApps(a.appsDir)
+	if err != nil {
+		logf("agent: could not read approved Windows apps: %v", err)
+		prefs = approvedAppPreferences{SchemaVersion: 1}
+	}
+	line, err := approvedAppsLine(prefs)
+	return err == nil && a.sendLine(line)
 }
 
 func (a *guestAgent) read(c net.Conn, r *bufio.Reader) {
@@ -168,7 +209,7 @@ func (a *guestAgent) sendBattery() bool {
 func (a *guestAgent) sendLine(line string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.conn == nil || line == "" || len(line) > 4096 || !strings.HasSuffix(line, "\n") {
+	if a.conn == nil || line == "" || len(line) > 16<<10 || !strings.HasSuffix(line, "\n") {
 		return false
 	}
 	a.conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
@@ -196,14 +237,17 @@ func (a *guestAgent) run(l net.Listener, resumed <-chan struct{}) {
 			a.sendTime("")
 		case <-batteryTicker.C:
 			a.sendBattery()
+			a.sendApprovedApps()
 		case <-resumed:
 			// Windows may take a moment to bring the clock and network back;
 			// send now and again shortly after.
 			a.sendTime("resume")
 			a.sendBattery()
+			a.sendApprovedApps()
 			time.Sleep(5 * time.Second)
 			a.sendTime("resume")
 			a.sendBattery()
+			a.sendApprovedApps()
 		}
 	}
 }

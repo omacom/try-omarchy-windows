@@ -1,0 +1,259 @@
+From a33c11d7139d83c64243ee2d853c03cdc1c2a88d Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 23 Sep 2026 07:47:00 -0400
+Subject: [PATCH] Expose approved Windows apps in the Omarchy launcher
+
+---
+ .../usr/local/bin/try-omarchy-windows-app     | 24 ++++++
+ .../usr/local/lib/try-omarchy/agent           | 10 ++-
+ .../local/lib/try-omarchy/approved-apps-sync  | 75 +++++++++++++++++++
+ guest/scripts/finalize-rootfs.sh              |  5 +-
+ guest/tests/test_overlay_scripts.py           | 44 +++++++++++
+ guest/tests/verify.py                         |  4 +-
+ 6 files changed, 159 insertions(+), 3 deletions(-)
+ create mode 100755 guest/factory-overlay/usr/local/bin/try-omarchy-windows-app
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/approved-apps-sync
+
+diff --git a/guest/factory-overlay/usr/local/bin/try-omarchy-windows-app b/guest/factory-overlay/usr/local/bin/try-omarchy-windows-app
+new file mode 100755
+index 0000000..bc13be3
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/bin/try-omarchy-windows-app
+@@ -0,0 +1,24 @@
++#!/bin/bash
++# Launch only a Windows app ID previously approved in host Settings.
++set -u
++id=${1:-}
++if [[ ! $id =~ ^[0-9a-f]{32}$ || $# -ne 1 ]]; then
++  echo 'Invalid approved Windows app.' >&2
++  exit 2
++fi
++host=${TRY_OMARCHY_AGENT_HOST:-10.0.2.2}
++port=${TRY_OMARCHY_AGENT_PORT:-4451}
++if ! { exec 3<>"/dev/tcp/$host/$port"; } 2>/dev/null; then
++  message='Windows app launch is unavailable. Start Omarchy from Windows and try again.'
++elif ! printf 'launch-app %s\n' "$id" >&3 || ! IFS= read -r -t 5 response <&3 || [[ $response != ok ]]; then
++  message='That Windows app is no longer approved or could not start. Check Try Omarchy Settings on Windows.'
++else
++  exec 3>&-
++  exit 0
++fi
++exec 3>&-
++printf '%s\n' "$message" >&2
++if command -v notify-send >/dev/null 2>&1; then
++  notify-send 'Try Omarchy' "$message"
++fi
++exit 1
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/agent b/guest/factory-overlay/usr/local/lib/try-omarchy/agent
+index 97eec4a..00b6a0a 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/agent
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/agent
+@@ -11,7 +11,8 @@ host=${TRY_OMARCHY_AGENT_HOST:-10.0.2.2}
+ port=${TRY_OMARCHY_AGENT_PORT:-4451}
+ set_time=${TRY_OMARCHY_SET_TIME:-date -s}
+ fill_dir=${TRY_OMARCHY_FILL_DIR:-/var/tmp}
+-version=3
++version=4
++app_sync=${TRY_OMARCHY_APP_SYNC:-/usr/local/lib/try-omarchy/approved-apps-sync}
+ max_drift=2
+ # Space left free while zero-filling, so running programs keep working.
+ fill_reserve_mib=512
+@@ -59,6 +60,13 @@ zero_fill() {
+ handle() {
+   local line=$1 target now drift
+   case $line in
++    apps\ *)
++      if [[ -n ${TRY_OMARCHY_APP_SYNC:-} ]]; then
++        printf '%s\n' "${line#apps }" | "$app_sync" || echo 'could not sync approved Windows apps' >&2
++      else
++        printf '%s\n' "${line#apps }" | runuser -u omarchy -- "$app_sync" || echo 'could not sync approved Windows apps' >&2
++      fi
++      ;;
+     battery\ *)
+       printf '%s\n' "${line#battery }" | /usr/local/lib/try-omarchy/battery-apply ||
+         echo 'could not apply host battery state' >&2
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/approved-apps-sync b/guest/factory-overlay/usr/local/lib/try-omarchy/approved-apps-sync
+new file mode 100755
+index 0000000..eaa0f68
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/approved-apps-sync
+@@ -0,0 +1,75 @@
++#!/usr/bin/env python3
++"""Apply host-approved Windows app IDs to the Omarchy user's launcher menu."""
++import base64
++import json
++import os
++import pathlib
++import re
++import sys
++import tempfile
++
++PREFIX = "try-omarchy-windows-"
++ID = re.compile(r"[0-9a-f]{32}\Z")
++
++
++def entries(data: str) -> dict[str, str]:
++    raw = base64.b64decode(data, validate=True)
++    if len(raw) > 12288:
++        raise ValueError("approved app list is too large")
++    value = json.loads(raw)
++    if not isinstance(value, list) or len(value) > 16:
++        raise ValueError("invalid approved app list")
++    result = {}
++    for item in value:
++        if not isinstance(item, dict) or set(item) != {"id", "name"}:
++            raise ValueError("invalid approved app entry")
++        app_id, name = item["id"], item["name"]
++        if not isinstance(app_id, str) or not ID.fullmatch(app_id) or app_id in result:
++            raise ValueError("invalid approved app ID")
++        if not isinstance(name, str) or not name or len(name) > 80 or any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
++            raise ValueError("invalid approved app name")
++        result[app_id] = name
++    return result
++
++
++def sync(apps: dict[str, str], directory: pathlib.Path) -> None:
++    directory.mkdir(mode=0o755, parents=True, exist_ok=True)
++    wanted = set()
++    for app_id, name in apps.items():
++        target = directory / f"{PREFIX}{app_id}.desktop"
++        wanted.add(target.name)
++        content = ("[Desktop Entry]\nType=Application\n"
++                   f"Name=Windows: {name.replace('\\', '\\\\')}\n"
++                   "Comment=Launch an approved Windows app outside Omarchy\n"
++                   f"Exec=try-omarchy-windows-app {app_id}\n"
++                   "Icon=computer\nCategories=Utility;\nTerminal=false\n")
++        if target.is_file() and target.read_text(encoding="utf-8") == content:
++            continue
++        fd, temp = tempfile.mkstemp(prefix=".try-omarchy-windows-", dir=directory)
++        try:
++            with os.fdopen(fd, "w", encoding="utf-8") as output:
++                output.write(content)
++            os.chmod(temp, 0o644)
++            os.replace(temp, target)
++        finally:
++            if os.path.exists(temp):
++                os.unlink(temp)
++    for path in directory.glob(f"{PREFIX}*.desktop"):
++        if ID.fullmatch(path.stem.removeprefix(PREFIX)) and path.name not in wanted:
++            path.unlink()
++
++
++def main() -> None:
++    data = sys.stdin.readline(16385).strip()
++    if not data or sys.stdin.read(1):
++        raise ValueError("invalid approved app input")
++    directory = pathlib.Path(os.environ.get("TRY_OMARCHY_APP_DIR", "~/.local/share/applications")).expanduser()
++    sync(entries(data), directory)
++
++
++if __name__ == "__main__":
++    try:
++        main()
++    except (OSError, ValueError, json.JSONDecodeError) as error:
++        print(f"could not sync approved Windows apps: {error}", file=sys.stderr)
++        sys.exit(1)
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index b72206d..2dc9d63 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -105,6 +105,8 @@ compat_paths=(
+   usr/local/bin/try-omarchy-drop
+   usr/local/bin/try-omarchy-host-settings
+   usr/share/applications/try-omarchy-host-settings.desktop
++  usr/local/bin/try-omarchy-windows-app
++  usr/local/lib/try-omarchy/approved-apps-sync
+   etc/systemd/user/clipboard-bridge.service
+   etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf
+   etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service
+@@ -167,7 +169,8 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 28 receives file drops in the background directly into folders.
+ # Revision 30 adds the in-guest launcher for native Windows settings.
+ # Revision 31 delivers the host battery device and its guest agent.
+-compat_revision=31
++# Revision 32 adds approved Windows app launcher entries and the guest request.
++compat_revision=32
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index 888f3eb..2c43821 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -22,6 +22,8 @@ REQUEST_SSHD = OVERLAY / "usr/local/lib/try-omarchy/request-sshd"
+ HOST_LOCALE = OVERLAY / "usr/local/lib/try-omarchy/apply-host-locale"
+ AGENT = OVERLAY / "usr/local/lib/try-omarchy/agent"
+ HOST_SETTINGS = OVERLAY / "usr/local/bin/try-omarchy-host-settings"
++WINDOWS_APP = OVERLAY / "usr/local/bin/try-omarchy-windows-app"
++APP_SYNC = OVERLAY / "usr/local/lib/try-omarchy/approved-apps-sync"
+ BATTERY_APPLY = OVERLAY / "usr/local/lib/try-omarchy/battery-apply"
+ CATCH_UP = OVERLAY / "usr/local/lib/try-omarchy/catch-up"
+ FRAGMENT = OVERLAY / "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua"
+@@ -511,6 +513,48 @@ class HostLocaleTests(OverlayCase):
+ 
+ 
+ class AgentTests(OverlayCase):
++    def test_approved_windows_apps_sync_and_revoke(self) -> None:
++        app_id = "a" * 32
++        directory = self.root / "applications"
++        env = dict(self.env, TRY_OMARCHY_APP_SYNC=str(APP_SYNC), TRY_OMARCHY_APP_DIR=str(directory))
++        encoded = base64.b64encode(json.dumps([{"id": app_id, "name": "Notepad"}]).encode()).decode()
++        result = subprocess.run([str(AGENT), "--handle"], input=f"apps {encoded}\n", env=env,
++                                capture_output=True, text=True, timeout=10)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        entry = directory / f"try-omarchy-windows-{app_id}.desktop"
++        self.assertIn(f"Exec=try-omarchy-windows-app {app_id}", entry.read_text())
++        result = subprocess.run([str(AGENT), "--handle"], input="apps W10=\n", env=env,
++                                capture_output=True, text=True, timeout=10)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertFalse(entry.exists())
++        bad = base64.b64encode(b'[{"id":"../../etc","name":"Bad"}]').decode()
++        result = subprocess.run([str(APP_SYNC)], input=bad + "\n", env=env,
++                                capture_output=True, text=True, timeout=10)
++        self.assertNotEqual(result.returncode, 0)
++
++    def test_approved_windows_app_request(self) -> None:
++        app_id = "b" * 32
++        with socket.socket() as server:
++            server.bind(("127.0.0.1", 0))
++            server.listen(1)
++            env = dict(self.env, TRY_OMARCHY_AGENT_HOST="127.0.0.1",
++                       TRY_OMARCHY_AGENT_PORT=str(server.getsockname()[1]))
++            def answer(status: bytes) -> bytes:
++                with server.accept()[0] as connection:
++                    request = connection.recv(128)
++                    connection.sendall(status)
++                    return request
++            with ThreadPoolExecutor(max_workers=1) as executor:
++                received = executor.submit(answer, b"ok\n")
++                result = subprocess.run([str(WINDOWS_APP), app_id], env=env, capture_output=True, text=True, timeout=10)
++                self.assertEqual(result.returncode, 0, result.stderr)
++                self.assertEqual(received.result(timeout=5), f"launch-app {app_id}\n".encode())
++            with ThreadPoolExecutor(max_workers=1) as executor:
++                received = executor.submit(answer, b"unavailable\n")
++                result = subprocess.run([str(WINDOWS_APP), app_id], env=env, capture_output=True, text=True, timeout=10)
++                self.assertEqual(received.result(timeout=5), f"launch-app {app_id}\n".encode())
++                self.assertEqual(result.returncode, 1)
++
+     def test_host_settings_request_and_failure(self) -> None:
+         with socket.socket() as server:
+             server.bind(("127.0.0.1", 0))
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 04aed28..1e373a8 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -266,8 +266,10 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=31" in finalize_rootfs
++        "compat_revision=32" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
++        and "usr/local/bin/try-omarchy-windows-app" in compat_paths
++        and "usr/local/lib/try-omarchy/approved-apps-sync" in compat_paths
+         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in compat_paths
+         and "etc/skel/.config/nvim/lua/plugins/theme.lua" in compat_paths
+         and "etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf" in compat_paths
+-- 
+2.55.0
+

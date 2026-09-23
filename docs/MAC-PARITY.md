@@ -39,6 +39,7 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Pre-boot launcher | Native pages and save-and-launch; signed candidate GPU boot/reboot/shutdown and keyboard regression tests pass | Mixed-DPI and broader hardware, moved-installation acceptance |
 | Automatic startup | Owned Windows shortcuts can opt into direct startup while the Settings shortcut remains available | Broader physical acceptance |
 | In-guest host settings | Implemented in [candidate #164](https://github.com/omacom/try-omarchy-windows/pull/164); the guest launcher entry opened native Settings on the AMD laptop | Include the guest patch and launcher in a signed release |
+| Approved Windows apps | [Phase 1 candidate](WINDOWS-APP-BRIDGE.md) launches a host-approved `.exe` from an Omarchy entry; physical Notepad launch/revocation passed | New guest image, signed candidate, and eventual embedded-window research |
 | Branding and About | Omacom resource metadata, retained original copyright plus contributor credit, notices, labelled About actions; native visibility tested | Confirm public-facing relationship and presentation before a 1.0 claim |
 | Camera, clipboard, shared folders, transfers | Implemented; the signed candidate passed camera and share checks on the AMD laptop | More device combinations and direct drops into arbitrary guest apps remain untested |
 | Resources, updates, storage and recovery | Implemented; the published update, backup, restore and uninstall paths passed on the AMD laptop | Broader hardware and recovery reports remain useful |

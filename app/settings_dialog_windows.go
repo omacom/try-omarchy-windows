@@ -67,6 +67,9 @@ const (
 	settingsResourceProfileID    = 2120
 	settingsStartAutomaticallyID = 2121
 	settingsLaunchAtSignInID     = 2122
+	settingsAppAddID             = 2123
+	settingsAppRemoveID          = 2124
+	settingsAppListID            = 2125
 	settingsSaveID               = 2001
 	settingsCancelID             = 2002
 	settingsBrowseID             = 2003
@@ -200,6 +203,11 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		errorBox("Cannot read resource preferences:\n\n" + err.Error())
 		return false
 	}
+	approvedApps, err := loadApprovedWindowsApps(dataDir)
+	if err != nil {
+		errorBox("Cannot read approved Windows apps:\n\n" + err.Error())
+		return false
+	}
 	hostSnapshot := measureHostResources(true)
 	cameras, cameraErr := listCameraDevices()
 	if prefs.CameraID != "" {
@@ -232,7 +240,9 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	var hCameraOn, hMicrophoneOn, hCamera, hUpdateOn uintptr
 	var hAudioOutput, hAudioInput uintptr
 	var hResourceProfile, hResourceHelp uintptr
+	var hApprovedApps uintptr
 	var updateResourceControls func()
+	var refreshApprovedApps func()
 	profileValues := []string{resourceBalanced, resourceMaximum, resourceManual}
 	selectedProfile := func() string {
 		index, _, _ := procSendMessageW.Call(hResourceProfile, 0x147, 0, 0) // CB_GETCURSEL
@@ -242,8 +252,8 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		return profileValues[index]
 	}
 	var selectPage func(int)
-	var pages [4][]settingsScrollControl
-	var pageHeights [4]int32
+	var pages [5][]settingsScrollControl
+	var pageHeights [5]int32
 	var common []settingsScrollControl
 
 	text := func(handle uintptr) string {
@@ -334,13 +344,30 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		}
 		switch msg {
 		case wmCommand:
-			if id := wParam & 0xffff; id >= settingsPageBase && id < settingsPageBase+4 {
+			if id := wParam & 0xffff; id >= settingsPageBase && id < settingsPageBase+uintptr(len(pages)) {
 				if selectPage != nil {
 					selectPage(int(id - settingsPageBase))
 				}
 				return 0
 			}
 			switch wParam & 0xffff {
+			case settingsAppAddID:
+				path, ok, err := chooseExecutablePath(hwnd)
+				if err != nil {
+					errorBox("Could not choose Windows app:\n\n" + err.Error())
+				} else if ok {
+					if err := approveWindowsExecutable(&approvedApps, path); err != nil {
+						errorBox("Could not approve Windows app:\n\n" + err.Error())
+					} else {
+						refreshApprovedApps()
+					}
+				}
+			case settingsAppRemoveID:
+				index, _, _ := procSendMessageW.Call(hApprovedApps, 0x188, 0, 0) // LB_GETCURSEL
+				if index < uintptr(len(approvedApps.Apps)) {
+					approvedApps.Apps = append(approvedApps.Apps[:index], approvedApps.Apps[index+1:]...)
+					refreshApprovedApps()
+				}
 			case settingsResourceProfileID:
 				if wParam>>16 == 1 && updateResourceControls != nil { // CBN_SELCHANGE
 					updateResourceControls()
@@ -491,6 +518,10 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 					errorBox("Other settings were saved, but the resource profile could not be saved:\n\n" + err.Error())
 					return 0
 				}
+				if err := saveApprovedWindowsApps(dataDir, approvedApps); err != nil {
+					errorBox("Other settings were saved, but approved Windows apps could not be saved:\n\n" + err.Error())
+					return 0
+				}
 				saved = true
 				procDestroyWindow.Call(h)
 			case settingsCancelID, idCancel:
@@ -630,8 +661,8 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		return h
 	}
 	const left, labelW, fieldX, fieldW = 16, 150, 170, 294
-	for i, label := range []string{"General", "Devices", "Advanced", "Recovery"} {
-		mk("BUTTON", label, 16+int32(i)*116, 12, 110, 28, wsTabstop, settingsPageBase+uintptr(i))
+	for i, label := range []string{"General", "Devices", "Advanced", "Recovery", "Apps"} {
+		mk("BUTTON", label, 16+int32(i)*94, 12, 90, 28, wsTabstop, settingsPageBase+uintptr(i))
 	}
 	common = append(common, scroll.controls...)
 	scroll.controls = nil
@@ -898,6 +929,29 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	}
 	pages[3] = append(pages[3], scroll.controls...)
 	pageHeights[3] = y + 40
+	scroll.controls = nil
+	y = 56
+	mk("STATIC", "Approved Windows apps", left, y, clientW-2*left, 24, ssNoprefix, 0)
+	y += 30
+	mk("STATIC", "Only apps you choose here can be launched from Omarchy. The app runs on Windows, outside the guest.", left, y, clientW-2*left, 48, ssNoprefix, 0)
+	y += 52
+	hApprovedApps = mk("LISTBOX", "", left, y, clientW-2*left, 240, wsBorder|wsVscroll|wsTabstop|0x0001, settingsAppListID) // LBS_NOTIFY
+	refreshApprovedApps = func() {
+		procSendMessageW.Call(hApprovedApps, 0x184, 0, 0) // LB_RESETCONTENT
+		for _, app := range approvedApps.Apps {
+			label, _ := syscall.UTF16PtrFromString(app.Name + " — " + app.Path)
+			procSendMessageW.Call(hApprovedApps, 0x180, 0, uintptr(unsafe.Pointer(label))) // LB_ADDSTRING
+		}
+	}
+	refreshApprovedApps()
+	y += 250
+	mk("BUTTON", "Add Windows app...", left, y, 190, 28, wsTabstop, settingsAppAddID)
+	mk("BUTTON", "Remove selected", left+200, y, 160, 28, wsTabstop, settingsAppRemoveID)
+	y += 40
+	mk("STATIC", "Save to apply. Entries appear in Omarchy shortly after it starts or while it runs. Launching an app reveals Windows; use the tray icon to return to Omarchy.", left, y, clientW-2*left, 70, ssNoprefix, 0)
+	y += 76
+	pages[4] = append(pages[4], scroll.controls...)
+	pageHeights[4] = y
 	scroll.controls = nil
 	footerText, saveText, cancelText := "Save, then restart Omarchy to apply changes.", "Save", "Cancel"
 	if launcher {

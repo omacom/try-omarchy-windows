@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -201,6 +202,66 @@ func TestGuestSettingsRequestKeepsAgentConnected(t *testing.T) {
 	case <-opened:
 		t.Fatal("unrecognized request opened settings")
 	default:
+	}
+}
+
+func TestApprovedAppRequestIsBoundedAndKeepsAgentConnected(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	a := newGuestAgent()
+	a.batteryLine = nil
+	id := strings.Repeat("c", 32)
+	now := time.Now()
+	a.now = func() time.Time { return now }
+	var launches atomic.Int32
+	a.launchApp = func(got string) error {
+		if got != id {
+			t.Errorf("unexpected app %q", got)
+		}
+		launches.Add(1)
+		return nil
+	}
+	go a.accept(l)
+	agent, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Close()
+	agent.Write([]byte("hello 4\n"))
+	if _, err := bufio.NewReader(agent).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	request := func(value string) string {
+		c, err := net.Dial("tcp", l.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		c.SetReadDeadline(time.Now().Add(2 * time.Second))
+		c.Write([]byte(value + "\n"))
+		line, err := bufio.NewReader(c).ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		return line
+	}
+	if got := request("launch-app " + id); got != "ok\n" {
+		t.Fatal(got)
+	}
+	if got := request("launch-app " + id); got != "unavailable\n" {
+		t.Fatal(got)
+	}
+	if got := request("launch-app ../../etc"); got != "unavailable\n" {
+		t.Fatal(got)
+	}
+	if launches.Load() != 1 {
+		t.Fatalf("launched %d times", launches.Load())
+	}
+	if !a.sendTime("") {
+		t.Fatal("app request disconnected the guest agent")
 	}
 }
 
