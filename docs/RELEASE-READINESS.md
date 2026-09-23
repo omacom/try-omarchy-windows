@@ -2,17 +2,22 @@
 
 ## Current decision
 
-The latest public launcher is `v0.0.20-preview`. The `v0.1.0` private draft
-has passed guest build, headless boot smoke, asset verification, signing, and
-physical Windows acceptance on the available AMD laptop. Its pinned source is
-commit `9ae72c386f3d7aebc353b2924112c35e77a4475c`. The
+The first normal 0.x version,
+[`v0.1.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.1.0),
+was published September 23, 2026. It passed guest build, headless boot smoke,
+asset verification, signing, and physical Windows acceptance on the available
+AMD laptop. Its pinned source is commit
+`9ae72c386f3d7aebc353b2924112c35e77a4475c`. The
 [signed candidate record](evidence/V0.1.0-SIGNED-CANDIDATE-2026-09-23.md)
 documents the exact test binary, upgrade, clean boot, recovery, backup,
-restore, and uninstall. No normal version has been approved or published.
+restore, and uninstall. The
+[publish workflow](https://github.com/omacom/try-omarchy-windows/actions/runs/35846137627)
+passed its public asset and feed checks. The published executable is a fresh
+signature of that pinned source; its SHA-256 is
+`1341a87d90298267341714f5d1724b47969e934fa71cb52c0430fc65d4e61c9e`.
 
-Dropping `-preview` need not mean claiming 1.0 completeness. `v0.1.0` is the
-current normal-version candidate, subject to the gates below and a release
-decision. A private draft is not a release instruction.
+Dropping `-preview` does not claim 1.0 completeness. Keep the 1.0 quality bar
+below and use reports from this normal 0.x release to prioritize further work.
 
 ## Evidence already in hand
 
@@ -44,22 +49,21 @@ decision. A private draft is not a release instruction.
 
 The live [Try Omarchy site](https://tryomarchy.com/) now uses the same Omarchy
 mark as the Windows app, the same green accent, and an explicit link to the
-current public `v0.0.20-preview` download. Its setup and uninstall descriptions
+current public `v0.1.0` release. Its setup and uninstall descriptions
 match the app's actual behavior; the site no longer promises that uninstalling
 means deleting a single folder or that the next normal release must be 1.0.
 Desktop and phone-width Chromium renders were inspected. The live `/download`
-redirect was verified to resolve to the published preview launcher.
+redirect points to the published Latest launcher.
 The site's macOS link and the README now point to
 `https://github.com/omacom/try-omarchy`; the live support answer points to the
 built-in diagnostics and GitHub bug-report flow.
 
-The Windows About window was checked on the AMD laptop from an isolated
-unsigned source build. The version, website, source/support address, notices
-action, and all buttons were visible in the interactive desktop. This `-about`
-check did not start the VM or change the installed guest. The app retains its
-legacy taskbar application ID so existing pinned shortcuts keep grouping with
-the branded window. A final signed release still needs its own visual and
-installer acceptance; this check does not replace that gate.
+The Windows About window was checked on the AMD laptop from an isolated source
+build. The version, website, source/support address, notices action, and all
+buttons were visible in the interactive desktop. The signed candidate's
+Settings and shortcut flow was then checked on the same laptop. The app retains
+its legacy taskbar application ID so existing pinned shortcuts keep grouping
+with the branded window.
 
 The clean install revealed a shortcut collision between separate installations.
 The signed test copy's Start Menu links were repaired to the original target.
@@ -74,13 +78,13 @@ placed launchers beside a second installation and recorded the choice. The
 re-signed binary passed both the first-run collision and repeat-launch checks
 on the laptop.
 
-## Gates for a first normal 0.x release
+## v0.1 release gates
 
 1. Keep the release story accurate across the executable, README, changelog,
    website, compatibility guide, and release notes. State the x86_64 and
    virtualization requirements, the CPU fallback, and known graphics
    limitations. Keep test-matrix detail in the compatibility and evidence docs.
-   Do not imply that the private draft is downloadable.
+   Keep public documentation in step with the published build.
 2. Validate the exact signed candidate on clean install and upgrade paths,
    including first boot, normal launch, files and settings preserved, input,
    audio, clipboard, sharing, camera, backup/restore, uninstall, and update
@@ -90,18 +94,20 @@ on the laptop.
    result in the compatibility guide and collect fresh reports when that
    hardware is available. Testing every CPU, GPU, or Windows version is an
    ongoing compatibility effort, not a release gate.
-4. Recheck signed update feeds and the preview-to-normal-version bridge before
-   promotion. Publish only after the draft asset hashes, Authenticode signature,
-   public download, rollback, and latest-release pointer have been checked.
+4. Verify signed update feeds and the preview-to-normal-version bridge. Check
+   draft asset hashes and Authenticode before publication, then check public
+   downloads, the Latest pointer, and physical bridge update after publication.
 
 The `v0.1.0` candidate passed the available physical tests, including visual
 inspection, GPU and CPU boots, core integrations, update rollback, backup,
 restore, and uninstall. The original installation and shortcuts were preserved.
-The remaining gate is a publication decision followed by the publish workflow's
-public asset and feed checks, a physical preview-bridge-to-`v0.1.0` update, and
-switching the prepared site PR to the newly public download. The public
-download and update feed still point to `v0.0.20-preview`. Broader hardware
-and Windows 10 coverage remain post-release compatibility work.
+The publish workflow verified the public asset and feed paths. The published
+launcher has a Valid Authenticode signature, both version fields read `v0.1.0`,
+and its public checksum matches. The site now points to that release. A copied
+public preview installation authenticated the current feed, updated its
+launcher, guest and runtime to the public `v0.1.0`, booted to healthy userspace,
+preserved its recorded file hash, and passed a repeat launch. Broader hardware
+and Windows 10 coverage remain compatibility work.
 
 ## 1.0 quality bar
 

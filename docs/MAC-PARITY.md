@@ -40,8 +40,8 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Automatic startup | Owned Windows shortcuts can opt into direct startup while the Settings shortcut remains available | Broader physical acceptance |
 | In-guest host settings | Not implemented | A Windows desktop-safe request path that reliably presents the native window |
 | Branding and About | Omacom resource metadata, retained original copyright plus contributor credit, notices, labelled About actions; native visibility tested | Confirm public-facing relationship and presentation before a 1.0 claim |
-| Camera, clipboard, shared folders, transfers | Implemented, with existing physical evidence in the handoff | Retest the selected final candidate; device coverage remains bounded |
-| Resources, updates, storage and recovery | Existing implementation; available before boot in this candidate | Existing v1 gates, plus recovery from the new launcher |
+| Camera, clipboard, shared folders, transfers | Implemented; the signed candidate passed camera and share checks on the AMD laptop | More device combinations and direct drops into arbitrary guest apps remain untested |
+| Resources, updates, storage and recovery | Implemented; the published update, backup, restore and uninstall paths passed on the AMD laptop | Broader hardware and recovery reports remain useful |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
 | Audio endpoint selection | Startup playback/recording choices and stable Windows endpoint IDs implemented; [behavior and acceptance](AUDIO-DEVICES.md) | Live guest selection bridge, physical rename/unplug acceptance, and switching between two physical devices |
 | Trackpad pinch | [Opt-in r18 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Firefox and broader host/DPI/fullscreen acceptance; experimental only |
@@ -88,8 +88,8 @@ replace the accepted launcher or mutate a running guest disk.
 6. Run the KVM probe inside the guest as its ordinary user and retain the JSON
    alongside exact runtime and host facts.
 
-This engineering work is merged into master. The newer signed candidate remains
-unpublished; see [its physical acceptance record](evidence/V1-SIGNED-CANDIDATE-2026-09-22.md).
+This engineering work is included in the public `v0.1.0` release; see its
+[signed acceptance and public update record](evidence/V0.1.0-SIGNED-CANDIDATE-2026-09-23.md).
 
 ## September 21 host capability checks
 

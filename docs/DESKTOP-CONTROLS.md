@@ -1,7 +1,6 @@
-# Desktop controls in the next candidate
+# Desktop controls
 
-These controls are implemented in the development branch. The published download
-is still v0.0.20-preview; it does not yet include these Settings changes.
+These controls are included in the published `v0.1.0` release.
 
 Settings has four pages:
 
@@ -13,7 +12,7 @@ Settings has four pages:
 Save, then restart Omarchy to apply changes. Automatic resources remain available
 by entering 0. A smaller disk setting never shrinks an existing disk.
 
-The September 21 development candidate also opens these pages before an ordinary
+`v0.1.0` opens these pages before an ordinary
 desktop launch. **Launch Omarchy** saves preferences and starts the guest;
 **Close** leaves the guest stopped. The separate Settings shortcut still saves
 without launching. Runtime command-line options keep direct startup; `-start`
@@ -41,7 +40,7 @@ disabled or the last capture error. Windows camera permission is still required.
 
 Turning microphone access off prevents QEMU from opening host recording voices
 while keeping playback enabled. Both device switches retain the existing enabled
-behavior unless changed. The unreleased r16 runtime adds separate **Sound output**
+behavior unless changed. The bundled r18 runtime adds separate **Sound output**
 and **Microphone** choices, applied on the next VM start. Older runtimes keep
 these choices disabled and use Windows defaults. **Windows sound devices** opens
 the host's sound settings. Stable endpoint IDs retain uniquely named selections

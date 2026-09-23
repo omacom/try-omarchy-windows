@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-## v0.1.0 - 2026-09-22
+## v0.1.0 - 2026-09-23
 
-First normal 0.x candidate. Existing preview installations keep their guest
+First normal 0.x release. Existing preview installations keep their guest
 disk, files, and settings when updating. The signed v0.0.20-preview bridge lets
 older launchers reach this version.
 
@@ -19,8 +19,8 @@ older launchers reach this version.
 - Send Alt+Tab and Alt+Shift+Tab to the focused Omarchy desktop; use Ctrl+Alt+Tab
   to reach the Windows task switcher.
 - Offer an experimental, opt-in Precision Touchpad pinch bridge on supported
-  Windows 11 laptops. It remains disabled by default while physical acceptance
-  and broader hardware testing continue.
+  Windows 11 laptops. It remains disabled by default while broader hardware
+  testing continues.
 - Support nested Linux virtualization on hosts that provide it while retaining
   a normal boot when the host refuses nested virtualization.
 - Optionally start Omarchy immediately from its Windows Start-menu and Desktop

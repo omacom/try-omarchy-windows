@@ -1,15 +1,14 @@
 # Windows audio device choices
 
-The candidate launcher adds **Sound output** and **Microphone** selectors to
+`v0.1.0` adds **Sound output** and **Microphone** selectors to
 **Devices**. Each direction can use **Windows default** or a device enumerated
 by the selected runtime's SDL library. Choices apply when the VM next starts;
 saving Settings while Omarchy runs does not switch an active stream.
 
-This requires the unreleased r16 runtime recipe's
-`0013-select-sdl-audio-devices.patch`. The published v20 runtime does not contain
-this patch: its selectors stay disabled and Windows defaults remain in use.
-The guest/runtime release lock remains unchanged until runtime acceptance and
-release packaging are complete.
+The bundled r18 runtime includes `0013-select-sdl-audio-devices.patch`. The
+older v20 runtime lacks this patch; when selected instead, its selectors stay
+disabled and Windows defaults remain in use. The selected r18 runtime is pinned
+in `guest-build/runtime.lock.json`.
 
 ## Behavior
 

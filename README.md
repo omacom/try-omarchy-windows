@@ -21,16 +21,15 @@ The Omarchy mark in the app icon is sourced from the
 Omarchy's trademark rights.
 
 The current public release is
-[v0.0.20-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.20-preview).
-The newer pre-boot launcher, audio device selection, and other work described
-below are in the source tree and under release review; they are not in that
-download yet. See the [release readiness review](docs/RELEASE-READINESS.md) and
-[Windows testing instructions](docs/TESTING.md). Hardware requirements and
-known graphics limitations are in the [compatibility guide](docs/COMPATIBILITY.md).
+[v0.1.0](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.1.0),
+the first normal 0.x version. See the [changelog](CHANGELOG.md),
+[Windows testing instructions](docs/TESTING.md), and
+[compatibility guide](docs/COMPATIBILITY.md) for tested hardware and known
+graphics limits.
 
-## What works in the current source candidate
+## What works in v0.1.0
 
-- **The full Omarchy 4.0.3 desktop on new or reset guests**: Hyprland, the bar, notifications, all 22 themes, the screensavers. Launches after setup go straight to the desktop. Startup time depends on the host and the drive holding the guest. No Linux login screens, no console text, branded window.
+- **The full Omarchy 4.0.3 desktop on new or reset guests**: Hyprland, the bar, notifications, all 22 themes, the screensavers. After setup, open pre-boot Settings or choose a direct-launch shortcut. Startup time depends on the host and the drive holding the guest. No Linux login screens or VM console text; the window is branded.
 - **GPU acceleration**: Hyprland renders on the host GPU via virgl, `vulkaninfo` shows Venus, smooth video and audio (verified on a Radeon iGPU laptop); `-cpu host` (AVX2 and all) via WINQ-EMU's patched WHPX.
 - **One app, zero prerequisites**: `TryOmarchy.exe` (~10 MB, no console window). First run lets you keep the default Local AppData location or choose another local drive or folder, switches on Windows' Hypervisor Platform (one permission prompt, one restart), then downloads the SHA256-verified GPU runtime and image and boots into Omarchy's setup form. Once setup is complete it keeps a stable launcher in the chosen data folder and can add optional Start-menu and Desktop shortcuts. After that it supervises everything: GPU/CPU auto-detect, the known WHPX launch wedge, in-guest reboot relaunch, poweroff cleanup.
 - **Feels like an app, not a VM**: the window is branded "Try Omarchy", the Windows key acts as Super only while the window is focused (Start menu and Win+Shift+S keep working everywhere else), Ctrl+Alt+F goes fullscreen. Settings can launch Omarchy at Windows sign-in and open it fullscreen.
@@ -69,7 +68,7 @@ Proven boot recipe: `-accel whpx -machine q35 -cpu qemu64`, direct kernel boot (
 
 ## Try it
 
-Download [TryOmarchy.exe](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (~10 MB, [SHA256](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and open it. First run asks where to store the virtual machine, graphics runtime, and downloads. Use the default Local AppData location or choose another local drive or folder. Windows then asks permission to switch on the Hypervisor Platform and restarts once, after which the app pulls the GPU runtime (a portable [WINQ-EMU](https://github.com/cmspam/winq-emu) tree, ~84 MB) and the Omarchy image (~2 GB), everything SHA256-verified. Choose the instant trial account to go straight to the desktop, or use Omarchy's setup form to choose your own account. Every launch after goes straight to the desktop.
+Download [TryOmarchy.exe](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (~10 MB, [SHA256](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and open it. First run asks where to store the virtual machine, graphics runtime, and downloads. Use the default Local AppData location or choose another local drive or folder. Windows then asks permission to switch on the Hypervisor Platform and restarts once, after which the app pulls the GPU runtime (a portable [WINQ-EMU](https://github.com/cmspam/winq-emu) tree, ~84 MB) and the Omarchy image (~2 GB), everything SHA256-verified. Choose the instant trial account to go straight to the desktop, or use Omarchy's setup form to choose your own account. Later launches open Settings before boot unless you choose a direct-launch shortcut.
 
 After the first successful setup, Try Omarchy offers optional Start-menu and Desktop shortcuts. Start-menu installs include a separate settings shortcut. They point to a stable copy of the signed launcher in the chosen data folder, so the original download can be moved or deleted. Opening a newer downloaded release refreshes that stable copy.
 
@@ -132,12 +131,11 @@ launch. Portable mode continues to support exFAT through the `data` and
 
 [Moving an existing installation](docs/MOVING.md) is available from Settings.
 
-The next candidate adds General, Devices, Advanced and Recovery pages, camera
-selection and camera/microphone switches, and About and updates. These controls
-are in this source branch and are not yet part of the published v20 download.
-See [desktop controls](docs/DESKTOP-CONTROLS.md) for behavior and validation.
-[Separate audio device choices](docs/AUDIO-DEVICES.md) additionally require the
-unreleased r16 runtime; the current download continues to use Windows defaults.
+Settings has General, Devices, Advanced and Recovery pages, camera selection,
+camera/microphone switches, and About and launcher updates. See
+[desktop controls](docs/DESKTOP-CONTROLS.md) for behavior and validation.
+[Separate audio device choices](docs/AUDIO-DEVICES.md) take effect on the next
+boot; live device switching remains future work.
 
 `settings.json` in the chosen data folder keeps the choices that survive a
 relaunch. These core VM settings have matching flags, and a flag given on the
@@ -368,7 +366,7 @@ WHPX and Hyper-V share the same Windows hypervisor and are designed to coexist. 
 - `docs/FINDINGS.md`: technical findings, gotchas, and their fixes
 - `docs/RELEASING.md` - the authenticated two-phase build, signing, and publishing process
 - `docs/PINCH-ZOOM.md`: opt-in Windows Precision Touchpad bridge and acceptance limits
-- `docs/MAC-PARITY.md`: current Mac comparison, development candidate changes, and remaining acceptance checks
+- `docs/MAC-PARITY.md`: current Mac comparison, implemented parity, and remaining acceptance checks
 - `docs/NESTED-VIRTUALIZATION.md`: guest KVM probe and the limits of WHPX nesting
 - `THIRD_PARTY_NOTICES.md`: bundled components and their licenses
 

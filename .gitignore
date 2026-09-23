@@ -12,3 +12,7 @@ __pycache__/
 /TryOmarchy*.exe
 /TryOmarchy*.exe.sha256
 /artifacts/
+/release-manifest/
+/release/
+/bridge-metadata/
+/release-notes.md
