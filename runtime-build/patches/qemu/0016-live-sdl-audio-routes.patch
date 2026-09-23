@@ -36,7 +36,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
 +/*
 + * The launcher gives QEMU an initial direction-aware route through the
 + * environment. A private, atomically replaced control file then lets the
-+ * guest-facing bridge change that route without restarting the VM.
++ * launcher change that route without restarting the VM.
 + */
 +static char *sdl_initial_device_name(int rec)
  {
@@ -174,7 +174,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
      if (sdl->devid) {
          SDL_CloseAudioDevice(sdl->devid);
          sdl->devid = 0;
-@@ -302,6 +365,194 @@
+@@ -302,6 +365,210 @@
          len -= read_len;
          buf += read_len;
      }
@@ -241,6 +241,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
 +    SDL_AudioDeviceID replacement;
 +    bool present;
 +    bool route_matches;
++    bool stopped;
 +
 +    if (!sdl->devid) {
 +        if (sdl->enabled && sdl_route_check_due(&sdl->next_route_check) &&
@@ -252,9 +253,16 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
 +    if (!sdl_route_check_due(&sdl->next_route_check)) {
 +        return;
 +    }
++    stopped = SDL_GetAudioDeviceStatus(sdl->devid) == SDL_AUDIO_STOPPED;
 +    requested = sdl_route_file_device_name(0, &present);
-+    if (!present || (sdl->route_matches &&
-+                     g_strcmp0(requested, sdl->device_name) == 0)) {
++    if (!present) {
++        if (!stopped) {
++            return;
++        }
++        requested = g_strdup(sdl->device_name);
++    }
++    if (!stopped && sdl->route_matches &&
++        g_strcmp0(requested, sdl->device_name) == 0) {
 +        return;
 +    }
 +    replacement = sdl_open(&sdl->reopen_spec, &obtained, 0, requested,
@@ -330,6 +338,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
 +    SDL_AudioDeviceID replacement;
 +    bool present;
 +    bool route_matches;
++    bool stopped;
 +
 +    if (!sdl->devid) {
 +        if (sdl->enabled && sdl_route_check_due(&sdl->next_route_check) &&
@@ -341,9 +350,16 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
 +    if (!sdl_route_check_due(&sdl->next_route_check)) {
 +        return;
 +    }
++    stopped = SDL_GetAudioDeviceStatus(sdl->devid) == SDL_AUDIO_STOPPED;
 +    requested = sdl_route_file_device_name(1, &present);
-+    if (!present || (sdl->route_matches &&
-+                     g_strcmp0(requested, sdl->device_name) == 0)) {
++    if (!present) {
++        if (!stopped) {
++            return;
++        }
++        requested = g_strdup(sdl->device_name);
++    }
++    if (!stopped && sdl->route_matches &&
++        g_strcmp0(requested, sdl->device_name) == 0) {
 +        return;
 +    }
 +    replacement = sdl_open(&sdl->reopen_spec, &obtained, 1, requested,
@@ -369,7 +385,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
  }
  
  #define SDL_WRAPPER_FUNC(name, ret_type, args_decl, args, dir) \
-@@ -310,9 +561,14 @@
+@@ -310,9 +577,14 @@
          ret_type ret;                                          \
          glue(SDLVoice, dir) *sdl = (glue(SDLVoice, dir) *)hw;  \
                                                                 \
@@ -386,7 +402,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
                                                                 \
          return ret;                                            \
      }
-@@ -322,9 +578,14 @@
+@@ -322,9 +594,14 @@
      {                                                          \
          glue(SDLVoice, dir) *sdl = (glue(SDLVoice, dir) *)hw;  \
                                                                 \
@@ -403,7 +419,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
      }
  
  SDL_WRAPPER_FUNC(buffer_get_free, size_t, (HWVoiceOut *hw), (hw), Out)
-@@ -348,6 +609,8 @@
+@@ -348,6 +625,8 @@
      SDLVoiceOut *sdl = (SDLVoiceOut *)hw;
  
      sdl_close_out(sdl);
@@ -412,7 +428,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
  }
  
  static int sdl_init_out(HWVoiceOut *hw, struct audsettings *as)
-@@ -369,7 +632,9 @@
+@@ -369,7 +648,9 @@
      req.userdata = sdl;
  
      sdl->dev = dev;
@@ -423,7 +439,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
      if (!sdl->devid) {
          return -1;
      }
-@@ -387,8 +652,12 @@
+@@ -387,8 +668,12 @@
      hw->samples = (spdo->has_buffer_count ? spdo->buffer_count : 4) *
          obt.samples;
  
@@ -436,7 +452,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
      return 0;
  }
  
-@@ -396,7 +665,18 @@
+@@ -396,7 +681,18 @@
  {
      SDLVoiceOut *sdl = (SDLVoiceOut *)hw;
  
@@ -456,7 +472,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
  }
  
  static void sdl_fini_in(HWVoiceIn *hw)
-@@ -404,6 +684,8 @@
+@@ -404,6 +700,8 @@
      SDLVoiceIn *sdl = (SDLVoiceIn *)hw;
  
      sdl_close_in(sdl);
@@ -465,7 +481,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
  }
  
  static int sdl_init_in(HWVoiceIn *hw, audsettings *as)
-@@ -425,11 +707,14 @@
+@@ -425,11 +723,14 @@
      req.userdata = sdl;
  
      sdl->dev = dev;
@@ -485,7 +501,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
      err = sdl_to_audfmt(obt.format, &obt_as.fmt, &obt_as.big_endian);
      if (err) {
          sdl_close_in(sdl);
-@@ -446,6 +731,9 @@
+@@ -446,6 +747,9 @@
      hw->buf_emul = g_malloc(hw->size_emul);
      hw->pos_emul = hw->pending_emul = 0;
  
@@ -495,7 +511,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
      sdl->initialized = 1;
      sdl->exit = 0;
      return 0;
-@@ -455,7 +743,18 @@
+@@ -455,7 +759,18 @@
  {
      SDLVoiceIn *sdl = (SDLVoiceIn *)hw;
  
