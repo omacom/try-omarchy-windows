@@ -72,7 +72,7 @@
       },
       {
         "file": "patches/qemu/0016-live-sdl-audio-routes.patch",
-        "sha256": "01edc851f48fbf1580279f2771725c151d6cacbebec2264ff5a758ba1576ca9b"
+        "sha256": "4d0d6d364ea50539f61edb24826d8dbcc6685fad3571ee420c1368bece645c5f"
       }
     ]
   },

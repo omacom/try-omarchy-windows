@@ -446,7 +446,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
      if (!sdl->devid) {
          return -1;
      }
-@@ -387,8 +668,12 @@
+@@ -387,8 +668,11 @@
      hw->samples = (spdo->has_buffer_count ? spdo->buffer_count : 4) *
          obt.samples;
  
@@ -455,7 +455,6 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
 +    sdl->reopen_spec.userdata = sdl;
      sdl->initialized = 1;
      sdl->exit = 0;
-+    sdl_release_out(sdl);
      return 0;
  }
  
