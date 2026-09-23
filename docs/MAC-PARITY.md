@@ -39,25 +39,26 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Pre-boot launcher | Native pages and save-and-launch; signed candidate GPU boot/reboot/shutdown and keyboard regression tests pass | Mixed-DPI and broader hardware, moved-installation acceptance |
 | Fullscreen monitor target | Settings choice and `-fullscreen-display` merged in #170; Windows native monitor enumeration and settings persistence passed | Second active monitor placement was not directly observed on the available laptop |
 | Automatic startup | Owned Windows shortcuts can opt into direct startup while the Settings shortcut remains available | Broader physical acceptance |
-| In-guest host settings | Implemented in [candidate #164](https://github.com/omacom/try-omarchy-windows/pull/164); the guest launcher entry opened native Settings on the AMD laptop | Include the guest patch and launcher in a signed release |
-| Approved Windows apps | [Phase 1 candidate](WINDOWS-APP-BRIDGE.md) launches a host-approved `.exe` from an Omarchy entry; physical Notepad launch/revocation passed | New guest image, signed candidate, and eventual embedded-window research |
+| In-guest host settings | Shipped in `v0.2.0`; the signed candidate opened native Settings above the running VM on the AMD laptop | Further physical observations as reports arrive |
+| Approved Windows apps | Phase 1 ships in `v0.2.0`; the signed candidate launched and revoked Notepad from Omarchy | [Embedded-window research #160](https://github.com/omacom/try-omarchy-windows/issues/160) and per-app icons |
 | Branding and About | Omacom resource metadata, retained original copyright plus contributor credit, notices, labelled About actions; native visibility tested | Confirm public-facing relationship and presentation before a 1.0 claim |
-| Camera, clipboard, shared folders, transfers | Implemented; the signed candidate passed camera and share checks on the AMD laptop | More device combinations and direct drops into arbitrary guest apps remain untested |
+| Camera, clipboard, shared folders, transfers | Implemented; the signed candidate passed camera and share checks on the AMD laptop | [Direct application drops #174](https://github.com/omacom/try-omarchy-windows/issues/174); investigate concrete device reports |
 | Resources, updates, storage and recovery | Implemented; the published update, backup, restore and uninstall paths passed on the AMD laptop | Broader hardware and recovery reports remain useful |
+| GPU application compatibility | AMD GPU desktop and applications passed their recorded checks; a previous Intel/NVIDIA preview runtime booted VirGL OpenGL but failed Venus Vulkan and Godot Forward+ | [Current-runtime investigation #173](https://github.com/omacom/try-omarchy-windows/issues/173); retain CPU/OpenGL fallback |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
 | Audio endpoint selection | Startup playback/recording choices and stable Windows endpoint IDs implemented; [behavior and acceptance](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167), including endpoint loss and independent capture/playback |
 | Trackpad pinch | [Opt-in r18 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Firefox and broader host/DPI/fullscreen acceptance; experimental only |
 | Windows Hello sudo | Not implemented; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); the available laptop reports `DeviceNotPresent` |
 | Bridged networking | NAT and explicit port forwarding exist | [True LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166), with supported adapter, privilege and firewall handling |
-| Host battery | Implemented in candidate #164; the AMD laptop's 99% charging state appeared as BAT0/ADP0 and in UPower | Ship the rebuilt guest image; desktop/no-battery transition remains to be observed on a suitable host |
-| Guest RAM reclamation | Implemented in candidate #164 with the now published and source-pinned r19 WHPX runtime; three physical touch/free cycles returned about 797 MiB after the third 768 MiB allocation | Include the pinned runtime and guest image in the next signed app release |
+| Host battery | Shipped in `v0.2.0`; the AMD laptop's 99% charging state appeared as BAT0/ADP0 and in UPower | Desktop/no-battery transition remains to be observed on a suitable host |
+| Guest RAM reclamation | Shipped with r19 in `v0.2.0`; three physical touch/free cycles returned about 797 MiB after the third 768 MiB allocation | Follow up on concrete memory reports |
 | Keyboard and language | Windows time zone, keyboard layout and display language follow the host | Physical ANSI/ISO/JIS geometry and broader input-method acceptance |
 
-Windows Hello, live audio routing, and true bridged networking remain feature
-work. Settings, battery mirroring, and live memory reclamation have passed the
-available physical candidate checks, but are not in public `v0.1.0`. The
-[September 23 candidate record](evidence/FEATURE-GAPS-2026-09-23.md) gives the
-measurements and remaining packaging step. Pinch remains opt-in; its physical
+Windows Hello, live audio routing, true bridged networking, and embedded Windows
+app windows remain feature work. Settings, battery mirroring, live memory
+reclamation and approved app launch passed the
+[signed v0.2.0 candidate](evidence/V020-SIGNED-CANDIDATE-2026-09-23.md).
+Pinch remains opt-in; its physical
 gesture and scrolling checks passed on the laptop.
 
 ## Local checks and next laptop pass

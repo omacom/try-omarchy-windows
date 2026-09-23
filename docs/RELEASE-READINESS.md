@@ -2,6 +2,20 @@
 
 ## Current decision
 
+The current normal version is
+[`v0.2.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.2.0).
+Its [signed candidate](evidence/V020-SIGNED-CANDIDATE-2026-09-23.md) passed a
+physical upgrade, GPU boot, preserved user data, approved Windows app launch
+and revocation, clean relaunch, and interrupted-update rollback on the AMD
+Windows 11 laptop. The
+[publish workflow](https://github.com/omacom/try-omarchy-windows/actions/runs/35867779077)
+passed signing and public Latest checks. Windows Hello sudo, true LAN bridging,
+live audio rerouting and embedded Windows app windows remain active feature
+work; they do not hold back normal 0.x releases. Broader user reports continue
+to guide hardware fixes.
+
+### Previous release
+
 The first normal 0.x version,
 [`v0.1.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.1.0),
 was published September 23, 2026. It passed guest build, headless boot smoke,
@@ -47,9 +61,9 @@ below and use reports from this normal 0.x release to prioritize further work.
 
 ## Brand and product experience pass
 
-The live [Try Omarchy site](https://tryomarchy.com/) now uses the same Omarchy
-mark as the Windows app, the same green accent, and an explicit link to the
-current public `v0.1.0` release. Its setup and uninstall descriptions
+The live [Try Omarchy site](https://tryomarchy.com/) uses the same Omarchy
+mark as the Windows app and the same green accent. It links to the current
+`v0.2.0` release. Its setup and uninstall descriptions
 match the app's actual behavior; the site no longer promises that uninstalling
 means deleting a single folder or that the next normal release must be 1.0.
 Desktop and phone-width Chromium renders were inspected. The live `/download`
@@ -118,10 +132,10 @@ Settings, and accurate help and branding. The gates above are the minimum
 evidence for that claim. Collect hardware reports after release and fix
 reproducible issues as they arrive; broader hardware coverage is not a gate.
 
-Feature parity is tracked in [MAC-PARITY.md](MAC-PARITY.md). The September 23
-candidate implements in-guest host Settings, battery mirroring, and measured
-live RAM reclamation; r19 is published and pinned in source, while the new guest
-image and signed app release remain. Keep Windows Hello sudo, true bridged networking, and live audio
+Feature parity is tracked in [MAC-PARITY.md](MAC-PARITY.md). `v0.2.0` ships
+in-guest host Settings, battery mirroring, measured live RAM reclamation, the
+approved-app launch bridge, and fullscreen monitor choice. Keep Windows Hello
+sudo, true bridged networking, and live audio
 switching as active feature work rather than dropping them for lack of bug
 reports. Their existing password, NAT, and startup-audio paths remain usable
 while [Hello #165](https://github.com/omacom/try-omarchy-windows/issues/165),

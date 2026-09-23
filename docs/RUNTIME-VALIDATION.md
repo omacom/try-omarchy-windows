@@ -60,11 +60,11 @@ initialization failed. This remains a documented compatibility result, not
 evidence that r18's NVIDIA Vulkan path passes. Follow up when that hardware is
 available or a user reports the same issue on the published runtime.
 
-The later r19 runtime candidate adds WHPX free-page reclamation. On September
+The r19 runtime in `v0.2.0` adds WHPX free-page reclamation. On September
 23 the AMD laptop booted its full GPU desktop with this runtime, and a separate
 4 GiB headless guest returned about 797 MiB to Windows after a 768 MiB
 touch/free cycle without shrinking the guest's configured capacity. The exact
 runtime archive and acceptance commands are in
-[FEATURE-GAPS-2026-09-23.md](evidence/FEATURE-GAPS-2026-09-23.md). This is a
-candidate result. The source lock now pins r19 for the next app release;
-published `v0.1.0` remains on r18.
+[FEATURE-GAPS-2026-09-23.md](evidence/FEATURE-GAPS-2026-09-23.md). The source
+lock pins r19 and the [signed v0.2.0 candidate](evidence/V020-SIGNED-CANDIDATE-2026-09-23.md)
+booted the bundled runtime on the same laptop.
