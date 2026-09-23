@@ -33,6 +33,24 @@ instruction.
   brand presentation and the relationship stated on the site need a deliberate
   review before making a 1.0 claim.
 
+## Brand and product experience pass
+
+The live [Try Omarchy site](https://tryomarchy.com/) now uses the same Omarchy
+mark as the Windows app, the same green accent, and an explicit link to the
+current public `v0.0.20-preview` download. Its setup and uninstall descriptions
+match the app's actual behavior; the site no longer promises that uninstalling
+means deleting a single folder or that the next normal release must be 1.0.
+Desktop and phone-width Chromium renders were inspected. The live `/download`
+redirect was verified to resolve to the published preview launcher.
+
+The Windows About window was checked on the AMD laptop from an isolated
+unsigned source build. The version, website, source/support address, notices
+action, and all buttons were visible in the interactive desktop. This `-about`
+check did not start the VM or change the installed guest. The app retains its
+legacy taskbar application ID so existing pinned shortcuts keep grouping with
+the branded window. A final signed release still needs its own visual and
+installer acceptance; this check does not replace that gate.
+
 ## Gates for a first normal 0.x release
 
 1. Keep the release story accurate across the executable, README, changelog,
