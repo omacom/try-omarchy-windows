@@ -129,39 +129,39 @@ preserved, and the updated initramfs installs the small matching launcher
 integration onto disks created by older releases without replacing their OS or
 user data.
 
-## Moving from preview to stable
+## Moving from preview to a normal version
 
-Ship and test a bridge preview containing the stable-version updater before
-publishing v1. Set the release environment variable `LEGACY_UPDATE_BRIDGE_TAG`
-to that published preview tag. Keep its launcher, payload, and signed metadata
-available permanently. Stable publication refuses to proceed without verified
-bridge metadata.
+Ship and test a bridge preview containing the normal-version updater before
+publishing the first normal version. Set the release environment variable
+`LEGACY_UPDATE_BRIDGE_TAG` to that published preview tag. Keep its launcher,
+payload, and signed metadata available permanently. Publication of a normal
+version refuses to proceed without verified bridge metadata.
 
 Each release carries two signed feeds:
 
 - `update-v2.json` describes the current release and is used by the bridge and
   all newer launchers.
 - `update.json` is for older launchers, which only accept preview tags. Preview
-  releases use their own metadata; stable releases carry the original signed
+  releases use their own metadata; normal releases carry the original signed
   bridge metadata unchanged.
 
-An old installation that misses the bridge still finds it through the stable
+An old installation that misses the bridge still finds it through the normal
 release's legacy feed. After installing the bridge, its next scheduled update
-check uses the current feed and can install stable. The normal Latest launcher
+check uses the current feed and can install the normal version. The Latest launcher
 link always serves the current executable. Signature verification, pinned
 payload hashes, and rollback remain required at both steps.
 
-Before publishing v1, test an old preview against the public bridge feed and
-verify that it installs the bridge on a copied guest disk. Test the exact signed
-v1 candidate against locally served, hash-pinned draft assets, including direct
-install, preservation, and forced rollback. The updater intentionally accepts
-only GitHub release URLs, so the bridge-to-stable update cannot fetch a private
-draft through a local test URL. Immediately after publication, verify the
-bridge-to-stable update and both public feeds on physical Windows. Automated
-tests cover feed routing and recovery-state parsing, but do not replace these
-Windows checks.
+Before publishing the first normal version, test an old preview against the
+public bridge feed and verify that it installs the bridge on a copied guest
+disk. Test the exact signed normal-version candidate against locally served,
+hash-pinned draft assets, including direct install, preservation, and forced
+rollback. The updater intentionally accepts only GitHub release URLs, so the
+bridge-to-normal-version update cannot fetch a private draft through a local
+test URL. Immediately after publication, verify that update and both public
+feeds on physical Windows. Automated tests cover feed routing and recovery-state
+parsing, but do not replace these Windows checks.
 
-Stable installations never automatically switch to a preview. The workflow
-also prevents a later preview or older version from replacing a newer stable
-Latest release. Retain the bridge feed on every future stable release so
+Normal-version installations never automatically switch to a preview. The
+workflow also prevents a later preview or older version from replacing a newer
+normal Latest release. Retain the bridge feed on every future normal release so
 infrequently used installations can still update.

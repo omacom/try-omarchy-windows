@@ -29,7 +29,7 @@ Try Omarchy runs the full x86_64 Arch Linux environment used by Omarchy. It is n
 - Portable mode is experimental pending external-drive and second-PC acceptance.
   Accelerated saved-session/RAM resume and bridged networking are not ready for use.
 - The launcher boots its pinned kernel and initramfs from the release image, and the guest's pacman configuration holds the `linux` package so `pacman -Syu` and `omarchy-update` leave it alone. Kernel updates arrive with guest-image updates, which also carry the matching modules onto existing disks. Forcing a different kernel package into the guest leaves it out of sync with those boot files.
-- Configuration export and restore are available through `try-omarchy-export`; see [the migration guide](MIGRATION.md). The published preview also supports [stopped-VM backup and restore](BACKUP.md) from Settings or command-line options. Reset can retain the old disk and offer a full backup first. Snapshots, restore-as-copy and rollback are also available.
+- Configuration export and restore are available through `try-omarchy-export`; see [the migration guide](MIGRATION.md). `v0.1.0` supports [stopped-VM backup and restore](BACKUP.md) from Settings or command-line options. Reset can retain the old disk and offer a full backup first. Snapshots, restore-as-copy and rollback are also available.
 
 Compatibility varies with Windows, CPU, GPU, and driver combinations. When reporting a problem, include those details and whether Try Omarchy selected GPU or CPU rendering.
 
