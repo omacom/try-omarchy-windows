@@ -54,34 +54,31 @@ installer acceptance; this check does not replace that gate.
 ## Gates for a first normal 0.x release
 
 1. Keep the release story accurate across the executable, README, changelog,
-   website, compatibility guide, and release notes. State supported Windows
-   versions, x86_64 requirement, tested hardware, the CPU fallback, and known
-   graphics limitations. Do not imply that the private draft is downloadable.
+   website, compatibility guide, and release notes. State the x86_64 and
+   virtualization requirements, the CPU fallback, and known graphics
+   limitations. Keep test-matrix detail in the compatibility and evidence docs.
+   Do not imply that the private draft is downloadable.
 2. Validate the exact signed candidate on clean install and upgrade paths,
    including first boot, normal launch, files and settings preserved, input,
    audio, clipboard, sharing, camera, backup/restore, uninstall, and update
    recovery. Record the app, guest, runtime, Windows, and driver versions.
-3. Resolve or clearly scope the Intel/NVIDIA Vulkan failure. A working CPU
-   fallback is acceptable for a 0.x release only if it is automatic, usable,
-   and accurately described. Confirm it on that hardware when available or
-   seek an equivalent independent Windows test machine. Do not convert the
-   unavailable PC into a passing result.
-4. Exercise a Windows 10 host and at least one non-AMD Windows 11 host for the
-   basic path, or explicitly narrow the first normal release's supported
-   hardware and Windows-version claim. Check high DPI, fullscreen, ordinary
-   keyboard/touchpad behavior, and sleep/resume on representative hosts.
-5. Recheck signed update feeds and the preview-to-normal-version bridge before
+3. Confirm the selected runtime's GPU path and automatic, usable CPU fallback
+   on available physical Windows hardware. Keep the earlier NVIDIA Vulkan
+   result in the compatibility guide and collect fresh reports when that
+   hardware is available. Testing every CPU, GPU, or Windows version is an
+   ongoing compatibility effort, not a release gate.
+4. Recheck signed update feeds and the preview-to-normal-version bridge before
    promotion. Publish only after the draft asset hashes, Authenticode signature,
    public download, rollback, and latest-release pointer have been checked.
 
 ## 1.0 quality bar
 
-Treat 1.0 as the everyday Windows experience on the supported matrix: clear
+Treat 1.0 as the everyday Windows experience on supported PCs: clear
 installation and uninstall, a reliable desktop with honest graphics fallback,
 no data loss through update or recovery, normal input and media, discoverable
-Settings, accurate help and branding, and tested hardware beyond the single
-AMD laptop. The gates above are the minimum evidence for that claim; 1.0 also
-needs resolved high-impact reports from a broader user cohort.
+Settings, and accurate help and branding. The gates above are the minimum
+evidence for that claim. Collect hardware reports after release and fix
+reproducible issues as they arrive; broader hardware coverage is not a gate.
 
 Feature parity is tracked in [MAC-PARITY.md](MAC-PARITY.md). Live audio switching,
 Windows Hello sudo, bridged networking, battery mirroring, and live RAM

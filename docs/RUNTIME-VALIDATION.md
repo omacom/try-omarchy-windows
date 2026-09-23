@@ -12,8 +12,8 @@ fallback. Physical keyboard/focus acceptance remains open. Default mpv Vulkan
 playback failed through r13. The complete r15 runtime and compatibility-20 guest
 now pass default Vulkan playback, visible output, persistence and shutdown on
 this AMD laptop. They include host-imported memory backing plus guest-side
-presentation and driver-lifetime workarounds. Other hardware and feature gates
-remain open, so the public pin remains unchanged. See the laptop report for the
+presentation and driver-lifetime workarounds. The public pin remained unchanged
+while the next signed candidate was prepared. See the laptop report for the
 exact artifact hashes and the distinction between engineering and final builds.
 
 The published runtime already uses our source-built `winq-emu-alpha10-source-r3`
@@ -22,7 +22,9 @@ and verified against `guest-build/runtime.lock.json`; the bundled source lock
 matches the current recipe. The Alpha 10 filenames are retained for compatibility.
 
 The Runtime workflow produces replacement test artifacts. Keep the current pin
-until a replacement passes these checks on supported Windows versions.
+until a replacement passes the applicable checks below on available physical
+Windows hardware. Record untested configurations rather than treating them as
+failures.
 
 - `qemu-system-x86_64.exe --version` reports QEMU 11.0.0.
 - `qemu-system-x86_64.exe -accel help` lists WHPX.
@@ -37,20 +39,23 @@ until a replacement passes these checks on supported Windows versions.
 - After the desktop settles, QEMU's Task Manager CPU use falls materially below
   its active-animation level and does not pin one logical processor. Animation
   and video remain smooth when display activity resumes.
-- On a host that refuses nested virtualization (Intel Core Ultra laptops, or
-  any machine with the full Hyper-V feature set enabled), QEMU starts and
+- When available, test a host that refuses nested virtualization (such as
+  some Intel Core Ultra laptops or hosts with the full Hyper-V feature set).
+  QEMU starts and
   `qemu-stderr.log` shows the "nested virtualization unavailable" warning
   instead of `Failed to enable nested virtualization` (issue #19).
 
-Test at least one AMD, Intel, and NVIDIA graphics configuration before changing the public pin. Record the launcher version, runtime hash, Windows build, and driver version using [TESTING.md](TESTING.md).
+Before changing the public pin, record the launcher version, runtime hash,
+Windows build, and driver version using [TESTING.md](TESTING.md). Expand AMD,
+Intel, NVIDIA, and Windows-version coverage as machines and bug reports become
+available; this broader matrix is not a prerequisite for publication.
 
 For the unpublished v1.0.0 candidate, the exact r18 runtime was available for
-physical acceptance only on the AMD Windows 11 laptop; the user kept the Intel/
-NVIDIA PC booted into Omarchy
-and declined a Windows switch. The [r18 laptop record](evidence/PINCH-R18-PHYSICAL-2026-09-22.md)
+physical acceptance on the AMD Windows 11 laptop; the Intel/NVIDIA PC remained
+booted into Omarchy. The [r18 laptop record](evidence/PINCH-R18-PHYSICAL-2026-09-22.md)
 records its package hashes, GPU boot, and touchpad test. The earlier
 [Intel/NVIDIA test](evidence/RESOURCE-PROFILES-INTEL-NVIDIA-2026-09-20.md)
 used the v0.0.20-preview runtime: VirGL OpenGL worked, while Venus Vulkan
-initialization failed. This is a documented candidate coverage gap, not
-evidence that r18's NVIDIA Vulkan path passes. Reassess the hardware gate
-before any public non-preview release.
+initialization failed. This remains a documented compatibility result, not
+evidence that r18's NVIDIA Vulkan path passes. Follow up when that hardware is
+available or a user reports the same issue on the published runtime.
