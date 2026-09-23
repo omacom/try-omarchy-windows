@@ -2,16 +2,17 @@
 
 ## Current decision
 
-The latest public launcher is `v0.0.20-preview`. The `v1.0.0` release is a
-private draft and its publish workflow was cancelled before publication. Its
-signed candidate has passed substantial laptop acceptance, but current source
-contains fixes newer than that binary. The public pin remains on the accessible
-preview. No non-preview version has been approved or published.
+The latest public launcher is `v0.0.20-preview`. A new `v0.1.0` private draft
+has passed guest build and headless boot smoke, and its source pin matches the
+draft manifest. It still needs an exact signed launcher and physical Windows
+acceptance before a publication decision. The older `v1.0.0` draft and its
+signed candidate passed substantial laptop acceptance, but current source
+contains fixes newer than that binary. No normal version has been approved or
+published.
 
-Dropping `-preview` need not mean claiming 1.0 completeness. `v0.1.0` is a
-possible first normal version after the gates below are met and a release
-decision is made. Version numbers in this document are proposals, not a release
-instruction.
+Dropping `-preview` need not mean claiming 1.0 completeness. `v0.1.0` is the
+current normal-version candidate, subject to the gates below and a release
+decision. A private draft is not a release instruction.
 
 ## Evidence already in hand
 
@@ -91,10 +92,10 @@ before calling its exact binary accepted.
 
 The old signed draft has passed the clean-install, backup/restore, uninstall,
 GPU, CPU and update-rollback checks recorded above. Its binary predates the
-latest product fixes, so the next practical gate is a newly signed candidate
-from current source with final visual and core integration checks. The public
-download and update feed still point to `v0.0.20-preview`. Broader hardware and
-Windows 10 coverage remain post-release compatibility work, not promotion gates.
+latest product fixes, so the next practical gate is a signed `v0.1.0` candidate
+with final visual and core integration checks. The public download and update
+feed still point to `v0.0.20-preview`. Broader hardware and Windows 10
+coverage remain post-release compatibility work, not promotion gates.
 
 ## 1.0 quality bar
 
