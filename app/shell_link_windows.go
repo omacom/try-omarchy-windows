@@ -40,7 +40,7 @@ func writeShellLink(path, target, arguments, directory string) error {
 		return err
 	}
 	defer recoveryCOMCall(link, 2)
-	description := "Run Omarchy on Windows"
+	description := "Open Try Omarchy"
 	for _, arg := range strings.Fields(arguments) {
 		if arg == "-settings" {
 			description = "Configure Try Omarchy"
