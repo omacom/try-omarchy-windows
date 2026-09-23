@@ -50,10 +50,13 @@ voices at launch. Unsupported runtimes retain the startup-only behavior above.
 
 This source slice does not yet mirror Windows endpoint choices into the guest's
 PipeWire device picker. The host audio catalog and guest selection bridge are
-still required for full Mac parity. It also awaits the r20 Windows build and
-physical checks of running playback/capture, fallback after removal, privacy,
-and clean shutdown. Do not describe live routing as shipped until those pass
-and the new runtime is pinned in a signed release.
+still required for full Mac parity. The corrected r20b archive passed
+[physical laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md) for playback,
+capture, second-stream recovery, missing-route fallback, microphone permission,
+and clean shutdown. The first session probe ran outside the desktop session and
+gave a false negative; the record explains and corrects it. Two real endpoints,
+hotplug, and guest picker integration remain. Live routing is not shipped until
+the runtime is pinned in a signed release.
 
 ## Validation
 

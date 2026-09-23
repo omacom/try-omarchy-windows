@@ -62,9 +62,12 @@ private, atomically replaced `output` and `input` route files while streams
 run, reopens only the changed direction, and falls back to the Windows default
 if a selected endpoint disappears. The launcher writes the initial routes and
 Settings can change them while a supported VM is running. r20 is not pinned by
-the public app or guest lock until a Windows build and physical audio pass
-complete. The route-file parser and SDL open/fallback behavior are compiled
-by `test-sdl-audio.py` during the runtime build.
+the public app or guest lock. The corrected r20b source-built archive passed
+the [available Windows laptop audio checks](../docs/evidence/LIVE-AUDIO-R20-2026-09-23.md),
+including playback, capture, route fallback and microphone gating. Guest
+PipeWire picker integration, a signed runtime pin and real two-endpoint/hotplug
+acceptance remain. The route-file parser and SDL open/fallback behavior are
+compiled by `test-sdl-audio.py` during the runtime build.
 
 The r5 recipe restores the Windows socket handle protection bit with an explicit
 mask before closing the socket. The old zero-mask call left protection enabled

@@ -46,10 +46,10 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Resources, updates, storage and recovery | Implemented; the published update, backup, restore and uninstall paths passed on the AMD laptop | Broader hardware and recovery reports remain useful |
 | GPU application compatibility | AMD GPU desktop and applications passed their recorded checks; a previous Intel/NVIDIA preview runtime booted VirGL OpenGL but failed Venus Vulkan and Godot Forward+ | [Current-runtime investigation #173](https://github.com/omacom/try-omarchy-windows/issues/173); retain CPU/OpenGL fallback |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
-| Audio endpoint selection | Startup choices and stable endpoint IDs ship; unreleased r20 source adds live host Settings routing; [behavior and acceptance](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167): build and physical test r20, then mirror endpoints and selection into the guest PipeWire picker |
+| Audio endpoint selection | Startup choices and stable endpoint IDs ship; unreleased r20b source and [laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md) establish live host routing, fallback and microphone gating; [behavior](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167): mirror endpoints and selection into the guest PipeWire picker, then pin a signed runtime |
 | Trackpad pinch | [Opt-in r18 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Firefox and broader host/DPI/fullscreen acceptance; experimental only |
 | Windows Hello sudo | Not implemented; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); the available laptop reports `DeviceNotPresent` |
-| 1Password host authentication | Guest 1Password uses its ordinary password and Linux authentication paths | After #165, evaluate a narrowly scoped Windows Hello unlock agent for the installed guest 1Password process, following the Mac process and polkit checks |
+| 1Password host authentication | Guest 1Password uses its ordinary password and Linux authentication paths | [Windows Hello unlock #176](https://github.com/omacom/try-omarchy-windows/issues/176) follows #165 with a narrowly scoped agent for the installed guest 1Password process and Mac-style process/polkit checks |
 | Bridged networking | NAT and explicit port forwarding exist | [True LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166), with supported adapter, privilege and firewall handling |
 | Host battery | Shipped in `v0.2.0`; the AMD laptop's 99% charging state appeared as BAT0/ADP0 and in UPower | Desktop/no-battery transition remains to be observed on a suitable host |
 | Guest RAM reclamation | Shipped with r19 in `v0.2.0`; three physical touch/free cycles returned about 797 MiB after the third 768 MiB allocation | Follow up on concrete memory reports |
@@ -64,9 +64,9 @@ gesture and scrolling checks passed on the laptop.
 
 ## Work sequence toward comparable everyday use
 
-1. **Complete live audio (#167).** Build and physically exercise the r20
-   host-route candidate in [PR #175](https://github.com/omacom/try-omarchy-windows/pull/175).
-   Then add an endpoint catalog and a guest PipeWire bridge so the Omarchy
+1. **Complete live audio (#167).** The r20b host-route candidate in
+   [PR #175](https://github.com/omacom/try-omarchy-windows/pull/175) passed its
+   available-hardware checks. Add an endpoint catalog and guest PipeWire bridge so the Omarchy
    picker can choose Windows playback and recording devices. Confirm separate
    directions, removal/reconnection, default fallback, microphone permission,
    and a saved choice after restart before shipping it.
@@ -75,8 +75,9 @@ gesture and scrolling checks passed on the laptop.
    sign a fresh request with Windows Hello, and verify it inside guest PAM.
    Denial and unsupported hosts must fall back to password. The current laptop
    can test failure paths; a Hello-capable host is needed to prove approval.
-   Once that bridge is sound, evaluate the Mac's separate, process-scoped
-   1Password unlock integration without changing general guest PAM policy.
+   Once that bridge is sound, implement [#176](https://github.com/omacom/try-omarchy-windows/issues/176),
+   the Mac's separate, process-scoped 1Password unlock integration, without
+   changing general guest PAM policy.
 3. **Offer a real LAN mode (#166).** Keep NAT and explicit forwards as the
    default. Start with a signed TAP adapter and a reversible wired-Ethernet
    bridge that has its own stable guest MAC. Verify host connectivity, guest
