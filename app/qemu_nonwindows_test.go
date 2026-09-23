@@ -21,6 +21,7 @@ type config struct {
 	dir, hostDir, payloadDir    string
 	winqEmu, share              string
 	fresh, fullscreen, noGpu    bool
+	fullscreenDisplay           string
 	hostCursor                  bool
 	experimentalPinch           bool
 	lanPublic                   bool

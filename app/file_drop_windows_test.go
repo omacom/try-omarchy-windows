@@ -164,7 +164,7 @@ func TestNativeQEMUFileDropEvent(t *testing.T) {
 	dir := t.TempDir()
 	qemuPid.Store(uint32(cmd.Process.Pid))
 	for qemuHwnd.Load() == 0 && ctx.Err() == nil {
-		enforceDisplayWindows(qemuPid.Load(), dir, false, 0)
+		enforceDisplayWindows(qemuPid.Load(), dir, false, "", 0)
 		time.Sleep(50 * time.Millisecond)
 	}
 	hwnd := qemuHwnd.Load()

@@ -22,6 +22,9 @@ type settings struct {
 	SchemaVersion int `json:"schemaVersion"`
 	// Immersive: open fullscreen instead of in a window.
 	Fullscreen bool `json:"fullscreen"`
+	// Windows display device name used for the first fullscreen guest output.
+	// Empty follows the primary display. A disconnected choice is retained.
+	FullscreenDisplay string `json:"fullscreenDisplay,omitempty"`
 	// Guest RAM in MiB. 0 sizes it to the machine automatically.
 	MemoryMiB int `json:"memoryMiB"`
 	// Guest CPUs. 0 sizes them to the machine automatically.
@@ -128,6 +131,9 @@ func saveSettings(path string, s settings) error {
 }
 
 func (s settings) validate() error {
+	if len(s.FullscreenDisplay) > 64 || strings.ContainsAny(s.FullscreenDisplay, "\x00\r\n") {
+		return fmt.Errorf("fullscreen display name is invalid")
+	}
 	if s.Displays < 0 || s.Displays > maximumGuestDisplays {
 		return fmt.Errorf("displays must be between 1 and %d", maximumGuestDisplays)
 	}
@@ -226,6 +232,9 @@ func applySettings(cfg *config, s settings, explicit map[string]bool, forwards *
 	}
 	if !explicit["fullscreen"] {
 		cfg.fullscreen = s.Fullscreen
+	}
+	if !explicit["fullscreen-display"] {
+		cfg.fullscreenDisplay = s.FullscreenDisplay
 	}
 	if !explicit["memory"] {
 		cfg.memOverrideMiB = s.MemoryMiB

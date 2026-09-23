@@ -183,6 +183,10 @@ func TestSignInFullscreenSettingsNative(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = syncSignInShortcut(target, dir, false) })
+	monitors := hostMonitors()
+	if len(monitors) == 0 || monitors[0].Name == "" {
+		t.Fatal("no named Windows display")
+	}
 	for _, enable := range []bool{true, false} {
 		cmd := exec.Command(launcher, "-dir", dir, "-settings")
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -193,7 +197,7 @@ func TestSignInFullscreenSettingsNative(t *testing.T) {
 		go func() { done <- cmd.Wait() }()
 		class, _ := syscall.UTF16PtrFromString("TryOmarchySettings")
 		title, _ := syscall.UTF16PtrFromString(appTitle + " settings")
-		var window, signIn, full uintptr
+		var window, signIn, full, display uintptr
 		for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
 			window, _, _ = user32.NewProc("FindWindowW").Call(uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(title)))
 			if window != 0 {
@@ -202,14 +206,15 @@ func TestSignInFullscreenSettingsNative(t *testing.T) {
 				if owner == uint32(cmd.Process.Pid) {
 					signIn, _, _ = user32.NewProc("GetDlgItem").Call(window, settingsLaunchAtSignInID)
 					full, _, _ = user32.NewProc("GetDlgItem").Call(window, settingsFullID)
-					if signIn != 0 && full != 0 {
+					display, _, _ = user32.NewProc("GetDlgItem").Call(window, settingsFullscreenDisplayID)
+					if signIn != 0 && full != 0 && display != 0 {
 						break
 					}
 				}
 			}
 			time.Sleep(25 * time.Millisecond)
 		}
-		if signIn == 0 || full == 0 {
+		if signIn == 0 || full == 0 || display == 0 {
 			_ = cmd.Process.Kill()
 			t.Fatal("sign-in or fullscreen control did not appear")
 		}
@@ -217,6 +222,7 @@ func TestSignInFullscreenSettingsNative(t *testing.T) {
 		if enable {
 			procSendMessageW.Call(full, 0x00f5, 0, 0)
 		}
+		procSendMessageW.Call(display, 0x14e, 1, 0) // first named display
 		procSendMessageW.Call(window, wmCommand, settingsSaveID, 0)
 		select {
 		case err := <-done:
@@ -233,7 +239,7 @@ func TestSignInFullscreenSettingsNative(t *testing.T) {
 			t.Fatalf("sign-in preference = %#v, error %v", prefs, err)
 		}
 		settings, err := loadSettings(settingsPath(dir))
-		if err != nil || !settings.Fullscreen {
+		if err != nil || !settings.Fullscreen || settings.FullscreenDisplay != monitors[0].Name {
 			t.Fatalf("fullscreen preference = %#v, error %v", settings, err)
 		}
 		path, err := signInShortcutPath(dir)

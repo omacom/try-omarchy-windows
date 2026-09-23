@@ -131,7 +131,7 @@ launch. Portable mode continues to support exFAT through the `data` and
 
 [Moving an existing installation](docs/MOVING.md) is available from Settings.
 
-Settings has General, Devices, Advanced and Recovery pages, camera selection,
+Settings has General, Devices, Advanced, Recovery and Apps pages, camera selection,
 camera/microphone switches, and About and launcher updates. See
 [desktop controls](docs/DESKTOP-CONTROLS.md) for behavior and validation.
 [Separate audio device choices](docs/AUDIO-DEVICES.md) take effect on the next
@@ -145,6 +145,7 @@ command line wins for that launch:
 {
   "schemaVersion": 1,
   "fullscreen": false,
+  "fullscreenDisplay": "",
   "memoryMiB": 0,
   "cpus": 0,
   "share": "",
@@ -156,7 +157,12 @@ command line wins for that launch:
 }
 ```
 
-`fullscreen` is the Immersive mode (`-fullscreen`), `memoryMiB` overrides the
+`fullscreen` is the Immersive mode (`-fullscreen`). The General page's
+**Fullscreen display** choice directs the first guest output to a selected
+Windows monitor; an empty `fullscreenDisplay` uses the primary monitor. If a
+selected monitor is disconnected, that launch uses the primary monitor and
+retains the choice for when it reconnects. The matching flag is
+`-fullscreen-display`. `memoryMiB` overrides the
 automatic guest RAM sizing (`-memory`, 0 keeps it automatic), `cpus` overrides
 the automatic vCPU count (`-cpus`, 0 keeps it automatic), `share` remembers
 the Windows folder shared into Omarchy (`-share`), `shareDisabled` turns that
