@@ -1,0 +1,56 @@
+name: Bug report
+description: Tell us what went wrong in Try Omarchy for Windows
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. A short description is enough to start;
+        the PC details below help us reproduce graphics and virtualization bugs.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include what you expected to happen and any error message.
+      placeholder: Try Omarchy opened, then ...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can we reproduce it?
+      description: Start with the action that triggered the problem. If it happened once, say so.
+      placeholder: |
+        1. Open Try Omarchy
+        2. Select ...
+        3. See ...
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Try Omarchy version
+      description: Shown in About and updates. Include the version on the downloaded file if setup did not finish.
+      placeholder: v0.0.20-preview
+    validations:
+      required: false
+  - type: textarea
+    id: pc
+    attributes:
+      label: Windows and PC
+      description: Windows version, CPU, GPU and driver if known; also say whether Try Omarchy used GPU or CPU rendering.
+      placeholder: |
+        Windows:
+        CPU:
+        GPU and driver:
+        Try Omarchy rendering mode:
+    validations:
+      required: false
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics or screenshots
+      description: Attach a diagnostics zip or screenshot if useful. Review files for local details before posting them publicly.
+      placeholder: Create a diagnostics zip from the tray menu, or run TryOmarchy.exe -diagnostics.
+    validations:
+      required: false

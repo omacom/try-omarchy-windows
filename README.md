@@ -105,12 +105,16 @@ trusted manifest digest via `-sums-sha256`.
 
 ### Reporting a problem
 
-Run `TryOmarchy.exe -diagnostics`. It writes one zip under the chosen data
+Choose **Create diagnostics...** from the tray while Omarchy is running, or run
+`TryOmarchy.exe -diagnostics`. It writes one zip under the chosen data
 folder's `diagnostics` directory with the launcher and QEMU logs, the
 guest's console output, redacted settings, install and update state, the guest
 manifest, and machine facts (Windows build, CPU, memory). It includes no disk
 images or home-folder files and redacts known account paths and SSH key data.
-Logs can still contain local details, so review the zip before attaching it.
+Logs can still contain local details, so review the zip before attaching it to a
+[bug report](https://github.com/omacom/try-omarchy-windows/issues/new/choose).
+Include the launcher version, Windows version, GPU and driver when known, and
+what you expected to happen.
 
 ### Install location
 
