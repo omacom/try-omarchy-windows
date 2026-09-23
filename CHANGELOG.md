@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-Candidate changes since v0.0.20-preview; no stable version has been published.
+## v0.1.0 - 2026-09-22
+
+First normal 0.x candidate. Existing preview installations keep their guest
+disk, files, and settings when updating. The signed v0.0.20-preview bridge lets
+older launchers reach this version.
 
 - Optionally launch Omarchy directly at Windows sign-in, using a per-user
   shortcut that follows fullscreen settings and moves or uninstalls with its
