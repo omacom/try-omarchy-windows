@@ -27,10 +27,15 @@ typedef struct {
 static int opens, warnings, clears, failures;
 static const char *last_name;
 static int last_rec;
+static const char *available_name = "Speakers, USB";
 #define warn_report(...) (warnings++)
 #define error_report(...) (failures++)
 static void SDL_ClearError(void) { clears++; }
 static const char *SDL_GetError(void) { return "unavailable"; }
+static int SDL_GetNumAudioDevices(int rec) { return rec ? 1 : 2; }
+static const char *SDL_GetAudioDeviceName(int index, int rec) {
+    return rec ? "Microphone, USB" : index ? available_name : "Speakers";
+}
 static SDL_AudioDeviceID SDL_OpenAudioDevice(const char *name, int rec,
         SDL_AudioSpec *req, SDL_AudioSpec *obt, int changes) {
     assert(req && obt && changes == 0);
@@ -70,6 +75,13 @@ int main(void) {
 
     assert(sdl_route_check_due(&next));
     assert(!sdl_route_check_due(&next));
+    assert(sdl_named_device_available(NULL, 0));
+    assert(sdl_named_device_available("Speakers, USB", 0));
+    assert(!sdl_named_device_available("missing", 0));
+    assert(sdl_named_device_available("Microphone, USB", 1));
+    assert(!sdl_named_device_available("Speakers, USB", 1));
+    available_name = "reconnected";
+    assert(sdl_named_device_available("reconnected", 0));
     assert(sdl_audio_specs_match(&req, &req));
     obt = req; obt.freq++;
     assert(!sdl_audio_specs_match(&req, &obt));
