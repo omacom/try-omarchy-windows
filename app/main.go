@@ -34,6 +34,7 @@ type config struct {
 	dir, hostDir, payloadDir    string
 	winqEmu, share              string
 	fresh, fullscreen, noGpu    bool
+	fullscreenDisplay           string
 	hostCursor                  bool
 	experimentalPinch           bool
 	lanPublic                   bool
@@ -134,6 +135,7 @@ func main() {
 	flag.BoolVar(&cfg.fresh, "fresh", false, "start over and retain the previous writable disk for recovery")
 	flag.IntVar(&cfg.displays, "displays", 1, "number of guest displays (1 to 16)")
 	flag.BoolVar(&cfg.fullscreen, "fullscreen", false, "start fullscreen (Immersive)")
+	flag.StringVar(&cfg.fullscreenDisplay, "fullscreen-display", "", "Windows display device for the first fullscreen output (empty: primary)")
 	flag.IntVar(&cfg.memOverrideMiB, "memory", 0, "guest RAM in MiB (default: sized to this PC)")
 	flag.IntVar(&cfg.cpuOverride, "cpus", 0, "guest CPUs (default: sized to this PC)")
 	resourceProfileFlag := flag.String("resource-profile", "", "resource preset: balanced, maximum-performance, or manual; -cpus and -memory override individual resources")
@@ -781,6 +783,9 @@ func main() {
 	// Launch-UX contract (NOTES.md): guest console sized to the window it will
 	// actually get, so the picture fills it from the first frame.
 	conW, conH := screenSize(cfg.fullscreen)
+	if cfg.fullscreen {
+		conW, conH = fullscreenTargetSize(cfg.fullscreenDisplay)
+	}
 	if !cfg.fullscreen {
 		if p := rememberedWindow(cfg.dir); p != nil && !p.Maximized {
 			conW, conH = p.consoleSize()
@@ -794,7 +799,7 @@ func main() {
 	go runGuestAgent(cfg.dir)
 	go runWinKeyHook()
 	go runWinKeyQmp()
-	go runTitleEnforcer(cfg.dir, cfg.fullscreen)
+	go runTitleEnforcer(cfg.dir, cfg.fullscreen, cfg.fullscreenDisplay)
 	go runCursorReleaseGuard()
 	go runCloseGuard()
 	runClipboardBridge()

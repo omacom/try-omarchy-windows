@@ -13,6 +13,43 @@ import (
 	"unsafe"
 )
 
+func TestFullscreenDisplaySelection(t *testing.T) {
+	monitors := []hostMonitor{
+		{Name: `\\.\DISPLAY2`, Bounds: screenRect{1920, 0, 4480, 1440}},
+		{Name: `\\.\DISPLAY1`, Bounds: screenRect{0, 0, 1920, 1080}, Primary: true},
+	}
+	for _, tc := range []struct {
+		name string
+		want int
+	}{
+		{"", 1},
+		{`\\.\DISPLAY2`, 0},
+		{`\\.\DISPLAY9`, 1},
+	} {
+		index, monitor := selectedHostMonitor(tc.name, monitors)
+		if index != tc.want || monitor != monitors[tc.want] {
+			t.Fatalf("selection %q = %d, %+v", tc.name, index, monitor)
+		}
+	}
+}
+
+func TestFullscreenDisplayEnumeration(t *testing.T) {
+	if os.Getenv("TRYOMARCHY_NATIVE_UI_TEST") != "1" {
+		t.Skip("requires interactive Windows desktop")
+	}
+	monitors := hostMonitors()
+	if len(monitors) == 0 {
+		t.Fatal("no host displays")
+	}
+	_, primary := selectedHostMonitor("", monitors)
+	if !primary.Primary || primary.Bounds.width() <= 0 || primary.Bounds.height() <= 0 {
+		t.Fatalf("invalid primary display: %+v", primary)
+	}
+	if width, height := fullscreenTargetSize(primary.Name); width != int(primary.Bounds.width()) || height != int(primary.Bounds.height()) {
+		t.Fatalf("fullscreen size %d x %d, display %+v", width, height, primary)
+	}
+}
+
 func TestNativeQEMUPrimaryWindow(t *testing.T) {
 	tool := os.Getenv("QEMU_SYSTEM")
 	if tool == "" || os.Getenv("TRYOMARCHY_NATIVE_UI_TEST") != "1" {
@@ -32,7 +69,7 @@ func TestNativeQEMUPrimaryWindow(t *testing.T) {
 	dir := t.TempDir()
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		enforceDisplayWindows(qemuPid.Load(), dir, false, 0)
+		enforceDisplayWindows(qemuPid.Load(), dir, false, "", 0)
 		if len(enumTitleWindows) == 1 {
 			break
 		}
@@ -111,7 +148,7 @@ func TestMultipleNativeDisplayWindowLifecycle(t *testing.T) {
 	}
 	qemuPid.Store(uint32(os.Getpid()))
 	dir := t.TempDir()
-	enforceDisplayWindows(qemuPid.Load(), dir, false, 0)
+	enforceDisplayWindows(qemuPid.Load(), dir, false, "", 0)
 	if len(enumTitleWindows) != 3 {
 		t.Fatalf("lost secondary display windows: %d", len(enumTitleWindows))
 	}
@@ -131,18 +168,18 @@ func TestMultipleNativeDisplayWindowLifecycle(t *testing.T) {
 	if capturePlacement(windows[1]).usable(monitors) {
 		t.Fatal("test window did not move offscreen")
 	}
-	enforceDisplayWindows(qemuPid.Load(), dir, false, 0)
+	enforceDisplayWindows(qemuPid.Load(), dir, false, "", 0)
 	if capturePlacement(windows[1]).usable(monitors) {
 		t.Fatal("moved a window without a topology change")
 	}
 	enumTitleMonitors = []screenRect{{30000, 30000, 32000, 32000}}
-	enforceDisplayWindows(qemuPid.Load(), dir, false, 0)
+	enforceDisplayWindows(qemuPid.Load(), dir, false, "", 0)
 	if !capturePlacement(windows[1]).usable(monitors) {
 		t.Fatal("lost output after monitor removal")
 	}
 	procDestroyWindow.Call(windows[2])
 	windows = windows[:2]
-	enforceDisplayWindows(qemuPid.Load(), dir, false, 0)
+	enforceDisplayWindows(qemuPid.Load(), dir, false, "", 0)
 	if len(enumTitleWindows) != 2 {
 		t.Fatal("retained a closed display window")
 	}

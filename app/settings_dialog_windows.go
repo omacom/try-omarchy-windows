@@ -96,6 +96,7 @@ const (
 	settingsDisplaysID           = 2033
 	settingsLANPublicID          = 2034
 	settingsLANAddID             = 2035
+	settingsFullscreenDisplayID  = 2036
 	bsAutoradiobutton            = 0x0009
 	wsGroup                      = 0x00020000
 	settingsRecoveryDone         = 0x8010
@@ -235,7 +236,9 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	className, _ := syscall.UTF16PtrFromString("TryOmarchySettings")
 	var hwnd uintptr
 	var scroll settingsScroll
-	var hFull, hStartAutomatically, hLaunchAtSignIn, hMem, hCPUs, hDisk, hShare, hShareOn, hFwd, hKey uintptr
+	var hFull, hFullscreenDisplay, hStartAutomatically, hLaunchAtSignIn, hMem, hCPUs, hDisk, hShare, hShareOn, hFwd, hKey uintptr
+	fullscreenMonitors := hostMonitors()
+	fullscreenChoices := []string{""}
 	var hRenderAuto, hRenderGPU, hRenderCPU, hDisplays, hLANPublic uintptr
 	var hCameraOn, hMicrophoneOn, hCamera, hUpdateOn uintptr
 	var hAudioOutput, hAudioInput uintptr
@@ -289,6 +292,11 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		if err != nil {
 			return s, err
 		}
+		selectedDisplay, _, _ := procSendMessageW.Call(hFullscreenDisplay, 0x147, 0, 0) // CB_GETCURSEL
+		if selectedDisplay >= uintptr(len(fullscreenChoices)) {
+			return s, fmt.Errorf("choose a fullscreen display")
+		}
+		s.FullscreenDisplay = fullscreenChoices[selectedDisplay]
 		// Presets are launch-time intent: current memory pressure (including
 		// a running guest) must not prevent saving them for the next boot.
 		if selectedProfile() == resourceManual {
@@ -672,6 +680,32 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		procSendMessageW.Call(hFull, bmSetcheck, bstChecked, 0)
 	}
 	y += 30
+	mk("STATIC", "Fullscreen display", left, y+3, labelW, 20, ssNoprefix, 0)
+	hFullscreenDisplay = mk("COMBOBOX", "", fieldX, y, fieldW, 180, 0x0003|wsVscroll|wsTabstop, settingsFullscreenDisplayID)
+	addDisplay := func(label, name string) {
+		value, _ := syscall.UTF16PtrFromString(label)
+		procSendMessageW.Call(hFullscreenDisplay, 0x143, 0, uintptr(unsafe.Pointer(value))) // CB_ADDSTRING
+		fullscreenChoices = append(fullscreenChoices, name)
+	}
+	value, _ := syscall.UTF16PtrFromString("Primary display (automatic)")
+	procSendMessageW.Call(hFullscreenDisplay, 0x143, 0, uintptr(unsafe.Pointer(value)))
+	selectedDisplay := 0
+	for _, monitor := range fullscreenMonitors {
+		label := fmt.Sprintf("%s (%d x %d)", monitor.Name, monitor.Bounds.width(), monitor.Bounds.height())
+		if monitor.Primary {
+			label += " - primary"
+		}
+		addDisplay(label, monitor.Name)
+		if monitor.Name == current.FullscreenDisplay {
+			selectedDisplay = len(fullscreenChoices) - 1
+		}
+	}
+	if current.FullscreenDisplay != "" && selectedDisplay == 0 {
+		addDisplay(current.FullscreenDisplay+" (disconnected)", current.FullscreenDisplay)
+		selectedDisplay = len(fullscreenChoices) - 1
+	}
+	procSendMessageW.Call(hFullscreenDisplay, 0x14e, uintptr(selectedDisplay), 0) // CB_SETCURSEL
+	y += 34
 	hStartAutomatically = mk("BUTTON", "Start automatically from Windows shortcuts", left, y, 360, 22, bsAutocheckbox|wsTabstop, settingsStartAutomaticallyID)
 	if launchPrefs.StartAutomatically {
 		procSendMessageW.Call(hStartAutomatically, bmSetcheck, bstChecked, 0)

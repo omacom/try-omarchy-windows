@@ -16,7 +16,7 @@ func TestLoadSettingsMissingFileIsDefaults(t *testing.T) {
 
 func TestSettingsRoundTrip(t *testing.T) {
 	path := settingsPath(filepath.Join(t.TempDir(), "TryOmarchy"))
-	in := settings{Fullscreen: true, MemoryMiB: 6144, Share: `C:\Users\me\Work`, SharedFolderPrompted: true,
+	in := settings{Fullscreen: true, FullscreenDisplay: `\\.\DISPLAY2`, MemoryMiB: 6144, Share: `C:\Users\me\Work`, SharedFolderPrompted: true,
 		Forwards: []string{"tcp:2222:22", "udp:5000:5000"}, SSHKey: `C:\Users\me\.ssh\work.pub`}
 	if err := saveSettings(path, in); err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	in.SchemaVersion = settingsSchemaVersion
-	if out.SchemaVersion != in.SchemaVersion || out.Fullscreen != in.Fullscreen || out.MemoryMiB != in.MemoryMiB ||
+	if out.SchemaVersion != in.SchemaVersion || out.Fullscreen != in.Fullscreen || out.FullscreenDisplay != in.FullscreenDisplay || out.MemoryMiB != in.MemoryMiB ||
 		out.Share != in.Share || out.ShareDisabled != in.ShareDisabled || out.SharedFolderPrompted != in.SharedFolderPrompted ||
 		out.SSHKey != in.SSHKey || strings.Join(out.Forwards, ",") != strings.Join(in.Forwards, ",") {
 		t.Fatalf("round trip changed settings: %+v vs %+v", out, in)
@@ -58,7 +58,7 @@ func TestLoadSettingsRejectsDamageInsteadOfIgnoringIt(t *testing.T) {
 }
 
 func TestApplySettingsLetsExplicitFlagsWin(t *testing.T) {
-	file := settings{Fullscreen: true, MemoryMiB: 4096, Share: `D:\Share`,
+	file := settings{Fullscreen: true, FullscreenDisplay: `\\.\DISPLAY2`, MemoryMiB: 4096, Share: `D:\Share`,
 		Forwards: []string{"tcp:2222:22"}, SSHKey: `D:\key.pub`}
 
 	// Nothing on the command line: the file decides every row.
@@ -68,19 +68,19 @@ func TestApplySettingsLetsExplicitFlagsWin(t *testing.T) {
 	if err := applySettings(cfg, file, map[string]bool{}, &forwards, &keyPath); err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.fullscreen || cfg.memOverrideMiB != 4096 || cfg.share != `D:\Share` || keyPath != `D:\key.pub` || forwards.String() != "tcp:2222:22" {
+	if !cfg.fullscreen || cfg.fullscreenDisplay != file.FullscreenDisplay || cfg.memOverrideMiB != 4096 || cfg.share != `D:\Share` || keyPath != `D:\key.pub` || forwards.String() != "tcp:2222:22" {
 		t.Fatalf("file not applied: %+v forwards=%s key=%s", cfg, forwards.String(), keyPath)
 	}
 
 	// Explicit flags keep their values; an explicit -ssh replaces the list.
-	cfg = &config{fullscreen: false, memOverrideMiB: 0, share: ""}
+	cfg = &config{fullscreen: false, fullscreenDisplay: `\\.\DISPLAY3`, memOverrideMiB: 0, share: ""}
 	forwards = forwardList{{"tcp", 2299, 22, ""}}
 	keyPath = ""
-	explicit := map[string]bool{"fullscreen": true, "memory": true, "share": true, "ssh": true, "ssh-key": true}
+	explicit := map[string]bool{"fullscreen": true, "fullscreen-display": true, "memory": true, "share": true, "ssh": true, "ssh-key": true}
 	if err := applySettings(cfg, file, explicit, &forwards, &keyPath); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.fullscreen || cfg.memOverrideMiB != 0 || cfg.share != "" || keyPath != "" || forwards.String() != "tcp:2299:22" {
+	if cfg.fullscreen || cfg.fullscreenDisplay != `\\.\DISPLAY3` || cfg.memOverrideMiB != 0 || cfg.share != "" || keyPath != "" || forwards.String() != "tcp:2299:22" {
 		t.Fatalf("explicit flags overridden: %+v forwards=%s key=%s", cfg, forwards.String(), keyPath)
 	}
 }
