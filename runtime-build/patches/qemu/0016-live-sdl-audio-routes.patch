@@ -419,7 +419,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
      }
  
  SDL_WRAPPER_FUNC(buffer_get_free, size_t, (HWVoiceOut *hw), (hw), Out)
-@@ -348,6 +625,8 @@
+@@ -348,12 +625,14 @@
      SDLVoiceOut *sdl = (SDLVoiceOut *)hw;
  
      sdl_close_out(sdl);
@@ -428,6 +428,13 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
  }
  
  static int sdl_init_out(HWVoiceOut *hw, struct audsettings *as)
+ {
+     SDLVoiceOut *sdl = (SDLVoiceOut *)hw;
+-    SDL_AudioSpec req, obt;
++    SDL_AudioSpec req = {0}, obt;
+     int err;
+     Audiodev *dev = hw->s->dev;
+     AudiodevSdlPerDirectionOptions *spdo = dev->u.sdl.out;
 @@ -369,7 +648,9 @@
      req.userdata = sdl;
  
@@ -472,7 +479,7 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
  }
  
  static void sdl_fini_in(HWVoiceIn *hw)
-@@ -404,6 +700,8 @@
+@@ -404,12 +700,14 @@
      SDLVoiceIn *sdl = (SDLVoiceIn *)hw;
  
      sdl_close_in(sdl);
@@ -481,6 +488,13 @@ diff --git a/audio/sdlaudio.c b/audio/sdlaudio.c
  }
  
  static int sdl_init_in(HWVoiceIn *hw, audsettings *as)
+ {
+     SDLVoiceIn *sdl = (SDLVoiceIn *)hw;
+-    SDL_AudioSpec req, obt;
++    SDL_AudioSpec req = {0}, obt;
+     int err;
+     Audiodev *dev = hw->s->dev;
+     AudiodevSdlPerDirectionOptions *spdo = dev->u.sdl.in;
 @@ -425,11 +723,14 @@
      req.userdata = sdl;
  
