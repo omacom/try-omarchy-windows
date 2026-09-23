@@ -75,6 +75,10 @@ Restore checks and extracts files into a temporary folder before publishing the
 new data folder. An error or cancellation leaves the existing installation and
 backup unchanged. It never replaces an existing data folder.
 
+In the next normal release, command-line restore also adds **Start Omarchy** and
+**Settings** shortcuts inside the restored folder. They point only to that
+copy; existing Start Menu and desktop shortcuts are unchanged.
+
 Start the restored copy explicitly:
 
 ```powershell

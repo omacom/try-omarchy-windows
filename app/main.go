@@ -376,7 +376,11 @@ func main() {
 		if *backupPath != "" {
 			infoBox("Backup saved to:\n\n" + *backupPath + "\n\nIt contains your guest files and settings. Keep it private. Shared Windows folders are not included.")
 		} else {
-			infoBox("Backup restored to:\n\n" + cfg.dir + "\n\nStart Try Omarchy with -dir pointing to this folder. Your original installation was not changed.")
+			if err := createRestoredLaunchers(cfg.dir); err != nil {
+				infoBox("Backup restored to:\n\n" + cfg.dir + "\n\nStartup shortcuts could not be created: " + err.Error() + "\n\nStart Try Omarchy with -dir pointing to this folder. Your original installation was not changed.")
+			} else {
+				infoBox("Backup restored to:\n\n" + cfg.dir + "\n\nOpen Start Omarchy in that folder to use this copy. Your original installation and shortcuts were not changed.")
+			}
 		}
 		return
 	}
