@@ -1,0 +1,148 @@
+From c62f8ca9435d581087d2f83828932ec948fc47d2 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 23 Sep 2026 06:53:52 -0400
+Subject: [PATCH] Open native Windows settings from Omarchy
+
+---
+ .../usr/local/bin/try-omarchy-host-settings   | 19 ++++++++++++++
+ .../try-omarchy-host-settings.desktop         |  8 ++++++
+ guest/scripts/finalize-rootfs.sh              |  5 +++-
+ guest/tests/test_overlay_scripts.py           | 26 +++++++++++++++++++
+ guest/tests/verify.py                         |  2 +-
+ 5 files changed, 58 insertions(+), 2 deletions(-)
+ create mode 100755 guest/factory-overlay/usr/local/bin/try-omarchy-host-settings
+ create mode 100644 guest/factory-overlay/usr/share/applications/try-omarchy-host-settings.desktop
+
+diff --git a/guest/factory-overlay/usr/local/bin/try-omarchy-host-settings b/guest/factory-overlay/usr/local/bin/try-omarchy-host-settings
+new file mode 100755
+index 0000000..ee5804a
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/bin/try-omarchy-host-settings
+@@ -0,0 +1,19 @@
++#!/bin/bash
++# Open the native Windows settings window through the local host agent.
++set -u
++host=${TRY_OMARCHY_AGENT_HOST:-10.0.2.2}
++port=${TRY_OMARCHY_AGENT_PORT:-4451}
++if ! { exec 3<>"/dev/tcp/$host/$port"; } 2>/dev/null; then
++  message='Try Omarchy settings are unavailable. Start Omarchy from Windows and try again.'
++elif ! printf 'open-settings\n' >&3 || ! IFS= read -r -t 5 response <&3 || [[ $response != ok ]]; then
++  message='Could not open Try Omarchy settings on Windows.'
++else
++  exec 3>&-
++  exit 0
++fi
++exec 3>&-
++printf '%s\n' "$message" >&2
++if command -v notify-send >/dev/null 2>&1; then
++  notify-send 'Try Omarchy' "$message"
++fi
++exit 1
+diff --git a/guest/factory-overlay/usr/share/applications/try-omarchy-host-settings.desktop b/guest/factory-overlay/usr/share/applications/try-omarchy-host-settings.desktop
+new file mode 100644
+index 0000000..2601cd2
+--- /dev/null
++++ b/guest/factory-overlay/usr/share/applications/try-omarchy-host-settings.desktop
+@@ -0,0 +1,8 @@
++[Desktop Entry]
++Type=Application
++Name=Try Omarchy Settings
++Comment=Change Windows host settings for Try Omarchy
++Exec=try-omarchy-host-settings
++Icon=preferences-system
++Categories=Settings;System;
++Terminal=false
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 285fd5d..115ec3f 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -103,6 +103,8 @@ compat_paths=(
+   etc/modules-load.d/90-try-omarchy-camera.conf
+   etc/modprobe.d/90-try-omarchy-camera.conf
+   usr/local/bin/try-omarchy-drop
++  usr/local/bin/try-omarchy-host-settings
++  usr/share/applications/try-omarchy-host-settings.desktop
+   etc/systemd/user/clipboard-bridge.service
+   etc/systemd/user/omarchy-fcitx5.service.d/10-try-omarchy.conf
+   etc/systemd/user/graphical-session.target.wants/clipboard-bridge.service
+@@ -153,7 +155,8 @@ kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '
+ # Revision 27 delivers the complete matching kernel modules and preserves
+ # the transfer fallback when a direct paste cannot be confirmed.
+ # Revision 28 receives file drops in the background directly into folders.
+-compat_revision=29
++# Revision 30 adds the in-guest launcher for native Windows settings.
++compat_revision=30
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index c0d5fea..4f1d571 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -8,10 +8,12 @@ import base64
+ import json
+ import os
+ import shutil
++import socket
+ import subprocess
+ import tarfile
+ import tempfile
+ import unittest
++from concurrent.futures import ThreadPoolExecutor
+ from pathlib import Path
+ 
+ OVERLAY = Path(__file__).resolve().parents[1] / "factory-overlay"
+@@ -19,6 +21,7 @@ SHARE_LINK = OVERLAY / "usr/local/lib/try-omarchy/share-link"
+ REQUEST_SSHD = OVERLAY / "usr/local/lib/try-omarchy/request-sshd"
+ HOST_LOCALE = OVERLAY / "usr/local/lib/try-omarchy/apply-host-locale"
+ AGENT = OVERLAY / "usr/local/lib/try-omarchy/agent"
++HOST_SETTINGS = OVERLAY / "usr/local/bin/try-omarchy-host-settings"
+ CATCH_UP = OVERLAY / "usr/local/lib/try-omarchy/catch-up"
+ FRAGMENT = OVERLAY / "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua"
+ EXPORT = OVERLAY / "usr/local/bin/try-omarchy-export"
+@@ -507,6 +510,29 @@ class HostLocaleTests(OverlayCase):
+ 
+ 
+ class AgentTests(OverlayCase):
++    def test_host_settings_request_and_failure(self) -> None:
++        with socket.socket() as server:
++            server.bind(("127.0.0.1", 0))
++            server.listen(1)
++            env = dict(self.env, TRY_OMARCHY_AGENT_HOST="127.0.0.1",
++                       TRY_OMARCHY_AGENT_PORT=str(server.getsockname()[1]))
++            def answer(status: bytes) -> bytes:
++                with server.accept()[0] as connection:
++                    request = connection.recv(128)
++                    connection.sendall(status)
++                    return request
++            with ThreadPoolExecutor(max_workers=1) as executor:
++                received = executor.submit(answer, b"ok\n")
++                result = subprocess.run([str(HOST_SETTINGS)], env=env, capture_output=True, text=True, timeout=10)
++                self.assertEqual(result.returncode, 0, result.stderr)
++                self.assertEqual(received.result(timeout=5), b"open-settings\n")
++            with ThreadPoolExecutor(max_workers=1) as executor:
++                received = executor.submit(answer, b"unavailable\n")
++                result = subprocess.run([str(HOST_SETTINGS)], env=env, capture_output=True, text=True, timeout=10)
++                self.assertEqual(received.result(timeout=5), b"open-settings\n")
++                self.assertEqual(result.returncode, 1)
++                self.assertIn("Could not open", result.stderr)
++
+     def handle(self, message: str, now: int) -> subprocess.CompletedProcess:
+         self.fake("date", f'if [ "$1" = +%s ]; then echo {now}; else echo "date $@" >> "$CALLS"; fi')
+         return subprocess.run([str(AGENT), "--handle"], input=message + "\n", env=dict(self.env, CALLS=str(self.log)),
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index a8bf9d4..ff05980 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -266,7 +266,7 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=29" in finalize_rootfs
++        "compat_revision=30" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in compat_paths
+         and "etc/skel/.config/nvim/lua/plugins/theme.lua" in compat_paths
+-- 
+2.55.0
+

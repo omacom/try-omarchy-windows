@@ -1,6 +1,6 @@
 # Windows and Mac feature review
 
-Reviewed September 21 and refreshed September 22, 2026 against Mac source commit
+Reviewed September 21 and refreshed September 23, 2026 against Mac source commit
 [`d843f54a37346dbb08ee4610785836194ca7e3bd`](https://github.com/omacom/try-omarchy/tree/d843f54a37346dbb08ee4610785836194ca7e3bd).
 This is an implementation and acceptance tracker, not a claim that every feature
 is shipped or hardware-tested. The release gates in
@@ -38,24 +38,25 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | --- | --- | --- |
 | Pre-boot launcher | Native pages and save-and-launch; signed candidate GPU boot/reboot/shutdown and keyboard regression tests pass | Mixed-DPI and broader hardware, moved-installation acceptance |
 | Automatic startup | Owned Windows shortcuts can opt into direct startup while the Settings shortcut remains available | Broader physical acceptance |
-| In-guest host settings | Not implemented | A Windows desktop-safe request path that reliably presents the native window |
+| In-guest host settings | Implemented in [candidate #164](https://github.com/omacom/try-omarchy-windows/pull/164); the guest launcher entry opened native Settings on the AMD laptop | Include the guest patch and launcher in a signed release |
 | Branding and About | Omacom resource metadata, retained original copyright plus contributor credit, notices, labelled About actions; native visibility tested | Confirm public-facing relationship and presentation before a 1.0 claim |
 | Camera, clipboard, shared folders, transfers | Implemented; the signed candidate passed camera and share checks on the AMD laptop | More device combinations and direct drops into arbitrary guest apps remain untested |
 | Resources, updates, storage and recovery | Implemented; the published update, backup, restore and uninstall paths passed on the AMD laptop | Broader hardware and recovery reports remain useful |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
-| Audio endpoint selection | Startup playback/recording choices and stable Windows endpoint IDs implemented; [behavior and acceptance](AUDIO-DEVICES.md) | Live guest selection bridge, physical rename/unplug acceptance, and switching between two physical devices |
+| Audio endpoint selection | Startup playback/recording choices and stable Windows endpoint IDs implemented; [behavior and acceptance](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167), including endpoint loss and independent capture/playback |
 | Trackpad pinch | [Opt-in r18 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Firefox and broader host/DPI/fullscreen acceptance; experimental only |
-| Windows Hello sudo | Not implemented; guest password authentication remains | Host Hello availability and verification, authenticated request bridge and fail-closed PAM integration; rejection, timeout, cancellation and unsupported-host tests |
-| Bridged networking | NAT and explicit port forwarding exist | Supported adapter/driver implementation and distribution, privilege boundary, reconnect and firewall behavior; no silent installation or adapter reconfiguration |
-| Host battery | Not implemented | Windows power-source bridge and guest device behavior, including desktops without batteries |
-| Guest RAM reclamation | Disk reclaim exists; unused guest RAM is not returned live to Windows | Runtime support and measured Windows host-memory acceptance |
+| Windows Hello sudo | Not implemented; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); the available laptop reports `DeviceNotPresent` |
+| Bridged networking | NAT and explicit port forwarding exist | [True LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166), with supported adapter, privilege and firewall handling |
+| Host battery | Implemented in candidate #164; the AMD laptop's 99% charging state appeared as BAT0/ADP0 and in UPower | Ship the rebuilt guest image; desktop/no-battery transition remains to be observed on a suitable host |
+| Guest RAM reclamation | Implemented in candidate #164 with the r19 WHPX runtime; three physical touch/free cycles returned about 797 MiB after the third 768 MiB allocation | Publish and pin the source-built r19 runtime with the next signed release |
 | Keyboard and language | Windows time zone, keyboard layout and display language follow the host | Physical ANSI/ISO/JIS geometry and broader input-method acceptance |
 
-Windows Hello, live audio routing, bridging, battery mirroring and live memory
-reclamation remain feature work; pinch still needs acceptance before default enablement. A
-settings link, source-only runtime patch, or build success does not close those
-rows. Keep native platform differences explicit instead of adding controls that
-cannot deliver their labelled behavior.
+Windows Hello, live audio routing, and true bridged networking remain feature
+work. Settings, battery mirroring, and live memory reclamation have passed the
+available physical candidate checks, but are not in public `v0.1.0`. The
+[September 23 candidate record](evidence/FEATURE-GAPS-2026-09-23.md) gives the
+measurements and remaining packaging step. Pinch remains opt-in; its physical
+gesture and scrolling checks passed on the laptop.
 
 ## Local checks and next laptop pass
 

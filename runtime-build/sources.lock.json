@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "name": "winq-emu-alpha10-source-r18",
+  "name": "winq-emu-alpha10-source-r19",
   "sourceDateEpoch": 1777269494,
   "qemu": {
     "repository": "https://github.com/cmspam/winq-emu-qemu.git",
@@ -65,6 +65,10 @@
       {
         "file": "patches/qemu/0014-forward-windows-pinch.patch",
         "sha256": "78ab8edc25822a0073b32ac2a99da92e7ff8b1b481c31651337ded4c169dbbd2"
+      },
+      {
+        "file": "patches/qemu/0015-reclaim-free-guest-pages-on-whpx.patch",
+        "sha256": "b262c8348f25fde5cc7526276e1f59ba559df2076e413a69949506e3f0790d74"
       }
     ]
   },

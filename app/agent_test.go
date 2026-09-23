@@ -37,6 +37,31 @@ func TestGuestAgentSendsTimeOnConnectAndResume(t *testing.T) {
 	}
 }
 
+func TestGuestAgentSendsBatteryOnConnect(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	a := newGuestAgent()
+	a.batteryLine = func() (string, error) { return "battery {\"type\":\"state\"}\n", nil }
+	go a.accept(l)
+	c, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.Write([]byte("hello 3\n"))
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	r := bufio.NewReader(c)
+	if line, err := r.ReadString('\n'); err != nil || !strings.HasPrefix(line, "time ") {
+		t.Fatalf("time message %q, %v", line, err)
+	}
+	if line, err := r.ReadString('\n'); err != nil || line != "battery {\"type\":\"state\"}\n" {
+		t.Fatalf("battery message %q, %v", line, err)
+	}
+}
+
 func TestGuestAgentWithoutConnectionIsSilent(t *testing.T) {
 	a := newGuestAgent()
 	if a.sendTime("test") {
@@ -51,18 +76,21 @@ func TestGuestAgentReplacesAnEarlierConnection(t *testing.T) {
 	}
 	defer l.Close()
 	a := newGuestAgent()
+	a.batteryLine = nil
 	go a.accept(l)
 	first, err := net.Dial("tcp", l.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close()
+	first.Write([]byte("hello 2\n"))
 	bufio.NewReader(first).ReadString('\n')
 	second, err := net.Dial("tcp", l.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer second.Close()
+	second.Write([]byte("hello 2\n"))
 	r := bufio.NewReader(second)
 	second.SetReadDeadline(time.Now().Add(2 * time.Second))
 	if _, err := r.ReadString('\n'); err != nil {
@@ -82,6 +110,7 @@ func TestGuestAgentZeroFillRoundTrip(t *testing.T) {
 	}
 	defer l.Close()
 	a := newGuestAgent()
+	a.batteryLine = nil
 	if a.requestZeroFill(1024) {
 		t.Fatal("request accepted without a guest")
 	}
@@ -91,6 +120,7 @@ func TestGuestAgentZeroFillRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	c.Write([]byte("hello 2\n"))
 	r := bufio.NewReader(c)
 	c.SetReadDeadline(time.Now().Add(2 * time.Second))
 	r.ReadString('\n') // time on connect
@@ -116,6 +146,61 @@ func TestGuestAgentZeroFillRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(a.reclaimStatus(), "Shut down") {
 		t.Fatal(a.reclaimStatus())
+	}
+}
+
+func TestGuestSettingsRequestKeepsAgentConnected(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	a := newGuestAgent()
+	a.batteryLine = nil
+	opened := make(chan struct{}, 2)
+	a.openSettings = func() bool { opened <- struct{}{}; return true }
+	go a.accept(l)
+	agent, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Close()
+	agent.Write([]byte("hello 2\n"))
+	if _, err := bufio.NewReader(agent).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	request, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Write([]byte("open-settings\n"))
+	request.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if line, err := bufio.NewReader(request).ReadString('\n'); err != nil || line != "ok\n" {
+		t.Fatalf("settings response %q, %v", line, err)
+	}
+	request.Close()
+	select {
+	case <-opened:
+	case <-time.After(2 * time.Second):
+		t.Fatal("settings callback was not called")
+	}
+	if !a.sendTime("") {
+		t.Fatal("settings request disconnected the guest agent")
+	}
+	request, err = net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Write([]byte("open-settings; reboot\n"))
+	request.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := bufio.NewReader(request).ReadString('\n'); err == nil {
+		t.Fatal("unrecognized request received a response")
+	}
+	request.Close()
+	select {
+	case <-opened:
+		t.Fatal("unrecognized request opened settings")
+	default:
 	}
 }
 

@@ -118,13 +118,19 @@ Settings, and accurate help and branding. The gates above are the minimum
 evidence for that claim. Collect hardware reports after release and fix
 reproducible issues as they arrive; broader hardware coverage is not a gate.
 
-Feature parity is tracked in [MAC-PARITY.md](MAC-PARITY.md). Live audio switching,
-Windows Hello sudo, bridged networking, battery mirroring, and live RAM
-reclamation are valuable, but none is automatically a 1.0 blocker if the
-existing startup audio selection, password authentication, NAT networking,
-power settings, and fixed memory allocation are reliable and their limits are
-explained. Pinch should stay opt-in until broader device testing supports a
-default. ARM64 and interface translation are open requests
+Feature parity is tracked in [MAC-PARITY.md](MAC-PARITY.md). The September 23
+candidate implements in-guest host Settings, battery mirroring, and measured
+live RAM reclamation; its r19 runtime and new guest image still need a signed
+release. Keep Windows Hello sudo, true bridged networking, and live audio
+switching as active feature work rather than dropping them for lack of bug
+reports. Their existing password, NAT, and startup-audio paths remain usable
+while [Hello #165](https://github.com/omacom/try-omarchy-windows/issues/165),
+[LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166),
+and [live audio #167](https://github.com/omacom/try-omarchy-windows/issues/167)
+proceed. The current user base of thousands with relatively
+few reports is positive evidence about the everyday path; broad hardware and
+Windows 10 acceptance are not 1.0 gates. Pinch should stay opt-in until device
+reports support a default. ARM64 and interface translation are open requests
 ([#131](https://github.com/omacom/try-omarchy-windows/issues/131),
 [#127](https://github.com/omacom/try-omarchy-windows/issues/127)); neither can be
 claimed as supported. Prioritize any gap that prevents a normal supported PC

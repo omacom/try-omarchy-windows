@@ -41,6 +41,16 @@ it, so a large first frame cannot be dropped by a fixed buffer. Set
 failures to QEMU stderr; it is off during normal use.
 See [experimental pinch behavior and acceptance limits](../docs/PINCH-ZOOM.md).
 
+The r19 recipe adds `0015-reclaim-free-guest-pages-on-whpx.patch`. It handles
+virtio balloon free-page reports on WHPX by unmapping, decommitting, committing
+and remapping private guest RAM. The recommit step guarantees zero-filled pages
+when Linux reuses them. The launcher enables free-page reporting only when the
+runtime's source provenance includes this patch, so older runtimes retain their
+previous behavior. The [September 23 physical candidate record](../docs/evidence/FEATURE-GAPS-2026-09-23.md)
+includes measured Windows memory return and reuse checks. The published
+`v0.1.0` runtime remains r18 until the validated r19 archive is published and
+pinned for a signed update.
+
 The r4 recipe enables libusb explicitly and includes its runtime DLL and license.
 The USB host patch adds `auto-reconnect=off` for explicit attachment: the selected
 bus/address must exist, vendor/product/port must still match, and opening the

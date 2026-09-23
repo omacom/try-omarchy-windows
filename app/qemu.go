@@ -128,6 +128,12 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		"-no-reboot",
 		"-name", appTitle,
 	)
+	// The bundled r19 runtime replaces reported free pages with demand-zero
+	// Windows backing before acknowledging Linux. Earlier Windows QEMU builds
+	// cannot discard these pages and spam errors when reporting is enabled.
+	if runtimeHasPatch(cfg.qemu, "patches/qemu/0015-reclaim-free-guest-pages-on-whpx.patch") {
+		args = append(args, "-device", "virtio-balloon-pci,free-page-reporting=on")
+	}
 	if cfg.share != "" {
 		if cfg.supportsSharing {
 			args = append(args, "-virtfs", "local,path="+qemuOptionValue(cfg.share)+",mount_tag=hostshare,security_model=none")

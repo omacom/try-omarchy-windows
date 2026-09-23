@@ -31,6 +31,7 @@ const (
 	trayIconID                = 1
 	trayCallbackMessage       = 0x8001 // WM_APP + 1
 	trayNoticeMessage         = 0x8003
+	traySettingsMessage       = 0x8004
 	trayStopMessage           = 0x8002 // WM_APP + 2
 	trayCommandShow           = 3001
 	trayCommandShare          = 3002
@@ -116,6 +117,18 @@ func trayControlArguments(cfg trayLaunchConfig, control string) []string {
 var trayWindow atomic.Uintptr
 var pendingTrayNotice atomic.Pointer[string]
 var transferErrorDialog atomic.Bool
+
+func requestTraySettings() bool {
+	hwnd := trayWindow.Load()
+	if hwnd == 0 {
+		return false
+	}
+	posted, _, err := procPostMessageW.Call(hwnd, traySettingsMessage, 0, 0)
+	if posted == 0 {
+		logf("tray: could not open settings from guest: %v", err)
+	}
+	return posted != 0
+}
 
 // Errors must never wait for a modal dialog in the file-transfer worker.
 func reportTransferError(err error) {
@@ -344,6 +357,9 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 			return 0
 		}
 		switch message {
+		case traySettingsMessage:
+			launchControl("-settings", &settingsOpen)
+			return 0
 		case trayNoticeMessage:
 			if text := pendingTrayNotice.Swap(nil); text != nil {
 				notice := nid

@@ -18,15 +18,19 @@ import (
 //   host -> guest: "zero-fill <MiB>"       write up to MiB of zeros over free space, then delete them
 //   guest -> host: "hello <version>"       the agent connected
 //   guest -> host: "zero-fill done|failed" the fill finished
+//   guest -> host: "open-settings"     one-shot request on a separate connection
 // The host sends the time on connect, every few minutes, and after Windows
 // resumes from sleep, when the guest clock is the thing most likely to be wrong.
 
 const agentTimeInterval = 5 * time.Minute
+const agentBatteryInterval = 30 * time.Second
 
 type guestAgent struct {
-	mu   sync.Mutex
-	conn net.Conn
-	now  func() time.Time
+	mu           sync.Mutex
+	conn         net.Conn
+	now          func() time.Time
+	openSettings func() bool
+	batteryLine  func() (string, error)
 	// zeroFilled is set when the guest reports that it zero-filled its free
 	// space, so the launcher compacts disk.raw after the guest powers off.
 	zeroFilled      bool
@@ -35,32 +39,68 @@ type guestAgent struct {
 }
 
 func newGuestAgent() *guestAgent {
-	return &guestAgent{now: time.Now}
+	return &guestAgent{now: time.Now, openSettings: requestTraySettings, batteryLine: hostBatteryLine}
 }
 
 func (a *guestAgent) accept(l net.Listener) {
+	// A guest process can open this loopback channel repeatedly. Bound the
+	// number of connections waiting for their first protocol line.
+	gate := make(chan struct{}, 4)
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			return
 		}
-		a.mu.Lock()
-		if a.conn != nil {
-			a.conn.Close()
+		select {
+		case gate <- struct{}{}:
+			go func() {
+				defer func() { <-gate }()
+				a.serve(c)
+			}()
+		default:
+			c.Close()
 		}
-		a.conn = c
-		if a.zeroFillPending {
-			a.zeroFillPending = false
-			a.zeroFillStatus = "Preparation interrupted by a guest reconnect. Try again."
-		}
-		a.mu.Unlock()
-		go a.read(c)
-		a.sendTime("connect")
 	}
 }
 
-func (a *guestAgent) read(c net.Conn) {
+func (a *guestAgent) serve(c net.Conn) {
+	defer c.Close()
 	r := bufio.NewReader(io.LimitReader(c, 64<<10))
+	_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	first, err := r.ReadString('\n')
+	_ = c.SetReadDeadline(time.Time{})
+	if err != nil {
+		return
+	}
+	if first == "open-settings\n" {
+		status := "unavailable\n"
+		if a.openSettings != nil && a.openSettings() {
+			status = "ok\n"
+		}
+		_ = c.SetWriteDeadline(time.Now().Add(3 * time.Second))
+		_, _ = c.Write([]byte(status))
+		return
+	}
+	if !strings.HasPrefix(first, "hello ") {
+		return
+	}
+	a.mu.Lock()
+	if a.conn != nil {
+		a.conn.Close()
+	}
+	a.conn = c
+	if a.zeroFillPending {
+		a.zeroFillPending = false
+		a.zeroFillStatus = "Preparation interrupted by a guest reconnect. Try again."
+	}
+	a.mu.Unlock()
+	logf("agent: guest agent connected (%s)", strings.TrimSpace(strings.TrimPrefix(first, "hello ")))
+	a.sendTime("connect")
+	a.sendBattery()
+	a.read(c, r)
+}
+
+func (a *guestAgent) read(c net.Conn, r *bufio.Reader) {
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
@@ -103,20 +143,8 @@ func (a *guestAgent) read(c net.Conn) {
 // sendTime tells the guest the host's clock. It is safe to call from any
 // goroutine and does nothing without a connected agent.
 func (a *guestAgent) sendTime(reason string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.conn == nil {
-		return false
-	}
 	line := fmt.Sprintf("time %d\n", a.now().Unix())
-	a.conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
-	if _, err := a.conn.Write([]byte(line)); err != nil {
-		a.conn.Close()
-		a.conn = nil
-		if a.zeroFillPending {
-			a.zeroFillPending = false
-			a.zeroFillStatus = "Preparation interrupted. Reconnect the guest and try again."
-		}
+	if !a.sendLine(line) {
 		return false
 	}
 	if reason != "" {
@@ -125,20 +153,57 @@ func (a *guestAgent) sendTime(reason string) bool {
 	return true
 }
 
+func (a *guestAgent) sendBattery() bool {
+	if a.batteryLine == nil {
+		return false
+	}
+	line, err := a.batteryLine()
+	if err != nil {
+		logf("agent: could not read Windows battery: %v", err)
+		return false
+	}
+	return line != "" && a.sendLine(line)
+}
+
+func (a *guestAgent) sendLine(line string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.conn == nil || line == "" || len(line) > 4096 || !strings.HasSuffix(line, "\n") {
+		return false
+	}
+	a.conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	if n, err := a.conn.Write([]byte(line)); err != nil || n != len(line) {
+		a.conn.Close()
+		a.conn = nil
+		if a.zeroFillPending {
+			a.zeroFillPending = false
+			a.zeroFillStatus = "Preparation interrupted. Reconnect the guest and try again."
+		}
+		return false
+	}
+	return true
+}
+
 func (a *guestAgent) run(l net.Listener, resumed <-chan struct{}) {
 	go a.accept(l)
-	ticker := time.NewTicker(agentTimeInterval)
-	defer ticker.Stop()
+	timeTicker := time.NewTicker(agentTimeInterval)
+	batteryTicker := time.NewTicker(agentBatteryInterval)
+	defer timeTicker.Stop()
+	defer batteryTicker.Stop()
 	for {
 		select {
-		case <-ticker.C:
+		case <-timeTicker.C:
 			a.sendTime("")
+		case <-batteryTicker.C:
+			a.sendBattery()
 		case <-resumed:
 			// Windows may take a moment to bring the clock and network back;
 			// send now and again shortly after.
 			a.sendTime("resume")
+			a.sendBattery()
 			time.Sleep(5 * time.Second)
 			a.sendTime("resume")
+			a.sendBattery()
 		}
 	}
 }
