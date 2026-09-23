@@ -11,16 +11,18 @@ import (
 )
 
 const projectURL = "https://github.com/omacom/try-omarchy-windows"
+const websiteURL = "https://tryomarchy.com"
 
 func runAbout() {
 	message := fmt.Sprintf("Try Omarchy %s\n\n"+
 		"Run the Omarchy desktop on Windows. Your files persist between sessions.\n\n"+
 		"Originally created by @martiano. Maintained under Omacom.\n\n"+
-		"Source, help and issue reporting:\n"+projectURL+"\n\n"+
+		"Website: "+websiteURL+"\n"+
+		"Source, help and issue reporting: "+projectURL+"\n\n"+
 		"Open source under the MIT License. Built with Omarchy, Arch Linux and QEMU.\n\n"+
 		"Launcher updates and Linux updates are separate. For Linux packages and Omarchy, use Update > Omarchy inside the desktop.",
 		currentVersion)
-	action, err := chooseAction("About Try Omarchy", message, "Check for launcher updates", "Open project and support page", "Third-party notices", "Close")
+	action, err := chooseAction("About Try Omarchy", message, "Check for launcher updates", "Open Try Omarchy website", "Open source and support", "Third-party notices", "Close")
 	if err != nil {
 		errorBox("Could not open About.\n\n" + err.Error())
 		return
@@ -29,8 +31,10 @@ func runAbout() {
 	case 1:
 		checkForLauncherUpdates()
 	case 2:
-		openWindowsURL(projectURL)
+		openWindowsURL(websiteURL)
 	case 3:
+		openWindowsURL(projectURL)
+	case 4:
 		openWindowsURL(projectURL + "/blob/master/THIRD_PARTY_NOTICES.md")
 	}
 }

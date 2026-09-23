@@ -94,6 +94,8 @@ func setTaskbarIdentity(hwnd uintptr) {
 		comCall(ps, 6, uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(&pv))) // SetValue
 		runtime.KeepAlive(u)
 	}
+	// This ID predates the Omacom publisher name. Retain it so existing taskbar
+	// pins keep grouping with the branded window after launcher updates.
 	set(pidAppUserModelID, "SouthForge.TryOmarchy")
 	set(pidRelaunchCommand, `"`+exe+`"`)
 	set(pidRelaunchDisplayName, appTitle)
