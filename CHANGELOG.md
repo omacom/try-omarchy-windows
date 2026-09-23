@@ -6,7 +6,7 @@ Candidate changes since v0.0.20-preview; no stable version has been published.
 
 - Optionally launch Omarchy directly at Windows sign-in, using a per-user
   shortcut that follows fullscreen settings and moves or uninstalls with its
-  installation.
+  installation. Restored copies require a fresh sign-in choice.
 - Open a pre-boot launcher with General, Devices, Advanced, and Recovery pages,
   then start Omarchy from the same window. Shortcuts can optionally start the
   desktop directly while keeping a separate Settings shortcut.

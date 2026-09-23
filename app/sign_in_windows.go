@@ -3,11 +3,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -36,24 +38,38 @@ func syncSignInShortcut(target, dir string, enabled bool) error {
 }
 
 func syncSignInShortcutAt(path, target, dir string, enabled bool) error {
-	if _, err := os.Lstat(path); err == nil {
-		owned, _, err := readShellLink(path)
-		if err != nil {
-			return fmt.Errorf("checking sign-in shortcut: %w", err)
-		}
-		if !sameShortcutTarget(owned, target) {
-			return fmt.Errorf("sign-in shortcut %q belongs to another installation", path)
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	} else if !enabled {
-		return nil
-	}
-	if !enabled {
-		return os.Remove(path)
-	}
 	if _, err := os.Stat(target); err != nil {
-		return fmt.Errorf("sign-in launcher is unavailable: %w", err)
+		if enabled {
+			return fmt.Errorf("sign-in launcher is unavailable: %w", err)
+		}
 	}
-	return writeShellLink(path, target, launchShortcutArguments(dir, true), dir)
+	for attempt := 0; ; attempt++ {
+		_, err := os.Lstat(path)
+		exists := err == nil
+		if exists {
+			owned, _, err := readShellLink(path)
+			if err != nil {
+				return fmt.Errorf("checking sign-in shortcut: %w", err)
+			}
+			if !sameShortcutTarget(owned, target) {
+				return fmt.Errorf("sign-in shortcut %q belongs to another installation", path)
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		} else if !enabled {
+			return nil
+		}
+		if enabled {
+			err = writeShellLink(path, target, launchShortcutArguments(dir, true), dir)
+		} else {
+			err = os.Remove(path)
+		}
+		if err == nil {
+			return nil
+		}
+		if attempt >= 9 || (!errors.Is(err, syscall.Errno(32)) && !errors.Is(err, syscall.Errno(33))) {
+			return err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }

@@ -28,6 +28,8 @@ Startup folder and starts Omarchy directly after Windows sign-in. Combine it
 with **Open fullscreen (Immersive)** to enter Omarchy fullscreen on launch.
 Turning it off removes this installation's Startup shortcut. Windows still
 shows its sign-in screen before this per-user startup runs.
+Restored copies start with sign-in launch disabled so a restore beside the
+original installation cannot start both copies at the next sign-in.
 See [the Mac parity tracker](MAC-PARITY.md) for implementation and test boundaries.
 
 Camera selection uses the Windows device identity, not its position in a list.
