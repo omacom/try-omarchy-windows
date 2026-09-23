@@ -220,6 +220,13 @@ func offerLauncherShortcuts(dir string) {
 	if err := registerUninstallEntry(target, installDir); err != nil {
 		logf("apps & features entry: %v", err)
 	}
+	if prefs, err := loadLaunchPreferences(installDir); err == nil {
+		if err := syncSignInShortcut(target, installDir, prefs.LaunchAtSignIn); err != nil {
+			logf("sign-in shortcut: %v", err)
+		}
+	} else {
+		logf("launch preferences: %v", err)
+	}
 	if shortcutOfferRecorded(installDir) {
 		return
 	}

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -167,6 +169,85 @@ func TestAutomaticStartSettingNative(t *testing.T) {
 	prefs, err := loadLaunchPreferences(dir)
 	if err != nil || !prefs.StartAutomatically {
 		t.Fatalf("automatic startup preference = %#v, error: %v", prefs, err)
+	}
+}
+
+func TestSignInFullscreenSettingsNative(t *testing.T) {
+	launcher := os.Getenv("TRYOMARCHY_LAUNCHER_TEST_EXE")
+	if os.Getenv("TRYOMARCHY_UI_TEST") != "1" || launcher == "" {
+		t.Skip("requires interactive Windows and TRYOMARCHY_LAUNCHER_TEST_EXE")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, stableLauncherName)
+	if err := copyLauncher(launcher, target, os.Rename); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syncSignInShortcut(target, dir, false) })
+	for _, enable := range []bool{true, false} {
+		cmd := exec.Command(launcher, "-dir", dir, "-settings")
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		class, _ := syscall.UTF16PtrFromString("TryOmarchySettings")
+		title, _ := syscall.UTF16PtrFromString(appTitle + " settings")
+		var window, signIn, full uintptr
+		for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
+			window, _, _ = user32.NewProc("FindWindowW").Call(uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(title)))
+			if window != 0 {
+				var owner uint32
+				procGetWindowThreadProcessId.Call(window, uintptr(unsafe.Pointer(&owner)))
+				if owner == uint32(cmd.Process.Pid) {
+					signIn, _, _ = user32.NewProc("GetDlgItem").Call(window, settingsLaunchAtSignInID)
+					full, _, _ = user32.NewProc("GetDlgItem").Call(window, settingsFullID)
+					if signIn != 0 && full != 0 {
+						break
+					}
+				}
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		if signIn == 0 || full == 0 {
+			_ = cmd.Process.Kill()
+			t.Fatal("sign-in or fullscreen control did not appear")
+		}
+		procSendMessageW.Call(signIn, 0x00f5, 0, 0) // BM_CLICK
+		if enable {
+			procSendMessageW.Call(full, 0x00f5, 0, 0)
+		}
+		procSendMessageW.Call(window, wmCommand, settingsSaveID, 0)
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(10 * time.Second):
+			procPostMessageW.Call(window, wmClose, 0, 0)
+			_ = cmd.Process.Kill()
+			t.Fatal("saving sign-in startup did not close Settings")
+		}
+		prefs, err := loadLaunchPreferences(dir)
+		if err != nil || prefs.LaunchAtSignIn != enable {
+			t.Fatalf("sign-in preference = %#v, error %v", prefs, err)
+		}
+		settings, err := loadSettings(settingsPath(dir))
+		if err != nil || !settings.Fullscreen {
+			t.Fatalf("fullscreen preference = %#v, error %v", settings, err)
+		}
+		path, err := signInShortcutPath(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if enable {
+			linkTarget, args, err := readShellLink(path)
+			if err != nil || !sameShortcutTarget(linkTarget, target) || !strings.Contains(args, "-start") {
+				t.Fatalf("sign-in shortcut = %q %q, error %v", linkTarget, args, err)
+			}
+		} else if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("sign-in shortcut remains after disabling: %v", err)
+		}
 	}
 }
 

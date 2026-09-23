@@ -16,8 +16,14 @@ func TestRestoredShortcutsTargetOnlyRestoredFolder(t *testing.T) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
+	if err := saveLaunchPreferences(dir, launchPreferences{StartAutomatically: false, LaunchAtSignIn: true}); err != nil {
+		t.Fatal(err)
+	}
 	if err := createRestoredLaunchers(dir); err != nil {
 		t.Fatal(err)
+	}
+	if prefs, err := loadLaunchPreferences(dir); err != nil || prefs.LaunchAtSignIn {
+		t.Fatalf("restored sign-in preference = %#v, error %v", prefs, err)
 	}
 	var links []struct{ Name, Target, Arguments, Directory string }
 	for _, name := range []string{"Start Omarchy.lnk", "Settings.lnk"} {

@@ -94,7 +94,7 @@ func writeDiagnostics(dir string, facts map[string]string) (string, error) {
 	}
 	if info, err := os.Lstat(filepath.Join(dir, launchPreferencesFilename)); err == nil && info.Mode().IsRegular() {
 		if prefs, err := loadLaunchPreferences(dir); err == nil {
-			data, _ := json.MarshalIndent(map[string]bool{"startAutomatically": prefs.StartAutomatically}, "", "  ")
+			data, _ := json.MarshalIndent(map[string]bool{"startAutomatically": prefs.StartAutomatically, "launchAtSignIn": prefs.LaunchAtSignIn}, "", "  ")
 			if err := addDiagnosticText(w, launchPreferencesFilename, string(data)); err != nil {
 				return fail(err)
 			}

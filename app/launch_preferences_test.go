@@ -9,7 +9,7 @@ import (
 
 func TestLaunchPreferencesRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	want := launchPreferences{SchemaVersion: 1, StartAutomatically: true}
+	want := launchPreferences{SchemaVersion: 1, StartAutomatically: true, LaunchAtSignIn: true}
 	if err := saveLaunchPreferences(dir, want); err != nil {
 		t.Fatal(err)
 	}

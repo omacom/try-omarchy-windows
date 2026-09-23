@@ -96,7 +96,7 @@ func runRecoveryUI(dir, action string) error {
 			if err := recordShortcutOffer(destination); err != nil {
 				logf("could not record the shortcut offer for %s: %v", destination, err)
 			}
-			infoBox("Restored to:\n\n" + destination + "\n\nOpen Start Omarchy in that folder to use this copy, or Settings to review it first. Your original installation and shortcuts are unchanged.")
+			infoBox("Restored to:\n\n" + destination + "\n\nOpen Start Omarchy in that folder to use this copy, or Settings to review it first. Sign-in launch is off for the restored copy; enable it in Settings if wanted. Your original installation and shortcuts are unchanged.")
 		}
 	case "reset":
 		return resetFromSettings(dir)
@@ -178,6 +178,15 @@ func createRestoredLaunchers(dir string) error {
 	prefs, err := loadLaunchPreferences(dir)
 	if err != nil {
 		return err
+	}
+	// A backup can be restored beside its original installation. Keep direct
+	// launch preferences, but require an explicit choice before that new copy
+	// starts at every Windows sign-in too.
+	if prefs.LaunchAtSignIn {
+		prefs.LaunchAtSignIn = false
+		if err := saveLaunchPreferences(dir, prefs); err != nil {
+			return err
+		}
 	}
 	for _, item := range []struct{ name, arguments string }{
 		{"Start Omarchy.lnk", launchShortcutArguments(dir, prefs.StartAutomatically)},
