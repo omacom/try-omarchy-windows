@@ -804,6 +804,9 @@ func main() {
 	go runCloseGuard()
 	runClipboardBridge()
 	runCameraBridge(cfg.desktop)
+	if audioRuntimeSupportsLiveRouting(cfg.qemu) {
+		runAudioBridge(cfg.dir, cfg.qemu, cfg.desktop.MicrophoneDisabled)
+	}
 
 	if err := checkForwardBindings(cfg.forwards); err != nil {
 		fatal("Could not prepare port forwarding:\n\n%v", err)

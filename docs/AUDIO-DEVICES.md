@@ -48,15 +48,21 @@ them and reopens a changed route without restarting the guest. The microphone
 permission gate still requires a new VM start because QEMU creates its input
 voices at launch. Unsupported runtimes retain the startup-only behavior above.
 
-This source slice does not yet mirror Windows endpoint choices into the guest's
-PipeWire device picker. The host audio catalog and guest selection bridge are
-still required for full Mac parity. The corrected r20b archive passed
+The draft candidate now adds a loopback-only virtio serial catalog and a guest
+PipeWire service. It offers active Windows endpoints that SDL can identify
+unambiguously, and choosing one in Omarchy saves its stable endpoint ID and
+updates QEMU's live route. Settings choices are polled back into the guest.
+Microphone-off removes host input choices from the guest picker. The corrected
+r20b archive passed
 [physical laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md) for playback,
 capture, second-stream recovery, missing-route fallback, microphone permission,
 and clean shutdown. The first session probe ran outside the desktop session and
-gave a false negative; the record explains and corrects it. Two real endpoints,
-hotplug, and guest picker integration remain. Live routing is not shipped until
-the runtime is pinned in a signed release.
+gave a false negative; the record explains and corrects it. The guest picker
+then changed a real speaker and microphone route on the laptop and survived
+rapid two-direction changes. Two physical endpoints per direction, hotplug,
+restart persistence and the rebuilt-image upgrade remain to be checked. Live
+routing is not shipped until the runtime and guest image are pinned in a signed
+release.
 
 ## Validation
 

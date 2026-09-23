@@ -46,7 +46,7 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Resources, updates, storage and recovery | Implemented; the published update, backup, restore and uninstall paths passed on the AMD laptop | Broader hardware and recovery reports remain useful |
 | GPU application compatibility | AMD GPU desktop and applications passed their recorded checks; a previous Intel/NVIDIA preview runtime booted VirGL OpenGL but failed Venus Vulkan and Godot Forward+ | [Current-runtime investigation #173](https://github.com/omacom/try-omarchy-windows/issues/173); retain CPU/OpenGL fallback |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
-| Audio endpoint selection | Startup choices and stable endpoint IDs ship; unreleased r20b source and [laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md) establish live host routing, fallback and microphone gating; [behavior](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167): mirror endpoints and selection into the guest PipeWire picker, then pin a signed runtime |
+| Audio endpoint selection | Startup choices and stable endpoint IDs ship; unreleased r20b source and [laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md) establish live host routing, fallback and microphone gating; draft host catalog and guest PipeWire mirror added in #175; [behavior](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167): boot-test the guest picker, hotplug and restart persistence, then pin signed runtime and guest image |
 | Trackpad pinch | [Opt-in r18 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Firefox and broader host/DPI/fullscreen acceptance; experimental only |
 | Windows Hello sudo | Not implemented; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); the available laptop reports `DeviceNotPresent` |
 | 1Password host authentication | Guest 1Password uses its ordinary password and Linux authentication paths | [Windows Hello unlock #176](https://github.com/omacom/try-omarchy-windows/issues/176) follows #165 with a narrowly scoped agent for the installed guest 1Password process and Mac-style process/polkit checks |
@@ -66,8 +66,8 @@ gesture and scrolling checks passed on the laptop.
 
 1. **Complete live audio (#167).** The r20b host-route candidate in
    [PR #175](https://github.com/omacom/try-omarchy-windows/pull/175) passed its
-   available-hardware checks. Add an endpoint catalog and guest PipeWire bridge so the Omarchy
-   picker can choose Windows playback and recording devices. Confirm separate
+   available-hardware checks. The endpoint catalog and guest PipeWire bridge are
+   now drafted so the Omarchy picker can choose Windows playback and recording devices. Confirm separate
    directions, removal/reconnection, default fallback, microphone permission,
    and a saved choice after restart before shipping it.
 2. **Add signed Windows Hello approval (#165).** Mirror the Mac's opt-in sudo
