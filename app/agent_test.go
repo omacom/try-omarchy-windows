@@ -76,6 +76,7 @@ func TestGuestAgentReplacesAnEarlierConnection(t *testing.T) {
 	}
 	defer l.Close()
 	a := newGuestAgent()
+	a.batteryLine = nil
 	go a.accept(l)
 	first, err := net.Dial("tcp", l.Addr().String())
 	if err != nil {
@@ -109,6 +110,7 @@ func TestGuestAgentZeroFillRoundTrip(t *testing.T) {
 	}
 	defer l.Close()
 	a := newGuestAgent()
+	a.batteryLine = nil
 	if a.requestZeroFill(1024) {
 		t.Fatal("request accepted without a guest")
 	}
@@ -154,6 +156,7 @@ func TestGuestSettingsRequestKeepsAgentConnected(t *testing.T) {
 	}
 	defer l.Close()
 	a := newGuestAgent()
+	a.batteryLine = nil
 	opened := make(chan struct{}, 2)
 	a.openSettings = func() bool { opened <- struct{}{}; return true }
 	go a.accept(l)
