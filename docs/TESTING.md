@@ -167,5 +167,7 @@ Track results for Intel and AMD CPUs, integrated and discrete Intel/AMD/NVIDIA
 GPUs, Windows Home and Pro, and each advertised Windows version. Include a
 physical system with full Hyper-V enabled and a lower-memory host. A nested VM
 helps with automation but cannot replace physical GPU and hypervisor coverage.
+This matrix guides ongoing compatibility work and bug reports; completing every
+row is not required before publication.
 
 The runtime-specific checks remain in [RUNTIME-VALIDATION.md](RUNTIME-VALIDATION.md).

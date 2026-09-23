@@ -25,9 +25,8 @@ The current public release is
 The newer pre-boot launcher, audio device selection, and other work described
 below are in the source tree and under release review; they are not in that
 download yet. See the [release readiness review](docs/RELEASE-READINESS.md) and
-[Windows testing instructions](docs/TESTING.md). Physical acceptance for the
-newer candidate centers on an AMD Windows 11 laptop; Intel and NVIDIA coverage
-remains open.
+[Windows testing instructions](docs/TESTING.md). Hardware requirements and
+known graphics limitations are in the [compatibility guide](docs/COMPATIBILITY.md).
 
 ## What works in the current source candidate
 
