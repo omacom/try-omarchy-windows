@@ -184,6 +184,7 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		}
 	}
 	audioSupported := audioRuntimeSupportsSelection(audioQEMU)
+	audioLive := audioRuntimeSupportsLiveRouting(audioQEMU)
 	audioDevices, audioErr := listAudioDevices(audioQEMU)
 	// Keep a disconnected selection intact until the user chooses another.
 	retainAudio := func(devices []string, selected string) []string {
@@ -491,6 +492,8 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 					}
 				}
 				if audioSupported {
+					microphoneCheck, _, _ := procSendMessageW.Call(hMicrophoneOn, bmGetcheck, 0, 0)
+					microphoneDisabled := microphoneCheck != bstChecked
 					updated := audioPrefs
 					updatedEndpoints := endpointPrefs
 					for _, row := range []struct {
@@ -520,6 +523,12 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 					if err := saveAudioSelection(dataDir, updated, updatedEndpoints); err != nil {
 						errorBox("Audio preferences could not be saved:\n\n" + err.Error())
 						return 0
+					}
+					if audioLive {
+						if err := publishSavedAudioRoutes(dataDir, updated, microphoneDisabled); err != nil {
+							errorBox("Audio choices were saved, but could not be applied to the running Omarchy session:\n\n" + err.Error())
+							return 0
+						}
 					}
 				}
 				if err := saveResourcePreferences(dataDir, selectedProfile()); err != nil {
@@ -862,7 +871,9 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	} else if audioErr != nil {
 		audioHelp = "Windows could not list audio devices. Saved choices are retained; reconnect devices and reopen Settings."
 	} else if endpointErr != nil {
-		audioHelp = "Stable Windows audio IDs are unavailable. Choices still apply by device name at next start."
+		audioHelp = "Stable Windows audio IDs are unavailable. Choices still apply by device name."
+	} else if audioLive {
+		audioHelp = "Audio choices switch live when Omarchy is running. Microphone permission still applies next boot. Missing devices use Windows defaults."
 	}
 	mk("STATIC", audioHelp, left, y, 450, 42, ssNoprefix, 0)
 	y += 50

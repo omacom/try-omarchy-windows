@@ -1,12 +1,12 @@
 # Windows and Mac feature review
 
 Reviewed September 21 and refreshed September 23, 2026 against Mac source commit
-[`d843f54a37346dbb08ee4610785836194ca7e3bd`](https://github.com/omacom/try-omarchy/tree/d843f54a37346dbb08ee4610785836194ca7e3bd).
+[`28f4722fab3e16ae26a7cb8fab2ab7908b1833e4`](https://github.com/omacom/try-omarchy/tree/28f4722fab3e16ae26a7cb8fab2ab7908b1833e4).
 This is an implementation and acceptance tracker, not a claim that every feature
 is shipped or hardware-tested. The release gates in
 [RELEASING.md](RELEASING.md) and [TESTING.md](TESTING.md) still apply.
 
-The refreshed Mac baseline is 25 commits newer than the original comparison.
+The refreshed Mac baseline is newer than the original comparison.
 It adds automatic startup with in-guest settings access, host battery mirroring,
 guest-memory reclamation, precise trackpad scrolling, stable bridged identities,
 keyboard-geometry and language work, update discovery, and runtime reliability
@@ -46,7 +46,7 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Resources, updates, storage and recovery | Implemented; the published update, backup, restore and uninstall paths passed on the AMD laptop | Broader hardware and recovery reports remain useful |
 | GPU application compatibility | AMD GPU desktop and applications passed their recorded checks; a previous Intel/NVIDIA preview runtime booted VirGL OpenGL but failed Venus Vulkan and Godot Forward+ | [Current-runtime investigation #173](https://github.com/omacom/try-omarchy-windows/issues/173); retain CPU/OpenGL fallback |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
-| Audio endpoint selection | Startup playback/recording choices and stable Windows endpoint IDs implemented; [behavior and acceptance](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167), including endpoint loss and independent capture/playback |
+| Audio endpoint selection | Startup choices and stable endpoint IDs ship; unreleased r20 source adds live host Settings routing; [behavior and acceptance](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167): build and physical test r20, then mirror endpoints and selection into the guest PipeWire picker |
 | Trackpad pinch | [Opt-in r18 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Firefox and broader host/DPI/fullscreen acceptance; experimental only |
 | Windows Hello sudo | Not implemented; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); the available laptop reports `DeviceNotPresent` |
 | Bridged networking | NAT and explicit port forwarding exist | [True LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166), with supported adapter, privilege and firewall handling |

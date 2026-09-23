@@ -58,6 +58,15 @@ device must succeed before QMP acknowledges it. Unplugging does not silently
 claim a replacement device. The default preserves upstream auto-scan behavior.
 CI verifies `usb-host`, `qemu-xhci` and the explicit-attachment property.
 
+The r20 engineering recipe adds `0016-live-sdl-audio-routes.patch`. QEMU reads
+private, atomically replaced `output` and `input` route files while streams
+run, reopens only the changed direction, and falls back to the Windows default
+if a selected endpoint disappears. The launcher writes the initial routes and
+Settings can change them while a supported VM is running. r20 is not pinned by
+the public app or guest lock until a Windows build and physical audio pass
+complete. The route-file parser and SDL open/fallback behavior are compiled
+by `test-sdl-audio.py` during the runtime build.
+
 The r5 recipe restores the Windows socket handle protection bit with an explicit
 mask before closing the socket. The old zero-mask call left protection enabled
 when the original flags were zero. A compiled source fixture covers all original

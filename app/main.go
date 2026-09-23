@@ -859,6 +859,14 @@ func supervise(cfg *config, cmdline string) bool {
 			logf("Selected audio devices require the updated SDL runtime; this attempt uses Windows defaults")
 		}
 		proc.Env = audioEnvironment(os.Environ(), cfg.audioDevices, audioSelection, cfg.desktop.MicrophoneDisabled)
+		if cfg.audio == "sdl" && audioRuntimeSupportsLiveRouting(cfg.qemu) {
+			routeDir := audioRouteDirectory(cfg.dir)
+			if err := publishAudioRoutes(routeDir, cfg.audioDevices, cfg.desktop.MicrophoneDisabled); err != nil {
+				logf("live audio controls are unavailable for this boot: %v", err)
+			} else {
+				proc.Env = append(proc.Env, "OMARCHY_SDL_AUDIO_CONTROL_DIRECTORY="+routeDir)
+			}
+		}
 		proc.Env = pinchEnvironment(proc.Env, pinchEnabled(cfg))
 		// The w-binary's startup errors (bad args, SDL init) only ever reach
 		// stderr; without this they vanish and a dead QEMU is undebuggable.

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "name": "winq-emu-alpha10-source-r19",
+  "name": "winq-emu-alpha10-source-r20",
   "sourceDateEpoch": 1777269494,
   "qemu": {
     "repository": "https://github.com/cmspam/winq-emu-qemu.git",
@@ -69,6 +69,10 @@
       {
         "file": "patches/qemu/0015-reclaim-free-guest-pages-on-whpx.patch",
         "sha256": "b262c8348f25fde5cc7526276e1f59ba559df2076e413a69949506e3f0790d74"
+      },
+      {
+        "file": "patches/qemu/0016-live-sdl-audio-routes.patch",
+        "sha256": "4e726778e945cecc9ecea95e09e40e7978adcf1417646826b206f52cbdbbaeb9"
       }
     ]
   },

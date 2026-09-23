@@ -38,6 +38,23 @@ rollback. Older launchers ignore the ID file. Device enumeration does not open
 playback or recording streams. Diagnostic bundles report whether a selection
 exists and omit device names and endpoint IDs.
 
+## r20 live-route candidate
+
+The unreleased r20 source recipe adds a private `vm/audio-control` directory.
+When the runtime contains `0016-live-sdl-audio-routes.patch`, the launcher writes
+separate output and input routes before QEMU starts. Saving audio choices in
+Settings writes atomically replaced route files; the active SDL backend polls
+them and reopens a changed route without restarting the guest. The microphone
+permission gate still requires a new VM start because QEMU creates its input
+voices at launch. Unsupported runtimes retain the startup-only behavior above.
+
+This source slice does not yet mirror Windows endpoint choices into the guest's
+PipeWire device picker. The host audio catalog and guest selection bridge are
+still required for full Mac parity. It also awaits the r20 Windows build and
+physical checks of running playback/capture, fallback after removal, privacy,
+and clean shutdown. Do not describe live routing as shipped until those pass
+and the new runtime is pinned in a signed release.
+
 ## Validation
 
 The [September 21 physical acceptance](evidence/AUDIO-PARITY-2026-09-21.md)
