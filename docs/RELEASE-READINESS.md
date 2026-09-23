@@ -3,9 +3,10 @@
 ## Current decision
 
 The latest public launcher is `v0.0.20-preview`. The `v1.0.0` release is a
-private draft and its publish workflow was cancelled before publication. The
-source tree contains a newer signed candidate, but the public pin remains on
-the accessible preview. No non-preview version has been approved or published.
+private draft and its publish workflow was cancelled before publication. Its
+signed candidate has passed substantial laptop acceptance, but current source
+contains fixes newer than that binary. The public pin remains on the accessible
+preview. No non-preview version has been approved or published.
 
 Dropping `-preview` need not mean claiming 1.0 completeness. `v0.1.0` is a
 possible first normal version after the gates below are met and a release
@@ -20,6 +21,11 @@ instruction.
   poweroff, repeat launch, update from the public launcher, interrupted update
   rollback, and preservation of existing guest data. The original installation
   was not changed for these tests.
+- The [signed clean-install record](evidence/V1-CLEAN-ACCEPTANCE-2026-09-22.md)
+  covers first boot, a visible GPU desktop, a full backup and separate restore,
+  exact guest-file preservation, an explicit CPU boot, a controlled automatic
+  GPU-to-CPU fallback, and app uninstall of only the restored test copy. The
+  original laptop installation and the clean test backup remain intact.
 - The [r18 touchpad record](evidence/PINCH-R18-PHYSICAL-2026-09-22.md) includes
   a physical two-finger pinch. Initiation improved, zoom returned to normal,
   and scrolling still worked. The feature remains experimental and opt-in.
@@ -42,6 +48,9 @@ match the app's actual behavior; the site no longer promises that uninstalling
 means deleting a single folder or that the next normal release must be 1.0.
 Desktop and phone-width Chromium renders were inspected. The live `/download`
 redirect was verified to resolve to the published preview launcher.
+The site's macOS link and the README now point to
+`https://github.com/omacom/try-omarchy`; the live support answer points to the
+built-in diagnostics and GitHub bug-report flow.
 
 The Windows About window was checked on the AMD laptop from an isolated
 unsigned source build. The version, website, source/support address, notices
@@ -50,6 +59,15 @@ check did not start the VM or change the installed guest. The app retains its
 legacy taskbar application ID so existing pinned shortcuts keep grouping with
 the branded window. A final signed release still needs its own visual and
 installer acceptance; this check does not replace that gate.
+
+The clean install revealed a shortcut collision between separate installations.
+The signed test copy's Start Menu links were repaired to the original target.
+The source now preserves links owned by another installation and gives
+command-line restores folder-local launchers (PRs
+[#154](https://github.com/omacom/try-omarchy-windows/pull/154) and
+[#156](https://github.com/omacom/try-omarchy-windows/pull/156)). These fixes
+postdate the signed draft. Rebuild and sign the chosen normal-version candidate
+before calling its exact binary accepted.
 
 ## Gates for a first normal 0.x release
 
@@ -70,6 +88,13 @@ installer acceptance; this check does not replace that gate.
 4. Recheck signed update feeds and the preview-to-normal-version bridge before
    promotion. Publish only after the draft asset hashes, Authenticode signature,
    public download, rollback, and latest-release pointer have been checked.
+
+The old signed draft has passed the clean-install, backup/restore, uninstall,
+GPU, CPU and update-rollback checks recorded above. Its binary predates the
+latest product fixes, so the next practical gate is a newly signed candidate
+from current source with final visual and core integration checks. The public
+download and update feed still point to `v0.0.20-preview`. Broader hardware and
+Windows 10 coverage remain post-release compatibility work, not promotion gates.
 
 ## 1.0 quality bar
 

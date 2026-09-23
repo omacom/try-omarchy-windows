@@ -25,6 +25,11 @@ Candidate changes since v0.0.20-preview; no stable version has been published.
   launcher update checks off. Linux updates remain separate inside Omarchy.
 - Report failed file transfers without a blocking dialog, so dropping a file
   during startup cannot prevent later drops from working.
+- Preserve another installation's Start Menu and Desktop shortcuts when setting
+  up a second copy. Command-line restore now creates launchers inside the
+  restored folder and leaves global shortcuts with their current owner.
+- Offer a structured bug-report form and a documented diagnostics bundle so
+  hardware and startup problems arrive with useful details.
 
 ## v0.0.20-preview - 2026-09-19
 
