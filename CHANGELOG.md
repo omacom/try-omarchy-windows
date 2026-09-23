@@ -34,7 +34,9 @@ older launchers reach this version.
   during startup cannot prevent later drops from working.
 - Preserve another installation's Start Menu and Desktop shortcuts when setting
   up a second copy. Command-line restore now creates launchers inside the
-  restored folder and leaves global shortcuts with their current owner.
+  restored folder and leaves global shortcuts with their current owner. A
+  second install now offers folder-local launchers when those shortcuts are
+  occupied, and remembers the choice instead of repeating it every launch.
 - Offer a structured bug-report form and a documented diagnostics bundle so
   hardware and startup problems arrive with useful details.
 

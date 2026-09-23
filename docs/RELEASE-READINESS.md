@@ -67,8 +67,11 @@ The source now preserves links owned by another installation and gives
 command-line restores folder-local launchers (PRs
 [#154](https://github.com/omacom/try-omarchy-windows/pull/154) and
 [#156](https://github.com/omacom/try-omarchy-windows/pull/156)). These fixes
-postdate the signed draft. Rebuild and sign the chosen normal-version candidate
-before calling its exact binary accepted.
+postdate the old signed draft. The first signed `v0.1.0` candidate preserved the
+existing links during a clean install, but offered the same unavailable Start
+Menu choice again on the next boot. The source now places launchers beside a
+second installation and records the choice. Rebuild and sign this fix before
+calling the exact binary accepted.
 
 ## Gates for a first normal 0.x release
 

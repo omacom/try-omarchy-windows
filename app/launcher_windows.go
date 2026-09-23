@@ -93,17 +93,6 @@ func settingsShortcutArguments(dir string) string {
 	return strings.TrimSpace(shortcutArguments(dir) + " -settings")
 }
 
-func createLauncherShortcuts(target, dir string, startMenu, desktop, startAutomatically bool) error {
-	if !startMenu && !desktop {
-		return nil
-	}
-	paths, err := launcherShortcutPaths()
-	if err != nil {
-		return err
-	}
-	return writeLauncherShortcuts(paths, target, dir, startMenu, desktop, startAutomatically)
-}
-
 func writeLauncherShortcuts(paths []string, target, dir string, startMenu, desktop, startAutomatically bool) error {
 	// Check every selected path before writing any of them. A second install
 	// must not take over the existing install's Start Menu or Desktop links.
@@ -137,6 +126,58 @@ func writeLauncherShortcuts(paths []string, target, dir string, startMenu, deskt
 		}
 	}
 	return nil
+}
+
+// A second installation cannot take over another copy's global shortcuts.
+// Put launchers beside its own data instead, and keep both links together.
+func writeFolderLaunchers(target, dir string, startAutomatically bool) error {
+	items := []struct{ path, arguments string }{
+		{filepath.Join(dir, "Start Omarchy.lnk"), launchShortcutArguments(dir, startAutomatically)},
+		{filepath.Join(dir, "Settings.lnk"), settingsShortcutArguments(dir)},
+	}
+	for _, item := range items {
+		if _, err := os.Lstat(item.path); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		ownedTarget, _, err := readShellLink(item.path)
+		if err != nil {
+			return fmt.Errorf("checking folder shortcut %q: %w", item.path, err)
+		}
+		if !sameShortcutTarget(ownedTarget, target) {
+			return fmt.Errorf("folder shortcut %q already belongs to another installation", item.path)
+		}
+	}
+	for _, item := range items {
+		if err := writeShellLink(item.path, target, item.arguments, dir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Record the first-run choice even when Windows cannot create a shortcut.
+// Otherwise a second installation repeats the same prompt on every launch.
+func finishLauncherShortcutChoice(paths []string, target, dir string, startMenu, desktop, startAutomatically bool) (string, error) {
+	var globalErr, folderErr error
+	if startMenu || desktop {
+		globalErr = writeLauncherShortcuts(paths, target, dir, startMenu, desktop, startAutomatically)
+		if globalErr != nil {
+			folderErr = writeFolderLaunchers(target, dir, startAutomatically)
+		}
+	}
+	if err := recordShortcutOffer(dir); err != nil {
+		return "", fmt.Errorf("saving shortcut choice: %w", err)
+	}
+	if folderErr != nil {
+		return "", fmt.Errorf("Windows shortcut: %v; folder shortcuts: %w", globalErr, folderErr)
+	}
+	if globalErr != nil {
+		return "Windows could not use the selected shortcut because " + globalErr.Error() +
+			"\n\nOpen Start Omarchy or Settings beside this installation. Your existing Windows shortcuts were not changed.", nil
+	}
+	return "", nil
 }
 
 func updateLaunchShortcuts(target, dir string, startAutomatically bool) error {
@@ -238,12 +279,18 @@ func offerLauncherShortcuts(dir string) {
 	if err != nil {
 		logf("shortcut preferences: %v", err)
 	}
-	if err := createLauncherShortcuts(target, installDir, startMenu, desktop, prefs.StartAutomatically); err != nil {
-		logf("shortcuts: %v", err)
-		errorBox("Try Omarchy is ready, but Windows could not create the requested shortcut. You can keep using the downloaded launcher.\n\n" + err.Error())
+	paths, err := launcherShortcutPaths()
+	if err != nil {
+		logf("shortcut paths: %v", err)
+		errorBox("Try Omarchy is ready, but Windows could not find the shortcut locations.\n\n" + err.Error())
 		return
 	}
-	if err := recordShortcutOffer(installDir); err != nil {
-		logf("shortcut offer marker: %v", err)
+	message, err := finishLauncherShortcutChoice(paths, target, installDir, startMenu, desktop, prefs.StartAutomatically)
+	if err != nil {
+		logf("shortcuts: %v", err)
+		errorBox("Try Omarchy is ready, but Windows could not finish creating shortcuts. Open TryOmarchy.exe in this installation's folder.\n\n" + err.Error())
+	} else if message != "" {
+		logf("shortcuts: using folder launchers")
+		infoBox(message)
 	}
 }
