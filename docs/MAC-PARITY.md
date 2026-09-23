@@ -46,9 +46,9 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Resources, updates, storage and recovery | Implemented; the published update, backup, restore and uninstall paths passed on the AMD laptop | Broader hardware and recovery reports remain useful |
 | GPU application compatibility | AMD GPU desktop and applications passed their recorded checks; a previous Intel/NVIDIA preview runtime booted VirGL OpenGL but failed Venus Vulkan and Godot Forward+ | [Current-runtime investigation #173](https://github.com/omacom/try-omarchy-windows/issues/173); retain CPU/OpenGL fallback |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
-| Audio endpoint selection | Startup choices and stable endpoint IDs ship; unreleased r20b source, [laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md) and a disposable image upgrade establish live host routing, guest PipeWire choices and compatibility delivery; [behavior](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167): boot the rebuilt image on Windows, check hotplug and restart persistence, then pin signed runtime and guest image |
+| Audio endpoint selection | Startup choices and stable endpoint IDs ship; unreleased r20c source, [packaged laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md) and a disposable image upgrade establish live host routing, guest PipeWire choices, restart persistence and idle release; [behavior](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167): sign and test the pinned candidate; two physical endpoints and hotplug need suitable hardware |
 | Trackpad pinch | [Opt-in r18 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Firefox and broader host/DPI/fullscreen acceptance; experimental only |
-| Windows Hello sudo | Not implemented; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); the available laptop reports `DeviceNotPresent` |
+| Windows Hello sudo | Not implemented; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); after PIN setup, the signed-in laptop reports Hello `Available`, but no approval prompt has been tested |
 | 1Password host authentication | Guest 1Password uses its ordinary password and Linux authentication paths | [Windows Hello unlock #176](https://github.com/omacom/try-omarchy-windows/issues/176) follows #165 with a narrowly scoped agent for the installed guest 1Password process and Mac-style process/polkit checks |
 | Bridged networking | NAT and explicit port forwarding exist | [True LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166), with supported adapter, privilege and firewall handling |
 | Host battery | Shipped in `v0.2.0`; the AMD laptop's 99% charging state appeared as BAT0/ADP0 and in UPower | Desktop/no-battery transition remains to be observed on a suitable host |
@@ -145,9 +145,11 @@ laptop with r18: pinch was easier to start than before, zoom returned, and
 two-finger scrolling still worked. See
 [the physical test record](evidence/PINCH-R18-PHYSICAL-2026-09-22.md).
 
-`UserConsentVerifier.CheckAvailabilityAsync` returned `DeviceNotPresent`, both
-through OpenSSH and in an interactive scheduled task for the signed-in user.
-No verification prompt or guest PAM change was made. The
+`UserConsentVerifier.CheckAvailabilityAsync` initially returned
+`DeviceNotPresent`, both through OpenSSH and in an interactive scheduled task
+for the signed-in user. After Windows Hello PIN setup on September 23, the
+interactive task returned `Available`. No verification prompt or guest PAM
+change has been made. The
 [availability API](https://learn.microsoft.com/en-us/uwp/api/windows.security.credentials.ui.userconsentverifier.checkavailabilityasync)
 allows an implementation to retain password authentication on unsupported hosts;
-this host cannot currently validate a successful Hello authentication flow.
+host is now available for a real prompt and approval test.

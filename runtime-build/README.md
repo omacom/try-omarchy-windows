@@ -65,7 +65,9 @@ Settings can change them while a supported VM is running. r20 is not pinned by
 the public app or guest lock. The corrected r20b source-built archive passed
 the [available Windows laptop audio checks](../docs/evidence/LIVE-AUDIO-R20-2026-09-23.md),
 including playback, capture, route fallback and microphone gating. Guest
-PipeWire picker integration, a signed runtime pin and real two-endpoint/hotplug
+PipeWire picker integration is in guest patch 0091 and passed an isolated
+packaged boot. The r20c runtime passed idle, playback, capture and restart
+checks on that laptop. A signed runtime pin and real two-endpoint/hotplug
 acceptance remain. The route-file parser and SDL open/fallback behavior are
 compiled by `test-sdl-audio.py` during the runtime build.
 
