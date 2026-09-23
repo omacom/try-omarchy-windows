@@ -425,21 +425,9 @@ func main() {
 		fatal("Cannot read device and update preferences: %v", desktopErr)
 	}
 
-	cfg.audioDevices, desktopErr = loadAudioPreferences(cfg.dir)
+	cfg.audioDevices, desktopErr = loadLaunchAudioPreferences(cfg.dir)
 	if desktopErr != nil {
 		fatal("Cannot read audio preferences: %v", desktopErr)
-	}
-	audioEndpointPrefs, desktopErr := loadAudioEndpoints(cfg.dir)
-	if desktopErr != nil {
-		fatal("Cannot read audio endpoint preferences: %v", desktopErr)
-	}
-	if endpoints, err := listAudioEndpoints(); err != nil {
-		logf("Stable audio endpoint lookup is unavailable; using saved device names: %v", err)
-	} else {
-		cfg.audioDevices.Output, _ = resolveAudioSelection(
-			cfg.audioDevices.Output, audioEndpointPrefs.OutputID, endpoints.Output)
-		cfg.audioDevices.Input, _ = resolveAudioSelection(
-			cfg.audioDevices.Input, audioEndpointPrefs.InputID, endpoints.Input)
 	}
 
 	// settings.json holds the rows the settings window edits; explicit flags
@@ -826,6 +814,24 @@ func main() {
 	logf("---- exiting ----")
 }
 
+func loadLaunchAudioPreferences(dir string) (audioPreferences, error) {
+	preferences, err := loadAudioPreferences(dir)
+	if err != nil {
+		return preferences, err
+	}
+	ids, err := loadAudioEndpoints(dir)
+	if err != nil {
+		return preferences, err
+	}
+	if endpoints, err := listAudioEndpoints(); err != nil {
+		logf("Stable audio endpoint lookup is unavailable; using saved device names: %v", err)
+	} else {
+		preferences.Output, _ = resolveAudioSelection(preferences.Output, ids.OutputID, endpoints.Output)
+		preferences.Input, _ = resolveAudioSelection(preferences.Input, ids.InputID, endpoints.Input)
+	}
+	return preferences, nil
+}
+
 // supervise runs one guest lifetime: launch with the wedge watchdog, watch it
 // until the guest goes down, reap a wedged QEMU. Returns true when the guest
 // rebooted (with -no-reboot a guest reset exits QEMU; relaunching IS the
@@ -856,6 +862,12 @@ func supervise(cfg *config, cmdline string) bool {
 			fatal("Cannot prepare private VM controls: %v", err)
 		}
 		cfg.qmpDir = controlDir
+		// Guest picker and a separate Settings process can change these files
+		// while QEMU runs. A guest reboot must use the latest saved choices.
+		cfg.audioDevices, err = loadLaunchAudioPreferences(cfg.dir)
+		if err != nil {
+			fatal("Cannot reload audio preferences for this boot: %v", err)
+		}
 		proc = exec.Command(cfg.qemu, buildQemuArgs(cfg, cmdline)...)
 		audioSelection := cfg.audio == "sdl" && audioRuntimeSupportsSelection(cfg.qemu)
 		if !audioSelection && (cfg.audioDevices.Output != "" || (!cfg.desktop.MicrophoneDisabled && cfg.audioDevices.Input != "")) {
