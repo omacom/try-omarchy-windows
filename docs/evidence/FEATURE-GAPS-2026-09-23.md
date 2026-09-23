@@ -5,6 +5,7 @@ This is an engineering candidate on [PR #164](https://github.com/omacom/try-omar
 ## Exact payloads
 
 - The [Runtime workflow run](https://github.com/omacom/try-omarchy-windows/actions/runs/35852652612) built source and portable WINQ-EMU r19 archives. `runtime-build/verify.py` passed on the downloaded artifact.
+- Both archives and `SHA256SUMS` are attached to the draft `runtime-v1-r19` component release, targeting the workflow's exact source commit `751a845359c98f0d31af9d5deee9d3d31ac5497f`. The draft is not publicly downloadable.
 - `winq-emu-alpha10-portable.zip` SHA-256: `b417f30f01df11af64de696f9d74a95bedc918d66c3756b3210288a133bbd945`.
 - `winq-emu-alpha10-source.zip` SHA-256: `bb175babf877bf07ea3b17eea06a0eddbb3069800450d1587423368ca7b4739e`.
 - The locally built guest `rootfs.ext4` SHA-256: `9b9ef27233c236ec7f0afc4140778bf8cfb58d741f1febe4ac70fe966a72d25e`. Its exact kernel was `7.2.6-arch2-1`; the battery module compiled through DKMS for that kernel. Local guest smoke, patch application and contract checks passed.
