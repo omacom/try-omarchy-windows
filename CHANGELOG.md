@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.2.0 - 2026-09-23
+
 - Open native Windows Settings from the Omarchy launcher and mirror the host
   laptop's battery and AC state inside the guest.
 - Return unused guest RAM to Windows through the source-built r19 WHPX runtime
