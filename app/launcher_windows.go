@@ -101,6 +101,29 @@ func createLauncherShortcuts(target, dir string, startMenu, desktop, startAutoma
 	if err != nil {
 		return err
 	}
+	return writeLauncherShortcuts(paths, target, dir, startMenu, desktop, startAutomatically)
+}
+
+func writeLauncherShortcuts(paths []string, target, dir string, startMenu, desktop, startAutomatically bool) error {
+	// Check every selected path before writing any of them. A second install
+	// must not take over the existing install's Start Menu or Desktop links.
+	for i, path := range paths {
+		if i < 2 && !startMenu || i == 2 && !desktop {
+			continue
+		}
+		if _, err := os.Lstat(path); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		ownedTarget, _, err := readShellLink(path)
+		if err != nil {
+			return fmt.Errorf("checking Windows shortcut %q: %w", path, err)
+		}
+		if !sameShortcutTarget(ownedTarget, target) {
+			return fmt.Errorf("Windows shortcut %q already belongs to another installation", path)
+		}
+	}
 	for i, path := range paths {
 		if i < 2 && !startMenu || i == 2 && !desktop {
 			continue
