@@ -1,0 +1,20 @@
+--- a/audio/sdlaudio.c
++++ b/audio/sdlaudio.c
+@@ -671,11 +671,12 @@
+ 
+     sdl->dev = dev;
+     sdl->device_name = sdl_initial_device_name(0);
+-    sdl->devid = sdl_open(&req, &obt, 0, sdl->device_name,
+-                          &sdl->route_matches);
+-    if (!sdl->devid) {
+-        return -1;
+-    }
++    /*
++     * SDL opens a Windows playback session immediately, even when paused.
++     * Leave it closed until the guest starts a stream. allowed_changes=0
++     * makes the requested format the format used by sdl_acquire_out().
++     */
++    obt = req;
+ 
+     err = sdl_to_audfmt(obt.format, &obt_as.fmt, &obt_as.big_endian);
+     if (err) {

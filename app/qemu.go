@@ -128,6 +128,12 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		"-no-reboot",
 		"-name", appTitle,
 	)
+	if cfg.audio == "sdl" && audioRuntimeSupportsLiveRouting(cfg.qemu) {
+		args = append(args,
+			"-chardev", fmt.Sprintf("socket,id=audio0,host=127.0.0.1,port=%d,reconnect-ms=1000", audioBridgePort),
+			"-device", "virtserialport,chardev=audio0,name=dev.tryomarchy.audio",
+		)
+	}
 	// The bundled r19 runtime replaces reported free pages with demand-zero
 	// Windows backing before acknowledging Linux. Earlier Windows QEMU builds
 	// cannot discard these pages and spam errors when reporting is enabled.

@@ -37,7 +37,7 @@ func TestAudioPreferencesRoundTripAndRollback(t *testing.T) {
 }
 
 func TestAudioEnvironmentSeparatesDirectionsAndPrivacy(t *testing.T) {
-	env := []string{"Path=example", "sdl_audio_device_name=wrong", "OMARCHY_SDL_OUTPUT_DEVICE_NAME=inherited", "omarchy_sdl_input_device_name=inherited"}
+	env := []string{"Path=example", "sdl_audio_device_name=wrong", "OMARCHY_SDL_OUTPUT_DEVICE_NAME=inherited", "omarchy_sdl_input_device_name=inherited", "OMARCHY_SDL_AUDIO_CONTROL_DIRECTORY=inherited"}
 	p := audioPreferences{1, "Speakers, 世界", "Mic=USB"}
 	for _, tc := range []struct {
 		enabled, muted bool
@@ -62,6 +62,9 @@ func TestAudioSelectionRequiresRuntimeSupport(t *testing.T) {
 	if audioRuntimeSupportsSelection(exe) {
 		t.Fatal("stock runtime accepted")
 	}
+	if audioRuntimeSupportsLiveRouting(exe) {
+		t.Fatal("stock runtime accepted for live routing")
+	}
 	if err := os.MkdirAll(filepath.Join(dir, "provenance"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -79,5 +82,14 @@ func TestAudioSelectionRequiresRuntimeSupport(t *testing.T) {
 		if audioRuntimeSupportsSelection(exe) != tc.want {
 			t.Fatal(tc)
 		}
+		if audioRuntimeSupportsLiveRouting(exe) {
+			t.Fatal("startup-only runtime accepted for live routing")
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "provenance", "sources.lock.json"), []byte(`{"qemu":{"patches":[{"file":"patches/qemu/0016-live-sdl-audio-routes.patch"}]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !audioRuntimeSupportsLiveRouting(exe) {
+		t.Fatal("live runtime was not recognized")
 	}
 }

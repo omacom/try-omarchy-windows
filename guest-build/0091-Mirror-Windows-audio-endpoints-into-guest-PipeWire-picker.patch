@@ -1,0 +1,742 @@
+From efc6949b9b9041468269c97567e9c73cf97c2753 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 23 Sep 2026 17:36:27 -0400
+Subject: [PATCH] Mirror Windows audio endpoints into guest PipeWire picker
+
+---
+ .../omarchy-windows-audio-bridge.service      |   1 +
+ .../udev/rules.d/70-try-omarchy-audio.rules   |   1 +
+ .../user/omarchy-windows-audio-bridge.service |  12 +
+ .../local/bin/omarchy-windows-audio-bridge    | 318 ++++++++++++++++++
+ guest/scripts/finalize-rootfs.sh              |   7 +-
+ guest/tests/test_windows_audio_bridge.py      | 311 +++++++++++++++++
+ guest/tests/verify.py                         |   8 +-
+ 7 files changed, 656 insertions(+), 2 deletions(-)
+ create mode 120000 guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-audio-bridge.service
+ create mode 100644 guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-audio.rules
+ create mode 100644 guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-audio-bridge.service
+ create mode 100755 guest/factory-overlay/usr/local/bin/omarchy-windows-audio-bridge
+ create mode 100644 guest/tests/test_windows_audio_bridge.py
+
+diff --git a/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-audio-bridge.service b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-audio-bridge.service
+new file mode 120000
+index 0000000..104151d
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-audio-bridge.service
+@@ -0,0 +1 @@
++/usr/lib/systemd/user/omarchy-windows-audio-bridge.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-audio.rules b/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-audio.rules
+new file mode 100644
+index 0000000..d443f78
+--- /dev/null
++++ b/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-audio.rules
+@@ -0,0 +1 @@
++SUBSYSTEM=="virtio-ports", ATTR{name}=="dev.tryomarchy.audio", GROUP="audio", MODE="0660", TAG+="uaccess", TAG+="seat"
+diff --git a/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-audio-bridge.service b/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-audio-bridge.service
+new file mode 100644
+index 0000000..20c1b1d
+--- /dev/null
++++ b/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-audio-bridge.service
+@@ -0,0 +1,12 @@
++[Unit]
++Description=Expose Windows audio devices to Omarchy over the virtio audio port
++PartOf=graphical-session.target
++After=graphical-session-pre.target
++
++[Service]
++ExecStart=/usr/local/bin/omarchy-windows-audio-bridge
++Restart=always
++RestartSec=1
++
++[Install]
++WantedBy=graphical-session.target
+diff --git a/guest/factory-overlay/usr/local/bin/omarchy-windows-audio-bridge b/guest/factory-overlay/usr/local/bin/omarchy-windows-audio-bridge
+new file mode 100755
+index 0000000..55e9833
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/bin/omarchy-windows-audio-bridge
+@@ -0,0 +1,318 @@
++#!/usr/bin/python3
++"""Mirror Windows audio endpoints into the Omarchy PipeWire graph."""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import os
++from pathlib import Path
++import select
++import subprocess
++import sys
++import time
++from typing import Any
++
++
++PORT = Path("/dev/virtio-ports/dev.tryomarchy.audio")
++PREFIX = "omarchy_windows_"
++
++
++def log(message: str) -> None:
++    print(f"omarchy-windows-audio-bridge: {message}", file=sys.stderr, flush=True)
++
++
++def run_pactl(*arguments: str, check: bool = True) -> str:
++    result = subprocess.run(
++        ["pactl", *arguments],
++        stdin=subprocess.DEVNULL,
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++        text=True,
++        timeout=10,
++        check=False,
++    )
++    if check and result.returncode != 0:
++        detail = result.stderr.strip() or f"status {result.returncode}"
++        raise RuntimeError(f"pactl {' '.join(arguments[:2])}: {detail}")
++    return result.stdout.strip()
++
++
++def pulse_property(value: str) -> str:
++    return value.replace("\\", "\\\\").replace('"', '\\"')
++
++
++def pulse_proplist(*properties: tuple[str, str | bool]) -> str:
++    values: list[str] = []
++    for name, value in properties:
++        if isinstance(value, bool):
++            encoded = "true" if value else "false"
++        else:
++            encoded = f'"{pulse_property(value)}"'
++        values.append(f"{name}={encoded}")
++    return " ".join(values)
++
++
++def pulse_module_proplist(name: str, properties: str) -> str:
++    # pactl joins load-module argv with spaces before PipeWire parses them. The
++    # nested proplist therefore needs its own escaped quotes to remain one
++    # module argument.
++    return f'{name}="{pulse_property(properties)}"'
++
++
++def endpoint_name(direction: str, uid: str | None) -> str:
++    identity = uid if uid is not None else "system-default"
++    digest = hashlib.sha256(identity.encode()).hexdigest()[:16]
++    return f"{PREFIX}{direction}_{digest}"
++
++
++def short_names(kind: str) -> list[str]:
++    records = run_pactl("list", "short", kind).splitlines()
++    names: list[str] = []
++    for record in records:
++        fields = record.split("\t")
++        if len(fields) >= 2:
++            names.append(fields[1])
++    return names
++
++
++def loaded_module_ids() -> set[str]:
++    records = run_pactl("list", "short", "modules").splitlines()
++    return {record.split("\t", 1)[0] for record in records if record}
++
++
++class PipeWireMirror:
++    def __init__(self, send: Any) -> None:
++        self.send = send
++        self.module_ids: list[str] = []
++        self.inventory: tuple[Any, ...] | None = None
++        self.output_uids: dict[str, str | None] = {}
++        self.input_uids: dict[str, str | None] = {}
++        self.last_sent: dict[str, str | None | object] = {
++            "output": object(),
++            "input": object(),
++        }
++        self.last_health_check = 0.0
++        self.pending: dict[str, tuple[str | None, float]] = {}
++
++    def close(self) -> None:
++        for module_id in reversed(self.module_ids):
++            run_pactl("unload-module", module_id, check=False)
++        self.module_ids.clear()
++
++    def apply(self, message: dict[str, Any]) -> None:
++        # A catalog echo can arrive between two quick picker changes. Capture
++        # the second local change before applying the echo to either direction.
++        if self.inventory is not None:
++            self._capture_local_changes()
++        outputs = self._validated_devices(message.get("outputs"))
++        inputs = self._validated_devices(message.get("inputs"))
++        selected_output = self._selected_uid(message.get("selectedOutputUID"), outputs)
++        selected_input = self._selected_uid(message.get("selectedInputUID"), inputs)
++        inventory = (
++            tuple((record["deviceUID"], record["name"]) for record in outputs),
++            tuple((record["deviceUID"], record["name"]) for record in inputs),
++        )
++
++        if inventory != self.inventory:
++            self._rebuild(outputs, inputs)
++            self.inventory = inventory
++        for direction, selected, devices in (
++            ("output", selected_output, outputs),
++            ("input", selected_input, inputs),
++        ):
++            pending = self.pending.get(direction)
++            if pending is not None:
++                requested, since = pending
++                available = requested is None or requested in {record["deviceUID"] for record in devices}
++                if selected == requested or not available or time.monotonic() - since > 5:
++                    self.pending.pop(direction, None)
++                else:
++                    selected = requested
++            self._set_selected(direction, selected)
++            self.last_sent[direction] = selected
++
++    def poll_selection(self) -> None:
++        now = time.monotonic()
++        if now - self.last_health_check >= 2:
++            self.last_health_check = now
++            loaded = loaded_module_ids()
++            if self.module_ids and not set(self.module_ids).issubset(loaded):
++                self.inventory = None
++                self.send({"type": "get-catalog"})
++                return
++
++        self._capture_local_changes()
++
++    def _capture_local_changes(self) -> None:
++        for direction, command, mapping in (
++            ("output", "get-default-sink", self.output_uids),
++            ("input", "get-default-source", self.input_uids),
++        ):
++            current = run_pactl(command, check=False).strip()
++            if current not in mapping:
++                continue
++            uid = mapping[current]
++            if self.last_sent[direction] != uid:
++                self.last_sent[direction] = uid
++                self.pending[direction] = (uid, time.monotonic())
++                self.send({"type": "select", "direction": direction, "deviceUID": uid})
++
++    @staticmethod
++    def _validated_devices(value: Any) -> list[dict[str, str]]:
++        if not isinstance(value, list):
++            raise ValueError("catalog device list is invalid")
++        devices: list[dict[str, str]] = []
++        seen: set[str] = set()
++        for record in value:
++            if not isinstance(record, dict) or set(record) != {"deviceUID", "name"}:
++                raise ValueError("catalog device record is invalid")
++            uid = record.get("deviceUID")
++            name = record.get("name")
++            if not isinstance(uid, str) or not uid or uid in seen:
++                raise ValueError("catalog device UID is invalid")
++            if not isinstance(name, str) or not name:
++                raise ValueError("catalog device name is invalid")
++            seen.add(uid)
++            devices.append({"deviceUID": uid, "name": name})
++        return devices
++
++    @staticmethod
++    def _selected_uid(value: Any, devices: list[dict[str, str]]) -> str | None:
++        if value is None:
++            return None
++        if isinstance(value, str) and value in {record["deviceUID"] for record in devices}:
++            return value
++        return None
++
++    def _load(self, module: str, *arguments: str) -> str:
++        module_id = run_pactl("load-module", module, *arguments)
++        if not module_id.isdecimal():
++            raise RuntimeError(f"pactl returned an invalid module id: {module_id!r}")
++        self.module_ids.append(module_id)
++        return module_id
++
++    def _rebuild(
++        self,
++        outputs: list[dict[str, str]],
++        inputs: list[dict[str, str]],
++    ) -> None:
++        self.close()
++        sinks = [name for name in short_names("sinks") if not name.startswith(PREFIX)]
++        sources = [
++            name
++            for name in short_names("sources")
++            if not name.startswith(PREFIX) and not name.endswith(".monitor")
++        ]
++        if not sinks or (inputs and not sources):
++            raise RuntimeError("the QEMU audio transport is not ready")
++        transport_sink = next((name for name in sinks if name.startswith("alsa_output.")), sinks[0])
++        transport_source = next((name for name in sources if name.startswith("alsa_input.")), sources[0]) if sources else None
++
++        output_records = [{"deviceUID": None, "name": "Windows System Default"}, *outputs]
++        input_records = [{"deviceUID": None, "name": "Windows System Default"}, *inputs] if inputs else []
++        self.output_uids = {}
++        self.input_uids = {}
++
++        for record in output_records:
++            uid = record["deviceUID"]
++            name = endpoint_name("output", uid)
++            properties = pulse_proplist(
++                ("node.virtual", True),
++                ("node.description", record["name"]),
++                ("device.description", record["name"]),
++                ("device.icon_name", "audio-card"),
++            )
++            self._load(
++                "module-remap-sink",
++                f"master={transport_sink}",
++                f"sink_name={name}",
++                pulse_module_proplist("sink_properties", properties),
++            )
++            self.output_uids[name] = uid
++
++        for record in input_records:
++            uid = record["deviceUID"]
++            name = endpoint_name("input", uid)
++            properties = pulse_proplist(
++                ("node.virtual", True),
++                ("node.description", record["name"]),
++                ("device.description", record["name"]),
++                ("device.icon_name", "audio-input-microphone"),
++            )
++            self._load(
++                "module-remap-source",
++                f"master={transport_source}",
++                f"source_name={name}",
++                pulse_module_proplist("source_properties", properties),
++            )
++            self.input_uids[name] = uid
++
++    def _set_selected(self, direction: str, uid: str | None) -> None:
++        mapping = self.output_uids if direction == "output" else self.input_uids
++        endpoint = next((name for name, candidate in mapping.items() if candidate == uid), None)
++        if endpoint is None:
++            return
++        command = "set-default-sink" if direction == "output" else "set-default-source"
++        run_pactl(command, endpoint)
++
++
++def open_port() -> int:
++    while True:
++        try:
++            return os.open(PORT, os.O_RDWR | os.O_CLOEXEC | os.O_NOCTTY)
++        except FileNotFoundError:
++            time.sleep(1)
++
++
++def main() -> int:
++    descriptor = open_port()
++
++    def send(message: dict[str, Any]) -> None:
++        payload = json.dumps(message, separators=(",", ":"), sort_keys=True).encode() + b"\n"
++        offset = 0
++        while offset < len(payload):
++            offset += os.write(descriptor, payload[offset:])
++
++    mirror = PipeWireMirror(send)
++    buffer = bytearray()
++    send({"type": "get-catalog"})
++    try:
++        while True:
++            ready, _, _ = select.select([descriptor], [], [], 0.25)
++            if ready:
++                chunk = os.read(descriptor, 65536)
++                if not chunk:
++                    return 0
++                buffer.extend(chunk)
++                if len(buffer) > 1_048_576:
++                    raise RuntimeError("host audio catalog exceeds one MiB")
++                while b"\n" in buffer:
++                    line, _, remainder = buffer.partition(b"\n")
++                    buffer = bytearray(remainder)
++                    message = json.loads(line)
++                    if not isinstance(message, dict) or message.get("type") != "catalog":
++                        raise ValueError("host sent an invalid audio message")
++                    applied = False
++                    while not applied:
++                        try:
++                            mirror.apply(message)
++                            applied = True
++                        except RuntimeError as error:
++                            log(str(error))
++                            time.sleep(1)
++            try:
++                mirror.poll_selection()
++            except RuntimeError as error:
++                log(str(error))
++    finally:
++        mirror.close()
++        os.close(descriptor)
++
++
++if __name__ == "__main__":
++    try:
++        raise SystemExit(main())
++    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
++        log(str(error))
++        raise SystemExit(1)
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 2dc9d63..df29d42 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -97,6 +97,10 @@ compat_paths=(
+   etc/systemd/system/try-omarchy-pacman-lock.service
+   etc/systemd/system/sysinit.target.wants/try-omarchy-pacman-lock.service
+   usr/local/bin/omarchy-windows-camera-bridge
++  usr/local/bin/omarchy-windows-audio-bridge
++  etc/udev/rules.d/70-try-omarchy-audio.rules
++  usr/lib/systemd/user/omarchy-windows-audio-bridge.service
++  etc/systemd/user/graphical-session.target.wants/omarchy-windows-audio-bridge.service
+   usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+   etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service
+   etc/udev/rules.d/70-try-omarchy-camera.rules
+@@ -170,7 +174,8 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 30 adds the in-guest launcher for native Windows settings.
+ # Revision 31 delivers the host battery device and its guest agent.
+ # Revision 32 adds approved Windows app launcher entries and the guest request.
+-compat_revision=32
++# Revision 33 exposes Windows audio endpoints in the guest PipeWire picker.
++compat_revision=33
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_windows_audio_bridge.py b/guest/tests/test_windows_audio_bridge.py
+new file mode 100644
+index 0000000..99c8faf
+--- /dev/null
++++ b/guest/tests/test_windows_audio_bridge.py
+@@ -0,0 +1,311 @@
++#!/usr/bin/env python3
++"""Behavior tests for the guest side of Windows audio routing."""
++
++from __future__ import annotations
++
++import importlib.util
++from importlib.machinery import SourceFileLoader
++from pathlib import Path
++import unittest
++from unittest import mock
++
++
++BRIDGE_PATH = (
++    Path(__file__).resolve().parents[1]
++    / "factory-overlay/usr/local/bin/omarchy-windows-audio-bridge"
++)
++LOADER = SourceFileLoader("omarchy_windows_audio_bridge", str(BRIDGE_PATH))
++SPEC = importlib.util.spec_from_loader(LOADER.name, LOADER)
++if SPEC is None or SPEC.loader is None:
++    raise RuntimeError(f"cannot import {BRIDGE_PATH}")
++bridge = importlib.util.module_from_spec(SPEC)
++SPEC.loader.exec_module(bridge)
++
++
++class PactlStub:
++    """Small pactl model that records the graph built by PipeWireMirror."""
++
++    transport_sink = "alsa_output.platform-4010000000.pci-generic.analog-stereo"
++    transport_source = "alsa_input.platform-4010000000.pci-generic.analog-stereo"
++
++    def __init__(self) -> None:
++        self.calls: list[tuple[tuple[str, ...], bool]] = []
++        self.next_module_id = 100
++        self.loaded_modules: set[str] = set()
++        self.default_sink = self.transport_sink
++        self.default_source = self.transport_source
++
++    def __call__(self, *arguments: str, check: bool = True) -> str:
++        self.calls.append((arguments, check))
++        if arguments == ("list", "short", "sinks"):
++            return f"10\t{self.transport_sink}\tmodule-alsa-card.c\ts16le 2ch 48000Hz\tRUNNING\n"
++        if arguments == ("list", "short", "sources"):
++            return f"11\t{self.transport_source}\tmodule-alsa-card.c\ts16le 2ch 48000Hz\tRUNNING\n"
++        if arguments == ("list", "short", "modules"):
++            return "\n".join(f"{module_id}\tmodule" for module_id in self.loaded_modules)
++        if arguments and arguments[0] == "load-module":
++            module_id = str(self.next_module_id)
++            self.next_module_id += 1
++            self.loaded_modules.add(module_id)
++            return module_id
++        if len(arguments) == 2 and arguments[0] == "unload-module":
++            self.loaded_modules.discard(arguments[1])
++            return ""
++        if len(arguments) == 2 and arguments[0] == "set-default-sink":
++            self.default_sink = arguments[1]
++            return ""
++        if len(arguments) == 2 and arguments[0] == "set-default-source":
++            self.default_source = arguments[1]
++            return ""
++        if arguments == ("get-default-sink",):
++            return self.default_sink
++        if arguments == ("get-default-source",):
++            return self.default_source
++        raise AssertionError(f"unexpected pactl call: {arguments!r}, check={check!r}")
++
++    def matching_calls(self, command: str) -> list[tuple[str, ...]]:
++        return [arguments for arguments, _ in self.calls if arguments[0] == command]
++
++
++def catalog_message() -> dict[str, object]:
++    return {
++        "type": "catalog",
++        "outputs": [
++            {"deviceUID": "laptop-output", "name": "Windows Laptop Pro Speakers"},
++            {"deviceUID": "studio-output", "name": "Studio Display Speakers"},
++        ],
++        "inputs": [
++            {"deviceUID": "laptop-input", "name": "Windows Laptop Pro Microphone"},
++            {"deviceUID": "studio-input", "name": 'Studio Display \\"Microphone\\"'},
++        ],
++        "selectedOutputUID": "studio-output",
++        "selectedInputUID": "laptop-input",
++    }
++
++
++def decode_quoted_value(value: str) -> str:
++    """Decode the quote/backslash syntax used by pactl module arguments."""
++    if len(value) < 2 or value[0] != '"' or value[-1] != '"':
++        raise AssertionError(f"expected one quoted value, got {value!r}")
++    decoded: list[str] = []
++    index = 1
++    while index < len(value) - 1:
++        character = value[index]
++        if character == "\\":
++            index += 1
++            if index >= len(value) - 1:
++                raise AssertionError(f"unterminated escape in {value!r}")
++            decoded.append(value[index])
++        elif character == '"':
++            raise AssertionError(f"unescaped nested quote in {value!r}")
++        else:
++            decoded.append(character)
++        index += 1
++    return "".join(decoded)
++
++
++def parse_proplist(value: str) -> dict[str, str]:
++    """Parse the small Pulse property-list grammar emitted by the bridge."""
++    properties: dict[str, str] = {}
++    index = 0
++    while index < len(value):
++        while index < len(value) and value[index] == " ":
++            index += 1
++        if index == len(value):
++            break
++        equals = value.find("=", index)
++        if equals < 0:
++            raise AssertionError(f"property has no value in {value!r}")
++        name = value[index:equals]
++        index = equals + 1
++        if index < len(value) and value[index] == '"':
++            end = index + 1
++            escaped = False
++            while end < len(value):
++                if escaped:
++                    escaped = False
++                elif value[end] == "\\":
++                    escaped = True
++                elif value[end] == '"':
++                    break
++                end += 1
++            if end >= len(value):
++                raise AssertionError(f"unterminated property value in {value!r}")
++            decoded = decode_quoted_value(value[index:end + 1])
++            index = end + 1
++        else:
++            end = value.find(" ", index)
++            if end < 0:
++                end = len(value)
++            decoded = value[index:end]
++            index = end
++        if not name or name in properties:
++            raise AssertionError(f"invalid duplicate property {name!r}")
++        properties[name] = decoded
++        if index < len(value) and value[index] != " ":
++            raise AssertionError(f"properties are not space-separated in {value!r}")
++    return properties
++
++
++class PipeWireMirrorTests(unittest.TestCase):
++    def make_mirror(self) -> tuple[object, PactlStub, list[dict[str, object]]]:
++        sent: list[dict[str, object]] = []
++        pactl = PactlStub()
++        mirror = bridge.PipeWireMirror(sent.append)
++        self.pactl_patch = mock.patch.object(bridge, "run_pactl", side_effect=pactl)
++        self.pactl_patch.start()
++        self.addCleanup(self.pactl_patch.stop)
++        self.addCleanup(mirror.close)
++        return mirror, pactl, sent
++
++    def test_outputs_are_playable_remaps_of_the_qemu_transport(self) -> None:
++        """A chooser sink must carry audio, not merely update the host route."""
++        mirror, pactl, _ = self.make_mirror()
++
++        mirror.apply(catalog_message())
++
++        loads = pactl.matching_calls("load-module")
++        output_loads = [call for call in loads if call[1] == "module-remap-sink"]
++        self.assertEqual(len(output_loads), 3)
++        self.assertFalse(any(call[1] in {"module-null-sink", "module-loopback"} for call in loads))
++        for call in output_loads:
++            self.assertIn(f"master={pactl.transport_sink}", call)
++            self.assertTrue(any(argument.startswith("sink_name=omarchy_windows_output_") for argument in call))
++
++        studio_endpoint = bridge.endpoint_name("output", "studio-output")
++        self.assertEqual(pactl.default_sink, studio_endpoint)
++
++    def test_every_virtual_endpoint_loads_with_its_friendly_node_description(self) -> None:
++        """Quick Settings reads the nested node.description passed at module load."""
++        mirror, pactl, _ = self.make_mirror()
++
++        mirror.apply(catalog_message())
++
++        expected_outputs = {
++            bridge.endpoint_name("output", None): "Windows System Default",
++            bridge.endpoint_name("output", "laptop-output"): "Windows Laptop Pro Speakers",
++            bridge.endpoint_name("output", "studio-output"): "Studio Display Speakers",
++        }
++        expected_inputs = {
++            bridge.endpoint_name("input", None): "Windows System Default",
++            bridge.endpoint_name("input", "laptop-input"): "Windows Laptop Pro Microphone",
++            bridge.endpoint_name("input", "studio-input"): 'Studio Display \\"Microphone\\"',
++        }
++
++        self.assert_friendly_loads(
++            pactl,
++            module="module-remap-sink",
++            endpoint_argument="sink_name",
++            properties_argument="sink_properties",
++            expected=expected_outputs,
++            icon="audio-card",
++        )
++        self.assert_friendly_loads(
++            pactl,
++            module="module-remap-source",
++            endpoint_argument="source_name",
++            properties_argument="source_properties",
++            expected=expected_inputs,
++            icon="audio-input-microphone",
++        )
++
++        unsupported = [
++            call for call, _ in pactl.calls
++            if call[0] in {"update-sink-proplist", "update-source-proplist"}
++        ]
++        self.assertEqual(unsupported, [])
++
++    def test_catalog_echo_does_not_undo_a_second_quick_picker_change(self) -> None:
++        mirror, pactl, sent = self.make_mirror()
++        initial = catalog_message()
++        initial["selectedOutputUID"] = None
++        initial["selectedInputUID"] = None
++        mirror.apply(initial)
++        pactl.default_sink = bridge.endpoint_name("output", "laptop-output")
++        mirror.poll_selection()
++        pactl.default_source = bridge.endpoint_name("input", "laptop-input")
++        echo = dict(initial, selectedOutputUID="laptop-output")
++        mirror.apply(echo)
++        self.assertEqual(pactl.default_source, bridge.endpoint_name("input", "laptop-input"))
++        self.assertIn({"type": "select", "direction": "input", "deviceUID": "laptop-input"}, sent)
++        acknowledged = dict(echo, selectedInputUID="laptop-input")
++        mirror.apply(acknowledged)
++        self.assertEqual(mirror.pending, {})
++
++    def test_microphone_disabled_keeps_output_picker_without_input_transport(self) -> None:
++        mirror, pactl, _ = self.make_mirror()
++        original = bridge.short_names
++        with mock.patch.object(bridge, "short_names", side_effect=lambda kind: [] if kind == "sources" else original(kind)):
++            message = catalog_message()
++            message["inputs"] = []
++            message["selectedInputUID"] = None
++            mirror.apply(message)
++        self.assertEqual(len(pactl.matching_calls("load-module")), 3)
++        self.assertEqual(mirror.input_uids, {})
++
++    def test_selecting_each_endpoint_sends_its_stable_host_uid(self) -> None:
++        mirror, pactl, sent = self.make_mirror()
++        mirror.apply(catalog_message())
++        sent.clear()
++        mirror.last_health_check = float("inf")
++
++        pactl.default_sink = bridge.endpoint_name("output", "laptop-output")
++        pactl.default_source = bridge.endpoint_name("input", "studio-input")
++        mirror.poll_selection()
++
++        self.assertEqual(
++            sent,
++            [
++                {"type": "select", "direction": "output", "deviceUID": "laptop-output"},
++                {"type": "select", "direction": "input", "deviceUID": "studio-input"},
++            ],
++        )
++
++    def assert_friendly_loads(
++        self,
++        pactl: PactlStub,
++        module: str,
++        endpoint_argument: str,
++        properties_argument: str,
++        expected: dict[str, str],
++        icon: str,
++    ) -> None:
++        loads = [call for call in pactl.matching_calls("load-module") if call[1] == module]
++        self.assertEqual(len(loads), len(expected))
++        seen: set[str] = set()
++        for call in loads:
++            endpoint_values = [
++                argument.removeprefix(f"{endpoint_argument}=")
++                for argument in call[2:]
++                if argument.startswith(f"{endpoint_argument}=")
++            ]
++            property_values = [
++                argument.removeprefix(f"{properties_argument}=")
++                for argument in call[2:]
++                if argument.startswith(f"{properties_argument}=")
++            ]
++            self.assertEqual(len(endpoint_values), 1)
++            self.assertEqual(len(property_values), 1)
++            endpoint = endpoint_values[0]
++            self.assertIn(endpoint, expected)
++            seen.add(endpoint)
++
++            # pactl joins load-module argv before PipeWire parses them. These
++            # outer quotes are therefore required to preserve the inner list.
++            self.assertTrue(property_values[0].startswith('"'))
++            self.assertTrue(property_values[0].endswith('"'))
++            properties = parse_proplist(decode_quoted_value(property_values[0]))
++            self.assertEqual(
++                properties,
++                {
++                    "node.virtual": "true",
++                    "node.description": expected[endpoint],
++                    "device.description": expected[endpoint],
++                    "device.icon_name": icon,
++                },
++            )
++        self.assertEqual(seen, set(expected))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 1e373a8..4bf91f2 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -266,8 +266,14 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=32" in finalize_rootfs
++        "compat_revision=33" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
++        and "usr/local/bin/omarchy-windows-audio-bridge" in compat_paths
++        and "etc/udev/rules.d/70-try-omarchy-audio.rules" in compat_paths
++        and 'ATTR{name}=="dev.tryomarchy.audio"' in read(GUEST / "factory-overlay/etc/udev/rules.d/70-try-omarchy-audio.rules")
++        and "usr/lib/systemd/user/omarchy-windows-audio-bridge.service" in compat_paths
++        and "etc/systemd/user/graphical-session.target.wants/omarchy-windows-audio-bridge.service" in compat_paths
++        and (GUEST / "factory-overlay/etc/systemd/user/graphical-session.target.wants/omarchy-windows-audio-bridge.service").is_symlink()
+         and "usr/local/bin/try-omarchy-windows-app" in compat_paths
+         and "usr/local/lib/try-omarchy/approved-apps-sync" in compat_paths
+         and "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua" in compat_paths
+-- 
+2.55.0
+

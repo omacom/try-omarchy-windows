@@ -102,7 +102,7 @@ func audioEnvironment(env []string, p audioPreferences, enabled, microphoneDisab
 	for _, item := range env {
 		key, _, _ := strings.Cut(item, "=")
 		switch strings.ToUpper(key) {
-		case "SDL_AUDIO_DEVICE_NAME", "OMARCHY_SDL_OUTPUT_DEVICE_NAME", "OMARCHY_SDL_INPUT_DEVICE_NAME":
+		case "SDL_AUDIO_DEVICE_NAME", "OMARCHY_SDL_OUTPUT_DEVICE_NAME", "OMARCHY_SDL_INPUT_DEVICE_NAME", "OMARCHY_SDL_AUDIO_CONTROL_DIRECTORY":
 			continue
 		}
 		result = append(result, item)

@@ -66,6 +66,8 @@ FACT_CHECKS = {
     "tun-device": "sudo modprobe tun && test -c /dev/net/tun && echo yes || echo no",
     "camera-device": "sudo modprobe v4l2loopback && test -c /dev/video42 && echo yes || echo no",
     "camera-service": "test \"$(readlink -f /etc/systemd/user/graphical-session.target.wants/omarchy-windows-camera-bridge.service)\" = /usr/lib/systemd/user/omarchy-windows-camera-bridge.service && echo yes || echo no",
+    "audio-service": "test \"$(readlink -f /etc/systemd/user/graphical-session.target.wants/omarchy-windows-audio-bridge.service)\" = /usr/lib/systemd/user/omarchy-windows-audio-bridge.service && test -x /usr/local/bin/omarchy-windows-audio-bridge && echo yes || echo no",
+    "audio-port-rule": "grep -Fq 'ATTR{name}==\"dev.tryomarchy.audio\"' /etc/udev/rules.d/70-try-omarchy-audio.rules && echo yes || echo no",
     "complete-modules": "test -f /usr/lib/modules/$(uname -r)/modules.order && test -f /usr/lib/modules/$(uname -r)/modules.builtin && test -f /usr/lib/modules/$(uname -r)/modules.builtin.modinfo && echo yes || echo no",
 }
 EXPECTED_FACTS = {
@@ -96,6 +98,8 @@ EXPECTED_FACTS = {
     "tun-device": "yes",
     "camera-device": "yes",
     "camera-service": "yes",
+    "audio-service": "yes",
+    "audio-port-rule": "yes",
     "complete-modules": "yes",
 }
 

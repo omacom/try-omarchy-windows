@@ -10,6 +10,12 @@ scripts/release/build-guest.sh --contract-only
 scripts/release/build-guest.sh --output /path/to/artifacts
 ```
 
+Patch 0091 adds a Windows audio endpoint mirror to the guest PipeWire picker.
+The bridge talks over a dedicated virtio serial port, and compatibility
+revision 33 delivers its user service to existing persistent disks. It needs
+the host catalog and live SDL route support in the matching Windows launcher
+and runtime; older launchers leave the service waiting for its port.
+
 The second command needs Docker and currently takes about ten minutes. Release
 CI also boots the resulting factory image with `scripts/release/smoke-guest.py`
 before it uploads anything.

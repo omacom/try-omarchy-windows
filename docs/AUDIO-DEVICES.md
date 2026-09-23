@@ -38,6 +38,33 @@ rollback. Older launchers ignore the ID file. Device enumeration does not open
 playback or recording streams. Diagnostic bundles report whether a selection
 exists and omit device names and endpoint IDs.
 
+## r20 live-route candidate
+
+The unreleased r20 source recipe adds a private `vm/audio-control` directory.
+When the runtime contains `0016-live-sdl-audio-routes.patch`, the launcher writes
+separate output and input routes before QEMU starts. Saving audio choices in
+Settings writes atomically replaced route files; the active SDL backend polls
+them and reopens a changed route without restarting the guest. The microphone
+permission gate still requires a new VM start because QEMU creates its input
+voices at launch. Unsupported runtimes retain the startup-only behavior above.
+
+The draft candidate now adds a loopback-only virtio serial catalog and a guest
+PipeWire service. It offers active Windows endpoints that SDL can identify
+unambiguously, and choosing one in Omarchy saves its stable endpoint ID and
+updates QEMU's live route. Settings choices are polled back into the guest.
+Microphone-off removes host input choices from the guest picker. The corrected
+r20b archive passed
+[physical laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md) for playback,
+capture, second-stream recovery, missing-route fallback, microphone permission,
+and clean shutdown. The first session probe ran outside the desktop session and
+gave a false negative; the record explains and corrects it. The guest picker
+then changed a real speaker and microphone route on the laptop and survived
+rapid two-direction changes. Two physical endpoints per direction, hotplug,
+restart persistence and a Windows boot with the rebuilt image remain to be
+checked. A disposable Linux upgrade and boot smoke passed for the rebuilt
+image. Live routing is not shipped until the runtime and guest image are pinned
+in a signed release.
+
 ## Validation
 
 The [September 21 physical acceptance](evidence/AUDIO-PARITY-2026-09-21.md)
