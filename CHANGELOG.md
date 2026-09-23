@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Open native Windows Settings from the Omarchy launcher and mirror the host
+  laptop's battery and AC state inside the guest.
+- Return unused guest RAM to Windows through the source-built r19 WHPX runtime
+  while keeping the guest's configured memory capacity available for reuse.
+- Approve specific Windows executables in Settings and launch them from the
+  Omarchy app menu; removing approval revokes later launches.
+- Choose the Windows monitor for fullscreen Omarchy, with primary-display
+  fallback when a saved monitor is disconnected.
+
 ## v0.1.0 - 2026-09-23
 
 First normal 0.x release. Existing preview installations keep their guest

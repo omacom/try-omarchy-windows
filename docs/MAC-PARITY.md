@@ -37,6 +37,7 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Area | Windows status | Acceptance or implementation remaining |
 | --- | --- | --- |
 | Pre-boot launcher | Native pages and save-and-launch; signed candidate GPU boot/reboot/shutdown and keyboard regression tests pass | Mixed-DPI and broader hardware, moved-installation acceptance |
+| Fullscreen monitor target | Settings choice and `-fullscreen-display` merged in #170; Windows native monitor enumeration and settings persistence passed | Second active monitor placement was not directly observed on the available laptop |
 | Automatic startup | Owned Windows shortcuts can opt into direct startup while the Settings shortcut remains available | Broader physical acceptance |
 | In-guest host settings | Implemented in [candidate #164](https://github.com/omacom/try-omarchy-windows/pull/164); the guest launcher entry opened native Settings on the AMD laptop | Include the guest patch and launcher in a signed release |
 | Approved Windows apps | [Phase 1 candidate](WINDOWS-APP-BRIDGE.md) launches a host-approved `.exe` from an Omarchy entry; physical Notepad launch/revocation passed | New guest image, signed candidate, and eventual embedded-window research |
@@ -49,7 +50,7 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Windows Hello sudo | Not implemented; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); the available laptop reports `DeviceNotPresent` |
 | Bridged networking | NAT and explicit port forwarding exist | [True LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166), with supported adapter, privilege and firewall handling |
 | Host battery | Implemented in candidate #164; the AMD laptop's 99% charging state appeared as BAT0/ADP0 and in UPower | Ship the rebuilt guest image; desktop/no-battery transition remains to be observed on a suitable host |
-| Guest RAM reclamation | Implemented in candidate #164 with the r19 WHPX runtime; three physical touch/free cycles returned about 797 MiB after the third 768 MiB allocation | Publish and pin the source-built r19 runtime with the next signed release |
+| Guest RAM reclamation | Implemented in candidate #164 with the now published and source-pinned r19 WHPX runtime; three physical touch/free cycles returned about 797 MiB after the third 768 MiB allocation | Include the pinned runtime and guest image in the next signed app release |
 | Keyboard and language | Windows time zone, keyboard layout and display language follow the host | Physical ANSI/ISO/JIS geometry and broader input-method acceptance |
 
 Windows Hello, live audio routing, and true bridged networking remain feature

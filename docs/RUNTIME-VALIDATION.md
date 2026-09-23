@@ -66,4 +66,5 @@ The later r19 runtime candidate adds WHPX free-page reclamation. On September
 touch/free cycle without shrinking the guest's configured capacity. The exact
 runtime archive and acceptance commands are in
 [FEATURE-GAPS-2026-09-23.md](evidence/FEATURE-GAPS-2026-09-23.md). This is a
-candidate result; `guest-build/runtime.lock.json` still pins public r18.
+candidate result. The source lock now pins r19 for the next app release;
+published `v0.1.0` remains on r18.
