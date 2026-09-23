@@ -36,10 +36,10 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 
 | Area | Windows status | Acceptance or implementation remaining |
 | --- | --- | --- |
-| Pre-boot launcher | Native pages and save-and-launch; physical GPU boot/reboot/shutdown and keyboard regression tests pass | Mixed-DPI and broader hardware, moved-installation acceptance and final signed candidate |
-| Automatic startup | Owned Windows shortcuts can opt into direct startup while the Settings shortcut remains available | Final signed-candidate acceptance |
+| Pre-boot launcher | Native pages and save-and-launch; signed candidate GPU boot/reboot/shutdown and keyboard regression tests pass | Mixed-DPI and broader hardware, moved-installation acceptance |
+| Automatic startup | Owned Windows shortcuts can opt into direct startup while the Settings shortcut remains available | Broader physical acceptance |
 | In-guest host settings | Not implemented | A Windows desktop-safe request path that reliably presents the native window |
-| Branding and About | Omacom resource metadata, retained original copyright plus contributor credit, notices, labelled About actions; native visibility tested | URL actions and final signed candidate acceptance |
+| Branding and About | Omacom resource metadata, retained original copyright plus contributor credit, notices, labelled About actions; native visibility tested | Confirm public-facing relationship and presentation before a 1.0 claim |
 | Camera, clipboard, shared folders, transfers | Implemented, with existing physical evidence in the handoff | Retest the selected final candidate; device coverage remains bounded |
 | Resources, updates, storage and recovery | Existing implementation; available before boot in this candidate | Existing v1 gates, plus recovery from the new launcher |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
@@ -88,8 +88,8 @@ replace the accepted launcher or mutate a running guest disk.
 6. Run the KVM probe inside the guest as its ordinary user and retain the JSON
    alongside exact runtime and host facts.
 
-This engineering work is retained on `codex/laptop-control-handoff`. It has not
-been merged into master or published as a release. See [the next-session handoff](NEXT-SESSION.md).
+This engineering work is merged into master. The newer signed candidate remains
+unpublished; see [its physical acceptance record](evidence/V1-SIGNED-CANDIDATE-2026-09-22.md).
 
 ## September 21 host capability checks
 
@@ -100,8 +100,10 @@ working pinch bridge by itself. The subsequent [experimental implementation](PIN
 has synthetic end-to-end evidence. The [Microsoft programming contract](https://learn.microsoft.com/en-us/windows/win32/input-precisiontouchpad/registertouchpadcapable)
 requires the window owner to handle resulting pointer messages and preserve
 normal scrolling. Unsupported Windows versions retain ordinary input; this path
-has not been tested on Windows 10. Actual finger gestures remain untested;
-synthetic guest libinput delivery was tested in the continuation.
+has not been tested on Windows 10. Actual finger gestures passed on the AMD
+laptop with r18: pinch was easier to start than before, zoom returned, and
+two-finger scrolling still worked. See
+[the physical test record](evidence/PINCH-R18-PHYSICAL-2026-09-22.md).
 
 `UserConsentVerifier.CheckAvailabilityAsync` returned `DeviceNotPresent`, both
 through OpenSSH and in an interactive scheduled task for the signed-in user.

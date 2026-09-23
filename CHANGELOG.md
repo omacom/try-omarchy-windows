@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## v1.0.0 - 2026-09-22
+Candidate changes since v0.0.20-preview; no stable version has been published.
 
 - Open a pre-boot launcher with General, Devices, Advanced, and Recovery pages,
   then start Omarchy from the same window. Shortcuts can optionally start the

@@ -20,13 +20,16 @@ The Omarchy mark in the app icon is sourced from the
 [official Omarchy brand kit](https://omarchy.org/brand/) and remains subject to
 Omarchy's trademark rights.
 
-The current release is [v1.0.0](https://github.com/omacom/try-omarchy-windows/releases/tag/v1.0.0),
-including Omarchy 4.0.3, working camera and microphone capture, quiet file drops,
-snapshots, installation moves, and a pre-boot launcher. See the
-[Windows testing instructions](docs/TESTING.md). Physical acceptance for this
-release centers on an AMD Windows 11 laptop; Intel and NVIDIA coverage remains open.
+The current public release is
+[v0.0.20-preview](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.0.20-preview).
+The newer pre-boot launcher, audio device selection, and other work described
+below are in the source tree and under release review; they are not in that
+download yet. See the [release readiness review](docs/RELEASE-READINESS.md) and
+[Windows testing instructions](docs/TESTING.md). Physical acceptance for the
+newer candidate centers on an AMD Windows 11 laptop; Intel and NVIDIA coverage
+remains open.
 
-## What works today
+## What works in the current source candidate
 
 - **The full Omarchy 4.0.3 desktop on new or reset guests**: Hyprland, the bar, notifications, all 22 themes, the screensavers. Launches after setup go straight to the desktop. Startup time depends on the host and the drive holding the guest. No Linux login screens, no console text, branded window.
 - **GPU acceleration**: Hyprland renders on the host GPU via virgl, `vulkaninfo` shows Venus, smooth video and audio (verified on a Radeon iGPU laptop); `-cpu host` (AVX2 and all) via WINQ-EMU's patched WHPX.
