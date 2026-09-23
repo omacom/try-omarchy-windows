@@ -49,6 +49,7 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Audio endpoint selection | Startup choices and stable endpoint IDs ship; unreleased r20 source adds live host Settings routing; [behavior and acceptance](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167): build and physical test r20, then mirror endpoints and selection into the guest PipeWire picker |
 | Trackpad pinch | [Opt-in r18 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Firefox and broader host/DPI/fullscreen acceptance; experimental only |
 | Windows Hello sudo | Not implemented; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); the available laptop reports `DeviceNotPresent` |
+| 1Password host authentication | Guest 1Password uses its ordinary password and Linux authentication paths | After #165, evaluate a narrowly scoped Windows Hello unlock agent for the installed guest 1Password process, following the Mac process and polkit checks |
 | Bridged networking | NAT and explicit port forwarding exist | [True LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166), with supported adapter, privilege and firewall handling |
 | Host battery | Shipped in `v0.2.0`; the AMD laptop's 99% charging state appeared as BAT0/ADP0 and in UPower | Desktop/no-battery transition remains to be observed on a suitable host |
 | Guest RAM reclamation | Shipped with r19 in `v0.2.0`; three physical touch/free cycles returned about 797 MiB after the third 768 MiB allocation | Follow up on concrete memory reports |
@@ -74,6 +75,8 @@ gesture and scrolling checks passed on the laptop.
    sign a fresh request with Windows Hello, and verify it inside guest PAM.
    Denial and unsupported hosts must fall back to password. The current laptop
    can test failure paths; a Hello-capable host is needed to prove approval.
+   Once that bridge is sound, evaluate the Mac's separate, process-scoped
+   1Password unlock integration without changing general guest PAM policy.
 3. **Offer a real LAN mode (#166).** Keep NAT and explicit forwards as the
    default. Start with a signed TAP adapter and a reversible wired-Ethernet
    bridge that has its own stable guest MAC. Verify host connectivity, guest

@@ -48,8 +48,7 @@ when Linux reuses them. The launcher enables free-page reporting only when the
 runtime's source provenance includes this patch, so older runtimes retain their
 previous behavior. The [September 23 physical candidate record](../docs/evidence/FEATURE-GAPS-2026-09-23.md)
 includes measured Windows memory return and reuse checks. The published
-`v0.1.0` app remains on r18. The validated r19 archive is now published and
-pinned in source for the next signed app candidate.
+`v0.2.0` app pins r19.
 
 The r4 recipe enables libusb explicitly and includes its runtime DLL and license.
 The USB host patch adds `auto-reconnect=off` for explicit attachment: the selected
