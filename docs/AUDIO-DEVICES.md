@@ -60,9 +60,10 @@ and clean shutdown. The first session probe ran outside the desktop session and
 gave a false negative; the record explains and corrects it. The guest picker
 then changed a real speaker and microphone route on the laptop and survived
 rapid two-direction changes. Two physical endpoints per direction, hotplug,
-restart persistence and the rebuilt-image upgrade remain to be checked. Live
-routing is not shipped until the runtime and guest image are pinned in a signed
-release.
+restart persistence and a Windows boot with the rebuilt image remain to be
+checked. A disposable Linux upgrade and boot smoke passed for the rebuilt
+image. Live routing is not shipped until the runtime and guest image are pinned
+in a signed release.
 
 ## Validation
 
