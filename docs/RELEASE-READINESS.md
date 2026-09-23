@@ -120,8 +120,8 @@ reproducible issues as they arrive; broader hardware coverage is not a gate.
 
 Feature parity is tracked in [MAC-PARITY.md](MAC-PARITY.md). The September 23
 candidate implements in-guest host Settings, battery mirroring, and measured
-live RAM reclamation; its r19 runtime and new guest image still need a signed
-release. Keep Windows Hello sudo, true bridged networking, and live audio
+live RAM reclamation; r19 is published and pinned in source, while the new guest
+image and signed app release remain. Keep Windows Hello sudo, true bridged networking, and live audio
 switching as active feature work rather than dropping them for lack of bug
 reports. Their existing password, NAT, and startup-audio paths remain usable
 while [Hello #165](https://github.com/omacom/try-omarchy-windows/issues/165),

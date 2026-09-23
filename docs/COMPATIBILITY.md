@@ -20,7 +20,7 @@ Try Omarchy runs the full x86_64 Arch Linux environment used by Omarchy. It is n
 - GPU acceleration depends on the patched WINQ-EMU runtime and compatible Windows graphics drivers. Try Omarchy falls back to CPU rendering when that path is unavailable.
 - USB management exists, but general physical-device compatibility remains unvalidated. V20 camera and microphone capture passed on the AMD test laptop; additional device combinations remain unverified, and arbitrary PCI passthrough is unsupported.
 - Networking uses QEMU NAT. Services inside the guest are not exposed to the Windows network automatically.
-- The published `v0.1.0` build uses fixed guest RAM while running. Live return of unused pages to Windows has passed an AMD laptop test in an unreleased r19 runtime candidate and will require a runtime pin update.
+- The published `v0.1.0` build uses fixed guest RAM while running. Live return of unused pages to Windows passed an AMD laptop test with the now published r19 runtime component; the next signed app release still needs to deliver that runtime and the matching guest image.
 - The published build does not mirror a Windows laptop's battery into Omarchy. An unreleased guest candidate exposes BAT0 and ADP0 to Linux power services and passed a physical charging-state test.
 - Host-folder sharing is not available with an external stock QEMU fallback.
 - Text and image clipboard sharing work in both directions (images travel as

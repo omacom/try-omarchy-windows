@@ -5,10 +5,10 @@
 by the selected runtime's SDL library. Choices apply when the VM next starts;
 saving Settings while Omarchy runs does not switch an active stream.
 
-The bundled r18 runtime includes `0013-select-sdl-audio-devices.patch`. The
+The published `v0.1.0` r18 runtime includes `0013-select-sdl-audio-devices.patch`. The
 older v20 runtime lacks this patch; when selected instead, its selectors stay
-disabled and Windows defaults remain in use. The selected r18 runtime is pinned
-in `guest-build/runtime.lock.json`.
+disabled and Windows defaults remain in use. Source now pins r19 for the next
+signed app release; it retains the same startup audio selection patch.
 
 ## Behavior
 
