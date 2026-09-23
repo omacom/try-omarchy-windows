@@ -61,6 +61,38 @@ reclamation and approved app launch passed the
 Pinch remains opt-in; its physical
 gesture and scrolling checks passed on the laptop.
 
+## Work sequence toward comparable everyday use
+
+1. **Complete live audio (#167).** Build and physically exercise the r20
+   host-route candidate in [PR #175](https://github.com/omacom/try-omarchy-windows/pull/175).
+   Then add an endpoint catalog and a guest PipeWire bridge so the Omarchy
+   picker can choose Windows playback and recording devices. Confirm separate
+   directions, removal/reconnection, default fallback, microphone permission,
+   and a saved choice after restart before shipping it.
+2. **Add signed Windows Hello approval (#165).** Mirror the Mac's opt-in sudo
+   model: enroll only after the guest password, pair a per-guest public key,
+   sign a fresh request with Windows Hello, and verify it inside guest PAM.
+   Denial and unsupported hosts must fall back to password. The current laptop
+   can test failure paths; a Hello-capable host is needed to prove approval.
+3. **Offer a real LAN mode (#166).** Keep NAT and explicit forwards as the
+   default. Start with a signed TAP adapter and a reversible wired-Ethernet
+   bridge that has its own stable guest MAC. Verify host connectivity, guest
+   DHCP/LAN reachability, restart, adapter loss and cleanup on a disposable
+   wired setup. Only offer Wi-Fi bridging after an actual Wi-Fi proof.
+4. **Finish host-app and file workflows (#160, #174).** The approved-app launch
+   bridge already works. Window embedding needs capture, input, focus,
+   accessibility, scaling and lifecycle behavior; direct drops need a Wayland
+   target protocol rather than a Downloads fallback. Each can ship separately
+   once it is reliable in normal use.
+5. **Polish input, language and graphics.** Use specific reports and available
+   machines to address keyboard geometry/IME, opt-in pinch defaults, and the
+   Intel/NVIDIA Vulkan issue (#173). Keep the existing CPU/OpenGL fallback.
+
+Public `v0.2.0` already covers the former battery, unused-RAM, fullscreen and
+in-guest Settings gaps. Broad hardware or Windows-version coverage is ongoing
+compatibility work. Each new path above needs proof of its own behavior before
+we call it complete; unrelated user hardware is not a release gate.
+
 ## Local checks and next laptop pass
 
 The candidate includes Windows-only native choice, hidden-startup, location and
