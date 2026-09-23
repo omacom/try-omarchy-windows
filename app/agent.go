@@ -43,12 +43,23 @@ func newGuestAgent() *guestAgent {
 }
 
 func (a *guestAgent) accept(l net.Listener) {
+	// A guest process can open this loopback channel repeatedly. Bound the
+	// number of connections waiting for their first protocol line.
+	gate := make(chan struct{}, 4)
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			return
 		}
-		go a.serve(c)
+		select {
+		case gate <- struct{}{}:
+			go func() {
+				defer func() { <-gate }()
+				a.serve(c)
+			}()
+		default:
+			c.Close()
+		}
 	}
 }
 
