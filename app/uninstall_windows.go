@@ -153,6 +153,9 @@ func runUninstall(dir string) error {
 		return err
 	}
 	target := filepath.Join(dir, stableLauncherName)
+	if err := syncSignInShortcut(target, dir, false); err != nil {
+		logf("uninstall: %v", err)
+	}
 	if err := removeLauncherShortcuts(target); err != nil {
 		logf("uninstall: %v", err)
 	}

@@ -66,6 +66,7 @@ const (
 	settingsAudioInputID         = 2119
 	settingsResourceProfileID    = 2120
 	settingsStartAutomaticallyID = 2121
+	settingsLaunchAtSignInID     = 2122
 	settingsSaveID               = 2001
 	settingsCancelID             = 2002
 	settingsBrowseID             = 2003
@@ -226,7 +227,7 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	className, _ := syscall.UTF16PtrFromString("TryOmarchySettings")
 	var hwnd uintptr
 	var scroll settingsScroll
-	var hFull, hStartAutomatically, hMem, hCPUs, hDisk, hShare, hShareOn, hFwd, hKey uintptr
+	var hFull, hStartAutomatically, hLaunchAtSignIn, hMem, hCPUs, hDisk, hShare, hShareOn, hFwd, hKey uintptr
 	var hRenderAuto, hRenderGPU, hRenderCPU, hDisplays, hLANPublic uintptr
 	var hCameraOn, hMicrophoneOn, hCamera, hUpdateOn uintptr
 	var hAudioOutput, hAudioInput uintptr
@@ -428,7 +429,21 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 					v, _, _ = procSendMessageW.Call(hStartAutomatically, bmGetcheck, 0, 0)
 					updatedLaunch := launchPrefs
 					updatedLaunch.StartAutomatically = v == bstChecked
+					v, _, _ = procSendMessageW.Call(hLaunchAtSignIn, bmGetcheck, 0, 0)
+					updatedLaunch.LaunchAtSignIn = v == bstChecked
+					if !portable {
+						target := filepath.Join(dataDir, stableLauncherName)
+						if err = syncSignInShortcut(target, dataDir, updatedLaunch.LaunchAtSignIn); err != nil {
+							errorBox("Windows sign-in startup could not be updated:\n\n" + err.Error())
+							return 0
+						}
+					}
 					if err = saveLaunchPreferences(dataDir, updatedLaunch); err != nil {
+						if !portable {
+							if rollbackErr := syncSignInShortcut(filepath.Join(dataDir, stableLauncherName), dataDir, launchPrefs.LaunchAtSignIn); rollbackErr != nil {
+								logf("restoring sign-in shortcut after settings save failed: %v", rollbackErr)
+							}
+						}
 						errorBox("Other settings were saved, but automatic startup could not be saved:\n\n" + err.Error())
 						return 0
 					}
@@ -632,6 +647,14 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	}
 	if portable {
 		procEnableWindow.Call(hStartAutomatically, 0)
+	}
+	y += 30
+	hLaunchAtSignIn = mk("BUTTON", "Launch when I sign in to Windows", left, y, 360, 22, bsAutocheckbox|wsTabstop, settingsLaunchAtSignInID)
+	if launchPrefs.LaunchAtSignIn {
+		procSendMessageW.Call(hLaunchAtSignIn, bmSetcheck, bstChecked, 0)
+	}
+	if portable {
+		procEnableWindow.Call(hLaunchAtSignIn, 0)
 	}
 	y += 30
 	mk("STATIC", "Resource profile", left, y+3, labelW, 20, ssNoprefix, 0)

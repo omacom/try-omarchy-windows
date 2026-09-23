@@ -16,6 +16,7 @@ const launchPreferencesFilename = "launch-preferences.json"
 type launchPreferences struct {
 	SchemaVersion      int  `json:"schemaVersion"`
 	StartAutomatically bool `json:"startAutomatically"`
+	LaunchAtSignIn     bool `json:"launchAtSignIn"`
 }
 
 func loadLaunchPreferences(dir string) (launchPreferences, error) {

@@ -165,6 +165,12 @@ func activateMovedInstallation(m *installationMove) error {
 	}); err != nil {
 		return err
 	}
+	if err := syncSignInShortcut(target, m.Destination, prefs.LaunchAtSignIn); err != nil {
+		return err
+	}
+	if err := syncSignInShortcut(filepath.Join(m.Source, stableLauncherName), m.Source, false); err != nil {
+		return err
+	}
 	if err := registerUninstallEntry(target, m.Destination); err != nil {
 		return err
 	}
