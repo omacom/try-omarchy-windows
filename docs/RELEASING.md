@@ -28,6 +28,11 @@ The Azure application needs the `Artifact Signing Certificate Profile Signer`
 role on the signing account. The workflow itself requests only `id-token: write`
 and `contents: write` in the protected publish job.
 
+The expected Authenticode publisher is `CN=Brandon South`. Azure Artifact
+Signing certificates are short-lived and renewed often, so check the subject
+name rather than a thumbprint. Any change in signing identity must be noted in
+`CHANGELOG.md` and `README.md`.
+
 The optional `signing-check` phase builds, signs, and verifies the current
 launcher and signed update metadata without creating or modifying a release.
 It requires the matching source pin and includes `test-update.json` in the

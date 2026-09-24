@@ -9,10 +9,11 @@ physical upgrade, GPU boot, preserved user data, approved Windows app launch
 and revocation, clean relaunch, and interrupted-update rollback on the AMD
 Windows 11 laptop. The
 [publish workflow](https://github.com/omacom/try-omarchy-windows/actions/runs/35867779077)
-passed signing and public Latest checks. Windows Hello sudo, true LAN bridging,
-live audio rerouting and embedded Windows app windows remain active feature
-work; they do not hold back normal 0.x releases. Broader user reports continue
-to guide hardware fixes.
+passed signing and public Latest checks. The v0.3.0 candidate pins the published
+r20c runtime for live audio rerouting; public `v0.2.0` remains on r19 until
+v0.3.0 publishes. Windows Hello sudo, true LAN bridging, and embedded Windows
+app windows remain active feature work; they do not hold back normal 0.x
+releases. Broader user reports continue to guide hardware fixes.
 
 ### Previous release
 
@@ -134,16 +135,15 @@ reproducible issues as they arrive; broader hardware coverage is not a gate.
 
 Feature parity is tracked in [MAC-PARITY.md](MAC-PARITY.md). `v0.2.0` ships
 in-guest host Settings, battery mirroring, measured live RAM reclamation, the
-approved-app launch bridge, and fullscreen monitor choice. Keep Windows Hello
-sudo, true bridged networking, and live audio
-switching as active feature work rather than dropping them for lack of bug
-reports. Their existing password, NAT, and startup-audio paths remain usable
-while [Hello #165](https://github.com/omacom/try-omarchy-windows/issues/165),
-[LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166),
-and [live audio #167](https://github.com/omacom/try-omarchy-windows/issues/167)
-proceed. The current user base of thousands with relatively
-few reports is positive evidence about the everyday path; broad hardware and
-Windows 10 acceptance are not 1.0 gates. Pinch should stay opt-in until device
+approved-app launch bridge, and fullscreen monitor choice. The v0.3.0 candidate
+pins published r20c for live audio switching; public `v0.2.0` remains on r19
+until v0.3.0 publishes. Keep Windows Hello sudo and true bridged networking as
+active feature work rather than dropping them for lack of bug reports. Their
+existing password and NAT paths remain usable while [Hello #165](https://github.com/omacom/try-omarchy-windows/issues/165)
+and [LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166)
+proceed. The current user base of thousands with relatively few reports is
+positive evidence about the everyday path; broad hardware and Windows 10
+acceptance are not 1.0 gates. Pinch should stay opt-in until device
 reports support a default. ARM64 and interface translation are open requests
 ([#131](https://github.com/omacom/try-omarchy-windows/issues/131),
 [#127](https://github.com/omacom/try-omarchy-windows/issues/127)); neither can be

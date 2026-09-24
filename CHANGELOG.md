@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.3.0 - 2026-09-24
+
+- Switch Windows playback and recording devices while Omarchy runs. Saving
+  audio choices in Settings reroutes the running VM, and Omarchy's own audio
+  picker lists the Windows speakers and microphones so a choice made there is
+  saved back to Windows. Choices carry across guest reboots.
+- An idle VM no longer holds the Windows speaker open before anything plays.
+- Update the bundled runtime to the source-built r20c WINQ-EMU build. Turning
+  microphone access on or off still takes effect at the next VM start.
+
 ## v0.2.0 - 2026-09-23
 
 - Open native Windows Settings from the Omarchy launcher and mirror the host
