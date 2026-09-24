@@ -46,35 +46,34 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Resources, updates, storage and recovery | Implemented; the published update, backup, restore and uninstall paths passed on the AMD laptop | Broader hardware and recovery reports remain useful |
 | GPU application compatibility | AMD GPU desktop and applications passed their recorded checks; a previous Intel/NVIDIA preview runtime booted VirGL OpenGL but failed Venus Vulkan and Godot Forward+ | [Current-runtime investigation #173](https://github.com/omacom/try-omarchy-windows/issues/173); retain CPU/OpenGL fallback |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
-| Audio endpoint selection | Startup choices and stable endpoint IDs ship; unreleased r20c source, [packaged laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md) and a disposable image upgrade establish live host routing, guest PipeWire choices, restart persistence and idle release; [behavior](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167): sign and test the pinned candidate; two physical endpoints and hotplug need suitable hardware |
+| Audio endpoint selection | Startup choices and stable endpoint IDs ship; merged r20c source, [signed packaged laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md) and a disposable image upgrade establish live host routing, guest PipeWire choices, restart persistence and idle release; [behavior](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167): pin release artifacts; two physical endpoints and hotplug need suitable hardware |
 | Trackpad pinch | [Opt-in r18 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Firefox and broader host/DPI/fullscreen acceptance; experimental only |
-| Windows Hello sudo | Not implemented; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); after PIN setup, the signed-in laptop reports Hello `Available`, but no approval prompt has been tested |
+| Windows Hello sudo | Not implemented; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); the signed-in laptop reports Hello `Available` and completed an initial approval prompt, but key-backed guest sudo remains untested |
 | 1Password host authentication | Guest 1Password uses its ordinary password and Linux authentication paths | [Windows Hello unlock #176](https://github.com/omacom/try-omarchy-windows/issues/176) follows #165 with a narrowly scoped agent for the installed guest 1Password process and Mac-style process/polkit checks |
 | Bridged networking | NAT and explicit port forwarding exist | [True LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166), with supported adapter, privilege and firewall handling |
 | Host battery | Shipped in `v0.2.0`; the AMD laptop's 99% charging state appeared as BAT0/ADP0 and in UPower | Desktop/no-battery transition remains to be observed on a suitable host |
 | Guest RAM reclamation | Shipped with r19 in `v0.2.0`; three physical touch/free cycles returned about 797 MiB after the third 768 MiB allocation | Follow up on concrete memory reports |
 | Keyboard and language | Windows time zone, keyboard layout and display language follow the host | Physical ANSI/ISO/JIS geometry and broader input-method acceptance |
 
-Windows Hello, live audio routing, true bridged networking, and embedded Windows
-app windows remain feature work. Settings, battery mirroring, live memory
-reclamation and approved app launch passed the
+Windows Hello, true bridged networking, and embedded Windows app windows remain
+feature work. Live audio source is merged but awaits a release pin. Settings,
+battery mirroring, live memory reclamation and approved app launch passed the
 [signed v0.2.0 candidate](evidence/V020-SIGNED-CANDIDATE-2026-09-23.md).
 Pinch remains opt-in; its physical
 gesture and scrolling checks passed on the laptop.
 
 ## Work sequence toward comparable everyday use
 
-1. **Complete live audio (#167).** The r20b host-route candidate in
-   [PR #175](https://github.com/omacom/try-omarchy-windows/pull/175) passed its
-   available-hardware checks. The endpoint catalog and guest PipeWire bridge are
-   now drafted so the Omarchy picker can choose Windows playback and recording devices. Confirm separate
-   directions, removal/reconnection, default fallback, microphone permission,
-   and a saved choice after restart before shipping it.
+1. **Complete live audio (#167).** [PR #175](https://github.com/omacom/try-omarchy-windows/pull/175)
+   merged the r20c host routes and guest PipeWire picker. The signed candidate
+   passed the [available laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md).
+   Pin the release artifacts after review. Two physical endpoints and hotplug
+   need additional hardware; their absence does not hold up this laptop pass.
 2. **Add signed Windows Hello approval (#165).** Mirror the Mac's opt-in sudo
    model: enroll only after the guest password, pair a per-guest public key,
    sign a fresh request with Windows Hello, and verify it inside guest PAM.
-   Denial and unsupported hosts must fall back to password. The current laptop
-   can test failure paths; a Hello-capable host is needed to prove approval.
+   Denial and unsupported hosts must fall back to password. After PIN setup,
+   the current laptop can test approval and denial in the eventual guest flow.
    Once that bridge is sound, implement [#176](https://github.com/omacom/try-omarchy-windows/issues/176),
    the Mac's separate, process-scoped 1Password unlock integration, without
    changing general guest PAM policy.
@@ -148,8 +147,8 @@ two-finger scrolling still worked. See
 `UserConsentVerifier.CheckAvailabilityAsync` initially returned
 `DeviceNotPresent`, both through OpenSSH and in an interactive scheduled task
 for the signed-in user. After Windows Hello PIN setup on September 23, the
-interactive task returned `Available`. No verification prompt or guest PAM
-change has been made. The
+interactive task returned `Available`, and an initial approval prompt returned
+`Verified`. No guest PAM change has been made. The
 [availability API](https://learn.microsoft.com/en-us/uwp/api/windows.security.credentials.ui.userconsentverifier.checkavailabilityasync)
 allows an implementation to retain password authentication on unsupported hosts;
-host is now available for a real prompt and approval test.
+the laptop is now available for a key-backed guest approval and denial test.
