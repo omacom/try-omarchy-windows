@@ -26,16 +26,14 @@ type forwardedKey struct {
 }
 
 var (
-	qemuPid     atomic.Uint32 // current QEMU child, set by the supervisor
-	guestUp     atomic.Bool   // supervisor handshake succeeded for this launch
-	winDown     bool          // hook-thread only
-	printDown   bool          // hook-thread only
-	tabDown     bool          // hook-thread only
-	altTabDown  bool          // hook-thread only
-	cadCtrlDown bool          // hook-thread only
-	cadAltDown  bool          // hook-thread only
-	cadDelDown  bool          // hook-thread only
-	keyEvents   = make(chan forwardedKey, 64)
+	qemuPid        atomic.Uint32 // current QEMU child, set by the supervisor
+	guestUp        atomic.Bool   // supervisor handshake succeeded for this launch
+	winDown        bool          // hook-thread only
+	printDown      bool          // hook-thread only
+	tabDown        bool          // hook-thread only
+	altTabDown     bool          // hook-thread only
+	ctrlAltEndSent bool          // hook-thread only
+	keyEvents      = make(chan forwardedKey, 64)
 )
 
 // forwardKey hands a key state change to the QMP drain without blocking the
@@ -51,6 +49,16 @@ func forwardKey(state *bool, qcode string, down bool) uintptr {
 	return 1
 }
 
+func queueKeys(keys ...forwardedKey) bool {
+	if len(keyEvents)+len(keys) > cap(keyEvents) {
+		return false
+	}
+	for _, key := range keys {
+		keyEvents <- key
+	}
+	return true
+}
+
 // releaseKey lets go of a forwarded key in the guest when focus leaves mid-press.
 func releaseKey(state *bool, qcode string) {
 	if *state {
@@ -59,6 +67,15 @@ func releaseKey(state *bool, qcode string) {
 		case keyEvents <- forwardedKey{qcode: qcode, down: false}:
 		default:
 		}
+	}
+}
+
+func isCtrlOrAltVK(vk uint32) bool {
+	switch vk {
+	case vkControl, vkMenu, 0xA2, 0xA3, 0xA4, 0xA5:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -112,26 +129,32 @@ func hookCallback(nCode, wParam, lParam uintptr) uintptr {
 			releaseKey(&tabDown, "tab")
 			releaseKey(&altTabDown, "alt")
 		}
+		if ctrlAltEndSent && (wParam == wmKeyup || wParam == wmSyskeyup) && isCtrlOrAltVK(vk) {
+			ctrlAltEndSent = false
+		}
 		if vk == vkEnd {
 			down := wParam == wmKeydown || wParam == wmSyskeydown
 			pid := qemuPid.Load()
 			focused := pid != 0 && foregroundPid() == pid
 			control, _, _ := procGetAsyncKeyState.Call(vkControl)
 			menu, _, _ := procGetAsyncKeyState.Call(vkMenu)
-			if forwardsCtrlAltDelete(focused, control&0x8000 != 0, menu&0x8000 != 0, cadDelDown, down) {
-				if down {
-					forwardKey(&cadCtrlDown, "ctrl", true)
-					forwardKey(&cadAltDown, "alt", true)
-					return forwardKey(&cadDelDown, "delete", true)
+			switch classifyCtrlAltEnd(focused, control&0x8000 != 0, menu&0x8000 != 0, ctrlAltEndSent, down) {
+			case ctrlAltEndSend:
+				ctrlAltEndSent = queueKeys(
+					forwardedKey{qcode: "ctrl", down: true},
+					forwardedKey{qcode: "alt", down: true},
+					forwardedKey{qcode: "delete", down: true},
+					forwardedKey{qcode: "delete", down: false},
+					forwardedKey{qcode: "alt", down: false},
+					forwardedKey{qcode: "ctrl", down: false},
+				)
+				return 1
+			case ctrlAltEndSwallow:
+				if !down {
+					ctrlAltEndSent = false
 				}
-				releaseKey(&cadDelDown, "delete")
-				releaseKey(&cadAltDown, "alt")
-				releaseKey(&cadCtrlDown, "ctrl")
 				return 1
 			}
-			releaseKey(&cadDelDown, "delete")
-			releaseKey(&cadAltDown, "alt")
-			releaseKey(&cadCtrlDown, "ctrl")
 		}
 	}
 	r, _, _ := procCallNextHookEx.Call(0, nCode, wParam, lParam)

@@ -54,6 +54,7 @@ const (
 	mbIconError      = 0x10
 	whKeyboardLL     = 13
 	wmKeydown        = 0x100
+	wmKeyup          = 0x101
 	wmSyskeydown     = 0x104
 	wmSyskeyup       = 0x105
 	vkTab            = 0x09

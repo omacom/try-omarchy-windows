@@ -2,26 +2,27 @@ package main
 
 import "testing"
 
-func TestForwardsCtrlAltDelete(t *testing.T) {
+func TestClassifyCtrlAltEnd(t *testing.T) {
 	tests := []struct {
-		name                                 string
-		focused, ctrl, alt, forwarding, down bool
-		want                                 bool
+		name                           string
+		focused, ctrl, alt, sent, down bool
+		want                           ctrlAltEndAction
 	}{
-		{name: "focused ctrl alt down", focused: true, ctrl: true, alt: true, down: true, want: true},
-		{name: "not focused", ctrl: true, alt: true, down: true, want: false},
-		{name: "ctrl only", focused: true, ctrl: true, down: true, want: false},
-		{name: "alt only", focused: true, alt: true, down: true, want: false},
-		{name: "neither modifier", focused: true, down: true, want: false},
-		{name: "key up while forwarding", focused: true, forwarding: true, want: true},
-		{name: "key up while not forwarding", focused: true, want: false},
-		{name: "repeat down while forwarding", focused: true, forwarding: true, down: true, want: true},
+		{name: "send focused ctrl alt down", focused: true, ctrl: true, alt: true, down: true, want: ctrlAltEndSend},
+		{name: "pass when unfocused", ctrl: true, alt: true, down: true, want: ctrlAltEndPass},
+		{name: "pass with ctrl only", focused: true, ctrl: true, down: true, want: ctrlAltEndPass},
+		{name: "pass with alt only", focused: true, alt: true, down: true, want: ctrlAltEndPass},
+		{name: "pass with no modifiers", focused: true, down: true, want: ctrlAltEndPass},
+		{name: "pass key up before sending", focused: true, ctrl: true, alt: true, want: ctrlAltEndPass},
+		{name: "swallow repeat down after sending", focused: true, sent: true, down: true, want: ctrlAltEndSwallow},
+		{name: "swallow key up after sending", focused: true, sent: true, want: ctrlAltEndSwallow},
+		{name: "swallow unfocused key up after sending", sent: true, want: ctrlAltEndSwallow},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := forwardsCtrlAltDelete(test.focused, test.ctrl, test.alt, test.forwarding, test.down)
+			got := classifyCtrlAltEnd(test.focused, test.ctrl, test.alt, test.sent, test.down)
 			if got != test.want {
-				t.Fatalf("forwardsCtrlAltDelete() = %t, want %t", got, test.want)
+				t.Fatalf("classifyCtrlAltEnd() = %v, want %v", got, test.want)
 			}
 		})
 	}
