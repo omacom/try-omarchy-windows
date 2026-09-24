@@ -1,10 +1,12 @@
 # Windows audio device choices
 
-`v0.1.0` adds **Sound output** and **Microphone** selectors to
+`v0.1.0` introduced **Sound output** and **Microphone** selectors to
 **Devices**. Each direction can use **Windows default** or a device enumerated
-by the selected runtime's SDL library. In public `v0.2.0`, choices apply when
-the VM next starts; saving Settings while Omarchy runs does not switch an active
-stream.
+by the selected runtime's SDL library. The `v0.2.0` release applies choices at
+VM startup. The public `v0.3.0` release adds live switching with r20c: host
+Settings and Omarchy's guest audio switcher can change playback and recording
+choices while the VM runs, and selected devices persist across guest reboots.
+The microphone access gate still applies at the next VM start.
 
 The bundled r19 runtime in `v0.2.0` includes
 `0013-select-sdl-audio-devices.patch`, as did the prior r18 runtime. The older
@@ -24,16 +26,16 @@ runtime may also lack the patch.
   fallback applies. A non-SDL or older runtime logs that it cannot apply saved
   selections and uses defaults.
 - Reopen Settings to refresh the device list. A disconnected choice is retained
-  until changed. On public `v0.2.0`, hot-unplug and default-device changes during
-  playback still depend on SDL/Windows; restart the VM if routing is not
+  until changed. On the older r19 runtime, hot-unplug and default-device changes
+  during playback still depend on SDL/Windows; restart the VM if routing is not
   recovered. r20c polls live routes and falls back if a selected endpoint
-  disappears.
+  disappears. Physical hotplug acceptance remains untested.
 - Preferences retain SDL device names and, when a name uniquely matches an active
   Core Audio endpoint, its stable Windows endpoint ID. The ID resolves the current
   friendly name at each start, so ordinary renames and reboots do not discard the
   selection. Ambiguous duplicate names remain name-based. Live guest-driven
-  switching is supported by r20c, pinned for the v0.3.0 candidate; public
-  v0.2.0 remains startup-only. This is not full Mac audio parity.
+  switching ships in `v0.3.0` with r20c; public `v0.2.0` remains a previous
+  startup-only release. This is not full Mac audio parity.
 
 `audio-preferences.json` and the separate `audio-endpoints.json` live beside
 `settings.json` and are included in current backups and recovery copies. Keeping
@@ -42,7 +44,7 @@ rollback. Older launchers ignore the ID file. Device enumeration does not open
 playback or recording streams. Diagnostic bundles report whether a selection
 exists and omit device names and endpoint IDs.
 
-## r20c live-route candidate
+## r20c live-route support
 
 The r20 source recipe adds a private `vm/audio-control` directory. When the
 runtime contains `0016-live-sdl-audio-routes.patch`, the launcher writes separate
@@ -52,20 +54,19 @@ reopens a changed route without restarting the guest. The microphone permission
 gate still requires a new VM start because QEMU creates its input voices at
 launch. Unsupported runtimes retain the startup-only behavior above.
 
-The r20c candidate includes a loopback-only virtio serial catalog and a guest
-PipeWire service. It offers active Windows endpoints that SDL can identify
-unambiguously, and choosing one in Omarchy saves its stable endpoint ID and
-updates QEMU's live route. Settings choices are polled back into the guest.
-Microphone-off removes host input choices from the guest picker. The r20c
-runtime is published as `runtime-v1-r20c` and pinned for the v0.3.0 candidate.
-The [signed packaged candidate checks](evidence/LIVE-AUDIO-R20-2026-09-23.md)
-passed playback, capture, route fallback, microphone permission, saved-choice
-persistence across guest restart, idle release, and Windows boot with the
-rebuilt image. The signed laptop candidate changed real speaker and microphone
-routes through the guest picker and survived rapid two-direction changes. A
-disposable Linux upgrade and boot smoke also passed for the rebuilt image.
-Public `v0.2.0` remains on r19 until v0.3.0 publishes. Two physical endpoints
-per direction and hotplug remain untested.
+The r20c runtime shipped as `runtime-v1-r20c` in `v0.3.0`. Its loopback-only
+virtio serial catalog and guest PipeWire service offer active Windows endpoints
+that SDL can identify unambiguously. Choosing one in Omarchy saves its stable
+endpoint ID and updates QEMU's live route; Settings choices are polled back into
+the guest. Microphone-off removes host input choices from the guest picker.
+The [signed and public acceptance record](evidence/V030-SIGNED-CANDIDATE-2026-09-24.md)
+passed playback, capture, live route changes from the guest and host Settings,
+saved-choice persistence across guest restart, idle release, rollback, and the
+public update path. The [signed packaged candidate checks](evidence/LIVE-AUDIO-R20-2026-09-23.md)
+also passed the rebuilt image's playback, capture, route fallback, microphone
+permission, idle release, and Windows boot checks. Public `v0.2.0` used r19 and
+startup-only choices. Two physical endpoints per direction and hotplug remain
+untested.
 
 ## Validation
 

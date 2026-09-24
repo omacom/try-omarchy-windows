@@ -6,7 +6,7 @@ candidate against locally served, authenticated assets.
 
 ## Hardware testing
 
-The published baseline is [v0.2.0](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.2.0).
+The published baseline is [v0.3.0](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.3.0).
 Reports on earlier previews remain useful, but must not be recorded as acceptance
 of unreleased master changes. Maintainers pin signed candidates and exact
 launcher/runtime/guest hashes before combined candidate rounds.

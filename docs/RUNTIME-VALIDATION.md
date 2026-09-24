@@ -60,17 +60,19 @@ initialization failed. This remains a documented compatibility result, not
 evidence that r18's NVIDIA Vulkan path passes. Follow up when that hardware is
 available or a user reports the same issue on the published runtime.
 
-The public `v0.2.0` release uses the r19 runtime, which adds WHPX free-page
-reclamation. On September 23 the AMD laptop booted its full GPU desktop with
-this runtime, and a separate 4 GiB headless guest returned about 797 MiB to
-Windows after a 768 MiB touch/free cycle without shrinking the guest's
-configured capacity. The exact runtime archive and acceptance commands are in
+The previous public `v0.2.0` release uses the r19 runtime, which adds WHPX
+free-page reclamation. The AMD laptop booted its full GPU desktop with r19, and
+a separate 4 GiB headless guest returned about 797 MiB to Windows after a
+768 MiB touch/free cycle without shrinking the guest's configured capacity.
+The exact runtime archive and acceptance commands are in
 [FEATURE-GAPS-2026-09-23.md](evidence/FEATURE-GAPS-2026-09-23.md). The
-[signed v0.2.0 candidate](evidence/V020-SIGNED-CANDIDATE-2026-09-23.md) booted
-the bundled runtime on the same laptop.
+[signed v0.2.0 candidate](evidence/V020-SIGNED-CANDIDATE-2026-09-23.md) records
+that release's physical checks.
 
-The r20c runtime is published as `runtime-v1-r20c` and pinned for the v0.3.0
-candidate. Its signed packaged candidate passed Windows boot, saved-choice
-persistence across guest restart, and idle playback-device release on the AMD
-laptop. Public `v0.2.0` remains on r19 until v0.3.0 publishes. See the
-[live audio record](evidence/LIVE-AUDIO-R20-2026-09-23.md).
+The public `v0.3.0` release ships r20c as `runtime-v1-r20c`. The [signed and
+public acceptance record](evidence/V030-SIGNED-CANDIDATE-2026-09-24.md) covers
+the public update, GPU desktop, live Windows audio routing, persistence, and
+interrupted-update rollback on the AMD laptop. The packaged runtime also passed
+playback, capture, route fallback, microphone permission, idle release, and
+Windows boot checks in the [live audio record](evidence/LIVE-AUDIO-R20-2026-09-23.md).
+Two physical endpoints per direction and hotplug remain untested.
