@@ -61,20 +61,24 @@ The r20 engineering recipe adds `0016-live-sdl-audio-routes.patch`. QEMU reads
 private, atomically replaced `output` and `input` route files while streams
 run, reopens only the changed direction, and falls back to the Windows default
 if a selected endpoint disappears. The launcher writes the initial routes and
-Settings can change them while a supported VM is running. r20 is not pinned by
-the public app or guest lock. The corrected r20b source-built archive passed
-the [available Windows laptop audio checks](../docs/evidence/LIVE-AUDIO-R20-2026-09-23.md),
+Settings can change them while a supported VM is running. The public v0.2.0
+release uses r19. The `guest-build/runtime.lock.json` pin now selects the r20c
+runtime published as `runtime-v1-r20c` for the v0.3.0 candidate. The corrected r20b
+source-built archive passed the [available Windows laptop audio checks](../docs/evidence/LIVE-AUDIO-R20-2026-09-23.md),
 including playback, capture, route fallback and microphone gating. Guest
 PipeWire picker integration is in guest patch 0091 and passed an isolated
-packaged boot. The r20c runtime passed idle, playback, capture and restart
-checks on that laptop. A signed runtime pin and real two-endpoint/hotplug
-acceptance remain. The route-file parser and SDL open/fallback behavior are
-compiled by `test-sdl-audio.py` during the runtime build.
+packaged boot. The signed r20c candidate passed Windows boot, saved-choice
+persistence across guest restart, active playback and capture, and idle release
+on that laptop. Public v0.2.0 remains on r19 until v0.3.0 publishes. Two
+physical endpoints per direction and hotplug remain untested. The route-file
+parser and SDL open/fallback behavior are compiled by `test-sdl-audio.py`
+during the runtime build.
 
 The r20c follow-up defers the initial SDL playback open until the guest starts
 a stream. The r20b physical candidate kept a Realtek render session active
 while the guest was idle after boot, even though subsequent idle periods closed
-it. The physical idle and first-playback checks must pass before r20c is pinned.
+it. The signed r20c candidate passed physical idle and first-playback checks on
+the laptop.
 
 The r5 recipe restores the Windows socket handle protection bit with an explicit
 mask before closing the socket. The old zero-mask call left protection enabled

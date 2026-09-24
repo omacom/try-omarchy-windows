@@ -22,9 +22,9 @@ Try Omarchy runs the full x86_64 Arch Linux environment used by Omarchy. It is n
 - GPU acceleration depends on the patched WINQ-EMU runtime and compatible Windows graphics drivers. Try Omarchy falls back to CPU rendering when that path is unavailable.
 - USB management exists, but general physical-device compatibility remains unvalidated. V20 camera and microphone capture passed on the AMD test laptop; additional device combinations remain unverified, and arbitrary PCI passthrough is unsupported.
 - Networking uses QEMU NAT. Services inside the guest are not exposed to the Windows network automatically.
-- Live guest RAM return uses the bundled r19 runtime. A separately installed `C:\WINQ-EMU` is user-managed and can be selected instead; older external builds may not support free-page reporting.
+- Public `v0.2.0` live guest RAM return uses the bundled r19 runtime. The v0.3.0 candidate pins the published r20c runtime. A separately installed `C:\WINQ-EMU` is user-managed and can be selected instead; older external builds may not support free-page reporting.
 - Windows Hello approval for guest `sudo` is not implemented; guest password authentication remains available for personalized accounts.
-- Audio playback and recording devices can be selected before boot. Switching the active guest stream to another Windows endpoint without restarting Omarchy is not implemented.
+- Public `v0.2.0` selects audio playback and recording devices before boot. The v0.3.0 candidate pins r20c for live switching between Windows endpoints; public `v0.2.0` remains startup-only until that release publishes.
 - Approved Windows apps open on the Windows desktop. Displaying a Windows app as an embedded Hyprland window is not implemented.
 - Host-folder sharing is not available with an external stock QEMU fallback.
 - Text and image clipboard sharing work in both directions (images travel as

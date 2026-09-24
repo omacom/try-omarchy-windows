@@ -46,7 +46,7 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Resources, updates, storage and recovery | Implemented; the published update, backup, restore and uninstall paths passed on the AMD laptop | Broader hardware and recovery reports remain useful |
 | GPU application compatibility | AMD GPU desktop and applications passed their recorded checks; a previous Intel/NVIDIA preview runtime booted VirGL OpenGL but failed Venus Vulkan and Godot Forward+ | [Current-runtime investigation #173](https://github.com/omacom/try-omarchy-windows/issues/173); retain CPU/OpenGL fallback |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
-| Audio endpoint selection | Startup choices and stable endpoint IDs ship; merged r20c source, [signed packaged laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md) and a disposable image upgrade establish live host routing, guest PipeWire choices, restart persistence and idle release; [behavior](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167): pin release artifacts; two physical endpoints and hotplug need suitable hardware |
+| Audio endpoint selection | Startup choices and stable endpoint IDs ship; r20c and the [signed packaged laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md) establish live host routing, guest PipeWire choices, restart persistence and idle release; [behavior](AUDIO-DEVICES.md) | [Live switching #167](https://github.com/omacom/try-omarchy-windows/issues/167): r20c is published as `runtime-v1-r20c` and pinned for the v0.3.0 candidate; public v0.2.0 remains on r19 until v0.3.0 publishes; two physical endpoints and hotplug need suitable hardware |
 | Trackpad pinch | [Opt-in r18 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Firefox and broader host/DPI/fullscreen acceptance; experimental only |
 | Windows Hello sudo | Not implemented; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); the signed-in laptop reports Hello `Available` and completed an initial approval prompt, but key-backed guest sudo remains untested |
 | 1Password host authentication | Guest 1Password uses its ordinary password and Linux authentication paths | [Windows Hello unlock #176](https://github.com/omacom/try-omarchy-windows/issues/176) follows #165 with a narrowly scoped agent for the installed guest 1Password process and Mac-style process/polkit checks |
@@ -56,8 +56,9 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | Keyboard and language | Windows time zone, keyboard layout and display language follow the host | Physical ANSI/ISO/JIS geometry and broader input-method acceptance |
 
 Windows Hello, true bridged networking, and embedded Windows app windows remain
-feature work. Live audio source is merged but awaits a release pin. Settings,
-battery mirroring, live memory reclamation and approved app launch passed the
+feature work. The v0.3.0 candidate pins published r20c for live audio; public
+v0.2.0 remains on r19 until v0.3.0 publishes. Settings, battery mirroring, live
+memory reclamation and approved app launch passed the
 [signed v0.2.0 candidate](evidence/V020-SIGNED-CANDIDATE-2026-09-23.md).
 Pinch remains opt-in; its physical
 gesture and scrolling checks passed on the laptop.
@@ -65,10 +66,11 @@ gesture and scrolling checks passed on the laptop.
 ## Work sequence toward comparable everyday use
 
 1. **Complete live audio (#167).** [PR #175](https://github.com/omacom/try-omarchy-windows/pull/175)
-   merged the r20c host routes and guest PipeWire picker. The signed candidate
-   passed the [available laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md).
-   Pin the release artifacts after review. Two physical endpoints and hotplug
-   need additional hardware; their absence does not hold up this laptop pass.
+   merged the r20c host routes and guest PipeWire picker. The published
+   `runtime-v1-r20c` is pinned for the v0.3.0 candidate, and its signed
+   packaged candidate passed the [available laptop checks](evidence/LIVE-AUDIO-R20-2026-09-23.md).
+   Two physical endpoints and hotplug need additional hardware; their absence
+   does not hold up this laptop pass.
 2. **Add signed Windows Hello approval (#165).** Mirror the Mac's opt-in sudo
    model: enroll only after the guest password, pair a per-guest public key,
    sign a fresh request with Windows Hello, and verify it inside guest PAM.
