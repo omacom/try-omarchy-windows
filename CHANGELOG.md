@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Send Ctrl+Alt+Delete to Omarchy with Ctrl+Alt+End while its window is focused. Windows reserves Ctrl+Alt+Delete for its security screen, so it cannot be passed through.
+
 ## v0.3.0 - 2026-09-24
 
 - Switch Windows playback and recording devices while Omarchy runs. Saving

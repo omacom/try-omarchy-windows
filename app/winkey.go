@@ -17,7 +17,8 @@ import (
 // behaves normally. Pair with SDL_GRAB_KEYBOARD=0 so SDL never installs its own
 // (system-wide) hook. Print Screen gets the same treatment: Windows opens its
 // own screen capture on it system-wide, so Omarchy's screenshot binding would
-// otherwise fire together with Snipping Tool.
+// otherwise fire together with Snipping Tool. Ctrl+Alt+End stands in for
+// Windows-reserved Ctrl+Alt+Delete while Omarchy is focused.
 
 type forwardedKey struct {
 	qcode string
@@ -25,13 +26,16 @@ type forwardedKey struct {
 }
 
 var (
-	qemuPid    atomic.Uint32 // current QEMU child, set by the supervisor
-	guestUp    atomic.Bool   // supervisor handshake succeeded for this launch
-	winDown    bool          // hook-thread only
-	printDown  bool          // hook-thread only
-	tabDown    bool          // hook-thread only
-	altTabDown bool          // hook-thread only
-	keyEvents  = make(chan forwardedKey, 64)
+	qemuPid     atomic.Uint32 // current QEMU child, set by the supervisor
+	guestUp     atomic.Bool   // supervisor handshake succeeded for this launch
+	winDown     bool          // hook-thread only
+	printDown   bool          // hook-thread only
+	tabDown     bool          // hook-thread only
+	altTabDown  bool          // hook-thread only
+	cadCtrlDown bool          // hook-thread only
+	cadAltDown  bool          // hook-thread only
+	cadDelDown  bool          // hook-thread only
+	keyEvents   = make(chan forwardedKey, 64)
 )
 
 // forwardKey hands a key state change to the QMP drain without blocking the
@@ -107,6 +111,27 @@ func hookCallback(nCode, wParam, lParam uintptr) uintptr {
 			}
 			releaseKey(&tabDown, "tab")
 			releaseKey(&altTabDown, "alt")
+		}
+		if vk == vkEnd {
+			down := wParam == wmKeydown || wParam == wmSyskeydown
+			pid := qemuPid.Load()
+			focused := pid != 0 && foregroundPid() == pid
+			control, _, _ := procGetAsyncKeyState.Call(vkControl)
+			menu, _, _ := procGetAsyncKeyState.Call(vkMenu)
+			if forwardsCtrlAltDelete(focused, control&0x8000 != 0, menu&0x8000 != 0, cadDelDown, down) {
+				if down {
+					forwardKey(&cadCtrlDown, "ctrl", true)
+					forwardKey(&cadAltDown, "alt", true)
+					return forwardKey(&cadDelDown, "delete", true)
+				}
+				releaseKey(&cadDelDown, "delete")
+				releaseKey(&cadAltDown, "alt")
+				releaseKey(&cadCtrlDown, "ctrl")
+				return 1
+			}
+			releaseKey(&cadDelDown, "delete")
+			releaseKey(&cadAltDown, "alt")
+			releaseKey(&cadCtrlDown, "ctrl")
 		}
 	}
 	r, _, _ := procCallNextHookEx.Call(0, nCode, wParam, lParam)

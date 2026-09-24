@@ -8,7 +8,7 @@ Copy files or folders in Explorer or Omarchy Files, then paste in the other syst
 
 Open received files shows cached Windows copies. Paste into your own folder to keep them. These copies also use space on Windows; remove ones you no longer need. Guest cache: ~/.cache/try-omarchy/clipboard-files.
 
-Ctrl+Alt+F: fullscreen. Ctrl+Alt+G: release input. Alt+Tab switches guest windows while focused; Ctrl+Alt+Tab opens the Windows task switcher. The Windows key goes to Omarchy only while focused.
+Ctrl+Alt+F: fullscreen. Ctrl+Alt+G: release input. Alt+Tab switches guest windows while focused; Ctrl+Alt+Tab opens the Windows task switcher. Ctrl+Alt+End sends Ctrl+Alt+Delete to Omarchy. The Windows key goes to Omarchy only while focused.
 
 For SSH, add tcp:2222:22 in Settings and restart. Connect to localhost:2222. Add LAN lets you choose a Windows adapter and port for other devices on your local network. LAN rules apply on private and domain networks by default; public networks are an explicit Settings choice.
 
