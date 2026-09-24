@@ -8,9 +8,10 @@ virglrenderer fork commits in `sources.lock.json`. It produces:
 - `SHA256SUMS`, hashes for both archives
 
 The portable archive includes source provenance, the MSYS2 package inventory,
-per-file hashes, and licenses. The Runtime workflow is manual while the output
-is being compared with the currently shipped alpha 10 archive on real Windows
-hardware.
+per-file hashes, and licenses. The Runtime workflow remains manual. Its r20c
+output is published as `runtime-v1-r20c` and is pinned by public `v0.3.0`;
+future runtime replacements stay test artifacts until they pass physical
+Windows validation.
 
 To build in an MSYS2 UCRT64 shell with the packages in `packages.txt` installed:
 
@@ -61,24 +62,23 @@ The r20 engineering recipe adds `0016-live-sdl-audio-routes.patch`. QEMU reads
 private, atomically replaced `output` and `input` route files while streams
 run, reopens only the changed direction, and falls back to the Windows default
 if a selected endpoint disappears. The launcher writes the initial routes and
-Settings can change them while a supported VM is running. The public v0.2.0
-release uses r19. The `guest-build/runtime.lock.json` pin now selects the r20c
-runtime published as `runtime-v1-r20c` for the v0.3.0 candidate. The corrected r20b
-source-built archive passed the [available Windows laptop audio checks](../docs/evidence/LIVE-AUDIO-R20-2026-09-23.md),
-including playback, capture, route fallback and microphone gating. Guest
-PipeWire picker integration is in guest patch 0091 and passed an isolated
-packaged boot. The signed r20c candidate passed Windows boot, saved-choice
-persistence across guest restart, active playback and capture, and idle release
-on that laptop. Public v0.2.0 remains on r19 until v0.3.0 publishes. Two
-physical endpoints per direction and hotplug remain untested. The route-file
-parser and SDL open/fallback behavior are compiled by `test-sdl-audio.py`
-during the runtime build.
+Settings can change them while a supported VM is running. Public `v0.3.0` ships
+r20c as `runtime-v1-r20c`; public `v0.2.0` remains the prior r19 release. The
+corrected r20b source-built archive passed the [available Windows laptop audio
+checks](../docs/evidence/LIVE-AUDIO-R20-2026-09-23.md), including playback,
+capture, route fallback and microphone gating. Guest PipeWire picker integration
+is in guest patch 0091 and passed an isolated packaged boot. The signed and
+public [v0.3.0 acceptance record](../docs/evidence/V030-SIGNED-CANDIDATE-2026-09-24.md)
+records live Windows audio switching, persisted choices, the public update,
+Windows boot and interrupted-update recovery. Two physical endpoints per
+direction and hotplug remain untested. The route-file parser and SDL open/fallback
+behavior are compiled by `test-sdl-audio.py` during the runtime build.
 
 The r20c follow-up defers the initial SDL playback open until the guest starts
 a stream. The r20b physical candidate kept a Realtek render session active
 while the guest was idle after boot, even though subsequent idle periods closed
-it. The signed r20c candidate passed physical idle and first-playback checks on
-the laptop.
+it. The signed v0.3.0 acceptance passed physical idle and first-playback checks
+on the laptop.
 
 The r5 recipe restores the Windows socket handle protection bit with an explicit
 mask before closing the socket. The old zero-mask call left protection enabled
