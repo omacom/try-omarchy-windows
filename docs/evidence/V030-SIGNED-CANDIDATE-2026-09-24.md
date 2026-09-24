@@ -6,31 +6,31 @@ Signing check [35959572969](https://github.com/omacom/try-omarchy-windows/action
 
 ## Source installation and copy
 
-The install inventory found no guest receipt matching the public `v0.2.0` manifest digest `597eeb40999779319ddb81ab55ef51f0715ba982865e6fe4697db25abbea2824`. I used the permitted clean `v0.1.0` source at `D:\TryOmarchy-v0.1.0-20260922\clean`. Its receipt identified manifest `3963f1d21fb280134201ebd65e5f339d3e88588e861f3e7681469a704ad7f6a9`.
+The install inventory found no guest receipt matching the public `v0.2.0` manifest digest `597eeb40999779319ddb81ab55ef51f0715ba982865e6fe4697db25abbea2824`. I used the clean `v0.1.0` source at `D:\TryOmarchy-v0.1.0-20260922\clean`. Its receipt identified manifest `3963f1d21fb280134201ebd65e5f339d3e88588e861f3e7681469a704ad7f6a9`.
 
-The source was copied to `D:\TryOmarchy-v0.3.0-20260924\copy1-upgrade`. Robocopy reported success, and both trees contained 223 files with 34,185,909,824 logical bytes. The original installation was not booted or modified. The disposable copy was removed during cleanup. The work folder retains its evidence files.
+The source was copied to `D:\TryOmarchy-v0.3.0-20260924\copy1-upgrade`. Robocopy reported success, and both trees contained 223 files with 34,185,909,824 logical bytes. The original installation was not booted or modified. The disposable copy was removed during cleanup. The work folder retains the evidence files.
 
-## Guest SSH trust blocker
+## Guest connection and preserved data
 
-The local `guest_known_hosts` pin for `[127.0.0.1]:2244` has fingerprint `SHA256:gToq9ETDiK+3K2mUR4bEbvM7YMqABX1A2IjFmZgqGRc`. With `StrictHostKeyChecking=yes`, the copied guest presented `SHA256:tbu1q3e2hn1FNRpMUhjreYWsrK8BusyGBuEABuXwCpI`. SSH reported that the remote host identification had changed and refused the connection. No alternate pin was added, and no guest command was run over that connection. The inspected v0.1 test folder did not contain a source-specific host-key pin.
-
-An old-launcher baseline attempt was made on the copy to obtain a pre-upgrade user-file hash. Its saved runtime manifest URL pointed to `127.0.0.1:18081`, where no server was running. The launcher logged a runtime setup authentication failure and started stock QEMU in CPU mode. Although its log later reported userspace readiness, the SSH trust check prevented verification of the guest system state or file hash. A QMP ACPI powerdown returned `POWERDOWN`, after which stock WHPX QEMU stopped answering and exited with status 1 without a guest shutdown event. This was not a v0.3.0 candidate boot. The original installation and Windows settings remained untouched.
+Guest SSH used `StrictHostKeyChecking=yes` and the source-specific pin in `v010_clean_guest_known_hosts`. The verified server fingerprint was `SHA256:tbu1q3e2hn1FNRpMUhjreYWsrK8BusyGBuEABuXwCpI`. `systemctl is-system-running` returned `running`, the failed unit count was 0, and `~/Documents/v010-clean-marker.txt` matched the expected SHA-256 `d7c3d98dd030ccf076e9bc8d1529ef6814c314704c610486d7256e93744e7ade`.
 
 ## Physical upgrade and boot
 
-Not run. The signed candidate was not launched because the source guest did not have a matching trusted host-key pin. The v0.3.0 update receipt, r20c QEMU executable hash, GPU boot, guest systemd state, and preserved user-file hash were not verified. No candidate desktop screenshot was captured.
+The signed candidate launched copy 1 with the draft payload served at `http://127.0.0.1:18080` and the v0.3.0 manifest digest pinned. The guest receipt recorded that URL and digest. The launcher logged `guest update v0.3.0 confirmed after userspace reported ready`. No separate runtime update confirmation line appeared in `vm/shell.log`; the runtime receipt recorded the same manifest digest and the installed QEMU executable SHA-256 matched r20c at `44e6e56f88fcac5567bfc3995aa5113135efe18b22cd2d0316eb30819c254447`.
+
+The QEMU command line included `virtio-vga-gl` and `-audiodev sdl`. The QEMU SDL window was visible, but the Windows screenshot did not show a rendered Omarchy desktop. The QMP screendump returned `no surface`. The screenshot is `D:\TryOmarchy-v0.3.0-20260924\evidence\candidate-copy1-desktop.png` and is also retained at `/tmp/v030/evidence/candidate-copy1-desktop.png`. The guest later powered off at 01:22:48 without a poweroff request from this test, and the launcher exited. The GPU desktop acceptance did not pass, so testing stopped here.
 
 ## Live audio
 
-Not run. The bridge service, PipeWire endpoint list, session-1 playback and capture probes, route-file changes, and restoration of audio choices were not tested.
+Not run. The bridge service, PipeWire endpoint list, session-1 playback and capture probes, route-file changes, and audio-choice restoration were not tested. The laptop has one physical endpoint per direction, so two-endpoint switching and hotplug remain untested. No human listening test was performed.
 
 ## Guest reboot and second launch
 
-Not run. Guest reboot persistence, clean poweroff, launcher exit, and a no-download second launch were not tested.
+Not run as planned. The guest powered off unexpectedly during the first candidate session. A guest reboot, saved-choice persistence, and a no-download second launch were not tested.
 
 ## Interrupted-update recovery
 
-Not run. No rollback copy was created and no interrupted update was attempted.
+Not run. Copy 2 was not created, and no interrupted update was attempted.
 
 ## Public release verification
 
