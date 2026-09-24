@@ -57,8 +57,7 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 
 Windows Hello, true bridged networking, and embedded Windows app windows remain
 feature work. Live audio source is merged but awaits a release pin. Settings,
-battery mirroring, live memory
-reclamation and approved app launch passed the
+battery mirroring, live memory reclamation and approved app launch passed the
 [signed v0.2.0 candidate](evidence/V020-SIGNED-CANDIDATE-2026-09-23.md).
 Pinch remains opt-in; its physical
 gesture and scrolling checks passed on the laptop.
