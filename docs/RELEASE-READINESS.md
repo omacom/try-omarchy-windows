@@ -73,8 +73,9 @@ below and use reports from this normal 0.x release to prioritize further work.
 ## Brand and product experience pass
 
 The live [Try Omarchy site](https://tryomarchy.com/) uses the same Omarchy
-mark as the Windows app and the same green accent. It links to the current
-`v0.3.0` release. Its setup and uninstall descriptions
+mark as the Windows app and the same green accent. Its download serves the
+Latest launcher, now `v0.3.0`, but its release-notes link and version text still
+name `v0.2.0` and need a site update. Its setup and uninstall descriptions
 match the app's actual behavior; the site no longer promises that uninstalling
 means deleting a single folder or that the next normal release must be 1.0.
 Desktop and phone-width Chromium renders were inspected. The live `/download`
