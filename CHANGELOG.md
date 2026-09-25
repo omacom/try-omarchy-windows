@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Guests created by earlier releases load the pinch touchpad's gesture-only
+  settings, and the pinch device stays off for any configuration that cannot
+  load them. A Hyprland `input.lua` exported to a real Omarchy install no
+  longer fails on the missing Try Omarchy rules file.
+
 ## v0.3.0 - 2026-09-24
 
 - Switch Windows playback and recording devices while Omarchy runs. Saving

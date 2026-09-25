@@ -42,8 +42,25 @@ Guest recipe patch `0083` installs `/usr/share/try-omarchy/pinch-input.lua` and
 loads it for new factory users. A complete factory image was rebuilt after the
 reviewed eight-package lock refresh in patch `0084`. Its fresh Windows GPU boot
 provisioned the override automatically and passed Hyprland configuration checks.
-Existing persistent guests need this device-only override in
-`~/.config/hypr/input.lua`, with a backup of that file first:
+
+Guest recipe patch `0092` extends this to persistent guests. Compatibility
+revision 34 delivers the rules file to disks created by older releases, and
+the boot-time catch-up appends a guarded loader to each user's
+`~/.config/hypr/input.lua` once. The original is kept as
+`input.lua.before-try-omarchy-pinch`. The loader only runs when the rules file
+exists, so a configuration exported to a real Omarchy install keeps working.
+The unguarded line from `0083` images is replaced. A symlinked `input.lua`, one
+that ends in a top-level `return`, or one that already configures
+`qemu-virtio-pinch-touchpad` is left alone.
+
+A udev rule sets `LIBINPUT_IGNORE_DEVICE` on the pinch device until
+`try-omarchy-pinch-ready` confirms at each boot that every desktop user's
+Hyprland configuration loads the rules. A guest that could not be migrated
+keeps ordinary pointer, click and scroll input and does not receive synthetic
+contacts. The reason is in `/run/try-omarchy/pinch-gestures` and in
+`journalctl -u try-omarchy-pinch-ready`. The published `v0.3.0` guest predates
+`0092`; until a guest image with it ships, existing persistent guests still need
+this device-only override in `~/.config/hypr/input.lua`, with a backup first:
 
 ```lua
 hl.device({
