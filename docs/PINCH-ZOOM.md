@@ -43,7 +43,7 @@ loads it for new factory users. A complete factory image was rebuilt after the
 reviewed eight-package lock refresh in patch `0084`. Its fresh Windows GPU boot
 provisioned the override automatically and passed Hyprland configuration checks.
 
-Guest recipe patch `0092` extends this to persistent guests. Compatibility
+Guest recipe patch `0093` extends this to persistent guests. Compatibility
 revision 34 delivers the rules file to disks created by older releases, and
 the boot-time catch-up appends a guarded loader to each user's
 `~/.config/hypr/input.lua` once. The original is kept as
@@ -59,7 +59,7 @@ Hyprland configuration loads the rules. A guest that could not be migrated
 keeps ordinary pointer, click and scroll input and does not receive synthetic
 contacts. The reason is in `/run/try-omarchy/pinch-gestures` and in
 `journalctl -u try-omarchy-pinch-ready`. The published `v0.3.0` guest predates
-`0092`; until a guest image with it ships, existing persistent guests still need
+`0093`; until a guest image with it ships, existing persistent guests still need
 this device-only override in `~/.config/hypr/input.lua`, with a backup first:
 
 ```lua
