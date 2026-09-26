@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.24)
+project(TryOmarchyHelloHelper LANGUAGES CXX)
+
+add_executable(TryOmarchyHelloHelper main.cpp)
+target_compile_features(TryOmarchyHelloHelper PRIVATE cxx_std_20)
+target_compile_definitions(TryOmarchyHelloHelper PRIVATE WINRT_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_link_libraries(TryOmarchyHelloHelper PRIVATE windowsapp user32)

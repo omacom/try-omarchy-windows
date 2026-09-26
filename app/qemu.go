@@ -105,6 +105,10 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		"-chardev", fmt.Sprintf("socket,id=cam0,host=127.0.0.1,port=%d,reconnect-ms=1000", cameraPort),
 		"-device", "virtio-serial-pci,id=virtioserial0",
 		"-device", "virtserialport,chardev=cam0,name=dev.tryomarchy.camera",
+		// Root-only in the guest. The host sends only bounded responses to a
+		// matching request; enrollment remains opt-in through guest sudo.
+		"-chardev", fmt.Sprintf("socket,id=hello0,host=127.0.0.1,port=%d,reconnect-ms=1000", helloBridgePort),
+		"-device", "virtserialport,chardev=hello0,name=dev.tryomarchy.authentication",
 		// The q35 root bus cannot hotplug a PCIe controller. USB devices
 		// attach to this controller after the guest has started.
 		"-device", "qemu-xhci,id="+usbControllerID,

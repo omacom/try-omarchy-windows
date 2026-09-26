@@ -45,7 +45,7 @@ func TestForwardListRejectsDuplicateHostPortPerProtocol(t *testing.T) {
 }
 
 func TestForwardListReservesLauncherTCPPortsButNotUDP(t *testing.T) {
-	for port := qmpToolsPort; port <= transferPort; port++ {
+	for port := qmpToolsPort; port <= helloBridgePort; port++ {
 		var l forwardList
 		if err := l.Set(fmt.Sprintf("tcp:%d:80", port)); err == nil {
 			t.Fatalf("reserved TCP port %d accepted", port)

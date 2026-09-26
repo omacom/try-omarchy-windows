@@ -98,8 +98,8 @@ func (l *forwardList) Set(value string) error {
 }
 
 func (l *forwardList) add(f portForward) error {
-	if f.proto == "tcp" && f.hostPort >= qmpToolsPort && f.hostPort <= cameraPort {
-		return fmt.Errorf("windows TCP port %d is reserved by Try Omarchy; choose a port outside %d-%d", f.hostPort, qmpToolsPort, cameraPort)
+	if f.proto == "tcp" && f.hostPort >= qmpToolsPort && f.hostPort <= helloBridgePort {
+		return fmt.Errorf("windows TCP port %d is reserved by Try Omarchy; choose a port outside %d-%d", f.hostPort, qmpToolsPort, helloBridgePort)
 	}
 	for _, existing := range *l {
 		if existing.proto == f.proto && existing.hostPort == f.hostPort && (existing.address() == f.address() || existing.address() == "0.0.0.0" || f.address() == "0.0.0.0") {
