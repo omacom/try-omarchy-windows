@@ -1,6 +1,6 @@
 # Desktop controls
 
-This guide describes the published `v0.3.0` release.
+This guide describes the published `v0.4.0` release.
 
 Settings has four pages:
 
@@ -31,6 +31,12 @@ shows its sign-in screen before this per-user startup runs.
 Restored copies start with sign-in launch disabled so a restore beside the
 original installation cannot start both copies at the next sign-in.
 See [the Mac parity tracker](MAC-PARITY.md) for implementation and test boundaries.
+
+While the Omarchy window is focused, Ctrl+Alt+End sends Ctrl+Alt+Delete to
+Omarchy, since Windows keeps Ctrl+Alt+Delete for its own security screen. Pinch
+to zoom on a Windows 11 Precision Touchpad reaches Linux apps in GPU mode with
+one display. It has no Settings control; start with `-disable-pinch` to keep
+ordinary two-finger input. See [trackpad pinch](PINCH-ZOOM.md).
 
 Camera selection uses the Windows device identity, not its position in a list.
 If the chosen camera is disconnected, capture stays unavailable instead of
