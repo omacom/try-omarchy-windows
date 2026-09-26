@@ -213,8 +213,10 @@ func releaseQemuCursor() {
 // variables; only runTitleEnforcer's goroutine calls enforceDisplayWindows, so the
 // handoff needs no locking.
 type displayWindowState struct {
-	index int
-	last  *windowPlacement
+	index     int
+	last      *windowPlacement
+	themeSet  bool // the title bar theme below was applied or refused
+	darkTitle bool
 }
 
 var (
@@ -228,6 +230,7 @@ var (
 	enumTitleMonitors          []screenRect
 	enumTitleMonitorDetails    []hostMonitor
 	enumTitleTopologyChanged   bool
+	enumTitleDark              bool
 	enumTitleCallback          = syscall.NewCallback(enumTitleProc)
 	procGetClassNameW          = user32.NewProc("GetClassNameW")
 )
@@ -295,6 +298,12 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		value, _ := syscall.UTF16PtrFromString(wanted)
 		procSetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(value)))
 	}
+	if !state.themeSet || state.darkTitle != enumTitleDark {
+		if !setDarkTitleBar(hwnd, enumTitleDark) && !state.themeSet {
+			logf("title bar: Windows refused the dark mode attribute")
+		}
+		state.themeSet, state.darkTitle = true, enumTitleDark
+	}
 	if enumTitleTopologyChanged && !enumTitleFullscreen {
 		if now := capturePlacement(hwnd); now != nil && !now.usable(enumTitleMonitors) {
 			if restored := initialDisplayPlacement(state.index, enumTitleMonitors); restored != nil {
@@ -338,6 +347,7 @@ func enforceDisplayWindows(pid uint32, dir string, fullscreen bool, fullscreenDi
 	enumTitleTopologyChanged = !slices.Equal(enumTitleMonitors, monitors)
 	enumTitleMonitors = monitors
 	enumTitleMonitorDetails = details
+	enumTitleDark = windowsAppsUseDarkTheme()
 	procEnumWindows.Call(enumTitleCallback, 0)
 	foreground, _, _ := procGetForegroundWindow.Call()
 	selected := uintptr(0)
