@@ -69,9 +69,17 @@ WHPX works on Windows Home and Pro (it's the same platform WSL2 rides on), so no
 
 Proven boot recipe: `-accel whpx -machine q35 -cpu qemu64`, direct kernel boot (vmlinuz + initramfs + raw ext4 rootfs on virtio-blk), all-virtio devices, SDL audio with recording support. See [docs/FINDINGS.md](docs/FINDINGS.md) for the details and the traps.
 
-## Try it
+<a id="try-it"></a>
 
-Download [TryOmarchy.exe](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (~10 MB, [SHA256](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and open it. First run asks where to store the virtual machine, graphics runtime, and downloads. Use the default Local AppData location or choose another local drive or folder. Windows then asks permission to switch on the Hypervisor Platform and restarts once, after which the app pulls the GPU runtime (a portable [WINQ-EMU](https://github.com/cmspam/winq-emu) tree, ~84 MB) and the Omarchy image (~2 GB), everything SHA256-verified. Choose the instant trial account to go straight to the desktop, or use Omarchy's setup form to choose your own account. Later launches open Settings before boot unless you choose a direct-launch shortcut.
+## Quick start
+
+1. Download [TryOmarchy.exe](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) and open it.
+2. Choose where to store Omarchy. Keep the default Local AppData location or choose another local drive or folder. If prompted, allow Windows Hypervisor Platform, restart Windows, and reopen Try Omarchy.
+3. Let setup download the graphics runtime and Linux image, then choose an instant trial account or create your own account.
+
+The first launch downloads several GB and takes longer. Downloads are SHA256-verified. You need Windows 10 or 11 on an x86_64 PC with hardware virtualization enabled; Windows on ARM is not supported. See the [compatibility guide](docs/COMPATIBILITY.md) for hardware requirements and graphics limits.
+
+Later launches open Settings before boot. Choose **Launch Omarchy** to start, or enable direct-launch shortcuts to skip Settings. While Omarchy is running, search for **Try Omarchy Settings** in the app launcher or use the Windows tray icon to change settings.
 
 Releases are Authenticode-signed by **Brandon South** through Azure Artifact Signing with a Microsoft identity-verified certificate. Windows shows that name as the verified publisher. Check it in the file's Properties > Digital Signatures tab or run `Get-AuthenticodeSignature .\TryOmarchy.exe` in PowerShell; the SignerCertificate subject should read `CN=Brandon South`. A publisher change will be announced in the changelog.
 
