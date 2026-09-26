@@ -1,14 +1,18 @@
-# Experimental Windows trackpad pinch
+# Windows trackpad pinch
 
-The r17 engineering runtime adds a dedicated `virtio-pinch-pci` touchpad and an
-opt-in Windows Precision Touchpad bridge. It sends multitouch contacts to Linux;
-it does not substitute zoom keyboard shortcuts. The ordinary Virtio Tablet keeps
-pointer movement, clicks and scrolling.
+The runtime adds a dedicated `virtio-pinch-pci` touchpad and a Windows Precision
+Touchpad bridge, first in r17 and bundled since r20c. It sends multitouch
+contacts to Linux; it does not substitute zoom keyboard shortcuts. The ordinary
+Virtio Tablet keeps pointer movement, clicks and scrolling.
 
-Enable only for acceptance testing with `-experimental-pinch` and `-winq` pointing
-to the supporting runtime. The launcher requires GPU mode and one display, and
-removes inherited enablement when the flag is absent. The public v20 runtime is
-unchanged. There is no default-on UI checkbox or claim of general availability.
+The launcher turns pinch on by default when the runtime carries the pinch patch,
+the VM uses GPU mode with one display, and the installed guest image lists
+`virtio-pinch-pci` under `runtime.optionalDevices` in `build-spec.json`. Guest
+patch `0095` adds that declaration; images without it, including `v0.3.0` and
+older payloads restored from a checkpoint, never receive the device. There is
+no setting. `-disable-pinch` keeps ordinary Windows two-finger input, and
+`-experimental-pinch` still forces the device on for a guest configured by hand.
+Each launch logs the decision as `touchpad pinch forwarding` in `shell.log`.
 
 ## Host behavior
 
@@ -31,8 +35,8 @@ Updates after cancellation cannot resume old contacts without a new begin.
 Motion callbacks are coalesced once per SDL poll while preserving contact
 transitions, preventing batched Windows history from appearing as touch jumps.
 
-Registration changes how Windows delivers two-finger input, so it is deliberately
-restricted to the experimental path. Microsoft's
+Registration changes how Windows delivers two-finger input, so it only happens
+when pinch is on. Microsoft's
 [registration contract](https://learn.microsoft.com/en-us/windows/win32/input-precisiontouchpad/registertouchpadcapable)
 describes the default-window-procedure fallback used for ordinary scrolling.
 
@@ -59,8 +63,9 @@ Hyprland configuration loads the rules. A guest that could not be migrated
 keeps ordinary pointer, click and scroll input and does not receive synthetic
 contacts. The reason is in `/run/try-omarchy/pinch-gestures` and in
 `journalctl -u try-omarchy-pinch-ready`. The published `v0.3.0` guest predates
-`0093`; until a guest image with it ships, existing persistent guests still need
-this device-only override in `~/.config/hypr/input.lua`, with a backup first:
+`0093`. Forcing pinch on for such a guest with `-experimental-pinch` still
+needs this device-only override in `~/.config/hypr/input.lua`, with a backup
+first:
 
 ```lua
 hl.device({
@@ -72,8 +77,7 @@ hl.device({
 
 Reload Hyprland and check `hyprctl configerrors`. This prevents synthetic contacts
 from becoming tap clicks and keeps keyboard palm rejection from suppressing them.
-The test laptop's existing guest has this override and a pre-change backup.
-Do not enable the experimental bridge on other existing guests without it.
+Do not force the bridge on for other pre-`0093` guests without it.
 
 ## Acceptance tools and limits
 
@@ -102,6 +106,7 @@ still worked, but starting the r17 pinch took too much effort. The r18 recipe
 queries Windows pointer history size before reading it. On the same laptop, the
 user reported that pinch was easier to start, could zoom back, and preserved
 two-finger scrolling. Firefox, mixed DPI, fullscreen, and broader hardware
-remain acceptance work. Pinch remains experimental.
+remain acceptance work. On September 26, physical pinch zoom and Ctrl+Alt+End
+passed on the laptop guest migrated by `0093`.
 
 See [the September 21 continuation record](evidence/PINCH-NESTED-2026-09-21.md).

@@ -9,6 +9,8 @@
   settings, and the pinch device stays off for any configuration that cannot
   load them. A Hyprland `input.lua` exported to a real Omarchy install no
   longer fails on the missing Try Omarchy rules file.
+- Pinch to zoom on a Windows 11 Precision Touchpad is on by default for guest
+  images that include its touchpad rules. `-disable-pinch` turns it off.
 
 ## v0.3.0 - 2026-09-24
 

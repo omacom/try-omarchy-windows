@@ -37,6 +37,7 @@ type config struct {
 	fullscreenDisplay           string
 	hostCursor                  bool
 	experimentalPinch           bool
+	disablePinch, guestPinch    bool
 	lanPublic                   bool
 	instant, portable           bool
 	guestDir, vmDir, disk       string
@@ -73,15 +74,6 @@ type config struct {
 func memoryStarved(cfg *config) bool {
 	data, err := os.ReadFile(filepath.Join(cfg.vmDir, "qemu-stderr.log"))
 	return err == nil && bytes.Contains(data, []byte("cannot set up guest memory"))
-}
-
-type buildSpec struct {
-	Runtime struct {
-		KernelCommandLine string `json:"kernelCommandLine"`
-		Storage           struct {
-			ExpandedSizeMiB int64 `json:"expandedSizeMiB"`
-		} `json:"storage"`
-	} `json:"runtime"`
 }
 
 var logFile *os.File
@@ -146,7 +138,8 @@ func main() {
 	keyboardFlag := flag.String("keyboard", "", "guest keyboard layout: blank follows Windows, keep leaves the guest alone, or an XKB layout such as de or us:intl")
 	localeFlag := flag.String("locale", "", "guest language: blank follows Windows, keep leaves the guest alone, or a locale such as de_DE")
 	flag.BoolVar(&cfg.hostCursor, "host-cursor", false, "force the legacy Windows cursor over the guest")
-	flag.BoolVar(&cfg.experimentalPinch, "experimental-pinch", false, "test Precision Touchpad pinch with a supporting runtime and guest configuration")
+	flag.BoolVar(&cfg.experimentalPinch, "experimental-pinch", false, "force Precision Touchpad pinch on for a guest configured by hand")
+	flag.BoolVar(&cfg.disablePinch, "disable-pinch", false, "keep ordinary Windows two-finger input instead of forwarding touchpad pinch")
 	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the trial account")
 	flag.BoolVar(&cfg.portable, "portable", false, "run entirely from data and payload folders beside the executable")
 	var forwards forwardList
@@ -713,6 +706,7 @@ func main() {
 	if err := json.Unmarshal(specData, &spec); err != nil {
 		fatal("Cannot parse build-spec.json: %v", err)
 	}
+	cfg.guestPinch = guestAcceptsPinch(spec)
 	// Serial log only - no console= on the display, so no kernel text or
 	// blinking cursor flashes in the window before SDDM (boot problems: read
 	// vm\serial*.log).
@@ -882,7 +876,9 @@ func supervise(cfg *config, cmdline string) bool {
 				proc.Env = append(proc.Env, "OMARCHY_SDL_AUDIO_CONTROL_DIRECTORY="+routeDir)
 			}
 		}
-		proc.Env = pinchEnvironment(proc.Env, pinchEnabled(cfg))
+		pinch := pinchEnabled(cfg)
+		logf("touchpad pinch forwarding: %v (guest declares device: %v)", pinch, cfg.guestPinch)
+		proc.Env = pinchEnvironment(proc.Env, pinch)
 		// The w-binary's startup errors (bad args, SDL init) only ever reach
 		// stderr; without this they vanish and a dead QEMU is undebuggable.
 		if ef, err := os.OpenFile(filepath.Join(cfg.vmDir, "qemu-stderr.log"),

@@ -40,7 +40,7 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 	vm := cfg.vmDir
 	args := []string{}
 	if pinchEnabled(cfg) {
-		args = append(args, "-device", "virtio-pinch-pci")
+		args = append(args, "-device", pinchDevice)
 	}
 	// Guest RAM is sized to the machine (pickGuestMem + the memory ladder);
 	// hostmem for GPU blob resources scales with it.
