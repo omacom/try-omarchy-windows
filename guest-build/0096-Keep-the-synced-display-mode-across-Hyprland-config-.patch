@@ -1,0 +1,281 @@
+From e2a13dda133862d3c80090718733f4f266c07f72 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 26 Sep 2026 17:50:56 -0400
+Subject: [PATCH] Keep the synced display mode across Hyprland config reloads
+
+Every theme switch runs hyprctl reload, which re-applied monitors.lua's "preferred" mode over the modeline display sync had applied from the window's EDID. The mode change forced a modeset, so QEMU showed "Display output is not active" for a few frames, and a restored window could snap back to an older size.
+
+Display sync now records the mode it applied under the runtime directory, and the QEMU profile in monitors.lua applies that mode on every config load, so a reload leaves the output alone. A customized monitors.lua keeps the older profile, so display sync also applies the EDID mode again on configreloaded. Revision 35 delivers the script and fragment to existing guests; catch-up refreshes an untouched monitors.lua.
+---
+ .../hypr-monitors-qemu.append.lua             | 33 +++++++++++++
+ guest/fragments/hypr-monitors-qemu.append.lua | 33 +++++++++++++
+ .../usr/local/bin/omarchy-native-display-sync | 46 +++++++++++++++++++
+ guest/scripts/finalize-rootfs.sh              |  4 +-
+ guest/tests/verify.py                         | 29 +++++++++++-
+ 5 files changed, 143 insertions(+), 2 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua b/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
+index a4c1b3c..e388dce 100644
+--- a/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
++++ b/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
+@@ -28,8 +28,41 @@ local function omarchy_kernel_option_enabled(expected_option)
+   return false
+ end
+ 
++-- Hyprland re-reads this file on every reload, and each theme switch runs
++-- one. Keep the mode display sync last applied from the window's EDID;
++-- falling back to "preferred" changes the mode, which blanks the window and
++-- can restore an older window size.
++local function omarchy_synced_display_mode()
++  if type(os) ~= "table" or type(os.getenv) ~= "function" or type(io) ~= "table" or type(io.open) ~= "function" then
++    return nil
++  end
++  local runtime_dir = os.getenv("XDG_RUNTIME_DIR")
++  if type(runtime_dir) ~= "string" or runtime_dir == "" then
++    return nil
++  end
++
++  local opened, mode_file = pcall(io.open, runtime_dir .. "/try-omarchy/display-mode", "r")
++  if not opened or not mode_file then
++    return nil
++  end
++  local mode_ok, mode = pcall(mode_file.read, mode_file, "*l")
++  local scale_ok, scale = pcall(mode_file.read, mode_file, "*l")
++  pcall(mode_file.close, mode_file)
++  if not mode_ok or not scale_ok or type(mode) ~= "string" or type(scale) ~= "string" then
++    return nil
++  end
++  if not mode:match("^modeline [%d ]+ [+-]hsync [+-]vsync$") or not scale:match("^%d+%.?%d*$") then
++    return nil
++  end
++  return mode, scale
++end
++
+ if omarchy_kernel_option_enabled("omarchy.qemu=1") then
+   hl.config({ cursor = { invisible = false } })
++  local synced_mode, synced_scale = omarchy_synced_display_mode()
++  if synced_mode then
++    hl.monitor({ output = "", mode = synced_mode, scale = synced_scale })
++  end
+   o.exec_on_start("/usr/local/bin/omarchy-native-display-sync")
+ end
+ 
+diff --git a/guest/fragments/hypr-monitors-qemu.append.lua b/guest/fragments/hypr-monitors-qemu.append.lua
+index a4c1b3c..e388dce 100644
+--- a/guest/fragments/hypr-monitors-qemu.append.lua
++++ b/guest/fragments/hypr-monitors-qemu.append.lua
+@@ -28,8 +28,41 @@ local function omarchy_kernel_option_enabled(expected_option)
+   return false
+ end
+ 
++-- Hyprland re-reads this file on every reload, and each theme switch runs
++-- one. Keep the mode display sync last applied from the window's EDID;
++-- falling back to "preferred" changes the mode, which blanks the window and
++-- can restore an older window size.
++local function omarchy_synced_display_mode()
++  if type(os) ~= "table" or type(os.getenv) ~= "function" or type(io) ~= "table" or type(io.open) ~= "function" then
++    return nil
++  end
++  local runtime_dir = os.getenv("XDG_RUNTIME_DIR")
++  if type(runtime_dir) ~= "string" or runtime_dir == "" then
++    return nil
++  end
++
++  local opened, mode_file = pcall(io.open, runtime_dir .. "/try-omarchy/display-mode", "r")
++  if not opened or not mode_file then
++    return nil
++  end
++  local mode_ok, mode = pcall(mode_file.read, mode_file, "*l")
++  local scale_ok, scale = pcall(mode_file.read, mode_file, "*l")
++  pcall(mode_file.close, mode_file)
++  if not mode_ok or not scale_ok or type(mode) ~= "string" or type(scale) ~= "string" then
++    return nil
++  end
++  if not mode:match("^modeline [%d ]+ [+-]hsync [+-]vsync$") or not scale:match("^%d+%.?%d*$") then
++    return nil
++  end
++  return mode, scale
++end
++
+ if omarchy_kernel_option_enabled("omarchy.qemu=1") then
+   hl.config({ cursor = { invisible = false } })
++  local synced_mode, synced_scale = omarchy_synced_display_mode()
++  if synced_mode then
++    hl.monitor({ output = "", mode = synced_mode, scale = synced_scale })
++  end
+   o.exec_on_start("/usr/local/bin/omarchy-native-display-sync")
+ end
+ 
+diff --git a/guest/native-overlay/usr/local/bin/omarchy-native-display-sync b/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
+index 5c050cd..6877c5b 100755
+--- a/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
++++ b/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
+@@ -3,6 +3,9 @@
+ set -euo pipefail
+ 
+ drm_root=${OMARCHY_DISPLAY_SYNC_DRM_ROOT:-/sys/class/drm}
++# The QEMU profile in monitors.lua reads the last applied mode from here, so a
++# config reload keeps that mode instead of falling back to "preferred".
++state_file=${OMARCHY_DISPLAY_SYNC_STATE:-${XDG_RUNTIME_DIR:-/run/user/$UID}/try-omarchy/display-mode}
+ 
+ preferred_mode_from_edid() {
+   python3 - "$1" <<'PY'
+@@ -272,11 +275,48 @@ apply_preferred_modes() {
+     elif [[ $response != ok ]]; then
+       printf 'omarchy-native-display-sync: Hyprland rejected %s for %s: %s\n' \
+         "$mode" "$output" "$response" >&2
++    else
++      record_mode "$mode" "$scale"
+     fi
+   done
+   shopt -u nullglob
+ }
+ 
++record_mode() {
++  local tmp
++  mkdir -p "${state_file%/*}" || return 0
++  tmp=$(mktemp "$state_file.XXXXXX") || return 0
++  if printf '%s\n%s\n' "$1" "$2" >"$tmp" && mv -f "$tmp" "$state_file"; then
++    return 0
++  fi
++  rm -f "$tmp"
++}
++
++# Every theme switch runs hyprctl reload, which re-applies monitors.lua. The
++# current QEMU profile keeps the recorded mode; an older copy of it in a
++# customized monitors.lua cannot, so apply the EDID mode again afterwards.
++# When the mode already matches, Hyprland leaves the output alone.
++apply_after_config_reload() {
++  local line
++
++  while IFS= read -r line; do
++    if [[ $line == configreloaded* ]]; then
++      apply_preferred_modes
++    fi
++  done
++}
++
++watch_config_reloads() {
++  local socket=${XDG_RUNTIME_DIR:-/run/user/$UID}/hypr/${HYPRLAND_INSTANCE_SIGNATURE:-}/.socket2.sock
++
++  [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || return 0
++  # The socket goes away with this Hyprland instance; so does the watcher.
++  while [[ -S $socket ]]; do
++    socat -U - "UNIX-CONNECT:$socket" 2>/dev/null | apply_after_config_reload || true
++    sleep 1
++  done
++}
++
+ reload_on_display_change() {
+   local action=""
+   local hotplug=""
+@@ -310,9 +350,15 @@ if [[ ${1:-} == --from-stdin ]]; then
+   exit 0
+ fi
+ 
++if [[ ${1:-} == --config-reloads-from-stdin ]]; then
++  apply_after_config_reload
++  exit 0
++fi
++
+ # QEMU changes the virtio-gpu EDID whenever its SDL window changes size.
+ # Linux exposes that as a DRM hotplug change.
+ apply_preferred_modes
++watch_config_reloads &
+ while true; do
+   udevadm monitor --udev --subsystem-match=drm --property |
+     reload_on_display_change || true
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 357cabe..a0f471c 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -132,6 +132,7 @@ compat_paths=(
+   usr/src/try-omarchy-battery-1.0.0
+   etc/systemd/system/try-omarchy-catch-up.service
+   etc/systemd/system/multi-user.target.wants/try-omarchy-catch-up.service
++  usr/local/bin/omarchy-native-display-sync
+   usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
+   usr/share/try-omarchy/skel-fragments/hypr-input-pinch.append.lua
+   usr/share/try-omarchy/pinch-input.lua
+@@ -183,7 +184,8 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 33 exposes Windows audio endpoints in the guest PipeWire picker.
+ # Revision 34 loads the pinch touchpad's device rules for existing users and
+ # keeps the device ignored until every user's Hyprland config applies them.
+-compat_revision=34
++# Revision 35 keeps the synced display mode across Hyprland config reloads.
++compat_revision=35
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index b7b4ee4..c344a0d 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -269,8 +269,9 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=34" in finalize_rootfs
++        "compat_revision=35" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
++        and "usr/local/bin/omarchy-native-display-sync" in compat_paths
+         and "usr/local/bin/omarchy-windows-audio-bridge" in compat_paths
+         and "etc/udev/rules.d/70-try-omarchy-audio.rules" in compat_paths
+         and 'ATTR{name}=="dev.tryomarchy.audio"' in read(GUEST / "factory-overlay/etc/udev/rules.d/70-try-omarchy-audio.rules")
+@@ -424,6 +425,13 @@ def main() -> None:
+         read(GUEST / "factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua") == monitor_fragment,
+         "the compat overlay carries the current QEMU profile fragment",
+     )
++    check(
++        'runtime_dir .. "/try-omarchy/display-mode"' in monitor_fragment
++        and 'hl.monitor({ output = "", mode = synced_mode, scale = synced_scale })' in monitor_fragment
++        and 'state_file=${OMARCHY_DISPLAY_SYNC_STATE:-${XDG_RUNTIME_DIR:-/run/user/$UID}/try-omarchy/display-mode}'
++        in read(display_sync),
++        "QEMU profile keeps the synced display mode across config reloads",
++    )
+     check(
+         'omarchy_kernel_option_enabled("tryomarchy.render=cpu")' in monitor_fragment
+         and "animations = { enabled = false }" in monitor_fragment,
+@@ -496,6 +504,8 @@ HOTPLUG=1
+         environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+         environment["HYPRCTL_LOG"] = str(reload_log)
+         environment["OMARCHY_DISPLAY_SYNC_DRM_ROOT"] = str(drm_root)
++        state_file = temporary_path / "runtime/try-omarchy/display-mode"
++        environment["OMARCHY_DISPLAY_SYNC_STATE"] = str(state_file)
+         subprocess.run(
+             [str(display_sync), "--from-stdin"],
+             input=events,
+@@ -503,6 +513,11 @@ HOTPLUG=1
+             env=environment,
+             check=True,
+         )
++        check(
++            state_file.read_text(encoding="utf-8")
++            == "modeline 149 1920 2008 2052 2200 1080 1084 1089 1125 -hsync -vsync\n1\n",
++            "native display sync records the last applied mode for config reloads",
++        )
+         check(
+             reload_log.read_text(encoding="utf-8").splitlines()
+             == [
+@@ -513,6 +528,18 @@ HOTPLUG=1
+             ],
+             "native display sync handles QEMU DisplayID and legacy EDID hotplug modes",
+         )
++        applied_before_reloads = len(reload_log.read_text(encoding="utf-8").splitlines())
++        subprocess.run(
++            [str(display_sync), "--config-reloads-from-stdin"],
++            input="activewindow>>foot,foot\nconfigreloaded>>\nworkspace>>2\n",
++            text=True,
++            env=environment,
++            check=True,
++        )
++        check(
++            len(reload_log.read_text(encoding="utf-8").splitlines()) == applied_before_reloads + 2,
++            "native display sync applies the EDID modes again after a config reload",
++        )
+ 
+     shell_files = [
+         GUEST / "test",
+-- 
+2.55.0
+

@@ -27,6 +27,16 @@ Patch 0095 lists `virtio-pinch-pci` under `runtime.optionalDevices` in the
 build spec. The Windows launcher attaches the pinch touchpad by default only to
 guest images that declare it, so older images never receive the device.
 
+Patch 0096 keeps the display mode that `omarchy-native-display-sync` applied
+from the window's EDID across `hyprctl reload`, which every theme switch runs.
+The script records the mode under `$XDG_RUNTIME_DIR/try-omarchy/display-mode`
+and the QEMU profile in `monitors.lua` applies it on each config load, so the
+reload no longer modesets back to "preferred" and blanks the window. A
+customized `monitors.lua` keeps the older profile, so the script also applies
+the EDID mode again on `configreloaded`; there the window keeps its size but
+can still blank briefly. Compatibility revision 35 delivers the script and
+fragment to existing guests.
+
 The second command needs Docker and currently takes about ten minutes. Release
 CI also boots the resulting factory image with `scripts/release/smoke-guest.py`
 before it uploads anything.
