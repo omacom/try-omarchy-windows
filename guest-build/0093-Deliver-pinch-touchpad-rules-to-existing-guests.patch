@@ -1,0 +1,570 @@
+From 8bc015f8ffa6ba9dbf3c420cbe1446009039f99e Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Thu, 24 Sep 2026 23:06:30 -0400
+Subject: [PATCH] Deliver pinch touchpad rules to existing guests
+
+Persistent disks created before the pinch device never received its rules file or the loader in input.lua. Revision 34 delivers the rules through the compat overlay, and catch-up appends a guarded loader to each user's input.lua once, keeping the original as input.lua.before-try-omarchy-pinch. The loader only runs dofile when the rules file exists, so input.lua no longer breaks after try-omarchy-export copies it to a real Omarchy install; the unguarded line earlier images added is replaced. Symlinked files, files ending in a top-level return, and a user's own device rule are left alone.
+
+A udev rule makes libinput ignore the device until try-omarchy-pinch-ready confirms at each boot that every desktop user's Hyprland config loads the rules, so a guest that could not be migrated keeps ordinary input without stray tap clicks. The reason is written to /run/try-omarchy/pinch-gestures.
+---
+ .../try-omarchy-pinch-ready.service           |   1 +
+ .../system/try-omarchy-pinch-ready.service    |  11 ++
+ .../udev/rules.d/70-try-omarchy-pinch.rules   |   4 +
+ .../usr/local/lib/try-omarchy/catch-up        |  70 +++++++
+ .../usr/local/lib/try-omarchy/pinch-ready     |  51 +++++
+ .../hypr-input-pinch.append.lua               |  14 ++
+ guest/fragments/hypr-input-pinch.append.lua   |  14 ++
+ guest/scripts/finalize-rootfs.sh              |  10 +-
+ guest/scripts/materialize-omarchy.sh          |   6 +-
+ guest/tests/test_overlay_scripts.py           | 179 +++++++++++++++++-
+ guest/tests/verify.py                         |  39 +++-
+ 11 files changed, 391 insertions(+), 8 deletions(-)
+ create mode 120000 guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-pinch-ready.service
+ create mode 100644 guest/factory-overlay/etc/systemd/system/try-omarchy-pinch-ready.service
+ create mode 100644 guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-pinch.rules
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/pinch-ready
+ create mode 100644 guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-input-pinch.append.lua
+ create mode 100644 guest/fragments/hypr-input-pinch.append.lua
+
+diff --git a/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-pinch-ready.service b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-pinch-ready.service
+new file mode 120000
+index 0000000..7582e0d
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-pinch-ready.service
+@@ -0,0 +1 @@
++../try-omarchy-pinch-ready.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/system/try-omarchy-pinch-ready.service b/guest/factory-overlay/etc/systemd/system/try-omarchy-pinch-ready.service
+new file mode 100644
+index 0000000..aac5535
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/try-omarchy-pinch-ready.service
+@@ -0,0 +1,11 @@
++[Unit]
++Description=Enable Try Omarchy pinch gestures once Hyprland applies their device rules
++After=systemd-udev-trigger.service try-omarchy-catch-up.service omarchy-provision-owner.service
++Before=display-manager.service
++
++[Service]
++Type=oneshot
++ExecStart=/usr/local/lib/try-omarchy/pinch-ready
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-pinch.rules b/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-pinch.rules
+new file mode 100644
+index 0000000..ceeec00
+--- /dev/null
++++ b/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-pinch.rules
+@@ -0,0 +1,4 @@
++# Try Omarchy's virtual pinch touchpad only carries Windows pinch gestures.
++# libinput ignores it until try-omarchy-pinch-ready confirms that Hyprland
++# turns off tapping and disable-while-typing for it.
++ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="QEMU Virtio Pinch Touchpad", TEST!="/run/try-omarchy/pinch-ready", ENV{LIBINPUT_IGNORE_DEVICE}="1"
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+index 54aef80..c717257 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+@@ -8,6 +8,8 @@
+ #   - remove the Hyprland toggles an older image switched on by mistake, when
+ #     they are still the seeded copies (same mtime as the flags placeholder)
+ #   - switch on Omarchy's suspend-off toggle, since a VM cannot suspend
++#   - load the virtual pinch touchpad's device-only rules from input.lua,
++#     once per user, keeping the original file beside it
+ # Runs once per integration revision, before the display manager.
+ set -euo pipefail
+ 
+@@ -17,6 +19,7 @@ fragment=${TRY_OMARCHY_QEMU_FRAGMENT:-/usr/share/try-omarchy/skel-fragments/hypr
+ omarchy_default=${TRY_OMARCHY_OMARCHY_MONITORS:-/usr/share/omarchy/config/hypr/monitors.lua}
+ toggle_templates=${TRY_OMARCHY_TOGGLE_TEMPLATES:-/usr/share/omarchy/default/hypr/toggles}
+ omarchy_version=${TRY_OMARCHY_OMARCHY_VERSION:-/usr/share/omarchy/version}
++pinch_fragment=${TRY_OMARCHY_PINCH_FRAGMENT:-/usr/share/try-omarchy/skel-fragments/hypr-input-pinch.append.lua}
+ homes=${TRY_OMARCHY_HOMES:-/home}
+ 
+ revision=$(cut -d: -f1 "$revision_file" 2>/dev/null || echo 0)
+@@ -94,12 +97,79 @@ restore_nvim_theme_link() {
+   echo "restored the Neovim theme link for $1"
+ }
+ 
++load_pinch_rules() {
++  # Disks created before the pinch device never got a loader for its rules,
++  # and images since then loaded them unguarded, which breaks input.lua after
++  # try-omarchy-export copies it to a real Omarchy install. Append the current
++  # guarded loader once per user. A later removal is the user's choice and is
++  # not undone. Files that cannot safely be extended are left alone;
++  # try-omarchy-pinch-ready then keeps the device ignored.
++  local home=$1 file=$1/.config/hypr/input.lua record=$state_dir/pinch-input/${1##*/}
++  local backup=$1/.config/hypr/input.lua.before-try-omarchy-pinch last tmp
++  [[ -f $pinch_fragment && ! -e $record ]] || return 0
++  # Never write through a linked config, such as a dotfiles checkout.
++  if [[ -L $1/.config/hypr || -L $file || ! -f $file ]]; then
++    echo "left pinch gestures off for $home: $file is linked or not a regular file"
++    return 0
++  fi
++  if grep -qxF -- '-- BEGIN TRY OMARCHY PINCH DEVICE' "$file"; then
++    mkdir -p "${record%/*}" && : >"$record"
++    return 0
++  fi
++  if ! grep -qxF "$legacy_pinch_load" "$file" && grep -qE '^[^-]*qemu-virtio-pinch-touchpad' "$file"; then
++    echo "kept the pinch device rules $home already has in $file"
++    mkdir -p "${record%/*}" && : >"$record"
++    return 0
++  fi
++  # Code after a top-level return would not parse.
++  last=$(grep -vE '^[[:space:]]*(--.*)?$' "$file" | tail -n 1 || true)
++  if [[ $last =~ ^[[:space:]]*return([^[:alnum:]_]|$) ]]; then
++    echo "left pinch gestures off for $home: $file ends with a return statement"
++    return 0
++  fi
++  # set -e does not apply here (the caller uses || true), so check each step.
++  if [[ ! -e $backup && ! -L $backup ]] && ! cp -p "$file" "$backup"; then
++    echo "left pinch gestures off for $home: could not keep a copy of $file"
++    return 0
++  fi
++  tmp=$(mktemp "$(dirname "$file")/.input.lua.XXXXXX") || return 0
++  # Drop the unguarded loader earlier images appended, with its comment and
++  # the blank line before it, then append the guarded one.
++  if awk -v comment="$legacy_pinch_comment" -v loader="$legacy_pinch_load" '
++      { line[NR] = $0 }
++      END {
++        for (i = 1; i <= NR; i++) {
++          if (line[i] == loader) {
++            if (kept && out[kept] == comment) kept--
++            if (kept && out[kept] == "") kept--
++            continue
++          }
++          out[++kept] = line[i]
++        }
++        for (i = 1; i <= kept; i++) print out[i]
++      }' "$file" >"$tmp" &&
++    cat "$pinch_fragment" >>"$tmp" &&
++    chown --reference="$file" "$tmp" &&
++    chmod --reference="$file" "$tmp" &&
++    mv -f "$tmp" "$file"; then
++    mkdir -p "${record%/*}" && : >"$record"
++    echo "loaded the pinch device rules in $file (original kept as $backup)"
++  else
++    rm -f "$tmp"
++    echo "left pinch gestures off for $home: could not update $file"
++  fi
++}
++
++legacy_pinch_comment="-- Try Omarchy's host pinch device carries gestures only."
++legacy_pinch_load='dofile("/usr/share/try-omarchy/pinch-input.lua")'
++
+ for home in "$homes"/*; do
+   restore_nvim_theme_link "$home" || true
+   [[ -d $home/.config/hypr ]] || continue
+   refresh_monitors "$home" || true
+   remove_seeded_toggles "$home" || true
+   enable_suspend_off "$home" || true
++  load_pinch_rules "$home" || true
+ done
+ printf '%s\n' "$revision" >"$marker"
+ exit 0
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/pinch-ready b/guest/factory-overlay/usr/local/lib/try-omarchy/pinch-ready
+new file mode 100755
+index 0000000..ada6604
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/pinch-ready
+@@ -0,0 +1,51 @@
++#!/bin/bash
++# libinput ignores Try Omarchy's virtual pinch touchpad until every desktop
++# user's Hyprland config loads its device-only rules. Without them a Windows
++# pinch can register as a two-finger tap click, and typing can suppress it.
++# Runs every boot, after provisioning and catch-up and before the desktop, so
++# a later edit that drops the rules turns the device off again. The reason is
++# left in /run/try-omarchy/pinch-gestures.
++set -uo pipefail
++
++rules=${TRY_OMARCHY_PINCH_RULES:-/usr/share/try-omarchy/pinch-input.lua}
++homes=${TRY_OMARCHY_HOMES:-/home}
++run_dir=${TRY_OMARCHY_RUN_DIR:-/run/try-omarchy}
++sysfs=${TRY_OMARCHY_SYSFS:-/sys}
++device="QEMU Virtio Pinch Touchpad"
++
++reason=""
++users=0
++[[ -f $rules ]] || reason="$rules is missing"
++for home in "$homes"/*; do
++  config=$home/.config/hypr
++  [[ -d $config ]] || continue
++  users=$((users + 1))
++  [[ -z $reason ]] || continue
++  if ! grep -qE "^[[:space:]]*require[[:space:](]+[\"']hypr\.input[\"']" "$config/hyprland.lua" 2>/dev/null; then
++    reason="$config/hyprland.lua does not load hypr.input"
++  elif ! grep -qE -e '^-- BEGIN TRY OMARCHY PINCH DEVICE$' \
++      -e "^[[:space:]]*dofile\(\"$rules\"\)" \
++      -e '^[^-]*qemu-virtio-pinch-touchpad' "$config/input.lua" 2>/dev/null; then
++    reason="$config/input.lua does not load $rules"
++  fi
++done
++((users)) || reason=${reason:-no desktop user has a Hyprland config}
++
++mkdir -p "$run_dir"
++if [[ -z $reason ]]; then
++  : >"$run_dir/pinch-ready"
++  echo ready >"$run_dir/pinch-gestures"
++  echo "pinch gestures are ready"
++else
++  rm -f "$run_dir/pinch-ready"
++  printf 'inactive: %s\n' "$reason" >"$run_dir/pinch-gestures"
++  echo "pinch gestures stay off: $reason"
++fi
++
++# udev classified the device during coldplug, before this ran.
++for name in "$sysfs"/class/input/input*/name; do
++  [[ -f $name && $(<"$name") == "$device" ]] || continue
++  udevadm trigger --action=change --parent-match="$(dirname "$(readlink -f "$name")")" || true
++done
++udevadm settle --timeout=10 || true
++exit 0
+diff --git a/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-input-pinch.append.lua b/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-input-pinch.append.lua
+new file mode 100644
+index 0000000..18df2ce
+--- /dev/null
++++ b/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-input-pinch.append.lua
+@@ -0,0 +1,14 @@
++
++-- BEGIN TRY OMARCHY PINCH DEVICE
++-- Try Omarchy's virtual pinch touchpad only carries Windows pinch gestures.
++-- Its device-only rules keep those contacts from turning into tap clicks.
++-- Other Omarchy installs do not have the file, so nothing loads there.
++do
++  local rules = "/usr/share/try-omarchy/pinch-input.lua"
++  local file = io.open(rules, "r")
++  if file then
++    file:close()
++    dofile(rules)
++  end
++end
++-- END TRY OMARCHY PINCH DEVICE
+diff --git a/guest/fragments/hypr-input-pinch.append.lua b/guest/fragments/hypr-input-pinch.append.lua
+new file mode 100644
+index 0000000..18df2ce
+--- /dev/null
++++ b/guest/fragments/hypr-input-pinch.append.lua
+@@ -0,0 +1,14 @@
++
++-- BEGIN TRY OMARCHY PINCH DEVICE
++-- Try Omarchy's virtual pinch touchpad only carries Windows pinch gestures.
++-- Its device-only rules keep those contacts from turning into tap clicks.
++-- Other Omarchy installs do not have the file, so nothing loads there.
++do
++  local rules = "/usr/share/try-omarchy/pinch-input.lua"
++  local file = io.open(rules, "r")
++  if file then
++    file:close()
++    dofile(rules)
++  end
++end
++-- END TRY OMARCHY PINCH DEVICE
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index df29d42..357cabe 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -133,6 +133,12 @@ compat_paths=(
+   etc/systemd/system/try-omarchy-catch-up.service
+   etc/systemd/system/multi-user.target.wants/try-omarchy-catch-up.service
+   usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
++  usr/share/try-omarchy/skel-fragments/hypr-input-pinch.append.lua
++  usr/share/try-omarchy/pinch-input.lua
++  usr/local/lib/try-omarchy/pinch-ready
++  etc/systemd/system/try-omarchy-pinch-ready.service
++  etc/systemd/system/multi-user.target.wants/try-omarchy-pinch-ready.service
++  etc/udev/rules.d/70-try-omarchy-pinch.rules
+   etc/skel/.config/nvim/lua/plugins/theme.lua
+   etc/systemd/user/try-omarchy-share-link.service
+   etc/systemd/user/graphical-session.target.wants/try-omarchy-share-link.service
+@@ -175,7 +181,9 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 31 delivers the host battery device and its guest agent.
+ # Revision 32 adds approved Windows app launcher entries and the guest request.
+ # Revision 33 exposes Windows audio endpoints in the guest PipeWire picker.
+-compat_revision=33
++# Revision 34 loads the pinch touchpad's device rules for existing users and
++# keeps the device ignored until every user's Hyprland config applies them.
++compat_revision=34
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
+index cfd1d90..c81f893 100755
+--- a/guest/scripts/materialize-omarchy.sh
++++ b/guest/scripts/materialize-omarchy.sh
+@@ -162,11 +162,7 @@ mv "$nvim_skel" "$nvim_stash/nvim"
+ rm -rf "$root/etc/skel/.config"
+ copy_tree "$source_dir/config" "$root/etc/skel/.config"
+ # Only the dedicated virtual pinch device is affected; normal input is unchanged.
+-cat >> "$root/etc/skel/.config/hypr/input.lua" <<'EOF'
+-
+--- Try Omarchy's host pinch device carries gestures only.
+-dofile("/usr/share/try-omarchy/pinch-input.lua")
+-EOF
++cat "$guest_dir/fragments/hypr-input-pinch.append.lua" >>"$root/etc/skel/.config/hypr/input.lua"
+ copy_tree "$nvim_stash/nvim" "$root/etc/skel/.config/nvim"
+ rm -rf "$nvim_stash"
+ install_file 0644 "$source_dir/default/bashrc" "$root/etc/skel/.bashrc"
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index 2c43821..0ca76dc 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -27,6 +27,8 @@ APP_SYNC = OVERLAY / "usr/local/lib/try-omarchy/approved-apps-sync"
+ BATTERY_APPLY = OVERLAY / "usr/local/lib/try-omarchy/battery-apply"
+ CATCH_UP = OVERLAY / "usr/local/lib/try-omarchy/catch-up"
+ FRAGMENT = OVERLAY / "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua"
++PINCH_FRAGMENT = OVERLAY / "usr/share/try-omarchy/skel-fragments/hypr-input-pinch.append.lua"
++PINCH_READY = OVERLAY / "usr/local/lib/try-omarchy/pinch-ready"
+ EXPORT = OVERLAY / "usr/local/bin/try-omarchy-export"
+ 
+ def generated_key(directory: Path) -> str:
+@@ -684,7 +686,8 @@ class CatchUpTests(OverlayCase):
+         return self.run_script(CATCH_UP, TRY_OMARCHY_COMPAT_VERSION=str(self.version), TRY_OMARCHY_STATE_DIR=str(self.state),
+                                TRY_OMARCHY_QEMU_FRAGMENT=str(FRAGMENT), TRY_OMARCHY_OMARCHY_MONITORS=str(self.default),
+                                TRY_OMARCHY_TOGGLE_TEMPLATES=str(self.templates), TRY_OMARCHY_HOMES=str(self.homes),
+-                               TRY_OMARCHY_OMARCHY_VERSION=str(self.omarchy_version))
++                               TRY_OMARCHY_OMARCHY_VERSION=str(self.omarchy_version),
++                               TRY_OMARCHY_PINCH_FRAGMENT=str(PINCH_FRAGMENT))
+ 
+     def seed_toggles(self) -> None:
+         for name in ("flags", "window-no-gaps", "single-window-aspect-ratio"):
+@@ -760,6 +763,180 @@ class CatchUpTests(OverlayCase):
+         self.assertEqual(result.returncode, 0, result.stderr)
+         self.assertEqual(os.readlink(plugins / "theme.lua"), "../../../../.config/omarchy/current/theme/neovim.lua")
+ 
++    def next_revision(self, revision: int) -> None:
++        self.version.write_text(f"{revision}:7.2.3-arch1\n")
++
++    def test_existing_input_gets_the_pinch_loader_once_and_keeps_its_content(self) -> None:
++        input_lua = self.user / ".config/hypr/input.lua"
++        original = 'hl.config({ input = { kb_layout = "us,dk" } })\n'
++        input_lua.write_text(original)
++        input_lua.chmod(0o640)
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(input_lua.read_text(), original + PINCH_FRAGMENT.read_text())
++        self.assertEqual(input_lua.stat().st_mode & 0o777, 0o640)
++        backup = self.user / ".config/hypr/input.lua.before-try-omarchy-pinch"
++        self.assertEqual(backup.read_text(), original)
++        self.assertIn("loaded the pinch device rules", result.stdout)
++        # Later revisions neither duplicate the loader nor replace the copy.
++        self.next_revision(13)
++        self.run_catch_up()
++        self.assertEqual(input_lua.read_text().count("BEGIN TRY OMARCHY PINCH DEVICE"), 1)
++        self.assertEqual(backup.read_text(), original)
++        # Removing the loader is the user's choice and survives upgrades.
++        input_lua.write_text(original)
++        self.next_revision(14)
++        self.run_catch_up()
++        self.assertEqual(input_lua.read_text(), original)
++
++    def test_the_unguarded_factory_loader_is_replaced(self) -> None:
++        input_lua = self.user / ".config/hypr/input.lua"
++        skeleton = "-- Keep only your personal input overrides here.\n"
++        legacy = "\n-- Try Omarchy's host pinch device carries gestures only.\ndofile(\"/usr/share/try-omarchy/pinch-input.lua\")\n"
++        input_lua.write_text(skeleton + legacy)
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(input_lua.read_text(), skeleton + PINCH_FRAGMENT.read_text())
++        self.assertEqual((self.user / ".config/hypr/input.lua.before-try-omarchy-pinch").read_text(), skeleton + legacy)
++
++    def test_a_users_own_pinch_device_rule_is_kept(self) -> None:
++        input_lua = self.user / ".config/hypr/input.lua"
++        own = 'hl.device({\n  name = "qemu-virtio-pinch-touchpad",\n  tap_to_click = false,\n})\n'
++        input_lua.write_text(own)
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(input_lua.read_text(), own)
++        self.assertFalse((self.user / ".config/hypr/input.lua.before-try-omarchy-pinch").exists())
++
++    def test_input_that_cannot_be_extended_safely_is_left_alone(self) -> None:
++        input_lua = self.user / ".config/hypr/input.lua"
++        returning = "local M = {}\nreturn M -- module\n\n-- trailing note\n"
++        input_lua.write_text(returning)
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(input_lua.read_text(), returning)
++        self.assertIn("ends with a return statement", result.stdout)
++        # A dotfiles symlink is never written through.
++        target = self.root / "dotfiles-input.lua"
++        target.write_text("-- managed elsewhere\n")
++        input_lua.unlink()
++        input_lua.symlink_to(target)
++        self.next_revision(13)
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(target.read_text(), "-- managed elsewhere\n")
++        self.assertTrue(input_lua.is_symlink())
++        self.assertIn("is linked or not a regular file", result.stdout)
++        self.assertFalse((self.user / ".config/hypr/input.lua.before-try-omarchy-pinch").exists())
++        # Nor is a linked Hyprland directory.
++        dotfiles = self.root / "dotfiles-hypr"
++        shutil.move(self.user / ".config/hypr", dotfiles)
++        (dotfiles / "input.lua").unlink()
++        (dotfiles / "input.lua").write_text("-- managed elsewhere\n")
++        (self.user / ".config/hypr").symlink_to(dotfiles)
++        self.next_revision(14)
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual((dotfiles / "input.lua").read_text(), "-- managed elsewhere\n")
++        self.assertFalse((dotfiles / "input.lua.before-try-omarchy-pinch").exists())
++
++    def test_an_untouched_default_input_gets_the_loader(self) -> None:
++        input_lua = self.user / ".config/hypr/input.lua"
++        default = "-- Keep only your personal input overrides here.\n-- hl.config({\n--   input = {},\n-- })\n"
++        input_lua.write_text(default)
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(input_lua.read_text(), default + PINCH_FRAGMENT.read_text())
++
++
++class PinchReadyTests(OverlayCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.homes = self.root / "homes"
++        self.config = self.homes / "alice/.config/hypr"
++        self.config.mkdir(parents=True)
++        (self.config / "hyprland.lua").write_text('require("default.hypr.omarchy")\nrequire("hypr.input")\n')
++        self.rules = self.root / "pinch-input.lua"
++        self.rules.write_text("hl.device({})\n")
++        self.run_dir = self.root / "run"
++        self.sysfs = self.root / "sys"
++        device = self.sysfs / "devices/virtual/input/input7"
++        device.mkdir(parents=True)
++        (device / "name").write_text("QEMU Virtio Pinch Touchpad\n")
++        tablet = self.sysfs / "devices/virtual/input/input3"
++        tablet.mkdir(parents=True)
++        (tablet / "name").write_text("QEMU Virtio Tablet\n")
++        (self.sysfs / "class/input").mkdir(parents=True)
++        (self.sysfs / "class/input/input7").symlink_to(device)
++        (self.sysfs / "class/input/input3").symlink_to(tablet)
++        self.device = device
++        self.fake("udevadm", f'echo "udevadm $*" >>"{self.log}"')
++
++    def run_ready(self) -> subprocess.CompletedProcess:
++        return self.run_script(PINCH_READY, TRY_OMARCHY_PINCH_RULES=str(self.rules), TRY_OMARCHY_HOMES=str(self.homes),
++                               TRY_OMARCHY_RUN_DIR=str(self.run_dir), TRY_OMARCHY_SYSFS=str(self.sysfs))
++
++    def status(self) -> str:
++        return (self.run_dir / "pinch-gestures").read_text().strip()
++
++    def test_the_guarded_loader_enables_the_device(self) -> None:
++        (self.config / "input.lua").write_text("-- mine\n" + PINCH_FRAGMENT.read_text())
++        result = self.run_ready()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertTrue((self.run_dir / "pinch-ready").exists())
++        self.assertEqual(self.status(), "ready")
++        calls = self.log.read_text().splitlines()
++        self.assertEqual(calls, [f"udevadm trigger --action=change --parent-match={self.device}", "udevadm settle --timeout=10"])
++
++    def test_the_legacy_loader_and_a_users_own_rule_count_as_ready(self) -> None:
++        for content in (f'dofile("{self.rules}")\n', 'hl.device({ name = "qemu-virtio-pinch-touchpad", tap_to_click = false })\n'):
++            with self.subTest(content=content):
++                (self.config / "input.lua").write_text(content)
++                self.run_ready()
++                self.assertEqual(self.status(), "ready")
++
++    def test_input_without_the_rules_keeps_the_device_ignored(self) -> None:
++        self.run_dir.mkdir()
++        (self.run_dir / "pinch-ready").touch()
++        # A commented-out device rule does not count.
++        (self.config / "input.lua").write_text('-- nothing here\n-- name = "qemu-virtio-pinch-touchpad"\n')
++        result = self.run_ready()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertFalse((self.run_dir / "pinch-ready").exists())
++        self.assertIn("input.lua does not load", self.status())
++        self.assertIn("pinch gestures stay off", result.stdout)
++        # The device is reclassified either way, so a stale udev state cannot linger.
++        self.assertIn(f"--parent-match={self.device}", self.log.read_text())
++
++    def test_a_config_that_never_loads_input_lua_keeps_the_device_ignored(self) -> None:
++        (self.config / "input.lua").write_text(PINCH_FRAGMENT.read_text())
++        (self.config / "hyprland.lua").write_text('-- require("hypr.input")\n')
++        self.run_ready()
++        self.assertIn("does not load hypr.input", self.status())
++
++    def test_one_unready_user_or_no_rules_file_keeps_the_device_ignored(self) -> None:
++        (self.config / "input.lua").write_text(PINCH_FRAGMENT.read_text())
++        other = self.homes / "bob/.config/hypr"
++        other.mkdir(parents=True)
++        (other / "hyprland.lua").write_text('require "hypr.input"\n')
++        (other / "input.lua").write_text("-- no loader\n")
++        self.run_ready()
++        self.assertIn("bob/.config/hypr/input.lua does not load", self.status())
++        (other / "input.lua").write_text(PINCH_FRAGMENT.read_text())
++        self.run_ready()
++        self.assertEqual(self.status(), "ready")
++        self.rules.unlink()
++        self.run_ready()
++        self.assertIn("pinch-input.lua is missing", self.status())
++
++    def test_no_desktop_user_keeps_the_device_ignored(self) -> None:
++        shutil.rmtree(self.homes)
++        self.homes.mkdir()
++        result = self.run_ready()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertFalse((self.run_dir / "pinch-ready").exists())
++        self.assertIn("no desktop user", self.status())
++
+ 
+ class FactoryUpdateNoticeTests(OverlayCase):
+     def setUp(self) -> None:
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 4bf91f2..51064c0 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -266,7 +266,7 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=33" in finalize_rootfs
++        "compat_revision=34" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/local/bin/omarchy-windows-audio-bridge" in compat_paths
+         and "etc/udev/rules.d/70-try-omarchy-audio.rules" in compat_paths
+@@ -318,6 +318,43 @@ def main() -> None:
+         and 'restore_nvim_theme_link "$home"' in catch_up,
+         "catch-up restores a missing packaged Neovim theme link without replacing a user's own file",
+     )
++    pinch_fragment = read(GUEST / "fragments/hypr-input-pinch.append.lua")
++    pinch_rule = read(GUEST / "factory-overlay/etc/udev/rules.d/70-try-omarchy-pinch.rules")
++    pinch_unit = read(GUEST / "factory-overlay/etc/systemd/system/try-omarchy-pinch-ready.service")
++    pinch_ready = GUEST / "factory-overlay/usr/local/lib/try-omarchy/pinch-ready"
++    check(
++        read(GUEST / "factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-input-pinch.append.lua") == pinch_fragment
++        and 'cat "$guest_dir/fragments/hypr-input-pinch.append.lua" >>"$root/etc/skel/.config/hypr/input.lua"' in materialize
++        and 'io.open(rules, "r")' in pinch_fragment
++        and 'dofile("/usr/share/try-omarchy/pinch-input.lua")' not in pinch_fragment
++        and 'load_pinch_rules "$home"' in catch_up
++        and "input.lua.before-try-omarchy-pinch" in catch_up,
++        "new and existing users load the pinch device rules only where the rules file exists",
++    )
++    check(
++        'ATTRS{name}=="QEMU Virtio Pinch Touchpad"' in pinch_rule
++        and 'TEST!="/run/try-omarchy/pinch-ready"' in pinch_rule
++        and 'ENV{LIBINPUT_IGNORE_DEVICE}="1"' in pinch_rule
++        and "Before=display-manager.service" in pinch_unit
++        and "omarchy-provision-owner.service" in pinch_unit.split("Before=", 1)[0]
++        and "try-omarchy-catch-up.service" in pinch_unit.split("Before=", 1)[0]
++        and (GUEST / "factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-pinch-ready.service").is_symlink()
++        and pinch_ready.stat().st_mode & stat.S_IXUSR != 0
++        and 'device="QEMU Virtio Pinch Touchpad"' in read(pinch_ready)
++        and "run_dir=${TRY_OMARCHY_RUN_DIR:-/run/try-omarchy}" in read(pinch_ready)
++        and all(
++            path in compat_paths
++            for path in (
++                "usr/share/try-omarchy/pinch-input.lua",
++                "usr/share/try-omarchy/skel-fragments/hypr-input-pinch.append.lua",
++                "usr/local/lib/try-omarchy/pinch-ready",
++                "etc/systemd/system/try-omarchy-pinch-ready.service",
++                "etc/systemd/system/multi-user.target.wants/try-omarchy-pinch-ready.service",
++                "etc/udev/rules.d/70-try-omarchy-pinch.rules",
++            )
++        ),
++        "libinput ignores the pinch touchpad on persistent disks until every user's config applies its rules",
++    )
+ 
+     ready_unit = read(GUEST / "factory-overlay/etc/systemd/system/try-omarchy-ready.service")
+     ready_script = GUEST / "factory-overlay/usr/local/lib/try-omarchy/guest-ready"
+-- 
+2.55.0
+

@@ -5,6 +5,9 @@ systemctl is-active try-omarchy-system-ownership.service
 [[ $(pacman -Q try-omarchy-runtime) == "try-omarchy-runtime $CANDIDATE_RUNTIME" ]]
 [[ $(cat /usr/share/omarchy/version) == "$CANDIDATE_VERSION" ]]
 sha256sum -c "$HOME/upgrade-preserve.sha256"
+# Later boots, including the older image, neither duplicate nor drop the
+# pinch loader or the personal override.
+sha256sum -c "$HOME/upgrade-input-after.sha256"
 for path in /etc /usr /usr/lib /usr/share; do
   [[ $(stat -c '%u:%g' "$path") == 0:0 ]]
 done
