@@ -16,6 +16,13 @@ revision 33 delivers its user service to existing persistent disks. It needs
 the host catalog and live SDL route support in the matching Windows launcher
 and runtime; older launchers leave the service waiting for its port.
 
+Patch 0093 brings the pinch touchpad's device-only rules to existing guests.
+Compatibility revision 34 delivers the rules file, and catch-up appends a
+guarded loader to each user's `input.lua` once, keeping the original as
+`input.lua.before-try-omarchy-pinch`. libinput ignores the pinch device until
+`try-omarchy-pinch-ready` confirms at boot that every desktop user's config
+loads the rules; `/run/try-omarchy/pinch-gestures` says why when it does not.
+
 The second command needs Docker and currently takes about ten minutes. Release
 CI also boots the resulting factory image with `scripts/release/smoke-guest.py`
 before it uploads anything.

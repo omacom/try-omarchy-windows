@@ -46,4 +46,19 @@ expected_theme_link="../../../../.local/state/omarchy/current/theme/neovim.lua"
 [[ $(readlink "$HOME/.config/nvim/lua/plugins/theme.lua") == "$expected_theme_link" ]]
 omarchy-migrate
 sha256sum -c "$HOME/upgrade-preserve.sha256"
+# Revision 34 loads the pinch device rules once, keeps the personal override,
+# and leaves the pre-upgrade file beside it unless the skeleton already had them.
+input="$HOME/.config/hypr/input.lua"
+[[ -f /usr/share/try-omarchy/pinch-input.lua ]]
+[[ $(grep -cx -- '-- BEGIN TRY OMARCHY PINCH DEVICE' "$input") == 1 ]]
+if grep -qx 'dofile("/usr/share/try-omarchy/pinch-input.lua")' "$input"; then exit 1; fi
+grep -qx 'hl.config({ input = { repeat_rate = 40 } })' "$input"
+if grep -qx -- '-- BEGIN TRY OMARCHY PINCH DEVICE' "$HOME/upgrade-input-before.lua"; then
+  cmp "$input" "$HOME/upgrade-input-before.lua"
+else
+  cmp "$HOME/.config/hypr/input.lua.before-try-omarchy-pinch" "$HOME/upgrade-input-before.lua"
+fi
+[[ $(cat /run/try-omarchy/pinch-gestures) == ready ]]
+sudo python3 /mnt/host/pinch-udev.py
+sha256sum "$input" > "$HOME/upgrade-input-after.sha256"
 sync

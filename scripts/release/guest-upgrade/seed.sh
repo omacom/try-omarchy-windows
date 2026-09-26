@@ -10,4 +10,7 @@ sha256sum "$HOME/Documents/upgrade-preserve.txt" "$HOME/.config/upgrade-test/set
 sha256sum /usr/bin/omarchy-nvim-refresh /usr/bin/omarchy-nvim-setup > "$HOME/upgrade-nvim.sha256"
 readlink /usr/bin/omarchy-nvim-refresh > "$HOME/upgrade-nvim-link"
 pacman -Qqe > "$HOME/upgrade-packages-before.txt"
+# A personal input override that the pinch migration must keep.
+printf '\n-- upgrade preservation fixture\nhl.config({ input = { repeat_rate = 40 } })\n' >> "$HOME/.config/hypr/input.lua"
+cp -p "$HOME/.config/hypr/input.lua" "$HOME/upgrade-input-before.lua"
 sync
