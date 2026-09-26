@@ -5,111 +5,83 @@ default and the fallback whenever Hello is denied, canceled, unavailable, or
 disconnected. It applies only to interactive `sudo` PAM requests in the Omarchy
 guest. It does not change login, screen unlock, SSH, or Windows authentication.
 
-## Pairing
+## Turning it on
 
-The guest installs a root-only authentication virtio port and helper, but does
-not change PAM until the user enables Hello in **Setup → Security**. Enabling
-first requires the guest password through normal sudo. The guest then creates
-a random 256-bit guest ID and a fresh enrollment challenge. The signed Windows
-helper creates a named, per-guest Windows Hello `KeyCredential`, returns its
-RSA public key in SubjectPublicKeyInfo DER, and signs the enrollment challenge.
-The guest verifies the signature before it pins that public key and atomically
-adds its exact `auth sufficient` PAM rule. Disabling removes the rule before it
-deletes pairing state and requests host-key deletion. A lost host key or PIN
-reset leaves password authentication usable; re-pairing requires the guest
-password again.
-
-The Windows helper owns a small visible window for enrollment and approval.
-It uses `RequestCreateForWindowAsync` and `RequestSignForWindowAsync` with that
-window ID. For each sudo request it first calls the desktop
-`UserConsentVerifierInterop.RequestVerificationForWindowAsync` with a message
-identifying the action and requires `Verified` before signing. A key-creation
-approval was reused by a subsequent sign call without a second PIN prompt on
-the test laptop, so the signing result alone does not establish fresh user
-consent. A hidden task put a Windows Security dialog behind the launcher on
-the [test laptop](evidence/HELLO-PREFLIGHT-2026-09-23.md), so enrollment cannot
-use an unowned prompt. The prompt message and owner window identify Try Omarchy
-and the requested sudo action. The app cannot restyle the Windows Security
-dialog itself.
-
-In a later native-helper preflight, the explicit consent check and key signing
-each required a PIN entry. That produces two PIN prompts for one sudo request.
-Resolve this presentation and approval flow before enabling guest sudo pairing
-for users.
-
-The native [WebAuthn assertion API](https://learn.microsoft.com/en-us/windows/win32/api/webauthn/nf-webauthn-webauthnauthenticatorgetassertion)
-is a candidate for combining user verification and a signed challenge in one
-operation. Its request options include a user verification requirement, and its
-assertion carries authenticator data and a signature. This is a design lead,
-not an accepted replacement: it needs a disposable laptop test and a revised
-guest verifier before use.
-
-### WebAuthn preflight
-
-`TryOmarchyWebAuthnPreflight.exe` (built by the Windows CI job next to the
-helper, in the `hello-helper-test-*` artifact) tests that lead on a Hello
-laptop. It creates one platform credential for the placeholder relying party
-`preflight.try-omarchy.invalid`, requests two approvals with user verification
-required, deletes the credential, and writes `webauthn-preflight.json` in the
-current folder. Run it from a folder you can write to, count the Windows Hello
-prompts (the expected result is three: one to create, one per approval), then
-check the file on any machine with OpenSSL:
+In an Omarchy terminal:
 
 ```bash
-hello-helper/verify-webauthn-preflight.py webauthn-preflight.json
+sudo try-omarchy-windows-hello enable
 ```
 
-The verifier makes the checks the guest would make for each sudo approval: the
-pinned P-256 key from the attestation, the relying party hash, the user-present
-and user-verified flags, and the ES256 signature over the authenticator data
-and the exact client data. If each approval shows exactly one prompt and the
-verifier passes, the helper can move from KeyCredential to WebAuthn.
+`sudo` asks for the guest password first. Windows then asks to create a passkey
+for "Try Omarchy" and for Windows Hello once. After that, each `sudo` in that
+guest shows one Windows Hello prompt; cancel it to type the password instead.
+`sudo try-omarchy-windows-hello disable` removes the PAM rule, forgets the
+pairing and deletes the Windows passkey.
 
-## Approval
+## How it works
 
-The root-only guest helper accepts only a `sudo` PAM service with a valid
-interactive TTY and local account names. Each request has a random 256-bit
-challenge and unique request ID. Requests and responses have strict field sets,
-a size limit, one-response semantics, and a short timeout. The host permits
-one prompt at a time, checks that its own QEMU process is still running and its
-window is frontmost, and refuses an unknown guest ID or signing key.
+Windows Hello answers as a WebAuthn platform authenticator. The launcher calls
+`webauthn.dll` directly; there is no separate helper program. The relying party
+ID is `try-omarchy.invalid`, a name that can never belong to a website.
 
-The Windows Hello key signs canonical bytes containing the guest ID, request
-ID, challenge, PAM user, requesting user, `sudo` service, TTY, issue and expiry
-times, and key ID. The approval expires after 15 seconds. The guest checks all
-fields against its pending request, checks the clock window, requires the pinned
-public key, and verifies its enrolled RSA SHA-256 signature before PAM can return
-success. An unsigned approval flag is never sufficient. PIN, password, and
+**Enrollment.** The guest broker creates a random 256-bit guest ID and sends an
+`enroll` request over the root-only virtio port `dev.tryomarchy.authentication`.
+The launcher calls `WebAuthNAuthenticatorMakeCredential` for a platform ES256
+credential with user verification required, and returns the authenticator
+data. The guest checks the relying party hash and the user-present,
+user-verified and attested-credential flags, then pins the credential ID and its
+P-256 public key in `/var/lib/try-omarchy/windows-hello/enrollment.json`
+(root-only). Only after that does `try-omarchy-windows-hello` add its single
+`auth sufficient pam_exec.so` rule to `/etc/pam.d/sudo`.
+
+**Each sudo.** The broker sends a `sudo` request with a fresh 256-bit challenge,
+a request ID, the guest ID, the PAM user, requesting user, TTY and the pinned
+credential ID. The launcher refuses unless its own Omarchy window is in front,
+allows one prompt at a time and waits 3 seconds after a denial before prompting
+again. It calls `WebAuthNAuthenticatorGetAssertion` for that one credential with
+user verification required. The signed client data is a fixed JSON rendering of
+every request field (`helloClientData` in `app/hello_protocol.go`, `client_data`
+in the broker); both sides build the same bytes. The guest verifies the ES256
+signature over the authenticator data and SHA-256 of those bytes with the
+pinned key, and checks the relying party hash and both flags before PAM returns
+success. An unsigned approval flag is never sufficient, and PIN, password and
 biometric material stay in Windows.
 
-The guest determines the valid RSA signature padding during enrollment and
-pins it with the public key. The test laptop produced a PKCS#1 v1.5 signature;
-Microsoft's current KeyCredentialManager remarks describe PSS. A later approval
-must verify with the pinned format. The host must fail closed if it cannot
-identify a supported format.
+**Disable.** The launcher lists the platform credentials Windows holds for
+`try-omarchy.invalid` and deletes the guest's credential only if it appears in
+that list, so a guest can never remove any other passkey. On Windows builds
+without the list API, the guest still disables itself and tells the user to
+remove the passkey in Settings > Accounts > Passkeys.
 
-The Windows helper and port are available only for the current interactive
-session. The guest rejects stale replies after a VM restart, duplicate replies,
-concurrent requests beyond the bound, and any response to another challenge.
-The host logs outcome codes without request secrets or credential data. The
-guest logs only a reason for falling through to password.
+Requests and responses have strict field sets, a 4 KiB limit and one response
+per request. Malformed requests close the port without a reply. The launcher
+logs only the operation and outcome; the guest logs only that it fell back to
+the password.
+
+## History
+
+The first design used a `KeyCredential` plus a separate
+`UserConsentVerifier` check, because a `KeyCredential` signature alone did not
+prove fresh consent on the test laptop. That cost two PIN prompts per sudo
+request. The [WebAuthn preflight](evidence/HELLO-WEBAUTHN-PREFLIGHT-2026-09-26.md)
+showed one prompt per signature with the user-verified flag set, so the bridge
+moved to WebAuthn. The earlier [preflight](evidence/HELLO-PREFLIGHT-2026-09-23.md)
+records the KeyCredential results.
 
 ## Acceptance
 
-- Protocol tests cover malformed fields, spoofed user and TTY, key mismatch,
-  replay, expiry, denial, cancellation, timeout, port disconnect, and VM
-  restart.
-- A real Windows 11 laptop approves one guest `sudo` request and denies one;
-  denial falls through to the normal guest password prompt.
-- Each sudo request shows a separate consent prompt, including a request soon
-  after enrollment or another approval.
-- The owner window and Windows Security prompt are visible above QEMU, have
-  clear Try Omarchy wording, and close after completion.
-- Disabling removes the managed PAM rule without disturbing other PAM policy.
-  Unsupported or unenrolled hosts keep password authentication.
+- Protocol tests cover malformed fields, spoofed user and TTY, wrong credential,
+  foreign relying party, missing user verification, changed client data and
+  denial. See `app/hello_protocol_test.go` and the guest's
+  `test_windows_hello_broker.py`.
+- A real Windows 11 laptop pairs a guest, approves one guest `sudo`, and cancels
+  one, which falls through to the password prompt.
+- Each sudo request shows exactly one Windows Hello prompt, above the Omarchy
+  window, and the prompt does not appear while another window is in front.
+- Disabling removes the PAM rule and the Windows passkey without disturbing
+  other PAM policy or other passkeys. Unsupported or unenrolled hosts keep
+  password authentication.
 
-Microsoft documents [Windows Hello key creation and challenge signing](https://learn.microsoft.com/en-us/windows/apps/develop/security/windows-hello-auth-service),
-the [KeyCredentialManager API](https://learn.microsoft.com/en-us/uwp/api/windows.security.credentials.keycredentialmanager?view=winrt-26100),
-the [window-bound signing API](https://learn.microsoft.com/en-us/uwp/api/windows.security.credentials.keycredential.requestsignforwindowasync),
-the [desktop consent API](https://learn.microsoft.com/en-us/windows/win32/api/userconsentverifierinterop/nf-userconsentverifierinterop-iuserconsentverifierinterop-requestverificationforwindowasync),
-and the [desktop window-owner requirement](https://learn.microsoft.com/en-us/windows/apps/develop/ui/display-ui-objects).
+Microsoft documents the [WebAuthn platform API](https://learn.microsoft.com/en-us/windows/win32/api/webauthn/)
+and its [header](https://github.com/microsoft/webauthn).

@@ -10,11 +10,11 @@ import (
 	"time"
 )
 
-// serveHelloBridge handles the QEMU authentication character device. The
-// default response remains a denial until the Windows key helper can verify
-// a separate user consent result and sign the exact request. The guest then
-// continues with its ordinary password prompt.
-func serveHelloBridge(conn net.Conn) error {
+// serveHelloBridge handles the QEMU authentication character device. Each
+// valid request gets exactly one response from approve; a denial sends the
+// guest on to its ordinary password prompt. Malformed requests close the
+// connection without a reply.
+func serveHelloBridge(conn net.Conn, approve func(helloRequest) helloResponse) error {
 	defer conn.Close()
 	reader := bufio.NewReaderSize(conn, helloMaximumLineBytes)
 	for {
@@ -29,7 +29,7 @@ func serveHelloBridge(conn net.Conn) error {
 		if err != nil {
 			return fmt.Errorf("invalid authentication request: %w", err)
 		}
-		response := helloDenied(request)
+		response := approve(request)
 		encoded, err := json.Marshal(response)
 		if err != nil {
 			return err

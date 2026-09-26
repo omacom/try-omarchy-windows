@@ -12,7 +12,7 @@ import (
 func TestHelloPortFallsThroughToPassword(t *testing.T) {
 	guest, host := net.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- serveHelloBridge(host) }()
+	go func() { done <- serveHelloBridge(host, helloDenied) }()
 	defer guest.Close()
 	guest.SetDeadline(time.Now().Add(2 * time.Second))
 	request := validHelloRequest()
@@ -28,7 +28,7 @@ func TestHelloPortFallsThroughToPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	if response.Approved || response.RequestID != request.RequestID ||
-		response.Signature != "" || response.KeyID != "" || response.PublicKey != "" {
+		response.Signature != "" || response.AuthenticatorData != "" {
 		t.Fatalf("denial did not preserve request context: %+v", response)
 	}
 	guest.Close()
@@ -40,7 +40,7 @@ func TestHelloPortFallsThroughToPassword(t *testing.T) {
 func TestHelloPortDropsMalformedRequestWithoutReply(t *testing.T) {
 	guest, host := net.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- serveHelloBridge(host) }()
+	go func() { done <- serveHelloBridge(host, helloDenied) }()
 	guest.SetDeadline(time.Now().Add(2 * time.Second))
 	line := bytes.Replace(mustHelloRequestLine(validHelloRequest()), []byte(`"service":"sudo"`), []byte(`"service":"login"`), 1)
 	if _, err := guest.Write(line); err != nil {

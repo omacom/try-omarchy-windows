@@ -28,7 +28,7 @@ func runHelloBridge() {
 			}
 			go func() {
 				defer active.Store(false)
-				if err := serveHelloBridge(conn); err != nil {
+				if err := serveHelloBridge(conn, approveHelloRequest); err != nil {
 					logf("Windows Hello: guest request rejected: %v", err)
 				}
 			}()

@@ -1,16 +1,19 @@
-From 333f3541deabe3f31146553f18c7a83301f4195c Mon Sep 17 00:00:00 2001
+From b6a2142d07e6fd70285c10bf6293d9031ded1ecc Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Wed, 23 Sep 2026 21:00:32 -0400
 Subject: [PATCH] Add opt-in Windows Hello sudo guest broker
 
+A root-only virtio port and broker let an opted-in guest approve sudo with Windows Hello. Windows answers as a WebAuthn platform authenticator: enrollment creates one ES256 credential per guest, and the broker pins its credential ID and P-256 key from the authenticator data. Each sudo request sends a fresh challenge bound to the guest, user, requesting user and TTY; Windows shows one Hello prompt and signs the client data. The broker checks the relying party hash, the user-present and user-verified flags and the signature with openssl before PAM succeeds. Anything else falls through to the guest password.
+
+sudo try-omarchy-windows-hello enable|disable adds or removes the single PAM rule; enabling first requires the guest password. Revision 36 delivers the broker, command and port rule to existing guests without enabling anything.
 ---
  .../70-try-omarchy-authentication.rules       |   1 +
- .../lib/try-omarchy/windows-hello-broker      | 350 ++++++++++++++++++
+ .../lib/try-omarchy/windows-hello-broker      | 431 ++++++++++++++++++
  .../usr/local/sbin/try-omarchy-windows-hello  |  60 +++
  guest/scripts/finalize-rootfs.sh              |   6 +-
- guest/tests/test_windows_hello_broker.py      | 107 ++++++
+ guest/tests/test_windows_hello_broker.py      | 169 +++++++
  guest/tests/verify.py                         |   8 +-
- 6 files changed, 530 insertions(+), 2 deletions(-)
+ 6 files changed, 673 insertions(+), 2 deletions(-)
  create mode 100644 guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-authentication.rules
  create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/windows-hello-broker
  create mode 100755 guest/factory-overlay/usr/local/sbin/try-omarchy-windows-hello
@@ -25,10 +28,10 @@ index 0000000..fe656dc
 +SUBSYSTEM=="virtio-ports", ATTR{name}=="dev.tryomarchy.authentication", OWNER="root", GROUP="root", MODE="0600"
 diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/windows-hello-broker b/guest/factory-overlay/usr/local/lib/try-omarchy/windows-hello-broker
 new file mode 100755
-index 0000000..13c3ee3
+index 0000000..4096453
 --- /dev/null
 +++ b/guest/factory-overlay/usr/local/lib/try-omarchy/windows-hello-broker
-@@ -0,0 +1,350 @@
+@@ -0,0 +1,431 @@
 +#!/usr/bin/python3 -I
 +"""Root-only Windows Hello approval broker for interactive guest sudo."""
 +
@@ -55,22 +58,26 @@ index 0000000..13c3ee3
 +PORT = Path("/dev/virtio-ports/dev.tryomarchy.authentication")
 +STATE = Path("/var/lib/try-omarchy/windows-hello/enrollment.json")
 +MAX_LINE = 4096
-+VERSION = 1
-+LIFETIME = 15
-+SKEW = 5
++VERSION = 2
++# Windows Hello answers as a WebAuthn platform authenticator. These must match
++# helloRelyingPartyID and helloClientDataType in the Windows launcher.
++RP_ID = "try-omarchy.invalid"
++CLIENT_TYPE = "try-omarchy.windows-hello.sudo"
++FLAG_USER_PRESENT = 0x01
++FLAG_USER_VERIFIED = 0x04
++FLAG_ATTESTED = 0x40
++P256_SPKI_PREFIX = bytes.fromhex("3059301306072a8648ce3d020106082a8648ce3d030107034200")
 +HEX32 = re.compile(r"[0-9a-f]{64}\Z")
 +ACCOUNT = re.compile(r"[a-z_][a-z0-9_-]{0,31}\Z")
 +TTY = re.compile(r"/dev/(?:pts/[0-9]+|tty[0-9]+)\Z")
 +VPORT_TARGET = re.compile(r"\.\./(vport[0-9]+p[0-9]+)\Z")
-+REQUEST_FIELDS = {
++REQUEST_ORDER = (
 +    "type", "version", "operation", "guestId", "requestId", "challenge",
-+    "user", "requestingUser", "service", "tty",
-+}
-+RESPONSE_FIELDS = REQUEST_FIELDS | {
-+    "approved", "issuedAt", "expiresAt", "keyId", "publicKey", "signature",
-+}
-+STATE_FIELDS = {"version", "guestId", "keyId", "publicKey", "padding"}
-+PADDINGS = {"pkcs1", "pss"}
++    "user", "requestingUser", "service", "tty", "credentialId",
++)
++REQUEST_FIELDS = set(REQUEST_ORDER)
++RESPONSE_FIELDS = REQUEST_FIELDS | {"approved", "authenticatorData", "signature"}
++STATE_FIELDS = {"version", "guestId", "credentialId", "publicKey", "keyId"}
 +
 +
 +class ApprovalError(Exception):
@@ -98,7 +105,23 @@ index 0000000..13c3ee3
 +    return value
 +
 +
-+def make_request(operation: str, guest_id: str, *, user: str = "", requesting_user: str = "", tty: str = "") -> dict[str, object]:
++def decode_b64(value: object, label: str) -> bytes:
++    if not isinstance(value, str):
++        raise ApprovalError(f"invalid {label}")
++    try:
++        return base64.b64decode(value, validate=True)
++    except (ValueError, binascii.Error) as error:
++        raise ApprovalError(f"invalid {label}") from error
++
++
++def valid_credential_id(value: object) -> bytes:
++    credential = decode_b64(value, "credential ID")
++    if not 16 <= len(credential) <= 255 or base64.b64encode(credential).decode("ascii") != value:
++        raise ApprovalError("invalid credential ID")
++    return credential
++
++
++def make_request(operation: str, guest_id: str, *, credential_id: str = "", user: str = "", requesting_user: str = "", tty: str = "") -> dict[str, object]:
 +    if not HEX32.fullmatch(guest_id) or operation not in {"enroll", "disable", "sudo"}:
 +        raise ApprovalError("invalid guest or operation")
 +    if operation == "sudo":
@@ -106,29 +129,25 @@ index 0000000..13c3ee3
 +            raise ApprovalError("invalid sudo context")
 +    elif user or requesting_user or tty:
 +        raise ApprovalError("control request contains sudo context")
++    if operation == "enroll":
++        if credential_id:
++            raise ApprovalError("enrollment names an existing credential")
++    else:
++        valid_credential_id(credential_id)
 +    return {
 +        "type": "authorize", "version": VERSION, "operation": operation,
 +        "guestId": guest_id, "requestId": str(uuid.uuid4()),
 +        "challenge": secrets.token_hex(32), "user": user,
 +        "requestingUser": requesting_user, "service": "sudo", "tty": tty,
++        "credentialId": credential_id,
 +    }
 +
 +
-+def payload(request: dict[str, object], response: dict[str, object]) -> bytes:
-+    fields = [
-+        "try-omarchy-windows-hello-v1", request["guestId"], request["operation"],
-+        request["requestId"], request["challenge"], request["user"],
-+        request["requestingUser"], request["service"], request["tty"],
-+        str(response["issuedAt"]), str(response["expiresAt"]), response["keyId"],
-+    ]
-+    return "\0".join(fields).encode("ascii")
-+
-+
-+def decode_b64(value: str, label: str) -> bytes:
-+    try:
-+        return base64.b64decode(value, validate=True)
-+    except (ValueError, binascii.Error) as error:
-+        raise ApprovalError(f"invalid {label}") from error
++def client_data(request: dict[str, object]) -> bytes:
++    """The exact bytes Windows signs; the launcher builds the same string."""
++    ordered = {key: request[key] for key in REQUEST_ORDER}
++    ordered["type"] = CLIENT_TYPE
++    return json.dumps(ordered, separators=(",", ":"), ensure_ascii=True).encode("ascii")
 +
 +
 +def parse_response(line: bytes, request: dict[str, object]) -> dict[str, object]:
@@ -137,27 +156,96 @@ index 0000000..13c3ee3
 +        raise ApprovalError("invalid authentication response schema")
 +    if result["requestId"] != request["requestId"]:
 +        raise ApprovalError("authentication response belongs to another request")
-+    for field in ("operation", "guestId", "requestId", "challenge", "user", "requestingUser", "service", "tty"):
++    for field in ("operation", "guestId", "requestId", "challenge", "user", "requestingUser", "service", "tty", "credentialId"):
 +        if result[field] != request[field]:
 +            raise ApprovalError("authentication response context changed")
++    material = (result["authenticatorData"], result["signature"])
++    if not all(isinstance(value, str) for value in material):
++        raise ApprovalError("invalid approval fields")
 +    if not result["approved"] or request["operation"] == "disable":
-+        if any(result[field] != 0 for field in ("issuedAt", "expiresAt")) or any(result[field] != "" for field in ("keyId", "publicKey", "signature")):
++        if any(material):
 +            raise ApprovalError("unsigned response contains approval material")
 +        return result
-+    if (type(result["issuedAt"]) is not int or type(result["expiresAt"]) is not int
-+            or not isinstance(result["keyId"], str) or not HEX32.fullmatch(result["keyId"])
-+            or not isinstance(result["publicKey"], str) or not isinstance(result["signature"], str)):
-+        raise ApprovalError("invalid signature fields")
-+    public_key = decode_b64(result["publicKey"], "public key")
-+    signature = decode_b64(result["signature"], "signature")
-+    if not 250 <= len(public_key) <= 512 or not 128 <= len(signature) <= 512:
-+        raise ApprovalError("invalid key or signature length")
-+    if hashlib.sha256(public_key).hexdigest() != result["keyId"]:
-+        raise ApprovalError("public key identifier mismatch")
++    auth_data = decode_b64(result["authenticatorData"], "authenticator data")
++    if not 37 <= len(auth_data) <= 1024:
++        raise ApprovalError("invalid authenticator data length")
++    if request["operation"] == "enroll":
++        if result["signature"]:
++            raise ApprovalError("enrollment response contains a signature")
++    elif not 8 <= len(decode_b64(result["signature"], "signature")) <= 80:
++        raise ApprovalError("invalid signature length")
 +    return result
 +
 +
-+def verify_signature(public_key: bytes, signature: bytes, signed: bytes, padding: str) -> bool:
++def cbor_item(data: bytes, offset: int, depth: int = 0) -> tuple[object, int]:
++    """Decode one CBOR item: enough for a COSE EC2 public key."""
++    if depth > 4 or offset >= len(data):
++        raise ApprovalError("invalid credential key")
++    major, info = data[offset] >> 5, data[offset] & 0x1F
++    offset += 1
++    if info < 24:
++        argument = info
++    elif info in (24, 25, 26, 27):
++        size = 1 << (info - 24)
++        if offset + size > len(data):
++            raise ApprovalError("invalid credential key")
++        argument = int.from_bytes(data[offset:offset + size], "big")
++        offset += size
++    else:
++        raise ApprovalError("invalid credential key")
++    if major == 0:
++        return argument, offset
++    if major == 1:
++        return -1 - argument, offset
++    if major in (2, 3):
++        if argument > len(data) - offset:
++            raise ApprovalError("invalid credential key")
++        value = data[offset:offset + argument]
++        return (value if major == 2 else value.decode("utf-8", "strict")), offset + argument
++    if major == 5 and argument <= 16:
++        result: dict[object, object] = {}
++        for _ in range(argument):
++            key, offset = cbor_item(data, offset, depth + 1)
++            value, offset = cbor_item(data, offset, depth + 1)
++            if key in result:
++                raise ApprovalError("invalid credential key")
++            result[key] = value
++        return result, offset
++    raise ApprovalError("invalid credential key")
++
++
++def check_authenticator_data(auth_data: bytes) -> int:
++    if auth_data[:32] != hashlib.sha256(RP_ID.encode("ascii")).digest():
++        raise ApprovalError("Windows Hello answered for another relying party")
++    flags = auth_data[32]
++    if not flags & FLAG_USER_PRESENT or not flags & FLAG_USER_VERIFIED:
++        raise ApprovalError("Windows Hello did not verify the user")
++    return flags
++
++
++def enrolled_credential(response: dict[str, object]) -> tuple[bytes, bytes]:
++    """Return the new credential ID and its P-256 key as SubjectPublicKeyInfo DER."""
++    auth_data = decode_b64(response["authenticatorData"], "authenticator data")
++    if not check_authenticator_data(auth_data) & FLAG_ATTESTED:
++        raise ApprovalError("enrollment returned no credential")
++    offset = 37 + 16
++    if offset + 2 > len(auth_data):
++        raise ApprovalError("enrollment returned no credential")
++    length = int.from_bytes(auth_data[offset:offset + 2], "big")
++    offset += 2
++    credential = auth_data[offset:offset + length]
++    if len(credential) != length or not 16 <= length <= 255:
++        raise ApprovalError("invalid enrolled credential ID")
++    key, _ = cbor_item(auth_data, offset + length)
++    if not isinstance(key, dict) or key.get(1) != 2 or key.get(3) != -7 or key.get(-1) != 1:
++        raise ApprovalError("enrolled credential is not an ES256 P-256 key")
++    x, y = key.get(-2), key.get(-3)
++    if not isinstance(x, bytes) or not isinstance(y, bytes) or len(x) != 32 or len(y) != 32:
++        raise ApprovalError("enrolled credential key is malformed")
++    return credential, P256_SPKI_PREFIX + b"\x04" + x + y
++
++
++def verify_signature(public_key: bytes, signature: bytes, signed: bytes) -> bool:
 +    runtime_dir = "/run" if os.access("/run", os.W_OK) else None
 +    with tempfile.TemporaryDirectory(prefix="try-omarchy-hello-", dir=runtime_dir) as directory:
 +        key = Path(directory) / "key.der"
@@ -167,29 +255,18 @@ index 0000000..13c3ee3
 +        key.chmod(0o600)
 +        sig.chmod(0o600)
 +        arguments = ["/usr/bin/openssl", "dgst", "-sha256", "-keyform", "DER", "-verify", str(key), "-signature", str(sig)]
-+        if padding == "pss":
-+            arguments.extend(["-sigopt", "rsa_padding_mode:pss", "-sigopt", "rsa_pss_saltlen:auto"])
 +        result = subprocess.run(arguments, input=signed, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False, env={"PATH": "/usr/bin"})
 +        return result.returncode == 0
 +
 +
-+def verify_approval(request: dict[str, object], response: dict[str, object], pinned: tuple[bytes, str] | None = None, now: int | None = None) -> tuple[bytes, str]:
-+    if not response["approved"]:
++def verify_approval(request: dict[str, object], response: dict[str, object], public_key: bytes) -> None:
++    if not response["approved"] or request["operation"] != "sudo":
 +        raise ApprovalError("Windows Hello was not approved")
-+    current = int(time.time()) if now is None else now
-+    issued = response["issuedAt"]
-+    expires = response["expiresAt"]
-+    if expires - issued != LIFETIME or issued > current + SKEW or expires < current:
-+        raise ApprovalError("approval expired or guest clock differs from Windows")
-+    key = decode_b64(response["publicKey"], "public key")
-+    signature = decode_b64(response["signature"], "signature")
-+    if pinned is not None and key != pinned[0]:
-+        raise ApprovalError("Windows Hello key differs from enrollment")
-+    paddings = (pinned[1],) if pinned is not None else ("pkcs1", "pss")
-+    for padding in paddings:
-+        if verify_signature(key, signature, payload(request, response), padding):
-+            return key, padding
-+    raise ApprovalError("Windows Hello signature is invalid")
++    auth_data = decode_b64(response["authenticatorData"], "authenticator data")
++    check_authenticator_data(auth_data)
++    signed = auth_data + hashlib.sha256(client_data(request)).digest()
++    if not verify_signature(public_key, decode_b64(response["signature"], "signature"), signed):
++        raise ApprovalError("Windows Hello signature is invalid")
 +
 +
 +def read_line(descriptor: int, deadline: float) -> bytes:
@@ -251,8 +328,8 @@ index 0000000..13c3ee3
 +        os.close(descriptor)
 +
 +
-+def save_state(guest_id: str, key: bytes, padding: str) -> None:
-+    if padding not in PADDINGS or not HEX32.fullmatch(guest_id):
++def save_state(guest_id: str, credential: bytes, key: bytes) -> None:
++    if not HEX32.fullmatch(guest_id) or not 16 <= len(credential) <= 255 or not key.startswith(P256_SPKI_PREFIX):
 +        raise ApprovalError("invalid enrollment")
 +    parent = STATE.parent
 +    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -260,7 +337,12 @@ index 0000000..13c3ee3
 +    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
 +        raise ApprovalError("authentication state directory is unsafe")
 +    parent.chmod(0o700)
-+    state = {"version": VERSION, "guestId": guest_id, "keyId": hashlib.sha256(key).hexdigest(), "publicKey": base64.b64encode(key).decode("ascii"), "padding": padding}
++    state = {
++        "version": VERSION, "guestId": guest_id,
++        "credentialId": base64.b64encode(credential).decode("ascii"),
++        "publicKey": base64.b64encode(key).decode("ascii"),
++        "keyId": hashlib.sha256(key).hexdigest(),
++    }
 +    data = (json.dumps(state, sort_keys=True) + "\n").encode("ascii")
 +    directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 +    temporary = f".{STATE.name}.{secrets.token_hex(8)}"
@@ -286,7 +368,7 @@ index 0000000..13c3ee3
 +        os.close(directory)
 +
 +
-+def load_state() -> tuple[str, bytes, str]:
++def load_state() -> tuple[str, str, bytes]:
 +    parent = STATE.parent
 +    info = parent.stat(follow_symlinks=False)
 +    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o700:
@@ -302,14 +384,13 @@ index 0000000..13c3ee3
 +    state = decode_json(data)
 +    if (set(state) != STATE_FIELDS or state.get("version") != VERSION
 +            or not isinstance(state.get("guestId"), str) or not HEX32.fullmatch(state["guestId"])
-+            or not isinstance(state.get("keyId"), str) or not HEX32.fullmatch(state["keyId"])
-+            or not isinstance(state.get("publicKey"), str)
-+            or not isinstance(state.get("padding"), str) or state["padding"] not in PADDINGS):
++            or not isinstance(state.get("keyId"), str) or not HEX32.fullmatch(state["keyId"])):
 +        raise ApprovalError("authentication enrollment state is invalid")
++    valid_credential_id(state["credentialId"])
 +    key = decode_b64(state["publicKey"], "enrolled key")
-+    if hashlib.sha256(key).hexdigest() != state["keyId"]:
-+        raise ApprovalError("enrollment key identifier mismatch")
-+    return state["guestId"], key, state["padding"]
++    if not key.startswith(P256_SPKI_PREFIX) or len(key) != len(P256_SPKI_PREFIX) + 65 or hashlib.sha256(key).hexdigest() != state["keyId"]:
++        raise ApprovalError("enrolled key is invalid")
++    return state["guestId"], state["credentialId"], key
 +
 +
 +def enroll() -> None:
@@ -317,25 +398,28 @@ index 0000000..13c3ee3
 +        guest_id, _, _ = load_state()
 +    except FileNotFoundError:
 +        guest_id = secrets.token_hex(32)
++    print("Approve the Windows Hello prompt on Windows to pair this guest.")
 +    request = make_request("enroll", guest_id)
 +    response = exchange(request)
-+    key, padding = verify_approval(request, response)
-+    save_state(guest_id, key, padding)
++    if not response["approved"]:
++        raise ApprovalError("Windows Hello pairing was not approved")
++    credential, key = enrolled_credential(response)
++    save_state(guest_id, credential, key)
 +    print("Windows Hello paired for this guest. Your guest password remains available.")
 +
 +
 +def disable() -> None:
 +    try:
-+        guest_id, _, _ = load_state()
++        guest_id, credential_id, _ = load_state()
 +    except FileNotFoundError:
 +        print("Windows Hello is already disabled for sudo.")
 +        return
 +    try:
-+        response = exchange(make_request("disable", guest_id), timeout=5)
++        response = exchange(make_request("disable", guest_id, credential_id=credential_id), timeout=5)
 +        if not response["approved"]:
-+            raise ApprovalError("host key deletion was refused")
++            raise ApprovalError("Windows kept the passkey; remove it in Settings > Accounts > Passkeys")
 +    except (ApprovalError, OSError, TimeoutError, ConnectionError) as error:
-+        print(f"Host key cleanup unavailable: {error}", file=sys.stderr)
++        print(f"Host passkey cleanup unavailable: {error}", file=sys.stderr)
 +    STATE.unlink()
 +    print("Windows Hello sudo disabled in this guest.")
 +
@@ -347,10 +431,10 @@ index 0000000..13c3ee3
 +    requester = os.environ.get("PAM_RUSER", "") or user
 +    tty = os.environ.get("PAM_TTY", "")
 +    try:
-+        guest_id, key, padding = load_state()
-+        request = make_request("sudo", guest_id, user=user, requesting_user=requester, tty=tty)
-+        response = exchange(request)
-+        verify_approval(request, response, pinned=(key, padding))
++        guest_id, credential_id, key = load_state()
++        request = make_request("sudo", guest_id, credential_id=credential_id, user=user, requesting_user=requester, tty=tty)
++        print("Approve with Windows Hello, or cancel to use your password.", flush=True)
++        verify_approval(request, exchange(request), key)
 +        return True
 +    except (ApprovalError, OSError, TimeoutError, ConnectionError, subprocess.SubprocessError):
 +        print("Windows Hello unavailable. Use your guest password.")
@@ -471,10 +555,10 @@ index a0f471c..4397ec0 100755
  # Fail the build if DKMS or networking modules were not packaged for this kernel.
 diff --git a/guest/tests/test_windows_hello_broker.py b/guest/tests/test_windows_hello_broker.py
 new file mode 100644
-index 0000000..153d009
+index 0000000..d52967f
 --- /dev/null
 +++ b/guest/tests/test_windows_hello_broker.py
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,169 @@
 +"""Security checks for the guest side of Windows Hello sudo."""
 +
 +from __future__ import annotations
@@ -491,53 +575,94 @@ index 0000000..153d009
 +
 +BROKER_PATH = Path(__file__).resolve().parents[1] / "factory-overlay/usr/local/lib/try-omarchy/windows-hello-broker"
 +broker = importlib.machinery.SourceFileLoader("windows_hello_broker", str(BROKER_PATH)).load_module()
++GUEST = "a" * 64
++CREDENTIAL = bytes(range(32))
++
++
++def cbor(value: object) -> bytes:
++    def head(major: int, argument: int) -> bytes:
++        if argument < 24:
++            return bytes([major << 5 | argument])
++        return bytes([major << 5 | 24, argument]) if argument < 256 else bytes([major << 5 | 25]) + argument.to_bytes(2, "big")
++
++    if isinstance(value, int):
++        return head(0, value) if value >= 0 else head(1, -1 - value)
++    if isinstance(value, bytes):
++        return head(2, len(value)) + value
++    if isinstance(value, dict):
++        return head(5, len(value)) + b"".join(cbor(k) + cbor(v) for k, v in value.items())
++    raise TypeError(value)
++
++
++def auth_data(flags: int, count: int = 0, attested: bytes = b"", rp_id: str = broker.RP_ID) -> bytes:
++    return hashlib.sha256(rp_id.encode()).digest() + bytes([flags]) + count.to_bytes(4, "big") + attested
++
++
++def b64(data: bytes) -> str:
++    return base64.b64encode(data).decode("ascii")
 +
 +
 +class HelloBrokerTests(unittest.TestCase):
 +    @classmethod
 +    def setUpClass(cls) -> None:
 +        cls.directory = tempfile.TemporaryDirectory()
-+        private = Path(cls.directory.name) / "key.pem"
-+        subprocess.run(
-+            ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(private)],
-+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
-+        )
-+        cls.private = private
-+        cls.public = subprocess.run(
-+            ["openssl", "pkey", "-in", str(private), "-pubout", "-outform", "DER"],
-+            capture_output=True, check=True,
-+        ).stdout
++        cls.private = Path(cls.directory.name) / "key.pem"
++        subprocess.run(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(cls.private)], check=True)
++        der = subprocess.run(["openssl", "pkey", "-in", str(cls.private), "-pubout", "-outform", "DER"], capture_output=True, check=True).stdout
++        cls.public = der
++        cls.x, cls.y = der[-64:-32], der[-32:]
 +
 +    @classmethod
 +    def tearDownClass(cls) -> None:
 +        cls.directory.cleanup()
 +
-+    def request_and_response(self) -> tuple[dict[str, object], dict[str, object]]:
-+        request = broker.make_request(
-+            "sudo", "a" * 64, user="root", requesting_user="omarchy", tty="/dev/pts/3",
-+        )
-+        response = {
-+            **request, "type": "authorization-result", "approved": True,
-+            "issuedAt": 1000, "expiresAt": 1015,
-+            "keyId": hashlib.sha256(self.public).hexdigest(),
-+            "publicKey": base64.b64encode(self.public).decode("ascii"),
-+            "signature": "",
-+        }
-+        signature = subprocess.run(
-+            ["openssl", "dgst", "-sha256", "-sign", str(self.private)],
-+            input=broker.payload(request, response), capture_output=True, check=True,
-+        ).stdout
-+        response["signature"] = base64.b64encode(signature).decode("ascii")
++    def sign(self, data: bytes) -> bytes:
++        return subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(self.private)], input=data, capture_output=True, check=True).stdout
++
++    def enrollment(self) -> tuple[dict[str, object], dict[str, object]]:
++        request = broker.make_request("enroll", GUEST)
++        key = cbor({1: 2, 3: -7, -1: 1, -2: self.x, -3: self.y})
++        attested = bytes(16) + len(CREDENTIAL).to_bytes(2, "big") + CREDENTIAL + key
++        response = {**request, "type": "authorization-result", "approved": True,
++                    "authenticatorData": b64(auth_data(0x45, 0, attested)), "signature": ""}
 +        return request, response
 +
-+    def test_signed_sudo_request_and_context_binding(self) -> None:
-+        request, response = self.request_and_response()
-+        encoded = json.dumps(response).encode("ascii")
-+        parsed = broker.parse_response(encoded, request)
-+        key, padding = broker.verify_approval(request, parsed, now=1005)
++    def sudo(self, flags: int = 0x05) -> tuple[dict[str, object], dict[str, object]]:
++        request = broker.make_request("sudo", GUEST, credential_id=b64(CREDENTIAL), user="root", requesting_user="omarchy", tty="/dev/pts/3")
++        data = auth_data(flags, 7)
++        signature = self.sign(data + hashlib.sha256(broker.client_data(request)).digest())
++        response = {**request, "type": "authorization-result", "approved": True,
++                    "authenticatorData": b64(data), "signature": b64(signature)}
++        return request, response
++
++    def round_trip(self, request: dict[str, object], response: dict[str, object]) -> dict[str, object]:
++        return broker.parse_response(json.dumps(response).encode("ascii"), request)
++
++    def test_client_data_matches_the_launcher(self) -> None:
++        request = broker.make_request("sudo", GUEST, credential_id=b64(CREDENTIAL), user="root", requesting_user="omarchy", tty="/dev/pts/3")
++        expected = (
++            '{"type":"try-omarchy.windows-hello.sudo","version":2,"operation":"sudo","guestId":"' + GUEST
++            + '","requestId":"' + request["requestId"] + '","challenge":"' + request["challenge"]
++            + '","user":"root","requestingUser":"omarchy","service":"sudo","tty":"/dev/pts/3","credentialId":"'
++            + b64(CREDENTIAL) + '"}'
++        )
++        self.assertEqual(broker.client_data(request), expected.encode("ascii"))
++
++    def test_enrollment_pins_the_credential_key(self) -> None:
++        request, response = self.enrollment()
++        credential, key = broker.enrolled_credential(self.round_trip(request, response))
++        self.assertEqual(credential, CREDENTIAL)
 +        self.assertEqual(key, self.public)
-+        self.assertEqual(padding, "pkcs1")
-+        self.assertEqual(broker.verify_approval(request, parsed, pinned=(key, padding), now=1005), (key, padding))
++        for flags in (0x41, 0x05):
++            changed = dict(response, authenticatorData=b64(auth_data(flags, 0, base64.b64decode(response["authenticatorData"])[37:])))
++            with self.subTest(flags=flags), self.assertRaises(broker.ApprovalError):
++                broker.enrolled_credential(self.round_trip(request, changed))
++        with self.assertRaises(broker.ApprovalError):
++            self.round_trip(request, dict(response, signature=b64(b"x" * 70)))
++
++    def test_signed_sudo_request_and_context_binding(self) -> None:
++        request, response = self.sudo()
++        broker.verify_approval(request, self.round_trip(request, response), self.public)
 +
 +        for field, value in (
 +            ("requestId", "c1d0243d-705e-4b64-a5c3-458d4e2b1f9d"),
@@ -545,30 +670,47 @@ index 0000000..153d009
 +            ("user", "omarchy"),
 +            ("requestingUser", "root"),
 +            ("tty", "/dev/pts/4"),
++            ("credentialId", b64(bytes(32))),
 +        ):
 +            changed = dict(response, **{field: value})
 +            with self.subTest(field=field), self.assertRaises(broker.ApprovalError):
-+                broker.parse_response(json.dumps(changed).encode("ascii"), request)
++                self.round_trip(request, changed)
 +
++        other_request = dict(request, challenge="c" * 64)
 +        with self.assertRaises(broker.ApprovalError):
-+            broker.verify_approval(request, parsed, pinned=(self.public, "pss"), now=1005)
++            broker.verify_approval(other_request, self.round_trip(other_request, dict(response, challenge="c" * 64)), self.public)
++        other_key = subprocess.run(
++            "openssl ecparam -name prime256v1 -genkey -noout | openssl pkey -pubout -outform DER",
++            shell=True, capture_output=True, check=True,
++        ).stdout
 +        with self.assertRaises(broker.ApprovalError):
-+            broker.verify_approval(request, parsed, now=1016)
-+        with self.assertRaises(broker.ApprovalError):
-+            broker.verify_approval(request, parsed, pinned=(b"other key", "pkcs1"), now=1005)
++            broker.verify_approval(request, self.round_trip(request, response), other_key)
++
++    def test_unverified_or_foreign_assertions_fail(self) -> None:
++        request, response = self.sudo(flags=0x01)
++        with self.assertRaisesRegex(broker.ApprovalError, "verify the user"):
++            broker.verify_approval(request, self.round_trip(request, response), self.public)
++        request, response = self.sudo()
++        data = auth_data(0x05, 7, rp_id="example.com")
++        signature = self.sign(data + hashlib.sha256(broker.client_data(request)).digest())
++        foreign = dict(response, authenticatorData=b64(data), signature=b64(signature))
++        with self.assertRaisesRegex(broker.ApprovalError, "relying party"):
++            broker.verify_approval(request, self.round_trip(request, foreign), self.public)
 +
 +    def test_denial_and_duplicate_fields_cannot_authorize(self) -> None:
-+        request, response = self.request_and_response()
-+        denial = dict(response, approved=False, issuedAt=0, expiresAt=0, keyId="", publicKey="", signature="")
-+        parsed = broker.parse_response(json.dumps(denial).encode("ascii"), request)
++        request, response = self.sudo()
++        denial = dict(response, approved=False, authenticatorData="", signature="")
++        parsed = self.round_trip(request, denial)
 +        with self.assertRaises(broker.ApprovalError):
-+            broker.verify_approval(request, parsed, now=1005)
++            broker.verify_approval(request, parsed, self.public)
 +        denial["signature"] = response["signature"]
 +        with self.assertRaises(broker.ApprovalError):
-+            broker.parse_response(json.dumps(denial).encode("ascii"), request)
++            self.round_trip(request, denial)
 +        duplicate = json.dumps(response).replace('"approved": true', '"approved": true, "approved": true')
 +        with self.assertRaises(broker.ApprovalError):
 +            broker.parse_response(duplicate.encode("ascii"), request)
++        with self.assertRaises(broker.ApprovalError):
++            self.round_trip(request, dict(response, version=1))
 +
 +    def test_invalid_pam_scope_never_makes_request(self) -> None:
 +        for context in (
@@ -577,7 +719,11 @@ index 0000000..153d009
 +            {"user": "root", "requesting_user": "omarchy", "tty": ""},
 +        ):
 +            with self.subTest(context=context), self.assertRaises(broker.ApprovalError):
-+                broker.make_request("sudo", "a" * 64, **context)
++                broker.make_request("sudo", GUEST, credential_id=b64(CREDENTIAL), **context)
++        with self.assertRaises(broker.ApprovalError):
++            broker.make_request("sudo", GUEST, credential_id="", user="root", requesting_user="omarchy", tty="/dev/pts/3")
++        with self.assertRaises(broker.ApprovalError):
++            broker.make_request("enroll", GUEST, credential_id=b64(CREDENTIAL))
 +
 +
 +if __name__ == "__main__":

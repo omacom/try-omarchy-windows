@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ func validHelloRequest() helloRequest {
 		RequestID: "c1d0243d-705e-4b64-a5c3-458d4e2b1f9d",
 		Challenge: strings.Repeat("b", 64), User: "root",
 		RequestingUser: "omarchy", Service: "sudo", TTY: "/dev/pts/3",
+		CredentialID: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)),
 	}
 }
 
@@ -23,13 +25,26 @@ func TestHelloRequestRejectsSpoofedOrAmbiguousContext(t *testing.T) {
 	if _, err := parseHelloRequest(line); err != nil {
 		t.Fatalf("valid request: %v", err)
 	}
+	enroll := valid
+	enroll.Operation, enroll.User, enroll.RequestingUser, enroll.TTY, enroll.CredentialID = "enroll", "", "", "", ""
+	if _, err := parseHelloRequest(mustHelloRequestLine(enroll)); err != nil {
+		t.Fatalf("valid enrollment: %v", err)
+	}
 	for name, mutate := range map[string]func(*helloRequest){
-		"foreign service": func(r *helloRequest) { r.Service = "login" },
-		"nonlocal tty":    func(r *helloRequest) { r.TTY = "/dev/ttyUSB0" },
-		"spoofed account": func(r *helloRequest) { r.RequestingUser = "omarchy;sudo" },
-		"uppercase id":    func(r *helloRequest) { r.GuestID = strings.ToUpper(r.GuestID) },
-		"missing nonce":   func(r *helloRequest) { r.Challenge = "" },
-		"bad operation":   func(r *helloRequest) { r.Operation = "login" },
+		"foreign service":     func(r *helloRequest) { r.Service = "login" },
+		"nonlocal tty":        func(r *helloRequest) { r.TTY = "/dev/ttyUSB0" },
+		"spoofed account":     func(r *helloRequest) { r.RequestingUser = "omarchy;sudo" },
+		"uppercase id":        func(r *helloRequest) { r.GuestID = strings.ToUpper(r.GuestID) },
+		"missing nonce":       func(r *helloRequest) { r.Challenge = "" },
+		"bad operation":       func(r *helloRequest) { r.Operation = "login" },
+		"old version":         func(r *helloRequest) { r.Version = 1 },
+		"missing credential":  func(r *helloRequest) { r.CredentialID = "" },
+		"short credential":    func(r *helloRequest) { r.CredentialID = "AAAA" },
+		"unpadded credential": func(r *helloRequest) { r.CredentialID = strings.TrimRight(r.CredentialID, "=") },
+		"enroll names a key":  func(r *helloRequest) { r.Operation, r.User, r.RequestingUser, r.TTY = "enroll", "", "", "" },
+		"disable without a key": func(r *helloRequest) {
+			r.Operation, r.User, r.RequestingUser, r.TTY, r.CredentialID = "disable", "", "", "", ""
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			candidate := valid
@@ -53,12 +68,15 @@ func TestHelloRequestRejectsSpoofedOrAmbiguousContext(t *testing.T) {
 	}
 }
 
-func TestHelloApprovalBindsEveryRequestField(t *testing.T) {
+func TestHelloClientDataBindsEveryRequestField(t *testing.T) {
 	request := validHelloRequest()
-	keyID := strings.Repeat("c", 64)
-	original, err := helloApprovalPayload(request, 12345, keyID)
-	if err != nil {
-		t.Fatal(err)
+	original := helloClientData(request)
+	want := `{"type":"try-omarchy.windows-hello.sudo","version":2,"operation":"sudo","guestId":"` +
+		request.GuestID + `","requestId":"` + request.RequestID + `","challenge":"` + request.Challenge +
+		`","user":"root","requestingUser":"omarchy","service":"sudo","tty":"/dev/pts/3","credentialId":"` +
+		request.CredentialID + `"}`
+	if string(original) != want {
+		t.Fatalf("client data is not the canonical form the guest rebuilds:\n%s\n%s", original, want)
 	}
 	changes := []func(*helloRequest){
 		func(r *helloRequest) { r.GuestID = strings.Repeat("e", 64) },
@@ -67,42 +85,27 @@ func TestHelloApprovalBindsEveryRequestField(t *testing.T) {
 		func(r *helloRequest) { r.User = "omarchy" },
 		func(r *helloRequest) { r.RequestingUser = "root" },
 		func(r *helloRequest) { r.TTY = "/dev/pts/4" },
+		func(r *helloRequest) { r.CredentialID = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32)) },
 		func(r *helloRequest) { r.Operation = "enroll"; r.User = ""; r.RequestingUser = ""; r.TTY = "" },
 	}
 	for index, change := range changes {
 		candidate := request
 		change(&candidate)
-		payload, err := helloApprovalPayload(candidate, 12345, keyID)
-		if err != nil {
-			t.Fatalf("change %d: %v", index, err)
-		}
-		if bytes.Equal(original, payload) {
+		if bytes.Equal(original, helloClientData(candidate)) {
 			t.Fatalf("change %d did not change signed bytes", index)
 		}
 	}
-	for _, variant := range []struct {
-		issuedAt int64
-		keyID    string
-	}{
-		{12346, keyID}, {12345, strings.Repeat("d", 64)},
-	} {
-		payload, err := helloApprovalPayload(request, variant.issuedAt, variant.keyID)
-		if err != nil || bytes.Equal(original, payload) {
-			t.Fatalf("time or key not bound: %v", err)
-		}
-	}
-	disable := request
-	disable.Operation, disable.User, disable.RequestingUser, disable.TTY = "disable", "", "", ""
-	if _, err := helloApprovalPayload(disable, 12345, keyID); err == nil {
-		t.Fatal("disable request received a signable payload")
-	}
+}
+
+func TestHelloDenialCarriesNoApprovalMaterial(t *testing.T) {
+	request := validHelloRequest()
 	response := helloDenied(request)
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Approved || response.Signature != "" || response.PublicKey != "" ||
-		!bytes.Contains(encoded, []byte(`"issuedAt":0`)) {
-		t.Fatal("denial contained authorization material")
+	if response.Approved || response.Signature != "" || response.AuthenticatorData != "" ||
+		response.CredentialID != request.CredentialID || !bytes.Contains(encoded, []byte(`"approved":false`)) {
+		t.Fatalf("denial contained authorization material: %s", encoded)
 	}
 }
