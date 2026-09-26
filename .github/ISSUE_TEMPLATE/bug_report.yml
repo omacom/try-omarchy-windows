@@ -31,7 +31,7 @@ body:
     attributes:
       label: Try Omarchy version
       description: Shown in About and updates. Include the version on the downloaded file if setup did not finish.
-      placeholder: v0.0.20-preview
+      placeholder: v0.3.0
     validations:
       required: false
   - type: textarea

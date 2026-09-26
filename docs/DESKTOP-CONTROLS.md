@@ -1,19 +1,20 @@
 # Desktop controls
 
-These controls are included in the published `v0.1.0` release.
+This guide describes the published `v0.3.0` release.
 
 Settings has four pages:
 
-- **General:** fullscreen, automatic startup from Windows shortcuts, memory in GB, disk capacity, installation location and shared folder.
-- **Devices:** camera selection and access, microphone access, playback/recording choices with the r16 runtime, plus Windows privacy and sound settings links.
-- **Advanced:** guest displays, rendering, CPUs, port forwards, SSH and automatic launcher update checks.
+- **General:** fullscreen and monitor selection, automatic startup, CPU/RAM profiles, disk capacity, installation location and shared folder.
+- **Devices:** camera selection and access, microphone access, live playback/recording choices with the bundled r20c runtime, plus Windows privacy and sound settings links.
+- **Advanced:** guest displays, rendering, port forwards, SSH and automatic launcher update checks.
 - **Recovery:** backup, restore, snapshots, reset, move, cleanup, portable copy and uninstall.
 
-Save, then restart Omarchy to apply changes. Automatic resources remain available
-by entering 0. A smaller disk setting never shrinks an existing disk.
+CPU, memory, graphics, display, and microphone-access changes apply on the next
+VM start. Audio device choices switch live with the bundled runtime. Choose the
+Balanced resource profile for automatic sizing. A smaller disk setting never
+shrinks an existing disk.
 
-`v0.1.0` opens these pages before an ordinary
-desktop launch. **Launch Omarchy** saves preferences and starts the guest;
+An ordinary launch opens these pages before the desktop. **Launch Omarchy** saves preferences and starts the guest;
 **Close** leaves the guest stopped. The separate Settings shortcut still saves
 without launching. Runtime command-line options keep direct startup; `-start`
 explicitly bypasses the menu and `-launcher` explicitly opens it. Command-line
@@ -38,14 +39,14 @@ camera. Cameras open only on a guest capture request; opening Settings enumerate
 devices without activating them. The tray's Camera status reports idle, active,
 disabled or the last capture error. Windows camera permission is still required.
 
-Turning microphone access off prevents QEMU from opening host recording voices
-while keeping playback enabled. Both device switches retain the existing enabled
-behavior unless changed. The bundled r18 runtime adds separate **Sound output**
-and **Microphone** choices, applied on the next VM start. Older runtimes keep
-these choices disabled and use Windows defaults. **Windows sound devices** opens
-the host's sound settings. Stable endpoint IDs retain uniquely named selections
-across ordinary renames and reboots. See [audio device behavior and validation](AUDIO-DEVICES.md);
-live guest-driven routing remains follow-up work.
+Turning microphone access off takes effect at the next VM start and prevents
+recording while keeping playback enabled. With the bundled r20c runtime,
+**Sound output** and **Microphone** choices switch live from host Settings or
+Omarchy's guest audio picker and persist across guest reboots. Older external
+runtimes may apply choices only at startup or use Windows defaults.
+**Windows sound devices** opens the host's sound settings. See
+[audio device behavior and validation](AUDIO-DEVICES.md) for fallback behavior
+and the remaining physical-device checks.
 
 About and updates is available from Settings and the tray. Manual checks verify
 the signed release metadata and offer the release notes/download page when a
@@ -73,7 +74,6 @@ Transfers always copy, including a Windows Cut selection. The source is retained
 A small progress window appears for longer transfers; closing it dismisses the
 window, while Cancel stops the copy. Transfer errors use non-blocking Windows
 notifications, so an early failed drop cannot hold up later transfers. Shared folders are useful for repeated large
-exchanges and links. Direct drops into arbitrary guest applications remain outside
-v1 scope.
+exchanges and links. Direct drops into arbitrary guest applications are not yet implemented.
 
 See the [candidate verification record](evidence/DESKTOP-POLISH-2026-09-19.md).

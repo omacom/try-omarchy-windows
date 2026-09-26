@@ -4,13 +4,11 @@
 
 <h1 align="center">Try Omarchy for Windows</h1>
 
-Run the full [Omarchy](https://omarchy.org) desktop in a window on Windows 10 or 11. No VMware, no VirtualBox, no dual boot: QEMU on the Windows Hypervisor Platform (WHPX), a prebuilt Arch image with Omarchy baked in, and the desktop rendered on your actual GPU (virgl + Venus Vulkan via [WINQ-EMU](https://github.com/cmspam/winq-emu)) with CPU rendering as the automatic fallback. No repartitioning or replacement of Windows. Setup may enable Windows Hypervisor Platform and request a restart; the Linux installation lives in a folder chosen on first run, with `%LOCALAPPDATA%\TryOmarchy` as the default.
+Run the full [Omarchy](https://omarchy.org) desktop in a window on Windows 10 or 11. Download one app to set up Linux without repartitioning, dual boot, or replacing Windows.
 
-Download, boot, Hyprland.
+GPU acceleration uses [WINQ-EMU](https://github.com/cmspam/winq-emu), with CPU rendering as a fallback. Setup may enable Windows Hypervisor Platform and ask for a restart. Your Linux installation lives in a folder you choose.
 
 ![The Omarchy desktop running in the Try Omarchy window on Windows](docs/images/hero.jpg)
-
-![Live capture on the Ryzen 5 test laptop: fastfetch, the Omarchy menu, and a screensaver inside the Try Omarchy window](docs/images/demo.gif)
 
 **Status: working end to end on real hardware.** One app switches on Windows' virtualization, downloads the GPU runtime and the image, boots, and supervises; the desktop renders on the GPU and falls back to CPU rendering automatically. Landing page: [tryomarchy.com](https://tryomarchy.com). See the [changelog](CHANGELOG.md) for release history.
 
@@ -27,11 +25,27 @@ See the [changelog](CHANGELOG.md),
 [compatibility guide](docs/COMPATIBILITY.md) for tested hardware and known
 graphics limits.
 
+<a id="try-it"></a>
+
+## Quick start
+
+1. Download [TryOmarchy.exe](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) and open it.
+2. Choose where to store Omarchy. Keep the default Local AppData location or choose another local drive or folder. If prompted, allow Windows Hypervisor Platform, restart Windows, and reopen Try Omarchy.
+3. Let setup download the graphics runtime and Linux image, then choose an instant trial account or create your own account.
+
+The first launch downloads several GB and takes longer. Downloads are SHA256-verified. You need Windows 10 or 11 on an x86_64 PC with hardware virtualization enabled; Windows on ARM is not supported. See the [compatibility guide](docs/COMPATIBILITY.md) for hardware requirements and graphics limits.
+
+Later launches open Settings before boot. Choose **Launch Omarchy** to start, or enable direct-launch shortcuts to skip Settings. While Omarchy is running, search for **Try Omarchy Settings** in the app launcher or use the Windows tray icon to change settings.
+
+## Documentation
+
+[User guides](docs/README.md) cover settings, sharing, updates, backups, and troubleshooting. For development, see [Contributing](CONTRIBUTING.md).
+
 ## What works in v0.4.0
 
 - **The full Omarchy 4.0.3 desktop on new or reset guests**: Hyprland, the bar, notifications, all 22 themes, the screensavers. After setup, open pre-boot Settings or choose a direct-launch shortcut. Startup time depends on the host and the drive holding the guest. No Linux login screens or VM console text; the window is branded.
 - **GPU acceleration**: Hyprland renders on the host GPU via virgl, `vulkaninfo` shows Venus, smooth video and audio (verified on a Radeon iGPU laptop); `-cpu host` (AVX2 and all) via WINQ-EMU's patched WHPX.
-- **One app, zero prerequisites**: `TryOmarchy.exe` (~10 MB, no console window). First run lets you keep the default Local AppData location or choose another local drive or folder, switches on Windows' Hypervisor Platform (one permission prompt, one restart), then downloads the SHA256-verified GPU runtime and image and boots into Omarchy's setup form. Once setup is complete it keeps a stable launcher in the chosen data folder and can add optional Start-menu and Desktop shortcuts. After that it supervises everything: GPU/CPU auto-detect, the known WHPX launch wedge, in-guest reboot relaunch, poweroff cleanup.
+- **Guided setup**: `TryOmarchy.exe` (~10 MB, no console window). First run lets you keep the default Local AppData location or choose another local drive or folder, switches on Windows' Hypervisor Platform (one permission prompt, one restart), then downloads the SHA256-verified GPU runtime and image and boots into Omarchy's setup form. Once setup is complete it keeps a stable launcher in the chosen data folder and can add optional Start-menu and Desktop shortcuts. After that it supervises everything: GPU/CPU auto-detect, the known WHPX launch wedge, in-guest reboot relaunch, poweroff cleanup.
 - **Feels like an app, not a VM**: the window is branded "Try Omarchy", the Windows key acts as Super only while the window is focused (Start menu and Win+Shift+S keep working everywhere else), Ctrl+Alt+F goes fullscreen, and Ctrl+Alt+End sends Ctrl+Alt+Delete. Pinch to zoom on a Windows 11 Precision Touchpad reaches Linux apps in GPU mode with one display. Settings can launch Omarchy at Windows sign-in and open it fullscreen.
 - **Host integration while Omarchy runs**: open native Settings from the Omarchy launcher, see a Windows laptop's battery and charging state in Linux, and return unused guest RAM to Windows without reducing the guest's configured capacity. Settings can choose which connected Windows monitor receives fullscreen Omarchy. Host Settings and Omarchy's audio picker can switch playback and recording devices live; audio choices persist across guest reboots, while microphone access changes apply at the next VM start.
 - **Approved Windows apps**: select specific local executables in Settings and launch them from Omarchy's app menu. They open as ordinary Windows windows, with a tray action to return to Omarchy. Removing approval blocks later launches.
@@ -44,6 +58,8 @@ See [app compatibility](docs/COMPATIBILITY.md) for package support and current V
 | First run | Screensaver |
 |---|---|
 | ![Omarchy first-run setup inside the Try Omarchy window](docs/images/first-run.jpg) | ![Omarchy pixel-logo screensaver](docs/images/screensaver.jpg) |
+
+![Live capture on the Ryzen 5 test laptop: fastfetch, the Omarchy menu, and a screensaver inside the Try Omarchy window](docs/images/demo.gif)
 
 ## Essential keys
 
@@ -69,17 +85,7 @@ WHPX works on Windows Home and Pro (it's the same platform WSL2 rides on), so no
 
 Proven boot recipe: `-accel whpx -machine q35 -cpu qemu64`, direct kernel boot (vmlinuz + initramfs + raw ext4 rootfs on virtio-blk), all-virtio devices, SDL audio with recording support. See [docs/FINDINGS.md](docs/FINDINGS.md) for the details and the traps.
 
-<a id="try-it"></a>
-
-## Quick start
-
-1. Download [TryOmarchy.exe](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) and open it.
-2. Choose where to store Omarchy. Keep the default Local AppData location or choose another local drive or folder. If prompted, allow Windows Hypervisor Platform, restart Windows, and reopen Try Omarchy.
-3. Let setup download the graphics runtime and Linux image, then choose an instant trial account or create your own account.
-
-The first launch downloads several GB and takes longer. Downloads are SHA256-verified. You need Windows 10 or 11 on an x86_64 PC with hardware virtualization enabled; Windows on ARM is not supported. See the [compatibility guide](docs/COMPATIBILITY.md) for hardware requirements and graphics limits.
-
-Later launches open Settings before boot. Choose **Launch Omarchy** to start, or enable direct-launch shortcuts to skip Settings. While Omarchy is running, search for **Try Omarchy Settings** in the app launcher or use the Windows tray icon to change settings.
+## Installation and updates
 
 Releases are Authenticode-signed by **Brandon South** through Azure Artifact Signing with a Microsoft identity-verified certificate. Windows shows that name as the verified publisher. Check it in the file's Properties > Digital Signatures tab or run `Get-AuthenticodeSignature .\TryOmarchy.exe` in PowerShell; the SignerCertificate subject should read `CN=Brandon South`. A publisher change will be announced in the changelog.
 
@@ -115,7 +121,7 @@ supports byte ranges, then the complete file is SHA256-verified before use.
 Custom release URLs must be paired with the
 trusted manifest digest via `-sums-sha256`.
 
-### Reporting a problem
+## Reporting a problem
 
 Choose **Create diagnostics...** from the tray while Omarchy is running, or run
 `TryOmarchy.exe -diagnostics`. It writes one zip under the chosen data
@@ -128,7 +134,7 @@ Logs can still contain local details, so review the zip before attaching it to a
 Include the launcher version, Windows version, GPU and driver when known, and
 what you expected to happen.
 
-### Install location
+## Install location
 
 New standard installs ask for a data location before downloading anything. The
 default is `%LOCALAPPDATA%\TryOmarchy`. Choosing another local drive or folder
@@ -140,7 +146,7 @@ installs stay where they are, and an explicit `-dir PATH` still wins for that
 launch. Portable mode continues to support exFAT through the `data` and
 `payload` folders beside the executable.
 
-### Settings
+## Settings
 
 [Moving an existing installation](docs/MOVING.md) is available from Settings.
 
