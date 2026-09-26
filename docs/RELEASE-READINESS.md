@@ -1,10 +1,15 @@
-# Release readiness review - September 24, 2026
+# Release readiness review - September 26, 2026
 
 ## Current decision
 
 The current normal version is
+[`v0.4.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.4.0),
+published as Latest on September 26 with default pinch and Ctrl+Alt+End. Its
+[candidate and release record](evidence/V040-SIGNED-CANDIDATE-2026-09-26.md)
+covers the signed candidate, upgrade, fresh install, pinch and rollback checks.
+The previous version,
 [`v0.3.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.3.0),
-published as Latest. [Publish run 35978943238](https://github.com/omacom/try-omarchy-windows/actions/runs/35978943238)
+was published as Latest on September 24. [Publish run 35978943238](https://github.com/omacom/try-omarchy-windows/actions/runs/35978943238)
 passed signing and public asset checks. The signed launcher SHA-256 is
 `906356dc484c1d6e61f50d4fd28e42762ada06c514961ca41ef2aeef64d7e0f5`, and the
 public `SHA256SUMS` digest is
@@ -154,9 +159,8 @@ bug reports. Their existing password and NAT paths remain usable while
 [LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166)
 proceed. The current user base of thousands with relatively few reports is
 positive evidence about the everyday path; broad hardware and Windows 10
-acceptance are not 1.0 gates. Automatic pinch ships with the first release
-whose guest image declares the touchpad, after its signed candidate passes the
-physical checks in [PINCH-ZOOM.md](PINCH-ZOOM.md). ARM64 and interface translation are open requests
+acceptance are not 1.0 gates. Automatic pinch shipped in `v0.4.0`; its
+acceptance limits are in [PINCH-ZOOM.md](PINCH-ZOOM.md). ARM64 and interface translation are open requests
 ([#131](https://github.com/omacom/try-omarchy-windows/issues/131),
 [#127](https://github.com/omacom/try-omarchy-windows/issues/127)); neither can be
 claimed as supported. Prioritize any gap that prevents a normal supported PC

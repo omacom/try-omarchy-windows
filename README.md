@@ -21,18 +21,18 @@ The Omarchy mark in the app icon is sourced from the
 Omarchy's trademark rights.
 
 The current public release is
-[v0.3.0](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.3.0).
+[v0.4.0](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.4.0).
 See the [changelog](CHANGELOG.md),
 [Windows testing instructions](docs/TESTING.md), and
 [compatibility guide](docs/COMPATIBILITY.md) for tested hardware and known
 graphics limits.
 
-## What works in v0.3.0
+## What works in v0.4.0
 
 - **The full Omarchy 4.0.3 desktop on new or reset guests**: Hyprland, the bar, notifications, all 22 themes, the screensavers. After setup, open pre-boot Settings or choose a direct-launch shortcut. Startup time depends on the host and the drive holding the guest. No Linux login screens or VM console text; the window is branded.
 - **GPU acceleration**: Hyprland renders on the host GPU via virgl, `vulkaninfo` shows Venus, smooth video and audio (verified on a Radeon iGPU laptop); `-cpu host` (AVX2 and all) via WINQ-EMU's patched WHPX.
 - **One app, zero prerequisites**: `TryOmarchy.exe` (~10 MB, no console window). First run lets you keep the default Local AppData location or choose another local drive or folder, switches on Windows' Hypervisor Platform (one permission prompt, one restart), then downloads the SHA256-verified GPU runtime and image and boots into Omarchy's setup form. Once setup is complete it keeps a stable launcher in the chosen data folder and can add optional Start-menu and Desktop shortcuts. After that it supervises everything: GPU/CPU auto-detect, the known WHPX launch wedge, in-guest reboot relaunch, poweroff cleanup.
-- **Feels like an app, not a VM**: the window is branded "Try Omarchy", the Windows key acts as Super only while the window is focused (Start menu and Win+Shift+S keep working everywhere else), Ctrl+Alt+F goes fullscreen. Settings can launch Omarchy at Windows sign-in and open it fullscreen.
+- **Feels like an app, not a VM**: the window is branded "Try Omarchy", the Windows key acts as Super only while the window is focused (Start menu and Win+Shift+S keep working everywhere else), Ctrl+Alt+F goes fullscreen, and Ctrl+Alt+End sends Ctrl+Alt+Delete. Pinch to zoom on a Windows 11 Precision Touchpad reaches Linux apps in GPU mode with one display. Settings can launch Omarchy at Windows sign-in and open it fullscreen.
 - **Host integration while Omarchy runs**: open native Settings from the Omarchy launcher, see a Windows laptop's battery and charging state in Linux, and return unused guest RAM to Windows without reducing the guest's configured capacity. Settings can choose which connected Windows monitor receives fullscreen Omarchy. Host Settings and Omarchy's audio picker can switch playback and recording devices live; audio choices persist across guest reboots, while microphone access changes apply at the next VM start.
 - **Approved Windows apps**: select specific local executables in Settings and launch them from Omarchy's app menu. They open as ordinary Windows windows, with a tray action to return to Omarchy. Removing approval blocks later launches.
 - **Two-way text and image clipboard sharing** between Windows and Omarchy (own compositor-native bridge over wl-clipboard, no SPICE) and **folder sharing** over virtio-9p: standard installs offer to create `Omarchy Shared` in your Windows home, then pin it in Omarchy's Files sidebar and link it into the Linux home. The tray can open the Windows folder at any time. File and folder clipboard transfers stream in the background. Drop Windows files into the Omarchy window to copy them into the supported folder under the pointer, or Downloads when that folder cannot accept the drop. Larger copies show small, nonblocking progress with cancellation. Dropping directly into arbitrary guest applications remains unfinished.
