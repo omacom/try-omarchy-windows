@@ -1,4 +1,4 @@
-From b6a2142d07e6fd70285c10bf6293d9031ded1ecc Mon Sep 17 00:00:00 2001
+From d2bc03f858534fd49ffc53924acedda6f13d6b79 Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Wed, 23 Sep 2026 21:00:32 -0400
 Subject: [PATCH] Add opt-in Windows Hello sudo guest broker
