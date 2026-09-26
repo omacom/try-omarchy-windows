@@ -313,6 +313,10 @@ func TestBuildQemuArgsUsesReconnectMSForTheCameraChardev(t *testing.T) {
 	if !strings.Contains(args, want) {
 		t.Fatalf("camera chardev missing %q: %s", want, args)
 	}
+	hello := fmt.Sprintf("socket,id=hello0,host=127.0.0.1,port=%d,reconnect-ms=1000", helloBridgePort)
+	if !strings.Contains(args, hello) || !strings.Contains(args, "virtserialport,chardev=hello0,name=dev.tryomarchy.authentication") {
+		t.Fatalf("authentication chardev missing: %s", args)
+	}
 }
 
 func TestBuildQemuArgsForwardsPortsOnLoopback(t *testing.T) {

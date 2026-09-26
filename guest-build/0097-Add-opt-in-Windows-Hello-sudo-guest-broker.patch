@@ -1,0 +1,610 @@
+From 333f3541deabe3f31146553f18c7a83301f4195c Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 23 Sep 2026 21:00:32 -0400
+Subject: [PATCH] Add opt-in Windows Hello sudo guest broker
+
+---
+ .../70-try-omarchy-authentication.rules       |   1 +
+ .../lib/try-omarchy/windows-hello-broker      | 350 ++++++++++++++++++
+ .../usr/local/sbin/try-omarchy-windows-hello  |  60 +++
+ guest/scripts/finalize-rootfs.sh              |   6 +-
+ guest/tests/test_windows_hello_broker.py      | 107 ++++++
+ guest/tests/verify.py                         |   8 +-
+ 6 files changed, 530 insertions(+), 2 deletions(-)
+ create mode 100644 guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-authentication.rules
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/windows-hello-broker
+ create mode 100755 guest/factory-overlay/usr/local/sbin/try-omarchy-windows-hello
+ create mode 100644 guest/tests/test_windows_hello_broker.py
+
+diff --git a/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-authentication.rules b/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-authentication.rules
+new file mode 100644
+index 0000000..fe656dc
+--- /dev/null
++++ b/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-authentication.rules
+@@ -0,0 +1 @@
++SUBSYSTEM=="virtio-ports", ATTR{name}=="dev.tryomarchy.authentication", OWNER="root", GROUP="root", MODE="0600"
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/windows-hello-broker b/guest/factory-overlay/usr/local/lib/try-omarchy/windows-hello-broker
+new file mode 100755
+index 0000000..13c3ee3
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/windows-hello-broker
+@@ -0,0 +1,350 @@
++#!/usr/bin/python3 -I
++"""Root-only Windows Hello approval broker for interactive guest sudo."""
++
++from __future__ import annotations
++
++import base64
++import binascii
++import fcntl
++import hashlib
++import json
++import os
++from pathlib import Path
++import re
++import secrets
++import select
++import stat
++import subprocess
++import sys
++import tempfile
++import time
++import uuid
++
++
++PORT = Path("/dev/virtio-ports/dev.tryomarchy.authentication")
++STATE = Path("/var/lib/try-omarchy/windows-hello/enrollment.json")
++MAX_LINE = 4096
++VERSION = 1
++LIFETIME = 15
++SKEW = 5
++HEX32 = re.compile(r"[0-9a-f]{64}\Z")
++ACCOUNT = re.compile(r"[a-z_][a-z0-9_-]{0,31}\Z")
++TTY = re.compile(r"/dev/(?:pts/[0-9]+|tty[0-9]+)\Z")
++VPORT_TARGET = re.compile(r"\.\./(vport[0-9]+p[0-9]+)\Z")
++REQUEST_FIELDS = {
++    "type", "version", "operation", "guestId", "requestId", "challenge",
++    "user", "requestingUser", "service", "tty",
++}
++RESPONSE_FIELDS = REQUEST_FIELDS | {
++    "approved", "issuedAt", "expiresAt", "keyId", "publicKey", "signature",
++}
++STATE_FIELDS = {"version", "guestId", "keyId", "publicKey", "padding"}
++PADDINGS = {"pkcs1", "pss"}
++
++
++class ApprovalError(Exception):
++    pass
++
++
++def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
++    result: dict[str, object] = {}
++    for key, value in pairs:
++        if key in result:
++            raise ApprovalError("duplicate authentication field")
++        result[key] = value
++    return result
++
++
++def decode_json(data: bytes) -> dict[str, object]:
++    if len(data) > MAX_LINE:
++        raise ApprovalError("authentication data exceeds 4 KiB")
++    try:
++        value = json.loads(data, object_pairs_hook=unique_object)
++    except (UnicodeDecodeError, json.JSONDecodeError) as error:
++        raise ApprovalError("invalid authentication JSON") from error
++    if not isinstance(value, dict):
++        raise ApprovalError("authentication data is not an object")
++    return value
++
++
++def make_request(operation: str, guest_id: str, *, user: str = "", requesting_user: str = "", tty: str = "") -> dict[str, object]:
++    if not HEX32.fullmatch(guest_id) or operation not in {"enroll", "disable", "sudo"}:
++        raise ApprovalError("invalid guest or operation")
++    if operation == "sudo":
++        if not ACCOUNT.fullmatch(user) or not ACCOUNT.fullmatch(requesting_user) or not TTY.fullmatch(tty):
++            raise ApprovalError("invalid sudo context")
++    elif user or requesting_user or tty:
++        raise ApprovalError("control request contains sudo context")
++    return {
++        "type": "authorize", "version": VERSION, "operation": operation,
++        "guestId": guest_id, "requestId": str(uuid.uuid4()),
++        "challenge": secrets.token_hex(32), "user": user,
++        "requestingUser": requesting_user, "service": "sudo", "tty": tty,
++    }
++
++
++def payload(request: dict[str, object], response: dict[str, object]) -> bytes:
++    fields = [
++        "try-omarchy-windows-hello-v1", request["guestId"], request["operation"],
++        request["requestId"], request["challenge"], request["user"],
++        request["requestingUser"], request["service"], request["tty"],
++        str(response["issuedAt"]), str(response["expiresAt"]), response["keyId"],
++    ]
++    return "\0".join(fields).encode("ascii")
++
++
++def decode_b64(value: str, label: str) -> bytes:
++    try:
++        return base64.b64decode(value, validate=True)
++    except (ValueError, binascii.Error) as error:
++        raise ApprovalError(f"invalid {label}") from error
++
++
++def parse_response(line: bytes, request: dict[str, object]) -> dict[str, object]:
++    result = decode_json(line)
++    if set(result) != RESPONSE_FIELDS or result.get("type") != "authorization-result" or result.get("version") != VERSION or type(result.get("approved")) is not bool:
++        raise ApprovalError("invalid authentication response schema")
++    if result["requestId"] != request["requestId"]:
++        raise ApprovalError("authentication response belongs to another request")
++    for field in ("operation", "guestId", "requestId", "challenge", "user", "requestingUser", "service", "tty"):
++        if result[field] != request[field]:
++            raise ApprovalError("authentication response context changed")
++    if not result["approved"] or request["operation"] == "disable":
++        if any(result[field] != 0 for field in ("issuedAt", "expiresAt")) or any(result[field] != "" for field in ("keyId", "publicKey", "signature")):
++            raise ApprovalError("unsigned response contains approval material")
++        return result
++    if (type(result["issuedAt"]) is not int or type(result["expiresAt"]) is not int
++            or not isinstance(result["keyId"], str) or not HEX32.fullmatch(result["keyId"])
++            or not isinstance(result["publicKey"], str) or not isinstance(result["signature"], str)):
++        raise ApprovalError("invalid signature fields")
++    public_key = decode_b64(result["publicKey"], "public key")
++    signature = decode_b64(result["signature"], "signature")
++    if not 250 <= len(public_key) <= 512 or not 128 <= len(signature) <= 512:
++        raise ApprovalError("invalid key or signature length")
++    if hashlib.sha256(public_key).hexdigest() != result["keyId"]:
++        raise ApprovalError("public key identifier mismatch")
++    return result
++
++
++def verify_signature(public_key: bytes, signature: bytes, signed: bytes, padding: str) -> bool:
++    runtime_dir = "/run" if os.access("/run", os.W_OK) else None
++    with tempfile.TemporaryDirectory(prefix="try-omarchy-hello-", dir=runtime_dir) as directory:
++        key = Path(directory) / "key.der"
++        sig = Path(directory) / "signature.bin"
++        key.write_bytes(public_key)
++        sig.write_bytes(signature)
++        key.chmod(0o600)
++        sig.chmod(0o600)
++        arguments = ["/usr/bin/openssl", "dgst", "-sha256", "-keyform", "DER", "-verify", str(key), "-signature", str(sig)]
++        if padding == "pss":
++            arguments.extend(["-sigopt", "rsa_padding_mode:pss", "-sigopt", "rsa_pss_saltlen:auto"])
++        result = subprocess.run(arguments, input=signed, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False, env={"PATH": "/usr/bin"})
++        return result.returncode == 0
++
++
++def verify_approval(request: dict[str, object], response: dict[str, object], pinned: tuple[bytes, str] | None = None, now: int | None = None) -> tuple[bytes, str]:
++    if not response["approved"]:
++        raise ApprovalError("Windows Hello was not approved")
++    current = int(time.time()) if now is None else now
++    issued = response["issuedAt"]
++    expires = response["expiresAt"]
++    if expires - issued != LIFETIME or issued > current + SKEW or expires < current:
++        raise ApprovalError("approval expired or guest clock differs from Windows")
++    key = decode_b64(response["publicKey"], "public key")
++    signature = decode_b64(response["signature"], "signature")
++    if pinned is not None and key != pinned[0]:
++        raise ApprovalError("Windows Hello key differs from enrollment")
++    paddings = (pinned[1],) if pinned is not None else ("pkcs1", "pss")
++    for padding in paddings:
++        if verify_signature(key, signature, payload(request, response), padding):
++            return key, padding
++    raise ApprovalError("Windows Hello signature is invalid")
++
++
++def read_line(descriptor: int, deadline: float) -> bytes:
++    line = bytearray()
++    while True:
++        remaining = deadline - time.monotonic()
++        if remaining <= 0 or not select.select([descriptor], [], [], remaining)[0]:
++            raise TimeoutError("Windows Hello request timed out")
++        try:
++            byte = os.read(descriptor, 1)
++        except BlockingIOError:
++            continue
++        if not byte:
++            raise ConnectionError("Windows Hello bridge disconnected")
++        if byte == b"\n":
++            return bytes(line)
++        line.extend(byte)
++        if len(line) > MAX_LINE:
++            raise ApprovalError("Windows Hello response exceeds 4 KiB")
++
++
++def exchange(request: dict[str, object], timeout: float = 65) -> dict[str, object]:
++    target = PORT
++    info = PORT.lstat()
++    if stat.S_ISLNK(info.st_mode):
++        if info.st_uid != 0:
++            raise ApprovalError("authentication port link is not root-owned")
++        match = VPORT_TARGET.fullmatch(os.readlink(PORT))
++        if match is None:
++            raise ApprovalError("authentication port link target is invalid")
++        target = PORT.parent.parent / match.group(1)
++    descriptor = os.open(target, os.O_RDWR | os.O_CLOEXEC | os.O_NOCTTY | os.O_NOFOLLOW | os.O_NONBLOCK)
++    try:
++        info = os.fstat(descriptor)
++        if not stat.S_ISCHR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o600:
++            raise ApprovalError("authentication port is not root-only")
++        try:
++            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError as error:
++            raise ApprovalError("another Hello request is in progress") from error
++        data = json.dumps(request, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
++        if len(data) > MAX_LINE:
++            raise ApprovalError("authentication request exceeds 4 KiB")
++        deadline = time.monotonic() + timeout
++        view = memoryview(data)
++        while view:
++            remaining = deadline - time.monotonic()
++            if remaining <= 0 or not select.select([], [descriptor], [], remaining)[1]:
++                raise TimeoutError("Windows Hello request timed out")
++            try:
++                count = os.write(descriptor, view)
++            except BlockingIOError:
++                continue
++            if count <= 0:
++                raise ConnectionError("Windows Hello bridge stopped accepting data")
++            view = view[count:]
++        return parse_response(read_line(descriptor, deadline), request)
++    finally:
++        os.close(descriptor)
++
++
++def save_state(guest_id: str, key: bytes, padding: str) -> None:
++    if padding not in PADDINGS or not HEX32.fullmatch(guest_id):
++        raise ApprovalError("invalid enrollment")
++    parent = STATE.parent
++    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
++    info = parent.lstat()
++    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
++        raise ApprovalError("authentication state directory is unsafe")
++    parent.chmod(0o700)
++    state = {"version": VERSION, "guestId": guest_id, "keyId": hashlib.sha256(key).hexdigest(), "publicKey": base64.b64encode(key).decode("ascii"), "padding": padding}
++    data = (json.dumps(state, sort_keys=True) + "\n").encode("ascii")
++    directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
++    temporary = f".{STATE.name}.{secrets.token_hex(8)}"
++    try:
++        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
++        try:
++            view = memoryview(data)
++            while view:
++                count = os.write(descriptor, view)
++                if count <= 0:
++                    raise OSError("state write stopped")
++                view = view[count:]
++            os.fsync(descriptor)
++        finally:
++            os.close(descriptor)
++        os.replace(temporary, STATE.name, src_dir_fd=directory, dst_dir_fd=directory)
++        os.fsync(directory)
++    finally:
++        try:
++            os.unlink(temporary, dir_fd=directory)
++        except FileNotFoundError:
++            pass
++        os.close(directory)
++
++
++def load_state() -> tuple[str, bytes, str]:
++    parent = STATE.parent
++    info = parent.stat(follow_symlinks=False)
++    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o700:
++        raise ApprovalError("authentication state directory is unsafe")
++    descriptor = os.open(STATE, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
++    try:
++        info = os.fstat(descriptor)
++        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o600:
++            raise ApprovalError("authentication enrollment state is unsafe")
++        data = os.read(descriptor, MAX_LINE + 1)
++    finally:
++        os.close(descriptor)
++    state = decode_json(data)
++    if (set(state) != STATE_FIELDS or state.get("version") != VERSION
++            or not isinstance(state.get("guestId"), str) or not HEX32.fullmatch(state["guestId"])
++            or not isinstance(state.get("keyId"), str) or not HEX32.fullmatch(state["keyId"])
++            or not isinstance(state.get("publicKey"), str)
++            or not isinstance(state.get("padding"), str) or state["padding"] not in PADDINGS):
++        raise ApprovalError("authentication enrollment state is invalid")
++    key = decode_b64(state["publicKey"], "enrolled key")
++    if hashlib.sha256(key).hexdigest() != state["keyId"]:
++        raise ApprovalError("enrollment key identifier mismatch")
++    return state["guestId"], key, state["padding"]
++
++
++def enroll() -> None:
++    try:
++        guest_id, _, _ = load_state()
++    except FileNotFoundError:
++        guest_id = secrets.token_hex(32)
++    request = make_request("enroll", guest_id)
++    response = exchange(request)
++    key, padding = verify_approval(request, response)
++    save_state(guest_id, key, padding)
++    print("Windows Hello paired for this guest. Your guest password remains available.")
++
++
++def disable() -> None:
++    try:
++        guest_id, _, _ = load_state()
++    except FileNotFoundError:
++        print("Windows Hello is already disabled for sudo.")
++        return
++    try:
++        response = exchange(make_request("disable", guest_id), timeout=5)
++        if not response["approved"]:
++            raise ApprovalError("host key deletion was refused")
++    except (ApprovalError, OSError, TimeoutError, ConnectionError) as error:
++        print(f"Host key cleanup unavailable: {error}", file=sys.stderr)
++    STATE.unlink()
++    print("Windows Hello sudo disabled in this guest.")
++
++
++def authenticate_pam() -> bool:
++    if os.getuid() != 0 or os.geteuid() != 0 or os.environ.get("PAM_TYPE") != "auth" or os.environ.get("PAM_SERVICE") != "sudo":
++        return False
++    user = os.environ.get("PAM_USER", "")
++    requester = os.environ.get("PAM_RUSER", "") or user
++    tty = os.environ.get("PAM_TTY", "")
++    try:
++        guest_id, key, padding = load_state()
++        request = make_request("sudo", guest_id, user=user, requesting_user=requester, tty=tty)
++        response = exchange(request)
++        verify_approval(request, response, pinned=(key, padding))
++        return True
++    except (ApprovalError, OSError, TimeoutError, ConnectionError, subprocess.SubprocessError):
++        print("Windows Hello unavailable. Use your guest password.")
++        return False
++
++
++def main() -> int:
++    if len(sys.argv) != 2 or sys.argv[1] not in {"enroll", "disable", "pam"}:
++        print("usage: windows-hello-broker enroll|disable|pam", file=sys.stderr)
++        return 2
++    if sys.argv[1] == "pam":
++        return 0 if authenticate_pam() else 1
++    if os.getuid() != 0 or os.geteuid() != 0:
++        print("Windows Hello pairing requires root", file=sys.stderr)
++        return 1
++    try:
++        if sys.argv[1] == "enroll":
++            enroll()
++        else:
++            disable()
++        return 0
++    except (ApprovalError, OSError, TimeoutError, ConnectionError, subprocess.SubprocessError) as error:
++        print(f"Windows Hello {sys.argv[1]} failed: {error}", file=sys.stderr)
++        return 1
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/guest/factory-overlay/usr/local/sbin/try-omarchy-windows-hello b/guest/factory-overlay/usr/local/sbin/try-omarchy-windows-hello
+new file mode 100755
+index 0000000..7315802
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/sbin/try-omarchy-windows-hello
+@@ -0,0 +1,60 @@
++#!/bin/bash
++
++set -euo pipefail
++
++broker=/usr/local/lib/try-omarchy/windows-hello-broker
++policy=/etc/pam.d/sudo
++rule=$'auth\t\tsufficient\tpam_exec.so quiet seteuid stdout /usr/local/lib/try-omarchy/windows-hello-broker pam'
++
++(( EUID == 0 )) || { echo 'Run with sudo to confirm your guest password.' >&2; exit 1; }
++[[ $# == 1 && $1 =~ ^(enable|disable)$ ]] || {
++  echo 'Usage: sudo try-omarchy-windows-hello enable|disable' >&2
++  exit 2
++}
++[[ -x $broker && ! -L $broker ]] || { echo 'Windows Hello broker is missing.' >&2; exit 1; }
++[[ -f $policy && ! -L $policy && $(sed -n '1p' "$policy") == '#%PAM-1.0' ]] || {
++  echo 'Unexpected sudo PAM policy.' >&2
++  exit 1
++}
++if grep -F '/usr/local/lib/try-omarchy/windows-hello-broker' "$policy" | grep -Fvx "$rule" >/dev/null; then
++  echo 'Unexpected Windows Hello PAM rule.' >&2
++  exit 1
++fi
++
++rewrite_policy() {
++  local action=$1 temporary
++  temporary=$(mktemp /etc/pam.d/.sudo.windows-hello.XXXXXX)
++  trap 'rm -f -- "$temporary"' EXIT
++  if [[ $action == enable ]]; then
++    if grep -Fxq "$rule" "$policy"; then
++      rm -f -- "$temporary"
++      trap - EXIT
++      return
++    fi
++    awk -v line="$rule" 'NR == 1 { print; print line; next } { print }' "$policy" >"$temporary"
++  else
++    if ! grep -Fxq "$rule" "$policy"; then
++      rm -f -- "$temporary"
++      trap - EXIT
++      return
++    fi
++    awk -v line="$rule" '$0 != line { print }' "$policy" >"$temporary"
++  fi
++  chown --reference="$policy" "$temporary"
++  chmod --reference="$policy" "$temporary"
++  mv -f -- "$temporary" "$policy"
++  trap - EXIT
++}
++
++if [[ $1 == enable ]]; then
++  if grep -Fxq "$rule" "$policy"; then
++    echo 'Windows Hello is already enabled. Disable it before re-pairing.' >&2
++    exit 1
++  fi
++  "$broker" enroll
++  rewrite_policy enable
++  echo 'Windows Hello enabled for sudo. Your guest password remains available.'
++else
++  rewrite_policy disable
++  "$broker" disable
++fi
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index a0f471c..4397ec0 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -99,6 +99,9 @@ compat_paths=(
+   usr/local/bin/omarchy-windows-camera-bridge
+   usr/local/bin/omarchy-windows-audio-bridge
+   etc/udev/rules.d/70-try-omarchy-audio.rules
++  usr/local/lib/try-omarchy/windows-hello-broker
++  usr/local/sbin/try-omarchy-windows-hello
++  etc/udev/rules.d/70-try-omarchy-authentication.rules
+   usr/lib/systemd/user/omarchy-windows-audio-bridge.service
+   etc/systemd/user/graphical-session.target.wants/omarchy-windows-audio-bridge.service
+   usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+@@ -185,7 +188,8 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 34 loads the pinch touchpad's device rules for existing users and
+ # keeps the device ignored until every user's Hyprland config applies them.
+ # Revision 35 keeps the synced display mode across Hyprland config reloads.
+-compat_revision=35
++# Revision 36 stages the opt-in Windows Hello sudo broker and its port rule.
++compat_revision=36
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_windows_hello_broker.py b/guest/tests/test_windows_hello_broker.py
+new file mode 100644
+index 0000000..153d009
+--- /dev/null
++++ b/guest/tests/test_windows_hello_broker.py
+@@ -0,0 +1,107 @@
++"""Security checks for the guest side of Windows Hello sudo."""
++
++from __future__ import annotations
++
++import base64
++import hashlib
++import importlib.machinery
++import json
++from pathlib import Path
++import subprocess
++import tempfile
++import unittest
++
++
++BROKER_PATH = Path(__file__).resolve().parents[1] / "factory-overlay/usr/local/lib/try-omarchy/windows-hello-broker"
++broker = importlib.machinery.SourceFileLoader("windows_hello_broker", str(BROKER_PATH)).load_module()
++
++
++class HelloBrokerTests(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls) -> None:
++        cls.directory = tempfile.TemporaryDirectory()
++        private = Path(cls.directory.name) / "key.pem"
++        subprocess.run(
++            ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(private)],
++            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
++        )
++        cls.private = private
++        cls.public = subprocess.run(
++            ["openssl", "pkey", "-in", str(private), "-pubout", "-outform", "DER"],
++            capture_output=True, check=True,
++        ).stdout
++
++    @classmethod
++    def tearDownClass(cls) -> None:
++        cls.directory.cleanup()
++
++    def request_and_response(self) -> tuple[dict[str, object], dict[str, object]]:
++        request = broker.make_request(
++            "sudo", "a" * 64, user="root", requesting_user="omarchy", tty="/dev/pts/3",
++        )
++        response = {
++            **request, "type": "authorization-result", "approved": True,
++            "issuedAt": 1000, "expiresAt": 1015,
++            "keyId": hashlib.sha256(self.public).hexdigest(),
++            "publicKey": base64.b64encode(self.public).decode("ascii"),
++            "signature": "",
++        }
++        signature = subprocess.run(
++            ["openssl", "dgst", "-sha256", "-sign", str(self.private)],
++            input=broker.payload(request, response), capture_output=True, check=True,
++        ).stdout
++        response["signature"] = base64.b64encode(signature).decode("ascii")
++        return request, response
++
++    def test_signed_sudo_request_and_context_binding(self) -> None:
++        request, response = self.request_and_response()
++        encoded = json.dumps(response).encode("ascii")
++        parsed = broker.parse_response(encoded, request)
++        key, padding = broker.verify_approval(request, parsed, now=1005)
++        self.assertEqual(key, self.public)
++        self.assertEqual(padding, "pkcs1")
++        self.assertEqual(broker.verify_approval(request, parsed, pinned=(key, padding), now=1005), (key, padding))
++
++        for field, value in (
++            ("requestId", "c1d0243d-705e-4b64-a5c3-458d4e2b1f9d"),
++            ("challenge", "b" * 64),
++            ("user", "omarchy"),
++            ("requestingUser", "root"),
++            ("tty", "/dev/pts/4"),
++        ):
++            changed = dict(response, **{field: value})
++            with self.subTest(field=field), self.assertRaises(broker.ApprovalError):
++                broker.parse_response(json.dumps(changed).encode("ascii"), request)
++
++        with self.assertRaises(broker.ApprovalError):
++            broker.verify_approval(request, parsed, pinned=(self.public, "pss"), now=1005)
++        with self.assertRaises(broker.ApprovalError):
++            broker.verify_approval(request, parsed, now=1016)
++        with self.assertRaises(broker.ApprovalError):
++            broker.verify_approval(request, parsed, pinned=(b"other key", "pkcs1"), now=1005)
++
++    def test_denial_and_duplicate_fields_cannot_authorize(self) -> None:
++        request, response = self.request_and_response()
++        denial = dict(response, approved=False, issuedAt=0, expiresAt=0, keyId="", publicKey="", signature="")
++        parsed = broker.parse_response(json.dumps(denial).encode("ascii"), request)
++        with self.assertRaises(broker.ApprovalError):
++            broker.verify_approval(request, parsed, now=1005)
++        denial["signature"] = response["signature"]
++        with self.assertRaises(broker.ApprovalError):
++            broker.parse_response(json.dumps(denial).encode("ascii"), request)
++        duplicate = json.dumps(response).replace('"approved": true', '"approved": true, "approved": true')
++        with self.assertRaises(broker.ApprovalError):
++            broker.parse_response(duplicate.encode("ascii"), request)
++
++    def test_invalid_pam_scope_never_makes_request(self) -> None:
++        for context in (
++            {"user": "root", "requesting_user": "omarchy", "tty": "/dev/ttyUSB0"},
++            {"user": "root", "requesting_user": "omarchy;id", "tty": "/dev/pts/3"},
++            {"user": "root", "requesting_user": "omarchy", "tty": ""},
++        ):
++            with self.subTest(context=context), self.assertRaises(broker.ApprovalError):
++                broker.make_request("sudo", "a" * 64, **context)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index c344a0d..10d587a 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -269,11 +269,17 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=35" in finalize_rootfs
++        "compat_revision=36" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/local/bin/omarchy-native-display-sync" in compat_paths
+         and "usr/local/bin/omarchy-windows-audio-bridge" in compat_paths
+         and "etc/udev/rules.d/70-try-omarchy-audio.rules" in compat_paths
++        and "usr/local/lib/try-omarchy/windows-hello-broker" in compat_paths
++        and "usr/local/sbin/try-omarchy-windows-hello" in compat_paths
++        and "etc/udev/rules.d/70-try-omarchy-authentication.rules" in compat_paths
++        and 'OWNER="root", GROUP="root", MODE="0600"' in read(GUEST / "factory-overlay/etc/udev/rules.d/70-try-omarchy-authentication.rules")
++        and (GUEST / "factory-overlay/usr/local/lib/try-omarchy/windows-hello-broker").stat().st_mode & stat.S_IXUSR != 0
++        and (GUEST / "factory-overlay/usr/local/sbin/try-omarchy-windows-hello").stat().st_mode & stat.S_IXUSR != 0
+         and 'ATTR{name}=="dev.tryomarchy.audio"' in read(GUEST / "factory-overlay/etc/udev/rules.d/70-try-omarchy-audio.rules")
+         and "usr/lib/systemd/user/omarchy-windows-audio-bridge.service" in compat_paths
+         and "etc/systemd/user/graphical-session.target.wants/omarchy-windows-audio-bridge.service" in compat_paths
+-- 
+2.55.0
+
