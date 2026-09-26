@@ -187,6 +187,19 @@ func downloadAttempt(client *http.Client, url, dest, wantSum string, progress do
 	default:
 		retry = resp.StatusCode == http.StatusRequestTimeout ||
 			resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+		// A completed transfer can outlive its download URL or a proxy's
+		// permission to fetch it. Permanent HTTP errors skip the retry loop,
+		// so recover an authenticated cache here as well. Invalid partials
+		// stay available for a later attempt and never replace the target.
+		if !retry && offset > 0 {
+			ok, err := verifyAndCommitPart(tmp, dest, wantSum, progress)
+			if err != nil {
+				return false, false, err
+			}
+			if ok {
+				return false, false, nil
+			}
+		}
 		return retry, false, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 

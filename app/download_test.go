@@ -655,3 +655,58 @@ func TestDownloadCacheRecoveryHonorsCancellation(t *testing.T) {
 		t.Fatalf("cached transfer lost: %q %v", data, err)
 	}
 }
+
+func TestDownloadRecoversCompleteCacheAfterPermanentHTTPError(t *testing.T) {
+	configureSetupCancellation(false)
+	payload := []byte("complete authenticated payload")
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusGone} {
+		for _, state := range []string{"complete", "incomplete", "corrupt"} {
+			t.Run(fmt.Sprintf("%d/%s", status, state), func(t *testing.T) {
+				requests := 0
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests++
+					w.WriteHeader(status)
+				}))
+				defer server.Close()
+				dest := filepath.Join(t.TempDir(), "payload")
+				cached := payload
+				if state == "incomplete" {
+					cached = payload[:5]
+				}
+				if state == "corrupt" {
+					cached = []byte(strings.Repeat("x", len(payload)))
+				}
+				if err := os.WriteFile(dest+".part", cached, 0600); err != nil {
+					t.Fatal(err)
+				}
+				err := downloadVerifiedWithOptions(server.Client(), server.URL, dest, testSHA256(payload), nil, fastDownloadOptions())
+				if requests != 1 {
+					t.Fatalf("requests = %d; permanent errors must not retry", requests)
+				}
+				if state == "complete" {
+					if err != nil {
+						t.Fatal(err)
+					}
+					got, err := os.ReadFile(dest)
+					if err != nil || string(got) != string(payload) {
+						t.Fatalf("recovered %q: %v", got, err)
+					}
+					if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
+						t.Fatal("committed partial remains")
+					}
+				} else {
+					if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", status)) {
+						t.Fatalf("expected HTTP error, got %v", err)
+					}
+					if _, err := os.Stat(dest); !os.IsNotExist(err) {
+						t.Fatal("incomplete payload published")
+					}
+					got, err := os.ReadFile(dest + ".part")
+					if err != nil || string(got) != string(cached) {
+						t.Fatalf("partial not retained: %q %v", got, err)
+					}
+				}
+			})
+		}
+	}
+}
