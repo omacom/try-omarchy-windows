@@ -74,8 +74,8 @@ below and use reports from this normal 0.x release to prioritize further work.
 
 The live [Try Omarchy site](https://tryomarchy.com/) uses the same Omarchy
 mark as the Windows app and the same green accent. Its download serves the
-Latest launcher, now `v0.3.0`, but its release-notes link and version text still
-name `v0.2.0` and need a site update. Its setup and uninstall descriptions
+Latest launcher, now `v0.3.0`; on September 24 the live download matched the
+published launcher hash and the version text named `v0.3.0`. Its setup and uninstall descriptions
 match the app's actual behavior; the site no longer promises that uninstalling
 means deleting a single folder or that the next normal release must be 1.0.
 Desktop and phone-width Chromium renders were inspected. The live `/download`
@@ -154,8 +154,9 @@ bug reports. Their existing password and NAT paths remain usable while
 [LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166)
 proceed. The current user base of thousands with relatively few reports is
 positive evidence about the everyday path; broad hardware and Windows 10
-acceptance are not 1.0 gates. Pinch should stay opt-in until device
-reports support a default. ARM64 and interface translation are open requests
+acceptance are not 1.0 gates. Pinch stays opt-in until its guest rules reach
+existing guests and the automatic launcher gate passes the physical checks in
+[PINCH-ZOOM.md](PINCH-ZOOM.md). ARM64 and interface translation are open requests
 ([#131](https://github.com/omacom/try-omarchy-windows/issues/131),
 [#127](https://github.com/omacom/try-omarchy-windows/issues/127)); neither can be
 claimed as supported. Prioritize any gap that prevents a normal supported PC
