@@ -1,0 +1,26 @@
+From ab91c1f9669c4c50f7512d993efabd8a2abfd373 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 23:28:32 +0000
+Subject: [PATCH] Refresh the guest package lock
+
+openexr 3.5.0-2 -> 3.5.1-1
+---
+ guest/packages.lock.json | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index aca61de..074fa5c 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -474,7 +474,7 @@
+     "oniguruma": "6.9.10-1",
+     "openal": "1.25.2-2",
+     "opencore-amr": "0.1.6-2",
+-    "openexr": "3.5.0-2",
++    "openexr": "3.5.1-1",
+     "openh264": "2.6.0-2",
+     "openjpeg2": "2.5.4-1",
+     "openjph": "0.32.0-1",
+-- 
+2.55.0
+
