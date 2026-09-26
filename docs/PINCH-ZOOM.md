@@ -8,7 +8,7 @@ Virtio Tablet keeps pointer movement, clicks and scrolling.
 The launcher turns pinch on by default when the runtime carries the pinch patch,
 the VM uses GPU mode with one display, and the installed guest image lists
 `virtio-pinch-pci` under `runtime.optionalDevices` in `build-spec.json`. Guest
-patch `0094` adds that declaration; images without it, including `v0.3.0` and
+patch `0095` adds that declaration; images without it, including `v0.3.0` and
 older payloads restored from a checkpoint, never receive the device. There is
 no setting. `-disable-pinch` keeps ordinary Windows two-finger input, and
 `-experimental-pinch` still forces the device on for a guest configured by hand.
