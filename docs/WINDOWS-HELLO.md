@@ -44,6 +44,27 @@ assertion carries authenticator data and a signature. This is a design lead,
 not an accepted replacement: it needs a disposable laptop test and a revised
 guest verifier before use.
 
+### WebAuthn preflight
+
+`TryOmarchyWebAuthnPreflight.exe` (built by the Windows CI job next to the
+helper, in the `hello-helper-test-*` artifact) tests that lead on a Hello
+laptop. It creates one platform credential for the placeholder relying party
+`preflight.try-omarchy.invalid`, requests two approvals with user verification
+required, deletes the credential, and writes `webauthn-preflight.json` in the
+current folder. Run it from a folder you can write to, count the Windows Hello
+prompts (the expected result is three: one to create, one per approval), then
+check the file on any machine with OpenSSL:
+
+```bash
+hello-helper/verify-webauthn-preflight.py webauthn-preflight.json
+```
+
+The verifier makes the checks the guest would make for each sudo approval: the
+pinned P-256 key from the attestation, the relying party hash, the user-present
+and user-verified flags, and the ES256 signature over the authenticator data
+and the exact client data. If each approval shows exactly one prompt and the
+verifier passes, the helper can move from KeyCredential to WebAuthn.
+
 ## Approval
 
 The root-only guest helper accepts only a `sudo` PAM service with a valid

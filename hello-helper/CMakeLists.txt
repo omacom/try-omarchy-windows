@@ -5,3 +5,8 @@ add_executable(TryOmarchyHelloHelper main.cpp)
 target_compile_features(TryOmarchyHelloHelper PRIVATE cxx_std_20)
 target_compile_definitions(TryOmarchyHelloHelper PRIVATE WINRT_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_link_libraries(TryOmarchyHelloHelper PRIVATE windowsapp user32)
+
+add_executable(TryOmarchyWebAuthnPreflight webauthn_preflight.cpp)
+target_compile_features(TryOmarchyWebAuthnPreflight PRIVATE cxx_std_20)
+target_compile_definitions(TryOmarchyWebAuthnPreflight PRIVATE NOMINMAX UNICODE _UNICODE)
+target_link_libraries(TryOmarchyWebAuthnPreflight PRIVATE webauthn bcrypt user32)
