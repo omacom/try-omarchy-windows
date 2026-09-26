@@ -77,6 +77,22 @@ jobs:
         working-directory: app
         run: go test ./...
 
+      - name: Build Windows Hello helper
+        shell: pwsh
+        run: |
+          cmake -S hello-helper -B hello-helper/build -A x64
+          cmake --build hello-helper/build --config Release
+          $invalid = Start-Process -FilePath hello-helper/build/Release/TryOmarchyHelloHelper.exe -ArgumentList 'sign invalid' -Wait -PassThru
+          if ($invalid.ExitCode -ne 2) { throw 'Invalid guest ID was accepted' }
+
+      - name: Retain unsigned Hello test helper
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hello-helper-test-${{ github.sha }}
+          path: hello-helper/build/Release/TryOmarchyHelloHelper.exe
+          retention-days: 7
+          if-no-files-found: error
+
   guest-contract:
     name: Guest contract
     runs-on: ubuntu-latest

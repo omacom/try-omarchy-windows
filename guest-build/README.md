@@ -37,6 +37,12 @@ the EDID mode again on `configreloaded`; there the window keeps its size but
 can still blank briefly. Compatibility revision 35 delivers the script and
 fragment to existing guests.
 
+Patch 0097 stages an opt-in Windows Hello sudo broker and a root-only virtio
+authentication port. Compatibility revision 36 delivers the broker and udev
+rule to existing persistent disks. No PAM rule is installed until the owner
+enables it after guest password authentication. It requires the matching host
+approval bridge; without that bridge, password authentication remains available.
+
 The second command needs Docker and currently takes about ten minutes. Release
 CI also boots the resulting factory image with `scripts/release/smoke-guest.py`
 before it uploads anything.

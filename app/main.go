@@ -786,6 +786,7 @@ func main() {
 	go runCloseGuard()
 	runClipboardBridge()
 	runCameraBridge(cfg.desktop)
+	runHelloBridge()
 	if audioRuntimeSupportsLiveRouting(cfg.qemu) {
 		runAudioBridge(cfg.dir, cfg.qemu, cfg.desktop.MicrophoneDisabled)
 	}

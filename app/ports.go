@@ -13,4 +13,5 @@ const (
 	transferPort    = 4452
 	cameraPort      = 4453
 	audioBridgePort = 4454
+	helloBridgePort = 4455
 )
