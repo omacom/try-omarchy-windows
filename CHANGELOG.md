@@ -1,16 +1,18 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 - 2026-09-26
 
+- Pinch to zoom on a Windows 11 Precision Touchpad. It is on by default in GPU
+  mode with one display, and `-disable-pinch` turns it off. Existing guests
+  pick up the touchpad rules on their first boot of the new image; a guest
+  whose Hyprland `input.lua` cannot be updated safely keeps ordinary touchpad
+  input.
 - Send Ctrl+Alt+Delete to Omarchy with Ctrl+Alt+End while its window is
   focused. Windows reserves Ctrl+Alt+Delete for its security screen, so it
   cannot be passed through.
-- Guests created by earlier releases load the pinch touchpad's gesture-only
-  settings, and the pinch device stays off for any configuration that cannot
-  load them. A Hyprland `input.lua` exported to a real Omarchy install no
-  longer fails on the missing Try Omarchy rules file.
-- Pinch to zoom on a Windows 11 Precision Touchpad is on by default for guest
-  images that include its touchpad rules. `-disable-pinch` turns it off.
+- A Hyprland `input.lua` exported to a real Omarchy install no longer fails on
+  the missing Try Omarchy rules file.
+- Update the guest to Linux 7.2.7 and systemd 262 with current Arch packages.
 
 ## v0.3.0 - 2026-09-24
 
