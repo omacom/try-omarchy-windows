@@ -24,6 +24,7 @@ type config struct {
 	fullscreenDisplay           string
 	hostCursor                  bool
 	experimentalPinch           bool
+	disablePinch, guestPinch    bool
 	lanPublic                   bool
 	instant, portable           bool
 	guestDir, vmDir, disk       string

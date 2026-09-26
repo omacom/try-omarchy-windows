@@ -1,0 +1,42 @@
+From eaa447ec173f2477493e6b25b73cc21fa8d2238b Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 26 Sep 2026 03:07:11 -0400
+Subject: [PATCH] Declare the gated pinch touchpad in the guest spec
+
+The Windows launcher attaches virtio-pinch-pci by default only to guest images whose build spec lists it under runtime.optionalDevices. Images from patch 0093 on keep libinput away from the device until every desktop user's Hyprland config loads the pinch rules, so the declaration is safe for fresh and upgraded disks. Older images leave the field out and never receive the device.
+---
+ guest/spec.json       | 3 +++
+ guest/tests/verify.py | 3 +++
+ 2 files changed, 6 insertions(+)
+
+diff --git a/guest/spec.json b/guest/spec.json
+index 0a26703..eb30582 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -198,6 +198,9 @@
+       "virtio-balloon-pci",
+       "intel-hda",
+       "hda-duplex"
++    ],
++    "optionalDevices": [
++      "virtio-pinch-pci"
+     ]
+   }
+ }
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 51064c0..b7b4ee4 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -47,6 +47,9 @@ def main() -> None:
+     check(spec["runtime"]["virtualMachineMonitor"] == "qemu-system-x86_64", "runtime uses native x86 QEMU")
+     check(spec["runtime"]["hypervisor"] == "whpx", "runtime uses Windows Hypervisor Platform")
+     check(spec["runtime"]["storage"]["expandedSizeMiB"] == 24576, "working disk expands to 24 GiB")
++    # The launcher attaches the pinch touchpad only to images that declare it,
++    # which is safe because pinch-ready (checked below) gates the device.
++    check(spec["runtime"].get("optionalDevices") == ["virtio-pinch-pci"], "guest accepts the gated pinch touchpad")
+     check(set(spec["inputs"]) == {"packages", "packageLock", "pacmanConfig"}, "spec has a minimal input set")
+     for path in spec["inputs"].values():
+         check((GUEST / path).is_file(), f"spec input exists: {path}")
+-- 
+2.55.0
+

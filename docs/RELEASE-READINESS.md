@@ -154,9 +154,9 @@ bug reports. Their existing password and NAT paths remain usable while
 [LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166)
 proceed. The current user base of thousands with relatively few reports is
 positive evidence about the everyday path; broad hardware and Windows 10
-acceptance are not 1.0 gates. Pinch stays opt-in until its guest rules reach
-existing guests and the automatic launcher gate passes the physical checks in
-[PINCH-ZOOM.md](PINCH-ZOOM.md). ARM64 and interface translation are open requests
+acceptance are not 1.0 gates. Automatic pinch ships with the first release
+whose guest image declares the touchpad, after its signed candidate passes the
+physical checks in [PINCH-ZOOM.md](PINCH-ZOOM.md). ARM64 and interface translation are open requests
 ([#131](https://github.com/omacom/try-omarchy-windows/issues/131),
 [#127](https://github.com/omacom/try-omarchy-windows/issues/127)); neither can be
 claimed as supported. Prioritize any gap that prevents a normal supported PC

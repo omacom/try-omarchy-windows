@@ -23,6 +23,10 @@ guarded loader to each user's `input.lua` once, keeping the original as
 `try-omarchy-pinch-ready` confirms at boot that every desktop user's config
 loads the rules; `/run/try-omarchy/pinch-gestures` says why when it does not.
 
+Patch 0094 lists `virtio-pinch-pci` under `runtime.optionalDevices` in the
+build spec. The Windows launcher attaches the pinch touchpad by default only to
+guest images that declare it, so older images never receive the device.
+
 The second command needs Docker and currently takes about ten minutes. Release
 CI also boots the resulting factory image with `scripts/release/smoke-guest.py`
 before it uploads anything.

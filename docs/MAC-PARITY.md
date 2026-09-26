@@ -47,7 +47,7 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | GPU application compatibility | AMD GPU desktop and applications passed their recorded checks; a previous Intel/NVIDIA preview runtime booted VirGL OpenGL but failed Venus Vulkan and Godot Forward+ | [Current-runtime investigation #173](https://github.com/omacom/try-omarchy-windows/issues/173); retain CPU/OpenGL fallback |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
 | Audio endpoint selection | Live host Settings and guest PipeWire switching ship in `v0.3.0` with r20c; public update and physical acceptance are in the [signed and public acceptance record](evidence/V030-SIGNED-CANDIDATE-2026-09-24.md) | [Live audio #167](https://github.com/omacom/try-omarchy-windows/issues/167): two physical endpoints per direction and hotplug need suitable hardware; see [audio behavior](AUDIO-DEVICES.md) |
-| Trackpad pinch | [Opt-in r18 bridge](PINCH-ZOOM.md), virtual touchpad and factory guest configuration implemented; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Guest rules for existing guests in draft [#184](https://github.com/omacom/try-omarchy-windows/pull/184), then automatic activation; Firefox and broader host/DPI/fullscreen acceptance |
+| Trackpad pinch | [r18 bridge](PINCH-ZOOM.md), virtual touchpad and guest rules for new and existing guests ([#184](https://github.com/omacom/try-omarchy-windows/pull/184)); on by default for guest images that declare the device; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Ship the declaring guest image after the signed physical gate; Firefox and broader host/DPI/fullscreen acceptance |
 | Windows Hello sudo | Draft [#179](https://github.com/omacom/try-omarchy-windows/pull/179) has the request contract, guest broker staging and a standalone Hello helper; guest password authentication remains | [Opt-in authentication bridge #165](https://github.com/omacom/try-omarchy-windows/issues/165); the signed-in laptop reports Hello `Available` and completed an initial approval prompt, but key-backed guest sudo remains untested |
 | 1Password host authentication | Guest 1Password uses its ordinary password and Linux authentication paths | [Windows Hello unlock #176](https://github.com/omacom/try-omarchy-windows/issues/176) follows #165 with a narrowly scoped agent for the installed guest 1Password process and Mac-style process/polkit checks |
 | Bridged networking | NAT and explicit port forwarding exist | [True LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166), with supported adapter, privilege and firewall handling |
@@ -62,7 +62,9 @@ record](evidence/V030-SIGNED-CANDIDATE-2026-09-24.md) and
 [publish run](https://github.com/omacom/try-omarchy-windows/actions/runs/35978943238)
 record the release checks. Settings, battery mirroring, live memory reclamation,
 approved app launch, and fullscreen monitor selection shipped in `v0.2.0`. Pinch
-remains opt-in; its physical gesture and scrolling checks passed on the laptop.
+is on by default for guest images that declare its touchpad, which reach users
+with the next release; its physical gesture and scrolling checks passed on the
+laptop.
 
 ## Work sequence toward comparable everyday use
 
@@ -91,8 +93,8 @@ remains opt-in; its physical gesture and scrolling checks passed on the laptop.
    target protocol rather than a Downloads fallback. Each can ship separately
    once it is reliable in normal use.
 5. **Polish input, language and graphics.** Use specific reports and available
-   machines to address keyboard geometry/IME, automatic pinch once existing
-   guests carry its device rules, and the Intel/NVIDIA Vulkan issue (#173).
+   machines to address keyboard geometry/IME, shipping automatic pinch, and
+   the Intel/NVIDIA Vulkan issue (#173).
    Keep the existing CPU/OpenGL fallback.
 
 Public `v0.2.0` already covers the former battery, unused-RAM, fullscreen and
