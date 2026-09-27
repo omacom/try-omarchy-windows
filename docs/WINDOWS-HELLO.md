@@ -47,6 +47,10 @@ data, so a sudo approval can never unlock 1Password. The password dialog runs as
 the user through the standard polkit PAM session, and its exit status alone
 never authorizes anything.
 
+The [laptop run](evidence/ONEPASSWORD-HELLO-LAPTOP-2026-09-26.md) covered the
+unlock with Windows Hello, the password fallback after a cancel, and a CLI
+request that never reached Windows Hello.
+
 ## How it works
 
 Windows Hello answers as a WebAuthn platform authenticator. The launcher calls
