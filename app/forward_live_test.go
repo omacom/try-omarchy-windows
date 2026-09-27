@@ -66,3 +66,28 @@ func TestApplyLiveForwardsReadsMonitorReplies(t *testing.T) {
 		t.Fatalf("a failed removal changed the active list: %v %v", active, errs)
 	}
 }
+
+func TestForwardsForBootFollowsLiveChanges(t *testing.T) {
+	launched := []portForward{mustForward(t, "tcp:8080:80"), mustForward(t, "tcp:2222:22")}
+	liveForwardState.Lock()
+	liveForwardState.set, liveForwardState.active = false, nil
+	liveForwardState.Unlock()
+	if got := forwardsForBoot(launched); len(got) != 2 {
+		t.Fatalf("before any live change got %v", got)
+	}
+	setLiveForwards([]portForward{mustForward(t, "tcp:2222:22")})
+	got := forwardsForBoot(launched)
+	if len(got) != 1 || got[0] != mustForward(t, "tcp:2222:22") {
+		t.Fatalf("a reboot after removing a forward would still get %v", got)
+	}
+	liveForwardState.Lock()
+	liveForwardState.set, liveForwardState.active = false, nil
+	liveForwardState.Unlock()
+}
+
+func TestPlanLiveForwardsTreatsExplicitLoopbackAsTheSameForward(t *testing.T) {
+	plan := planLiveForwards([]portForward{mustForward(t, "tcp:8080:80")}, []portForward{mustForward(t, "tcp:127.0.0.1:8080:80")})
+	if len(plan.add)+len(plan.remove)+len(plan.deferred) != 0 {
+		t.Fatalf("rewriting the same forward changed it: %+v", plan)
+	}
+}

@@ -11,13 +11,14 @@ import (
 // runLiveForwardWatcher applies local port-forward changes saved in Settings
 // to the running QEMU. Like the key forwarder, it waits for the supervisor's
 // QMP handshake before dialing, since an earlier QMP connection can wedge
-// WHPX, and starts over from the launch forwards whenever QEMU restarts for an
-// in-guest reboot.
+// WHPX. After QEMU restarts for an in-guest reboot it starts from the list
+// that boot was given (forwardsForBoot) and compares again.
 func runLiveForwardWatcher(dir string, launched []portForward) {
 	path := settingsPath(dir)
 	var active []portForward
 	var pid uint32
-	var applied time.Time
+	var seenTime time.Time
+	var seenSize int64 = -1
 	for {
 		time.Sleep(2 * time.Second)
 		current := qemuPid.Load()
@@ -25,26 +26,28 @@ func runLiveForwardWatcher(dir string, launched []portForward) {
 			continue
 		}
 		if current != pid {
-			pid, active, applied = current, append([]portForward(nil), launched...), time.Time{}
+			pid, active, seenTime, seenSize = current, forwardsForBoot(launched), time.Time{}, -1
 		}
 		info, err := os.Stat(path)
-		if err != nil || !info.ModTime().After(applied) {
+		// Size as well as time: a coarse or restored timestamp alone can hide an edit.
+		if err != nil || (info.ModTime().Equal(seenTime) && info.Size() == seenSize) {
 			continue
 		}
-		applied = info.ModTime()
+		seenTime, seenSize = info.ModTime(), info.Size()
 		saved, err := loadSettings(path)
 		if err != nil {
+			logf("forwards: settings not readable, keeping the current forwards: %v", err)
 			continue
 		}
 		var desired forwardList
-		valid := true
+		var invalid error
 		for _, line := range saved.Forwards {
-			if desired.Set(line) != nil {
-				valid = false
+			if invalid = desired.Set(line); invalid != nil {
 				break
 			}
 		}
-		if !valid {
+		if invalid != nil {
+			logf("forwards: saved list is invalid, keeping the current forwards: %v", invalid)
 			continue
 		}
 		plan := planLiveForwards(active, desired)
@@ -56,6 +59,7 @@ func runLiveForwardWatcher(dir string, launched []portForward) {
 		}
 		var errs []error
 		active, errs = applyLiveForwards(active, plan, monitorCommand)
+		setLiveForwards(active)
 		for _, err := range errs {
 			logf("forwards: %v", err)
 		}

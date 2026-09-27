@@ -54,7 +54,10 @@ type config struct {
 	// which some hosts advertise and then refuse (issue #19). Set by the
 	// startup retry, never by a flag.
 	forwards []portForward
-	sshKey   string
+	// launchForwards is the list from this launch; forwards follows live
+	// changes from Settings between boots (forward_live.go).
+	launchForwards []portForward
+	sshKey         string
 	// Guest RAM chosen by the user (settings.json or -memory); 0 = automatic.
 	memOverrideMiB int
 	diskGiB        int
@@ -784,9 +787,10 @@ func main() {
 	go runTitleEnforcer(cfg.dir, cfg.fullscreen, cfg.fullscreenDisplay)
 	go runCursorReleaseGuard()
 	go runCloseGuard()
+	cfg.launchForwards = append([]portForward(nil), cfg.forwards...)
 	// Command-line -forward and -ssh replace the saved list for this launch.
 	if !explicitFlags["forward"] && !explicitFlags["ssh"] {
-		go runLiveForwardWatcher(cfg.dir, cfg.forwards)
+		go runLiveForwardWatcher(cfg.dir, cfg.launchForwards)
 	}
 	runClipboardBridge()
 	runCameraBridge(cfg.desktop)
@@ -867,6 +871,9 @@ func supervise(cfg *config, cmdline string) bool {
 		if err != nil {
 			fatal("Cannot reload audio preferences for this boot: %v", err)
 		}
+		// Local forwards changed while running (forward_live.go) carry into a
+		// reboot instead of reverting to the launch list.
+		cfg.forwards = forwardsForBoot(cfg.launchForwards)
 		proc = exec.Command(cfg.qemu, buildQemuArgs(cfg, cmdline)...)
 		audioSelection := cfg.audio == "sdl" && audioRuntimeSupportsSelection(cfg.qemu)
 		if !audioSelection && (cfg.audioDevices.Output != "" || (!cfg.desktop.MicrophoneDisabled && cfg.audioDevices.Input != "")) {

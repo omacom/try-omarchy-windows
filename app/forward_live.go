@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // Applying port-forward changes from Settings while Omarchy runs. QEMU's user
@@ -11,6 +12,43 @@ import (
 // LAN forward needs its Windows firewall rule, which takes an elevation
 // prompt, and a forward to guest port 22 needs sshd, which the guest starts at
 // boot. Those wait for the next launch.
+
+// liveForwardState is the forward list QEMU should have now. The watcher
+// updates it after each live change, and every QEMU start, including the
+// relaunch after an in-guest reboot, builds its network from it, so a forward
+// removed while running stays removed.
+var liveForwardState struct {
+	sync.Mutex
+	active []portForward
+	set    bool
+}
+
+func setLiveForwards(active []portForward) {
+	liveForwardState.Lock()
+	liveForwardState.active = append([]portForward(nil), active...)
+	liveForwardState.set = true
+	liveForwardState.Unlock()
+}
+
+// forwardsForBoot returns the live list when there is one, else the forwards
+// from launch.
+func forwardsForBoot(launched []portForward) []portForward {
+	liveForwardState.Lock()
+	defer liveForwardState.Unlock()
+	if !liveForwardState.set {
+		return append([]portForward(nil), launched...)
+	}
+	return append([]portForward(nil), liveForwardState.active...)
+}
+
+// canonicalForward treats an explicit 127.0.0.1 binding like the default, so
+// rewriting tcp:8080:80 as tcp:127.0.0.1:8080:80 is not a change.
+func canonicalForward(f portForward) portForward {
+	if f.bind == "127.0.0.1" {
+		f.bind = ""
+	}
+	return f
+}
 
 func liveForwardEligible(f portForward) bool {
 	return !f.exposedToLAN() && f.guestPort != 22
@@ -30,7 +68,7 @@ func planLiveForwards(active, desired []portForward) forwardPlan {
 	var plan forwardPlan
 	has := func(list []portForward, f portForward) bool {
 		for _, other := range list {
-			if other == f {
+			if canonicalForward(other) == canonicalForward(f) {
 				return true
 			}
 		}
@@ -74,7 +112,7 @@ func applyLiveForwards(active []portForward, plan forwardPlan, monitor func(stri
 			continue
 		}
 		for i, other := range current {
-			if other == f {
+			if canonicalForward(other) == canonicalForward(f) {
 				current = append(current[:i], current[i+1:]...)
 				break
 			}
