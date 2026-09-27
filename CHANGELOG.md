@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.6.0 - 2026-09-27
+
+- Unlock 1Password with Windows Hello. If you install 1Password in Omarchy and
+  have paired Windows Hello for sudo, run
+  `sudo try-omarchy-windows-hello onepassword enable`, then turn on
+  1Password's "Unlock using system authentication". Its unlock button then
+  shows one Windows Hello prompt, with the guest password as the fallback.
+- Drop Windows files onto an Omarchy app, such as a browser upload area or an
+  editor, and the app receives them. The files also stay in Downloads. Drops on
+  a Files folder still copy straight into that folder.
+- Local port forwards changed in Settings apply while Omarchy runs. LAN
+  forwards and forwards to guest port 22 still change at the next launch.
+- Update > Omarchy installs packages that newer images added for Try Omarchy
+  features, so older installs get them too.
+- Windows Hello sudo accepts requests only from this Omarchy's own VM, refuses
+  sudo from SSH sessions into the guest, recovers when a request is
+  interrupted, and uses the password for 30 seconds after a canceled prompt.
+- `settings.json` saved with a UTF-8 byte-order mark (for example by Notepad or
+  PowerShell) opens normally.
+
 ## v0.5.0 - 2026-09-26
 
 - Approve guest `sudo` with Windows Hello. It is opt-in: run
