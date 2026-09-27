@@ -1,14 +1,14 @@
 # Try Omarchy for Windows guides
 
-Start with the [quick start](../README.md#quick-start). For supported hardware and current limits, read [App compatibility](COMPATIBILITY.md).
+Start with the [quick start](../README.md#try-it). For supported hardware and current limits, read [App compatibility](COMPATIBILITY.md).
 
 ## Using Omarchy
 
 | Task | Guide |
 | --- | --- |
-| Learn the keyboard shortcuts | [Essential keys](../README.md#essential-keys) |
-| Change CPU, RAM, display, audio, or camera settings | [Settings](../README.md#settings), [Desktop controls](DESKTOP-CONTROLS.md), [Audio devices](AUDIO-DEVICES.md) |
-| Share a folder or connect over SSH | [Shared-folder settings](../README.md#settings), [SSH and port forwarding](../README.md#ssh-and-port-forwarding) |
+| Learn the keyboard shortcuts | [Essential keys](USER-GUIDE.md#essential-keys) |
+| Change CPU, RAM, display, audio, or camera settings | [Settings](USER-GUIDE.md#settings), [Desktop controls](DESKTOP-CONTROLS.md), [Audio devices](AUDIO-DEVICES.md) |
+| Share a folder or connect over SSH | [Shared-folder settings](USER-GUIDE.md#settings), [SSH and port forwarding](USER-GUIDE.md#ssh-and-port-forwarding) |
 | Update an existing Linux guest | [Guest upgrades](GUEST-UPGRADES.md) |
 | Back up, restore, or reset a guest | [Backup and recovery](BACKUP.md) |
 | Move an installation to another drive | [Moving an installation](MOVING.md) |
@@ -17,7 +17,7 @@ Start with the [quick start](../README.md#quick-start). For supported hardware a
 | Approve `sudo` with Windows Hello | [Windows Hello for guest sudo](WINDOWS-HELLO.md) |
 | Zoom with a touchpad pinch | [Trackpad pinch](PINCH-ZOOM.md) |
 | Troubleshoot slow or unsupported graphics | [Performance](PERFORMANCE.md), [App compatibility](COMPATIBILITY.md) |
-| Report a problem | [Diagnostics and reports](../README.md#reporting-a-problem) |
+| Report a problem | [Diagnostics and reports](USER-GUIDE.md#reporting-a-problem) |
 
 ## Experimental features
 
