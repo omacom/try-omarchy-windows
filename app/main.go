@@ -784,6 +784,10 @@ func main() {
 	go runTitleEnforcer(cfg.dir, cfg.fullscreen, cfg.fullscreenDisplay)
 	go runCursorReleaseGuard()
 	go runCloseGuard()
+	// Command-line -forward and -ssh replace the saved list for this launch.
+	if !explicitFlags["forward"] && !explicitFlags["ssh"] {
+		go runLiveForwardWatcher(cfg.dir, cfg.forwards)
+	}
 	runClipboardBridge()
 	runCameraBridge(cfg.desktop)
 	runHelloBridge()

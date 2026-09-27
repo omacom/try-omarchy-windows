@@ -207,7 +207,14 @@ The same alias works for `scp`, Git, and VS Code Remote SSH. Other services
 use `-forward tcp:8080:80` or `-forward udp:5000:5000` (repeatable); the guest
 service must listen on its network interface, not only on its own localhost.
 From Omarchy, `windows.host:<port>` (10.0.2.2) reaches a service on Windows without any
-mapping. Key-only or permanent SSH is Omarchy's own choice: run
+mapping.
+
+Forwards saved under **Settings > Advanced > Port forwards** behave the same
+way. While Omarchy is running, adding or removing a local forward takes effect
+within a couple of seconds, with no restart. LAN forwards, which need a Windows
+firewall rule, and forwards to guest port 22, which need sshd started at boot,
+change at the next launch. Forwards given with `-forward` or `-ssh` on the
+command line replace the saved list for that session and do not change live. Key-only or permanent SSH is Omarchy's own choice: run
 `omarchy-setup-security-sshd` inside the guest. A fresh disk (`-fresh`) gets a
 new host key, so remove the old `[127.0.0.1]:2222` entry from `known_hosts`
 if ssh complains.
