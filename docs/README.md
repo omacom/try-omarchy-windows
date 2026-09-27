@@ -14,6 +14,8 @@ Start with the [quick start](../README.md#quick-start). For supported hardware a
 | Move an installation to another drive | [Moving an installation](MOVING.md) |
 | Export Omarchy configuration | [Configuration migration](MIGRATION.md) |
 | Launch approved Windows apps | [Windows app bridge](WINDOWS-APP-BRIDGE.md) |
+| Approve `sudo` with Windows Hello | [Windows Hello for guest sudo](WINDOWS-HELLO.md) |
+| Zoom with a touchpad pinch | [Trackpad pinch](PINCH-ZOOM.md) |
 | Troubleshoot slow or unsupported graphics | [Performance](PERFORMANCE.md), [App compatibility](COMPATIBILITY.md) |
 | Report a problem | [Diagnostics and reports](../README.md#reporting-a-problem) |
 
@@ -22,7 +24,6 @@ Start with the [quick start](../README.md#quick-start). For supported hardware a
 These guides describe their own limits and validation status. They are not a promise of support on every PC.
 
 - [Portable USB installations](PORTABLE_USB.md)
-- [Trackpad pinch](PINCH-ZOOM.md)
 - [Nested virtualization](NESTED-VIRTUALIZATION.md)
 - [GPU application profiles](GPU-APPLICATIONS.md)
 

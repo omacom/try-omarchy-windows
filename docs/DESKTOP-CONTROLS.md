@@ -1,6 +1,6 @@
 # Desktop controls
 
-This guide describes the published `v0.4.0` release.
+This guide describes the published `v0.5.0` release.
 
 Settings has four pages:
 
@@ -37,6 +37,11 @@ Omarchy, since Windows keeps Ctrl+Alt+Delete for its own security screen. Pinch
 to zoom on a Windows 11 Precision Touchpad reaches Linux apps in GPU mode with
 one display. It has no Settings control; start with `-disable-pinch` to keep
 ordinary two-finger input. See [trackpad pinch](PINCH-ZOOM.md).
+
+Holding Alt and tapping Tab cycles windows inside Omarchy the same way it does
+on a Linux PC. The Omarchy window's title bar follows the Windows light or dark
+app theme. To approve `sudo` with Windows Hello instead of the guest password,
+see [Windows Hello for guest sudo](WINDOWS-HELLO.md).
 
 Camera selection uses the Windows device identity, not its position in a list.
 If the chosen camera is disconnected, capture stays unavailable instead of
