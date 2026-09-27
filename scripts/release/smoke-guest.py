@@ -187,6 +187,10 @@ def main() -> None:
         raise SystemExit("release smoke test requires accessible /dev/kvm")
 
     spec = json.loads((args.artifacts / "build-spec.json").read_text(encoding="utf-8"))
+    # The runtime package follows the pinned Omarchy version and the spec's
+    # packageRelease, which goes up whenever its dependencies change.
+    upstream = spec["upstream"]
+    EXPECTED_FACTS["runtime-package"] = f"{upstream['version']}-{upstream.get('packageRelease', 1)}"
     cmdline = spec["runtime"]["kernelCommandLine"]
     cmdline = cmdline.replace("console=tty0 ", "").replace("console=hvc0", "console=ttyS0")
     cmdline += " tryomarchy.instant=1"
