@@ -3,10 +3,15 @@
 ## Current decision
 
 The current normal version is
-[`v0.4.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.4.0),
-published as Latest on September 26 with default pinch and Ctrl+Alt+End. Its
-[candidate and release record](evidence/V040-SIGNED-CANDIDATE-2026-09-26.md)
-covers the signed candidate, upgrade, fresh install, pinch and rollback checks.
+[`v0.5.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.5.0),
+published as Latest on September 26 with opt-in Windows Hello sudo, the theme
+switch fix, the dark title bar and Alt+Tab hold. Its
+[candidate and release record](evidence/V050-SIGNED-CANDIDATE-2026-09-26.md)
+covers the signed candidate, rollback, upgrade, fresh install and the first
+public update from an installed v0.4.0 launcher.
+[`v0.4.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.4.0)
+shipped earlier the same day with default pinch and Ctrl+Alt+End; see its
+[record](evidence/V040-SIGNED-CANDIDATE-2026-09-26.md).
 The previous version,
 [`v0.3.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.3.0),
 was published as Latest on September 24. [Publish run 35978943238](https://github.com/omacom/try-omarchy-windows/actions/runs/35978943238)
