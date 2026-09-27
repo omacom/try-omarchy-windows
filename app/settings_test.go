@@ -171,3 +171,17 @@ func TestSharedFolderOfferAndEnableState(t *testing.T) {
 		t.Fatalf("disabled form state = %+v, %v", s, err)
 	}
 }
+
+func TestLoadSettingsAcceptsAByteOrderMark(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte("\xef\xbb\xbf{\"schemaVersion\":1,\"forwards\":[\"tcp:2222:22\"]}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := loadSettings(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Forwards) != 1 || s.Forwards[0] != "tcp:2222:22" {
+		t.Fatalf("forwards = %v", s.Forwards)
+	}
+}

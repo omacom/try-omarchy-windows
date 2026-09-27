@@ -9,9 +9,10 @@ import (
 )
 
 // runLiveForwardWatcher applies local port-forward changes saved in Settings
-// to the running QEMU. It waits for the guest handshake, since a QMP
-// connection during early boot can wedge WHPX, and starts over from the
-// launch forwards whenever QEMU restarts for an in-guest reboot.
+// to the running QEMU. Like the key forwarder, it waits for the supervisor's
+// QMP handshake before dialing, since an earlier QMP connection can wedge
+// WHPX, and starts over from the launch forwards whenever QEMU restarts for an
+// in-guest reboot.
 func runLiveForwardWatcher(dir string, launched []portForward) {
 	path := settingsPath(dir)
 	var active []portForward

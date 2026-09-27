@@ -88,6 +88,8 @@ func loadSettings(path string) (settings, error) {
 	if err != nil {
 		return s, err
 	}
+	// Notepad and PowerShell can save UTF-8 with a byte-order mark.
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&s); err != nil {
