@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.5.0 - Unreleased
+
+- Approve guest `sudo` with Windows Hello. It is opt-in: run
+  `sudo try-omarchy-windows-hello enable` in Omarchy, confirm with the guest
+  password, and approve the Windows passkey prompt. Each `sudo` then shows one
+  Windows Hello prompt, only while the Omarchy window is in front; cancel it to
+  type the password. `disable` removes the passkey.
+- Switching themes no longer blanks the Omarchy window or snaps a restored
+  window back to an older size.
+- The Omarchy window's title bar follows the Windows light or dark app theme,
+  including when it changes while Omarchy runs.
+- Holding Alt and tapping Tab now keeps Alt held in Omarchy, so window
+  switchers that stay open while Alt is down cycle normally.
+- Setup finishes from an already downloaded file when its download link stops
+  working, as long as the file matches its checksum.
+- Update the guest's Arch packages.
+
 ## v0.4.0 - 2026-09-26
 
 - Pinch to zoom on a Windows 11 Precision Touchpad. It is on by default in GPU
