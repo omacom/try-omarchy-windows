@@ -3,7 +3,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"os/exec"
 	"syscall"
@@ -14,17 +13,14 @@ const projectURL = "https://github.com/omacom/try-omarchy-windows"
 const websiteURL = "https://tryomarchy.com"
 
 func runAbout() {
-	message := fmt.Sprintf("Try Omarchy %s\n\n"+
-		"Run the Omarchy desktop on Windows. Your files persist between sessions.\n\n"+
-		"Originally created by @martiano. Maintained under Omacom.\n\n"+
-		"Website: "+websiteURL+"\n"+
-		"Source, help and issue reporting: "+projectURL+"\n\n"+
-		"Open source under the MIT License. Built with Omarchy, Arch Linux and QEMU.\n\n"+
-		"Launcher updates and Linux updates are separate. For Linux packages and Omarchy, use Update > Omarchy inside the desktop.",
-		currentVersion)
-	action, err := chooseAction("About Try Omarchy", message, "Check for launcher updates", "Open Try Omarchy website", "Open source and support", "Third-party notices", "Close")
+	message := uiTextWith("about.body", map[string]string{
+		"version": currentVersion, "website": websiteURL, "source": projectURL,
+	})
+	action, err := chooseAction(uiText("about.title"), message,
+		uiText("about.check_updates"), uiText("about.open_website"), uiText("about.open_support"),
+		uiText("about.third_party"), uiText("about.close"))
 	if err != nil {
-		errorBox("Could not open About.\n\n" + err.Error())
+		errorBox(uiText("about.open_error") + err.Error())
 		return
 	}
 	switch action {
@@ -40,7 +36,7 @@ func runAbout() {
 }
 
 func checkForLauncherUpdates() {
-	getUI().setStatus("Checking for updates...")
+	getUI().setStatus("%s", uiText("about.checking"))
 	key, err := updatePublicKey()
 	var manifest *updateManifest
 	if err == nil {
@@ -48,14 +44,14 @@ func checkForLauncherUpdates() {
 	}
 	uiDone()
 	if err != nil {
-		errorBox("Could not check for updates. Your installation has not changed.\n\n" + err.Error())
+		errorBox(uiText("about.check_error") + err.Error())
 		return
 	}
 	if !updateIsNewer(manifest.Version, currentVersion) {
-		infoBox("No newer compatible launcher is available.\n\nInstalled: " + currentVersion + "\nLatest published release: " + manifest.Version)
+		infoBox(uiTextWith("about.no_update", map[string]string{"installed": currentVersion, "latest": manifest.Version}))
 		return
 	}
-	if msgBox("Update available: "+manifest.Version+"\nInstalled: "+currentVersion+"\n\nOpen the release notes and download page? Close Omarchy before opening the new launcher.", mbYesNo|mbIconQuestion) != idYes {
+	if msgBox(uiTextWith("about.update_available", map[string]string{"installed": currentVersion, "latest": manifest.Version}), mbYesNo|mbIconQuestion) != idYes {
 		return
 	}
 	openWindowsURL(projectURL + "/releases/tag/" + manifest.Version)
@@ -65,7 +61,7 @@ func openWindowsURL(url string) {
 	cmd := exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", url)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if err := cmd.Start(); err != nil {
-		errorBox("Windows could not open the page.\n\n" + err.Error())
+		errorBox(uiText("about.open_page_error") + err.Error())
 		return
 	}
 	_ = cmd.Process.Release()

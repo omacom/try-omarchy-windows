@@ -35,6 +35,8 @@ python3 runtime-build/validate-lock.py
 
 For guest changes, follow [guest-build/README.md](guest-build/README.md) and run `scripts/release/build-guest.sh --contract-only`. This fetches and patches the pinned guest source; a contract test is not a full VM boot.
 
+For Windows launcher translations, start with [LOCALIZATION.md](docs/LOCALIZATION.md).
+
 ## Validate the affected behavior
 
 Add a regression test for a bug when it can reproduce the failure. Use a separate data folder and copied guest for tests that change installations, updates, or recovery state. Keep the original guest and backup untouched.

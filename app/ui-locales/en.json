@@ -1,0 +1,15 @@
+{
+  "about.title": "About Try Omarchy",
+  "about.body": "Try Omarchy {version}\n\nRun the Omarchy desktop on Windows. Your files persist between sessions.\n\nOriginally created by @martiano. Maintained under Omacom.\n\nWebsite: {website}\nSource, help and issue reporting: {source}\n\nOpen source under the MIT License. Built with Omarchy, Arch Linux and QEMU.\n\nLauncher updates and Linux updates are separate. For Linux packages and Omarchy, use Update > Omarchy inside the desktop.",
+  "about.check_updates": "Check for launcher updates",
+  "about.open_website": "Open Try Omarchy website",
+  "about.open_support": "Open source and support",
+  "about.third_party": "Third-party notices",
+  "about.close": "Close",
+  "about.open_error": "Could not open About.\n\n",
+  "about.checking": "Checking for updates...",
+  "about.check_error": "Could not check for updates. Your installation has not changed.\n\n",
+  "about.no_update": "No newer compatible launcher is available.\n\nInstalled: {installed}\nLatest published release: {latest}",
+  "about.update_available": "Update available: {latest}\nInstalled: {installed}\n\nOpen the release notes and download page? Close Omarchy before opening the new launcher.",
+  "about.open_page_error": "Windows could not open the page.\n\n"
+}
