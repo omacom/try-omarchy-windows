@@ -49,6 +49,12 @@ broker for a signed `onepassword-unlock` approval, and every other request
 goes to the standard password dialog. Compatibility revision 37 delivers the
 agent, dialog and unit to existing guests without enabling anything.
 
+Patch 0100 drags dropped files into the app under the pointer: after the
+files reach Downloads, a small overlay drag source asks the launcher for
+`drop-drag`, and the launcher drags from it to the drop point through the
+virtual tablet. Compatibility revision 38 delivers the helper to existing
+guests.
+
 The second command needs Docker and currently takes about ten minutes. Release
 CI also boots the resulting factory image with `scripts/release/smoke-guest.py`
 before it uploads anything.

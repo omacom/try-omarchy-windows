@@ -28,6 +28,7 @@ var (
 	altTab         altTabForwarder // hook-thread only
 	ctrlAltEndSent bool            // hook-thread only
 	keyEvents      = make(chan forwardedKey, 64)
+	pointerScripts = make(chan []pointerStep, 1)
 )
 
 // forwardKey hands a key state change to the QMP drain without blocking the
@@ -237,6 +238,17 @@ func runWinKeyQmp() {
 				ev := fmt.Sprintf(`{"execute":"input-send-event","arguments":{"events":[{"type":"key","data":{"down":%t,"key":{"type":"qcode","data":%q}}}]}}`, key.down, key.qcode)
 				if err := c.writeLine(ev); err != nil {
 					break drain
+				}
+			case steps := <-pointerScripts:
+				for _, step := range steps {
+					events := fmt.Sprintf(`{"type":"abs","data":{"axis":"x","value":%d}},{"type":"abs","data":{"axis":"y","value":%d}}`, step.x, step.y)
+					if step.button >= 0 {
+						events += fmt.Sprintf(`,{"type":"btn","data":{"down":%t,"button":"left"}}`, step.button == 1)
+					}
+					if err := c.writeLine(`{"execute":"input-send-event","arguments":{"events":[` + events + `]}}`); err != nil {
+						break drain
+					}
+					time.Sleep(step.pause)
 				}
 			case _, ok := <-lines:
 				if !ok {

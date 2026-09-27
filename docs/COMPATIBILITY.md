@@ -30,8 +30,9 @@ Try Omarchy runs the full x86_64 Arch Linux environment used by Omarchy. It is n
 - Text and image clipboard sharing work in both directions (images travel as
   PNG, up to 16 MiB). V20 streams file/folder clipboard transfers and accepts native
   Windows file drops without a blocking transfer window. Supported folders receive
-  the files directly; other destinations fall back to Downloads. Direct drops into
-  arbitrary guest applications remain unfinished.
+  the files directly. A drop on another app, such as a browser upload area,
+  saves the files to Downloads and then drags them into that app, as long as
+  the pointer stays where it was dropped; otherwise they stay in Downloads.
 - Portable mode is experimental pending external-drive and second-PC acceptance.
   Accelerated saved-session/RAM resume and bridged networking are not ready for use.
 - The launcher boots its pinned kernel and initramfs from the release image, and the guest's pacman configuration holds the `linux` package so `pacman -Syu` and `omarchy-update` leave it alone. Kernel updates arrive with guest-image updates, which also carry the matching modules onto existing disks. Forcing a different kernel package into the guest leaves it out of sync with those boot files.

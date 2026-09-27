@@ -1048,7 +1048,11 @@ func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
 			silent = 0
 			if paths, point, ok := droppedFilesEvent(line); ok {
 				logf("file drop: received %d item(s)", len(paths))
-				if err := sendDroppedFilesAt(paths, guestDropPoint(point)); err != nil {
+				dropPoint := guestDropPoint(point)
+				if dropPoint != nil {
+					recordDrop(recordedDrop{at: time.Now(), point: dropPoint, cursor: cursorPosition()})
+				}
+				if err := sendDroppedFilesAt(paths, dropPoint); err != nil {
 					reportTransferError(err)
 				}
 			}
@@ -1218,6 +1222,7 @@ func runGuestAgent(dir string) {
 	a := newGuestAgent()
 	a.appsDir = dir
 	a.launchApp = func(id string) error { return launchApprovedWindowsApp(dir, id) }
+	a.dropDrag = performDropDrag
 	theAgent.Store(a)
 	a.run(l, hostResumed)
 }

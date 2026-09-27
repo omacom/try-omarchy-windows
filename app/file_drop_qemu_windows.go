@@ -2,7 +2,11 @@
 
 package main
 
-import "unsafe"
+import (
+	"errors"
+	"time"
+	"unsafe"
+)
 
 // Direct file drops on the VM window arrive as a QMP DISPLAY_FILE_DROP event
 // (see file_drop.go). QEMU owns the SDL window and runs in another process, so
@@ -19,6 +23,37 @@ var (
 	procGetClientRect  = user32.NewProc("GetClientRect")
 	procScreenToClient = user32.NewProc("ScreenToClient")
 )
+
+func cursorPosition() [2]int32 {
+	var cursor struct{ x, y int32 }
+	procGetCursorPos.Call(uintptr(unsafe.Pointer(&cursor)))
+	return [2]int32{cursor.x, cursor.y}
+}
+
+// performDropDrag answers the guest's "drop-drag" request for the last drop.
+func performDropDrag(x, y int) error {
+	drop, err := takeDrop(time.Now())
+	if err != nil {
+		return err
+	}
+	if pid := qemuPid.Load(); pid == 0 || foregroundPid() != pid {
+		return errors.New("the Omarchy window is not in front")
+	}
+	if cursorMoved(drop.cursor, cursorPosition()) {
+		return errors.New("the pointer moved after the drop")
+	}
+	steps, err := dropDragSteps(x, y, drop)
+	if err != nil {
+		return err
+	}
+	select {
+	case pointerScripts <- steps:
+		logf("file drop: dragging into the app under the pointer")
+		return nil
+	default:
+		return errors.New("another drag is in progress")
+	}
+}
 
 // guestDropPoint includes the current display-window size so the guest can
 // map the point using its current resolution and scale. A nil point means

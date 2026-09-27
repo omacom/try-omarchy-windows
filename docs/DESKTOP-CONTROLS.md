@@ -85,6 +85,9 @@ Transfers always copy, including a Windows Cut selection. The source is retained
 A small progress window appears for longer transfers; closing it dismisses the
 window, while Cancel stops the copy. Transfer errors use non-blocking Windows
 notifications, so an early failed drop cannot hold up later transfers. Shared folders are useful for repeated large
-exchanges and links. Direct drops into arbitrary guest applications are not yet implemented.
+exchanges and links. A drop on another app, such as a browser upload area or an editor, saves the
+files to Downloads and then drags them into that app. Keep the pointer still
+until they arrive; if it moves, or the Omarchy window loses focus, the files
+stay in Downloads with a notification.
 
 See the [candidate verification record](evidence/DESKTOP-POLISH-2026-09-19.md).

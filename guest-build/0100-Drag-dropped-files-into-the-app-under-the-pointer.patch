@@ -1,0 +1,366 @@
+From 8ffa4873d1f2691e622edec85706c372f5e347bc Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 26 Sep 2026 23:56:41 -0400
+Subject: [PATCH] Drag dropped files into the app under the pointer
+
+A Windows drop on an Omarchy app other than a Files folder used to stop at Downloads. The files still go to Downloads, and then a small overlay drag source (GTK 4 with gtk4-layer-shell, no keyboard focus) appears beside the drop point and asks the launcher for drop-drag over the agent port. The launcher presses on it through the virtual tablet and drags to the recorded drop point, so the app receives an ordinary Wayland drop of the files. The Downloads notice now only appears when that does not happen: the launcher refuses when the pointer moved, the window lost focus or the drop is old, and the helper gives up after a few seconds. Revision 38 delivers the helper to existing guests.
+---
+ .../usr/local/bin/try-omarchy-drop            | 99 ++++++++++++++++++-
+ .../usr/local/lib/try-omarchy/drop-drag       | 81 +++++++++++++++
+ guest/scripts/finalize-rootfs.sh              |  4 +-
+ guest/tests/test_file_drop_target.py          | 60 +++++++++++
+ guest/tests/verify.py                         |  4 +-
+ 5 files changed, 241 insertions(+), 7 deletions(-)
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/drop-drag
+
+diff --git a/guest/factory-overlay/usr/local/bin/try-omarchy-drop b/guest/factory-overlay/usr/local/bin/try-omarchy-drop
+index 6c1af6c..582bd17 100755
+--- a/guest/factory-overlay/usr/local/bin/try-omarchy-drop
++++ b/guest/factory-overlay/usr/local/bin/try-omarchy-drop
+@@ -84,7 +84,8 @@ def folder_from_windows(target, windows):
+     return folders[0] if len(folders) == 1 else None
+ 
+ 
+-def target_folder(point):
++def drop_target(point):
++    """The window under the drop point, with the point in layout coordinates."""
+     if len(point) != 4:
+         return None
+     result = subprocess.run(['hyprctl', '-j', 'monitors'], capture_output=True,
+@@ -96,7 +97,16 @@ def target_folder(point):
+     workspace = monitors[0].get('activeWorkspace', {}).get('id')
+     visible = [c for c in clients() if c.get('workspace', {}).get('id') == workspace]
+     target = candidate(visible, *mapped)
+-    if target is None or target.get('class') != 'org.gnome.Nautilus':
++    if target is None:
++        return None
++    return {'client': target, 'point': mapped, 'monitor': monitors[0]}
++
++
++def target_folder(found):
++    if found is None:
++        return None
++    target = found['client']
++    if target.get('class') != 'org.gnome.Nautilus':
+         return None
+     # Check the actual service owner, not just a window title/app ID.
+     owner = dbus_call('org.freedesktop.DBus', '/org/freedesktop/DBus',
+@@ -110,6 +120,75 @@ def target_folder(point):
+     return folder_from_windows(target, windows)
+ 
+ 
++DRAG_HELPER = Path('/usr/local/lib/try-omarchy/drop-drag')
++LAYER_SHELL = Path('/usr/lib/libgtk4-layer-shell.so')
++TABLET_MAX = 32767
++SOURCE_OFFSET = 90
++
++
++def tablet_position(x, y, monitor):
++    """Layout coordinates to the absolute units of QEMU's virtual tablet."""
++    scale = monitor.get('scale', 1) or 1
++    width, height = monitor['width'], monitor['height']
++    tx = round((x - monitor.get('x', 0)) * scale * TABLET_MAX / max(1, width - 1))
++    ty = round((y - monitor.get('y', 0)) * scale * TABLET_MAX / max(1, height - 1))
++    return min(TABLET_MAX, max(0, tx)), min(TABLET_MAX, max(0, ty))
++
++
++def source_position(x, y, monitor):
++    """Put the drag source beside the drop point, inside the monitor."""
++    scale = monitor.get('scale', 1) or 1
++    left = monitor.get('x', 0)
++    right = left + monitor['width'] / scale
++    sx = x - SOURCE_OFFSET if x - SOURCE_OFFSET >= left + 30 else x + SOURCE_OFFSET
++    return int(min(right - 30, max(left + 30, sx))), int(y)
++
++
++def ask_host_to_drag(tx, ty):
++    import socket
++    with socket.create_connection(('10.0.2.2', 4451), timeout=3) as connection:
++        connection.sendall(f'drop-drag {tx} {ty}\n'.encode('ascii'))
++        return connection.makefile('r').readline() == 'ok\n'
++
++
++def deliver_to_app(paths, found):
++    """Drag received files into the app under the drop point. True when it took them."""
++    import os
++    import select
++    if not paths or not DRAG_HELPER.exists() or not LAYER_SHELL.exists():
++        return False
++    monitor = found['monitor']
++    sx, sy = source_position(*found['point'], monitor)
++    environment = dict(os.environ, LD_PRELOAD=str(LAYER_SHELL))
++    helper = subprocess.Popen([str(DRAG_HELPER), str(sx), str(sy), *[str(p) for p in paths]],
++                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
++                              stderr=subprocess.DEVNULL, env=environment, text=True)
++
++    def line(timeout):
++        if select.select([helper.stdout], [], [], timeout)[0]:
++            return helper.stdout.readline().strip()
++        return ''
++
++    try:
++        if line(5) != 'ready':
++            return False
++        # Let the compositor map the overlay before the press arrives.
++        import time
++        time.sleep(0.2)
++        if not ask_host_to_drag(*tablet_position(sx, sy, monitor)):
++            return False
++        return line(10) == 'dropped'
++    except (OSError, ValueError):
++        return False
++    finally:
++        if helper.poll() is None:
++            helper.terminate()
++            try:
++                helper.wait(timeout=2)
++            except subprocess.TimeoutExpired:
++                helper.kill()
++
++
+ def downloads_folder():
+     result = subprocess.run(['xdg-user-dir', 'DOWNLOAD'], capture_output=True,
+                             text=True, timeout=2, check=True)
+@@ -150,7 +229,11 @@ def receive_ticket(ticket_path, point):
+         # Resolve before any network/disk work. A later focus/folder change must
+         # not redirect a copy that is already in progress.
+         try:
+-            folder = target_folder(point)
++            found = drop_target(point)
++        except Exception:
++            found = None
++        try:
++            folder = target_folder(found)
+             if folder is not None and not transfer.can_receive_into(folder):
+                 folder = None
+         except Exception:
+@@ -163,9 +246,15 @@ def receive_ticket(ticket_path, point):
+         with (state / 'drop-receive.lock').open('a') as lock:
+             fcntl.flock(lock, fcntl.LOCK_EX)
+             paths = transfer.download_into(ticket, folder)
+-        if fallback:
++        delivered = False
++        if fallback and found is not None:
++            # An app under the pointer gets the files by drag and drop; they
++            # stay in Downloads either way.
++            delivered = deliver_to_app(paths, found)
++        if fallback and not delivered:
+             notify('Files saved to Downloads', f'{len(paths)} item(s) received from Windows.')
+-        print(json.dumps({'paths': [str(p) for p in paths], 'fallback': fallback}), flush=True)
++        print(json.dumps({'paths': [str(p) for p in paths], 'fallback': fallback,
++                          'delivered': delivered}), flush=True)
+     except Exception as error:
+         notify('Could not copy files', str(error)[:250] + '. Original files are still on Windows.')
+         raise
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/drop-drag b/guest/factory-overlay/usr/local/lib/try-omarchy/drop-drag
+new file mode 100755
+index 0000000..f7b8f31
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/drop-drag
+@@ -0,0 +1,81 @@
++#!/usr/bin/python3
++"""Offer received files as a Wayland drag source next to a Windows drop point.
++
++try-omarchy-drop starts this with LD_PRELOAD set to gtk4-layer-shell, which
++must load before GTK connects to Wayland. It shows a small overlay that never
++takes keyboard focus at the logical position X, Y and prints "ready". The
++launcher then presses on it through the virtual tablet and drags to the drop
++point, so the app there receives an ordinary drop of the files. It prints
++"dropped" when the app accepted the drop, "cancelled" otherwise, and gives up
++after a few seconds.
++
++usage: drop-drag X Y FILE...
++"""
++
++import sys
++
++import gi
++
++gi.require_version("Gtk", "4.0")
++gi.require_version("Gtk4LayerShell", "1.0")
++from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
++from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
++
++SIZE = 48
++TIMEOUT_SECONDS = 8
++
++
++def main(argv: list[str]) -> int:
++    if len(argv) < 4:
++        return 2
++    x, y = int(argv[1]), int(argv[2])
++    files = [Gio.File.new_for_path(path) for path in argv[3:]]
++    result = {"state": "cancelled"}
++    app = Gtk.Application(application_id="org.tryomarchy.DropDrag", flags=Gio.ApplicationFlags.NON_UNIQUE)
++
++    def finish(state: str) -> None:
++        if result["state"] == "cancelled" or state == "dropped":
++            result["state"] = state
++        app.quit()
++
++    def activate(application: Gtk.Application) -> None:
++        window = Gtk.Window(application=application)
++        LayerShell.init_for_window(window)
++        LayerShell.set_layer(window, LayerShell.Layer.OVERLAY)
++        LayerShell.set_namespace(window, "try-omarchy-drop-drag")
++        LayerShell.set_keyboard_mode(window, LayerShell.KeyboardMode.NONE)
++        LayerShell.set_exclusive_zone(window, -1)
++        LayerShell.set_anchor(window, LayerShell.Edge.TOP, True)
++        LayerShell.set_anchor(window, LayerShell.Edge.LEFT, True)
++        LayerShell.set_margin(window, LayerShell.Edge.LEFT, max(0, x - SIZE // 2))
++        LayerShell.set_margin(window, LayerShell.Edge.TOP, max(0, y - SIZE // 2))
++        window.set_default_size(SIZE, SIZE)
++        area = Gtk.Box()
++        area.set_size_request(SIZE, SIZE)
++        source = Gtk.DragSource(actions=Gdk.DragAction.COPY)
++        source.set_content(Gdk.ContentProvider.new_for_value(Gdk.FileList.new_from_list(files)))
++        cancelled = {"value": False}
++
++        def on_cancel(_source, _drag, _reason):
++            cancelled["value"] = True
++            return False
++
++        def on_end(_source, _drag, _delete):
++            finish("cancelled" if cancelled["value"] else "dropped")
++
++        source.connect("drag-cancel", on_cancel)
++        source.connect("drag-end", on_end)
++        area.add_controller(source)
++        window.set_child(area)
++        window.present()
++        print("ready", flush=True)
++        GLib.timeout_add_seconds(TIMEOUT_SECONDS, lambda: finish("cancelled") or False)
++
++    app.connect("activate", activate)
++    app.run([])
++    print(result["state"], flush=True)
++    return 0 if result["state"] == "dropped" else 1
++
++
++if __name__ == "__main__":
++    sys.exit(main(sys.argv))
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 5e4f3bf..3ce9fc0 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -113,6 +113,7 @@ compat_paths=(
+   etc/modules-load.d/90-try-omarchy-camera.conf
+   etc/modprobe.d/90-try-omarchy-camera.conf
+   usr/local/bin/try-omarchy-drop
++  usr/local/lib/try-omarchy/drop-drag
+   usr/local/bin/try-omarchy-host-settings
+   usr/share/applications/try-omarchy-host-settings.desktop
+   usr/local/bin/try-omarchy-windows-app
+@@ -193,7 +194,8 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 35 keeps the synced display mode across Hyprland config reloads.
+ # Revision 36 stages the opt-in Windows Hello sudo broker and its port rule.
+ # Revision 37 adds the opt-in 1Password unlock agent that reuses the pairing.
+-compat_revision=37
++# Revision 38 drags dropped files into the app under the pointer.
++compat_revision=38
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_file_drop_target.py b/guest/tests/test_file_drop_target.py
+index 29e1111..19790b7 100644
+--- a/guest/tests/test_file_drop_target.py
++++ b/guest/tests/test_file_drop_target.py
+@@ -49,6 +49,7 @@ class DropTargetTests(unittest.TestCase):
+                 valid_ticket=Mock(return_value=True), can_receive_into=Mock(return_value=False),
+                 download_into=Mock(return_value=[downloads / 'file']))
+             with patch.dict(os.environ, {'XDG_RUNTIME_DIR': str(root)}), \
++                 patch.object(module, 'drop_target', return_value=None), \
+                  patch.object(module, 'target_folder', return_value=shared), \
+                  patch.object(module, 'downloads_folder', return_value=downloads), \
+                  patch.object(module, 'notify') as notify, \
+@@ -61,6 +62,65 @@ class DropTargetTests(unittest.TestCase):
+             self.assertFalse(request.exists())
+             self.assertEqual(list(shared.iterdir()), [])
+ 
++    def receive_onto_app(self, delivered):
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            state = root / 'try-omarchy-clipboard'
++            state.mkdir()
++            request = state / 'incoming-drop-test'
++            request.write_text('{}')
++            downloads = root / 'Downloads'
++            found = {'client': client('0xapp', [0, 0], [800, 600], cls='chromium'),
++                     'point': (100, 100), 'monitor': {'width': 800, 'height': 600}}
++            fake = SimpleNamespace(read_metadata=Mock(return_value={}),
++                valid_ticket=Mock(return_value=True), can_receive_into=Mock(return_value=True),
++                download_into=Mock(return_value=[downloads / 'file']))
++            with patch.dict(os.environ, {'XDG_RUNTIME_DIR': str(root)}), \
++                 patch.object(module, 'drop_target', return_value=found), \
++                 patch.object(module, 'downloads_folder', return_value=downloads), \
++                 patch.object(module, 'deliver_to_app', return_value=delivered) as deliver, \
++                 patch.object(module, 'notify') as notify, \
++                 patch.object(importlib.machinery.SourceFileLoader, 'exec_module',
++                              side_effect=lambda loaded: loaded.__dict__.update(vars(fake))):
++                module.receive_ticket(request, (1, 1, 10, 10))
++            deliver.assert_called_once_with([downloads / 'file'], found)
++            fake.download_into.assert_called_once_with({}, downloads)
++            return notify
++
++    def test_app_under_the_pointer_gets_the_files_without_a_downloads_notice(self):
++        self.receive_onto_app(True).assert_not_called()
++
++    def test_a_refused_app_drag_still_reports_downloads(self):
++        self.receive_onto_app(False).assert_called_once_with('Files saved to Downloads', '1 item(s) received from Windows.')
++
++    def test_tablet_position_follows_scale_and_monitor_size(self):
++        monitor = {'width': 2560, 'height': 1440, 'scale': 2, 'x': 0, 'y': 0}
++        self.assertEqual(module.tablet_position(0, 0, monitor), (0, 0))
++        self.assertEqual(module.tablet_position(1280, 720, monitor), (32767, 32767))
++        self.assertEqual(module.tablet_position(640, 360, monitor), (round(1280 * 32767 / 2559), round(720 * 32767 / 1439)))
++
++    def test_source_sits_beside_the_drop_point_inside_the_monitor(self):
++        monitor = {'width': 1000, 'height': 800, 'scale': 1, 'x': 0, 'y': 0}
++        self.assertEqual(module.source_position(500, 400, monitor), (410, 400))
++        self.assertEqual(module.source_position(50, 400, monitor), (140, 400))
++
++    def test_deliver_to_app_reports_the_helper_result(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            helper = Path(tmp) / 'drop-drag'
++            for final, expected in (('dropped', True), ('cancelled', False)):
++                helper.write_text(f'#!/bin/sh\necho ready\nsleep 0.3\necho {final}\n')
++                helper.chmod(0o755)
++                found = {'point': (500, 400), 'monitor': {'width': 1000, 'height': 800}}
++                with patch.object(module, 'DRAG_HELPER', helper), \
++                     patch.object(module, 'LAYER_SHELL', helper), \
++                     patch.object(module, 'ask_host_to_drag', return_value=True) as ask:
++                    self.assertEqual(module.deliver_to_app([Path('/tmp/file')], found), expected)
++                ask.assert_called_once_with(*module.tablet_position(410, 400, found['monitor']))
++            with patch.object(module, 'DRAG_HELPER', helper), \
++                 patch.object(module, 'LAYER_SHELL', helper), \
++                 patch.object(module, 'ask_host_to_drag', return_value=False):
++                self.assertFalse(module.deliver_to_app([Path('/tmp/file')], found))
++
+     def test_picks_the_window_under_the_point(self):
+         clients = [
+             client("0xa", [0, 0], [800, 600], focus=0),
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 6c76068..49bfbd5 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -269,7 +269,7 @@ def main() -> None:
+     finalize_rootfs = read(GUEST / "scripts/finalize-rootfs.sh")
+     compat_paths = finalize_rootfs.split("compat_paths=(", 1)[1].split(")", 1)[0]
+     check(
+-        "compat_revision=37" in finalize_rootfs
++        "compat_revision=38" in finalize_rootfs
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/local/bin/omarchy-native-display-sync" in compat_paths
+         and "usr/local/bin/omarchy-windows-audio-bridge" in compat_paths
+@@ -321,6 +321,8 @@ def main() -> None:
+     )
+     check(
+         "usr/local/bin/try-omarchy-drop" in compat_paths
++        and "usr/local/lib/try-omarchy/drop-drag" in compat_paths
++        and (GUEST / "factory-overlay/usr/local/lib/try-omarchy/drop-drag").stat().st_mode & stat.S_IXUSR != 0
+         and "valid_drop_point" in read(GUEST / "factory-overlay/usr/local/bin/file-transfer")
+         and "'--receive'" in read(GUEST / "factory-overlay/usr/local/bin/file-transfer")
+         and (GUEST / "factory-overlay/usr/local/bin/try-omarchy-drop").stat().st_mode & stat.S_IXUSR != 0,
+-- 
+2.55.0
+

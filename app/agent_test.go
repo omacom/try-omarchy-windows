@@ -272,3 +272,41 @@ func TestReclaimBudgetFollowsHostFreeSpace(t *testing.T) {
 		}
 	}
 }
+
+func TestDropDragRequestReachesTheHandlerOnlyWhenWellFormed(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	a := newGuestAgent()
+	a.batteryLine = nil
+	calls := make(chan [2]int, 4)
+	a.dropDrag = func(x, y int) error { calls <- [2]int{x, y}; return nil }
+	go a.accept(l)
+	ask := func(line string) string {
+		request, err := net.Dial("tcp", l.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer request.Close()
+		request.Write([]byte(line))
+		request.SetReadDeadline(time.Now().Add(2 * time.Second))
+		reply, _ := bufio.NewReader(request).ReadString('\n')
+		return reply
+	}
+	if reply := ask("drop-drag 1200 3400\n"); reply != "ok\n" {
+		t.Fatalf("drop-drag reply %q", reply)
+	}
+	if got := <-calls; got != [2]int{1200, 3400} {
+		t.Fatalf("handler got %v", got)
+	}
+	if reply := ask("drop-drag 1200 99999\n"); reply != "unavailable\n" {
+		t.Fatalf("out-of-range drop-drag reply %q", reply)
+	}
+	select {
+	case got := <-calls:
+		t.Fatalf("out-of-range request reached the handler: %v", got)
+	default:
+	}
+}
