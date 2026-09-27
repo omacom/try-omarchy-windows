@@ -42,14 +42,14 @@ fixes. Equivalent behavior is tracked below only where it makes sense on Windows
 | In-guest host settings | Shipped in `v0.2.0`; the signed candidate opened native Settings above the running VM on the AMD laptop | Further physical observations as reports arrive |
 | Approved Windows apps | Phase 1 ships in `v0.2.0`; the signed candidate launched and revoked Notepad from Omarchy | [Embedded-window research #160](https://github.com/omacom/try-omarchy-windows/issues/160) and per-app icons |
 | Branding and About | Omacom resource metadata, retained original copyright plus contributor credit, notices, labelled About actions; native visibility tested | Confirm public-facing relationship and presentation before a 1.0 claim |
-| Camera, clipboard, shared folders, transfers | Implemented; the signed candidate passed camera and share checks on the AMD laptop | [Direct application drops #174](https://github.com/omacom/try-omarchy-windows/issues/174); investigate concrete device reports |
+| Camera, clipboard, shared folders, transfers | Implemented; the signed candidate passed camera and share checks on the AMD laptop. Since `v0.6.0` a file dropped from File Explorer reaches the app under the pointer ([#174](https://github.com/omacom/try-omarchy-windows/issues/174)) | Investigate concrete device reports |
 | Resources, updates, storage and recovery | Implemented; the published update, backup, restore and uninstall paths passed on the AMD laptop | Broader hardware and recovery reports remain useful |
 | GPU application compatibility | AMD GPU desktop and applications passed their recorded checks; a previous Intel/NVIDIA preview runtime booted VirGL OpenGL but failed Venus Vulkan and Godot Forward+ | [Current-runtime investigation #173](https://github.com/omacom/try-omarchy-windows/issues/173); retain CPU/OpenGL fallback |
 | Nested KVM | Normal-user vCPU probe plus diskless Linux kernel/PID 1 boot, poweroff and reboot pass on the AMD laptop | Full nested distribution/storage/network workloads and wider host coverage; unsupported hosts must still boot Omarchy |
 | Audio endpoint selection | Live host Settings and guest PipeWire switching ship in `v0.3.0` with r20c; public update and physical acceptance are in the [signed and public acceptance record](evidence/V030-SIGNED-CANDIDATE-2026-09-24.md) | [Live audio #167](https://github.com/omacom/try-omarchy-windows/issues/167): two physical endpoints per direction and hotplug need suitable hardware; see [audio behavior](AUDIO-DEVICES.md) |
 | Trackpad pinch | [r18 bridge](PINCH-ZOOM.md), virtual touchpad and guest rules for new and existing guests ([#184](https://github.com/omacom/try-omarchy-windows/pull/184)); on by default for guest images that declare the device; synthetic and AMD-laptop physical Chromium pinch/scroll tests pass | Shipped in `v0.4.0`; Firefox and broader host/DPI/fullscreen acceptance |
 | Windows Hello sudo | Opt-in since `v0.5.0`: launcher WebAuthn bridge, guest broker and a single PAM rule; one Hello prompt per sudo with password fallback ([design](WINDOWS-HELLO.md), [laptop run](evidence/HELLO-SUDO-LAPTOP-2026-09-26.md)) | Other Hello hardware (fingerprint, face) and Windows 10 |
-| 1Password host authentication | Guest 1Password uses its ordinary password and Linux authentication paths | [Windows Hello unlock #176](https://github.com/omacom/try-omarchy-windows/issues/176) follows #165 with a narrowly scoped agent for the installed guest 1Password process and Mac-style process/polkit checks |
+| 1Password host authentication | Opt-in since `v0.6.0`: 1Password's system authentication unlock asks for Windows Hello through a polkit agent scoped to the installed 1Password process ([#176](https://github.com/omacom/try-omarchy-windows/issues/176)); canceling falls back to the guest password | 1Password still asks for its account password after it restarts |
 | Bridged networking | NAT and explicit port forwarding exist | [True LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166), with supported adapter, privilege and firewall handling |
 | Host battery | Shipped in `v0.2.0`; the AMD laptop's 99% charging state appeared as BAT0/ADP0 and in UPower | Desktop/no-battery transition remains to be observed on a suitable host |
 | Guest RAM reclamation | Shipped with r19 in `v0.2.0`; three physical touch/free cycles returned about 797 MiB after the third 768 MiB allocation | Follow up on concrete memory reports |
@@ -78,9 +78,9 @@ passed on the laptop.
    sign a fresh request with Windows Hello, and verify it inside guest PAM.
    Denial and unsupported hosts must fall back to password. After PIN setup,
    the current laptop can test approval and denial in the eventual guest flow.
-   Once that bridge is sound, implement [#176](https://github.com/omacom/try-omarchy-windows/issues/176),
-   the Mac's separate, process-scoped 1Password unlock integration, without
-   changing general guest PAM policy.
+   Shipped in `v0.5.0`. The Mac's separate, process-scoped 1Password unlock
+   ([#176](https://github.com/omacom/try-omarchy-windows/issues/176)) followed
+   in `v0.6.0` without changing general guest PAM policy.
 3. **Offer a real LAN mode (#166).** Keep NAT and explicit forwards as the
    default. Start with a signed TAP adapter and a reversible wired-Ethernet
    bridge that has its own stable guest MAC. Verify host connectivity, guest
@@ -88,9 +88,9 @@ passed on the laptop.
    wired setup. Only offer Wi-Fi bridging after an actual Wi-Fi proof.
 4. **Finish host-app and file workflows (#160, #174).** The approved-app launch
    bridge already works. Window embedding needs capture, input, focus,
-   accessibility, scaling and lifecycle behavior; direct drops need a Wayland
-   target protocol rather than a Downloads fallback. Each can ship separately
-   once it is reliable in normal use.
+   accessibility, scaling and lifecycle behavior, and can ship once it is
+   reliable in normal use. Direct drops shipped in `v0.6.0` through a guest
+   drag source under the pointer.
 5. **Polish input, language and graphics.** Use specific reports and available
    machines to address keyboard geometry/IME, shipping automatic pinch, and
    the Intel/NVIDIA Vulkan issue (#173).

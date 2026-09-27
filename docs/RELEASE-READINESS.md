@@ -1,14 +1,18 @@
-# Release readiness review - September 26, 2026
+# Release readiness review - September 27, 2026
 
 ## Current decision
 
 The current normal version is
-[`v0.5.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.5.0),
-published as Latest on September 26 with opt-in Windows Hello sudo, the theme
-switch fix, the dark title bar and Alt+Tab hold. Its
-[candidate and release record](evidence/V050-SIGNED-CANDIDATE-2026-09-26.md)
-covers the signed candidate, rollback, upgrade, fresh install and the first
-public update from an installed v0.4.0 launcher.
+[`v0.6.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.6.0),
+published as Latest on September 27 with drops into apps, 1Password unlock
+with Windows Hello, live port-forward changes and package catch-up for older
+disks. Its
+[candidate and release record](evidence/V060-SIGNED-CANDIDATE-2026-09-27.md)
+covers the signed candidate, rollback, upgrade, fresh install and a public
+update from an installed v0.5.0 launcher.
+[`v0.5.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.5.0)
+added opt-in Windows Hello sudo the day before; see its
+[record](evidence/V050-SIGNED-CANDIDATE-2026-09-26.md).
 [`v0.4.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.4.0)
 shipped earlier the same day with default pinch and Ctrl+Alt+End; see its
 [record](evidence/V040-SIGNED-CANDIDATE-2026-09-26.md).
