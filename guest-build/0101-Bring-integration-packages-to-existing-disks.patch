@@ -1,0 +1,94 @@
+From 59495f2410cc8d6ff9d2c1c2daa70dc4d646f8d5 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sun, 27 Sep 2026 00:26:26 -0400
+Subject: [PATCH] Bring integration packages to existing disks
+
+try-omarchy-runtime depended only on pamixer and playerctl, so a package a newer image added for a Try Omarchy feature never reached a disk created by an older one. The runtime now also depends on the packages the integration needs (the spec's integrationDepends: GTK and gtk4-layer-shell, python-gobject, polkit, openssl, socat, jq, wl-clipboard, the fcitx5 input packages, CJK fonts and a few tools), and packageRelease 5 makes the next Update > Omarchy upgrade it, so pacman installs whatever is missing. User-facing apps stay off the list, so removing one on purpose is left alone.
+---
+ guest/scripts/register-omarchy-runtime.sh | 15 +++++++++++++++
+ guest/spec.json                           | 22 +++++++++++++++++++++-
+ guest/tests/verify.py                     |  9 +++++++++
+ 3 files changed, 45 insertions(+), 1 deletion(-)
+
+diff --git a/guest/scripts/register-omarchy-runtime.sh b/guest/scripts/register-omarchy-runtime.sh
+index b82a514..3998c9d 100755
+--- a/guest/scripts/register-omarchy-runtime.sh
++++ b/guest/scripts/register-omarchy-runtime.sh
+@@ -154,6 +154,21 @@ depend = pamixer
+ depend = playerctl
+ EOF
+ 
++# Packages the Try Omarchy integration needs. Declaring them here is what
++# brings a package added to a newer image onto an existing disk: the next
++# Update > Omarchy upgrades this runtime and pacman installs any that are
++# missing. Raise packageRelease whenever this list changes.
++python3 - "$spec" >>"$stage/.PKGINFO" <<'PY'
++import json
++import re
++import sys
++
++for name in json.load(open(sys.argv[1]))["upstream"].get("integrationDepends", []):
++    if not re.fullmatch(r"[a-z0-9@._+-]+", name):
++        raise SystemExit(f"unsafe dependency name: {name}")
++    print(f"depend = {name}")
++PY
++
+ while IFS= read -r relative; do
+   printf 'backup = %s\n' "$relative" >>"$stage/.PKGINFO"
+ done <"$root/usr/share/try-omarchy/runtime-config-files"
+diff --git a/guest/spec.json b/guest/spec.json
+index eb30582..7544f61 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -30,7 +30,27 @@
+     "versionFile": "4.0.0.alpha",
+     "channel": "quattro",
+     "license": "MIT",
+-    "packageRelease": 4
++    "packageRelease": 5,
++    "integrationDepends": [
++      "fcitx5",
++      "fcitx5-gtk",
++      "fcitx5-qt",
++      "gtk3",
++      "gtk4",
++      "gtk4-layer-shell",
++      "jq",
++      "libnotify",
++      "libpulse",
++      "noto-fonts-cjk",
++      "openssl",
++      "polkit",
++      "python",
++      "python-gobject",
++      "socat",
++      "wl-clipboard",
++      "xdg-user-dirs",
++      "zstd"
++    ]
+   },
+   "supplyChain": {
+     "omarchyPackagesRepository": "https://github.com/omacom-io/omarchy-pkgs",
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 49bfbd5..8878847 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -96,6 +96,15 @@ def main() -> None:
+ 
+     package_text = (GUEST / spec["inputs"]["packages"]).read_bytes()
+     package_lock = json_file(GUEST / spec["inputs"]["packageLock"])
++    integration = spec["upstream"].get("integrationDepends", [])
++    check(
++        isinstance(integration, list)
++        and integration == sorted(set(integration))
++        and all(name in package_lock["packages"] for name in integration)
++        and {"gtk4-layer-shell", "python-gobject", "openssl", "socat"} <= set(integration)
++        and "depend = {name}" in read(GUEST / "scripts/register-omarchy-runtime.sh"),
++        "the runtime package declares the integration packages existing disks need",
++    )
+     check(package_lock.get("architecture") == "x86_64", "package lock is x86_64")
+     check(
+         package_lock.get("requestedFileSha256") == hashlib.sha256(package_text).hexdigest(),
+-- 
+2.55.0
+

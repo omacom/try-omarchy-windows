@@ -28,6 +28,12 @@ if grep -q "command failed to execute correctly" /tmp/upgrade-packages.log; then
 sha256sum -c "$HOME/upgrade-preserve.sha256"
 command -v pamixer
 command -v playerctl
+# The runtime declares the integration packages, so the update installed the
+# one the seed removed.
+pacman -Q noto-fonts-cjk
+for package in $(pactree -u -d 1 try-omarchy-runtime | tail -n +2); do
+  pacman -Q "$package" >/dev/null
+done
 pacman -Qq | sort > /tmp/packages-after
 comm -23 <(sort "$HOME/upgrade-packages-before.txt") /tmp/packages-after > /tmp/packages-missing
 [[ ! -s /tmp/packages-missing ]]

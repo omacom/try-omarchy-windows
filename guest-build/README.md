@@ -55,6 +55,10 @@ files reach Downloads, a small overlay drag source asks the launcher for
 virtual tablet. Compatibility revision 38 delivers the helper to existing
 guests.
 
+Patch 0101 makes `try-omarchy-runtime` depend on the integration packages in
+the spec's `integrationDepends` and raises its package release to 5, so the
+next Update > Omarchy installs any that a disk created by an older image lacks.
+
 The second command needs Docker and currently takes about ten minutes. Release
 CI also boots the resulting factory image with `scripts/release/smoke-guest.py`
 before it uploads anything.

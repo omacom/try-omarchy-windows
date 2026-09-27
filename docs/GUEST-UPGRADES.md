@@ -11,7 +11,13 @@ lock. Old archives remain available to transactions that read the previous
 repository. An older image cannot lower the repository's runtime version.
 
 The normal Omarchy updater installs the runtime and its dependencies through
-pacman. System configuration shipped by the runtime uses pacman's backup
+pacman. Besides Omarchy's own files, the runtime depends on the packages the
+Try Omarchy integration needs (`integrationDepends` in the guest spec: GTK and
+gtk4-layer-shell, python-gobject, polkit, openssl, socat, jq, wl-clipboard, the
+fcitx5 input packages, CJK fonts and a few tools). When a newer image adds one,
+the runtime's package release goes up, so the next update installs it on disks
+created by older images. Apps a user removed on purpose are not on that list
+and stay removed. System configuration shipped by the runtime uses pacman's backup
 handling, so local edits can be retained with a `.pacnew` file for review.
 Personal files stay on the existing disk. The launcher continues to supply the
 external kernel and matching modules; the guest's linux package stays held.
