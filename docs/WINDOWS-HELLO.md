@@ -13,7 +13,8 @@ In an Omarchy terminal:
 sudo try-omarchy-windows-hello enable
 ```
 
-`sudo` asks for the guest password first. Windows then asks to create a passkey
+`sudo` asks for the guest password first. Instant trial accounts have
+passwordless sudo, so Hello only matters once the account has a password. Windows then asks to create a passkey
 for "Try Omarchy" and for Windows Hello once. After that, each `sudo` in that
 guest shows one Windows Hello prompt; cancel it to type the password instead.
 `sudo try-omarchy-windows-hello disable` removes the PAM rule, forgets the
@@ -70,6 +71,10 @@ moved to WebAuthn. The earlier [preflight](evidence/HELLO-PREFLIGHT-2026-09-23.m
 records the KeyCredential results.
 
 ## Acceptance
+
+The [laptop run](evidence/HELLO-SUDO-LAPTOP-2026-09-26.md) covered pairing,
+one approval, one cancel, a request while another window was in front, and
+disable. The list below is what that run and the tests check.
 
 - Protocol tests cover malformed fields, spoofed user and TTY, wrong credential,
   foreign relying party, missing user verification, changed client data and
