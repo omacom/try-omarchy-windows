@@ -1048,11 +1048,7 @@ func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
 			silent = 0
 			if paths, point, ok := droppedFilesEvent(line); ok {
 				logf("file drop: received %d item(s)", len(paths))
-				dropPoint := guestDropPoint(point)
-				if dropPoint != nil {
-					recordDrop(recordedDrop{at: time.Now(), point: dropPoint, cursor: cursorPosition()})
-				}
-				if err := sendDroppedFilesAt(paths, dropPoint); err != nil {
+				if err := sendDroppedFilesAt(paths, guestDropPoint(point), cursorPosition()); err != nil {
 					reportTransferError(err)
 				}
 			}

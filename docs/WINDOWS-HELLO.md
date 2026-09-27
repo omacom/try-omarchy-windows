@@ -3,7 +3,9 @@
 This integration is opt-in. Ordinary guest password authentication remains the
 default and the fallback whenever Hello is denied, canceled, unavailable, or
 disconnected. It applies only to interactive `sudo` PAM requests in the Omarchy
-guest. It does not change login, screen unlock, SSH, or Windows authentication.
+guest from a local session. It does not change login, screen unlock or Windows
+authentication, and `sudo` in an SSH session into the guest keeps using the
+password.
 
 ## Turning it on
 
@@ -51,6 +53,17 @@ The [laptop run](evidence/ONEPASSWORD-HELLO-LAPTOP-2026-09-26.md) covered the
 unlock with Windows Hello, the password fallback after a cancel, and a CLI
 request that never reached Windows Hello.
 
+## What it does not protect against
+
+The Windows Hello prompt cannot say which request it approves. A program
+running as your guest user can start its own `sudo` from a local terminal
+just before yours, and its prompt looks the same. Approve a prompt only right
+after you ran `sudo` or unlocked 1Password yourself; if a prompt appears
+unexpectedly, cancel it. Only one request can wait at a time, and a second one
+falls back to the password. Like Touch ID in Try Omarchy for macOS, this is a
+convenience for your own guest account, not a boundary against code that
+already runs as that account.
+
 ## How it works
 
 Windows Hello answers as a WebAuthn platform authenticator. The launcher calls
@@ -69,7 +82,9 @@ P-256 public key in `/var/lib/try-omarchy/windows-hello/enrollment.json`
 
 **Each sudo.** The broker sends a `sudo` request with a fresh 256-bit challenge,
 a request ID, the guest ID, the PAM user, requesting user, TTY and the pinned
-credential ID. The launcher refuses unless its own Omarchy window is in front,
+credential ID. The broker refuses terminals that belong to a remote login session. The
+launcher accepts the port only from its own QEMU process, refuses unless its
+own Omarchy window is in front,
 allows one prompt at a time and waits 3 seconds after a denial before prompting
 again. It calls `WebAuthNAuthenticatorGetAssertion` for that one credential with
 user verification required. The signed client data is a fixed JSON rendering of
@@ -78,7 +93,9 @@ in the broker); both sides build the same bytes. The guest verifies the ES256
 signature over the authenticator data and SHA-256 of those bytes with the
 pinned key, and checks the relying party hash and both flags before PAM returns
 success. An unsigned approval flag is never sufficient, and PIN, password and
-biometric material stay in Windows.
+biometric material stay in Windows. After a denial or cancel, the guest uses the password on that terminal for 30
+seconds, so a mistyped password does not bring the prompt back. If the broker
+is interrupted, a late reply for that request is discarded by the next one.
 
 **Disable.** The launcher lists the platform credentials Windows holds for
 `try-omarchy.invalid` and deletes the guest's credential only if it appears in

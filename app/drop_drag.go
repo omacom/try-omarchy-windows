@@ -10,8 +10,9 @@ import (
 
 // Delivering a Windows file drop to the Omarchy app under the pointer. The
 // guest receives the files, then shows a small drag source next to the drop
-// point and asks for "drop-drag X Y" over the agent port with that source's
-// position in absolute tablet units (0-32767). The launcher answers by
+// point and asks for "drop-drag ID X Y" over the agent port, naming the drop
+// by its transfer ticket ID and giving that source's position in absolute
+// tablet units (0-32767). The launcher answers by
 // pressing on the source and dragging to the recorded drop point through the
 // guest's virtual tablet, so the app gets an ordinary Wayland drop. It does
 // that at most once per drop, only soon after it, and only if the Windows
@@ -22,6 +23,13 @@ const (
 	dropDragWindow  = 30 * time.Second
 	tabletMaximum   = 32767
 	cursorTolerance = 4
+	// The guest puts its drag source about 90 logical pixels beside the drop
+	// point. Refuse a start point far from it, so the request cannot drag
+	// across the rest of the desktop.
+	dragSourceReach = 6000
+	// A drag that could not start by now would press on a helper the guest
+	// has already given up on.
+	dragScriptLifetime = 5 * time.Second
 )
 
 type recordedDrop struct {
@@ -30,50 +38,79 @@ type recordedDrop struct {
 	cursor [2]int32 // Windows screen position of the pointer at the drop
 }
 
+type dragScript struct {
+	steps    []pointerStep
+	deadline time.Time
+}
+
 type pointerStep struct {
 	x, y   int  // absolute tablet position
 	button int8 // -1 leaves the button alone, 1 presses, 0 releases
 	pause  time.Duration
 }
 
-var lastDrop struct {
+// Drops by transfer ticket ID. Several drops can be in flight at once, and a
+// drag request must reach the drop it came from.
+var recentDrops struct {
 	sync.Mutex
-	drop *recordedDrop
+	drops map[string]recordedDrop
 }
 
-func recordDrop(drop recordedDrop) {
-	lastDrop.Lock()
-	lastDrop.drop = &drop
-	lastDrop.Unlock()
+func recordDrop(id string, drop recordedDrop) {
+	recentDrops.Lock()
+	defer recentDrops.Unlock()
+	if recentDrops.drops == nil {
+		recentDrops.drops = map[string]recordedDrop{}
+	}
+	for other, old := range recentDrops.drops {
+		if drop.at.Sub(old.at) > dropDragWindow {
+			delete(recentDrops.drops, other)
+		}
+	}
+	recentDrops.drops[id] = drop
 }
 
-// takeDrop returns the recorded drop once; a second drag request for the same
+// takeDrop returns a recorded drop once; a second drag request for the same
 // drop finds nothing.
-func takeDrop(now time.Time) (recordedDrop, error) {
-	lastDrop.Lock()
-	defer lastDrop.Unlock()
-	drop := lastDrop.drop
-	lastDrop.drop = nil
-	if drop == nil {
-		return recordedDrop{}, errors.New("no recent drop")
+func takeDrop(id string, now time.Time) (recordedDrop, error) {
+	recentDrops.Lock()
+	defer recentDrops.Unlock()
+	drop, ok := recentDrops.drops[id]
+	delete(recentDrops.drops, id)
+	if !ok {
+		return recordedDrop{}, errors.New("no recent drop with that ID")
 	}
 	if now.Sub(drop.at) > dropDragWindow || now.Before(drop.at) {
 		return recordedDrop{}, errors.New("the drop is too old")
 	}
-	return *drop, nil
+	return drop, nil
 }
 
-func parseDropDragRequest(line string) (int, int, bool) {
+func parseDropDragRequest(line string) (string, int, int, bool) {
 	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
-	if len(fields) != 3 || fields[0] != "drop-drag" || line != strings.Join(fields, " ")+"\n" {
-		return 0, 0, false
+	if len(fields) != 4 || fields[0] != "drop-drag" || line != strings.Join(fields, " ")+"\n" ||
+		!validTransferID(fields[1]) {
+		return "", 0, 0, false
 	}
-	x, errX := strconv.Atoi(fields[1])
-	y, errY := strconv.Atoi(fields[2])
+	x, errX := strconv.Atoi(fields[2])
+	y, errY := strconv.Atoi(fields[3])
 	if errX != nil || errY != nil || x < 0 || y < 0 || x > tabletMaximum || y > tabletMaximum {
-		return 0, 0, false
+		return "", 0, 0, false
 	}
-	return x, y, true
+	return fields[1], x, y, true
+}
+
+// validTransferID matches randomTransferToken(16): 32 lowercase hex digits.
+func validTransferID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func cursorMoved(a, b [2]int32) bool {
@@ -91,6 +128,9 @@ func dropDragSteps(startX, startY int, drop recordedDrop) ([]pointerStep, error)
 	}
 	endX := drop.point[0] * tabletMaximum / (drop.point[2] - 1)
 	endY := drop.point[1] * tabletMaximum / (drop.point[3] - 1)
+	if abs(startX-endX) > dragSourceReach || abs(startY-endY) > dragSourceReach {
+		return nil, errors.New("the drag source is not beside the drop point")
+	}
 	steps := []pointerStep{
 		{x: startX, y: startY, button: -1, pause: 60 * time.Millisecond},
 		{x: startX, y: startY, button: 1, pause: 80 * time.Millisecond},
@@ -104,4 +144,11 @@ func dropDragSteps(startX, startY int, drop recordedDrop) ([]pointerStep, error)
 	}
 	steps[len(steps)-1].pause = 120 * time.Millisecond
 	return append(steps, pointerStep{x: endX, y: endY, button: 0}), nil
+}
+
+func abs(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }

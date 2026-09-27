@@ -20,7 +20,7 @@ import (
 //   guest -> host: "zero-fill done|failed" the fill finished
 //   guest -> host: "open-settings"     one-shot request on a separate connection
 //   guest -> host: "launch-app <approved ID>" one-shot allowlisted Windows app request
-//   guest -> host: "drop-drag <x> <y>" one-shot: drag the last drop into the app (see drop_drag.go)
+//   guest -> host: "drop-drag <ticket ID> <x> <y>" one-shot: drag a drop into the app (see drop_drag.go)
 // The host sends the time on connect, every few minutes, and after Windows
 // resumes from sleep, when the guest clock is the thing most likely to be wrong.
 
@@ -35,7 +35,7 @@ type guestAgent struct {
 	batteryLine   func() (string, error)
 	appsDir       string
 	launchApp     func(string) error
-	dropDrag      func(x, y int) error
+	dropDrag      func(id string, x, y int) error
 	lastAppLaunch time.Time
 	// zeroFilled is set when the guest reports that it zero-filled its free
 	// space, so the launcher compacts disk.raw after the guest powers off.
@@ -98,8 +98,8 @@ func (a *guestAgent) serve(c net.Conn) {
 	}
 	if strings.HasPrefix(first, "drop-drag ") {
 		status := "unavailable\n"
-		if x, y, ok := parseDropDragRequest(first); ok && a.dropDrag != nil {
-			if err := a.dropDrag(x, y); err == nil {
+		if id, x, y, ok := parseDropDragRequest(first); ok && a.dropDrag != nil {
+			if err := a.dropDrag(id, x, y); err == nil {
 				status = "ok\n"
 			} else {
 				logf("file drop: not dragging into the app: %v", err)

@@ -31,7 +31,10 @@ command -v playerctl
 # The runtime declares the integration packages, so the update installed the
 # one the seed removed.
 pacman -Q noto-fonts-cjk
-for package in $(pactree -u -d 1 try-omarchy-runtime | tail -n +2); do
+# Capture first: a failing command inside for ... in $(...) does not trip set -e.
+runtime_dependencies=$(pactree -u -d 1 try-omarchy-runtime | tail -n +2)
+[[ -n $runtime_dependencies ]]
+for package in $runtime_dependencies; do
   pacman -Q "$package" >/dev/null
 done
 pacman -Qq | sort > /tmp/packages-after

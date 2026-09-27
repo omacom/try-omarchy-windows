@@ -30,13 +30,13 @@ func cursorPosition() [2]int32 {
 	return [2]int32{cursor.x, cursor.y}
 }
 
-// performDropDrag answers the guest's "drop-drag" request for the last drop.
-func performDropDrag(x, y int) error {
-	drop, err := takeDrop(time.Now())
+// performDropDrag answers the guest's "drop-drag" request for one drop.
+func performDropDrag(id string, x, y int) error {
+	drop, err := takeDrop(id, time.Now())
 	if err != nil {
 		return err
 	}
-	if pid := qemuPid.Load(); pid == 0 || foregroundPid() != pid {
+	if pid := qemuPid.Load(); pid == 0 || !guestUp.Load() || foregroundPid() != pid {
 		return errors.New("the Omarchy window is not in front")
 	}
 	if cursorMoved(drop.cursor, cursorPosition()) {
@@ -47,7 +47,7 @@ func performDropDrag(x, y int) error {
 		return err
 	}
 	select {
-	case pointerScripts <- steps:
+	case pointerScripts <- dragScript{steps: steps, deadline: time.Now().Add(dragScriptLifetime)}:
 		logf("file drop: dragging into the app under the pointer")
 		return nil
 	default:

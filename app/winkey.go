@@ -28,7 +28,10 @@ var (
 	altTab         altTabForwarder // hook-thread only
 	ctrlAltEndSent bool            // hook-thread only
 	keyEvents      = make(chan forwardedKey, 64)
-	pointerScripts = make(chan []pointerStep, 1)
+	pointerScripts = make(chan dragScript, 1)
+	// dragButtonHeld is set while a drag has pressed the tablet button and not
+	// yet released it; a reconnect releases it first. QMP drain goroutine only.
+	dragButtonHeld bool
 )
 
 // forwardKey hands a key state change to the QMP drain without blocking the
@@ -227,6 +230,12 @@ func runWinKeyQmp() {
 			continue
 		}
 		logf("winkey: QMP connected on %d", qmpFwdPort)
+		if dragButtonHeld {
+			// The last connection broke mid-drag; let go of the button.
+			if c.writeLine(`{"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":false,"button":"left"}}]}}`) == nil {
+				dragButtonHeld = false
+			}
+		}
 		lines := c.readLines()
 	drain:
 		for {
@@ -239,14 +248,18 @@ func runWinKeyQmp() {
 				if err := c.writeLine(ev); err != nil {
 					break drain
 				}
-			case steps := <-pointerScripts:
-				for _, step := range steps {
-					events := fmt.Sprintf(`{"type":"abs","data":{"axis":"x","value":%d}},{"type":"abs","data":{"axis":"y","value":%d}}`, step.x, step.y)
-					if step.button >= 0 {
-						events += fmt.Sprintf(`,{"type":"btn","data":{"down":%t,"button":"left"}}`, step.button == 1)
-					}
-					if err := c.writeLine(`{"execute":"input-send-event","arguments":{"events":[` + events + `]}}`); err != nil {
+			case script := <-pointerScripts:
+				// A late script would press on a helper the guest gave up on.
+				if time.Now().After(script.deadline) || !guestUp.Load() {
+					logf("file drop: skipped a drag that was no longer wanted")
+					break
+				}
+				for _, step := range script.steps {
+					if err := c.writeLine(pointerStepCommand(step)); err != nil {
 						break drain
+					}
+					if step.button >= 0 {
+						dragButtonHeld = step.button == 1
 					}
 					time.Sleep(step.pause)
 				}
@@ -293,4 +306,12 @@ func runCursorReleaseGuard() {
 	for range ticker.C {
 		releaseQemuCursor()
 	}
+}
+
+func pointerStepCommand(step pointerStep) string {
+	events := fmt.Sprintf(`{"type":"abs","data":{"axis":"x","value":%d}},{"type":"abs","data":{"axis":"y","value":%d}}`, step.x, step.y)
+	if step.button >= 0 {
+		events += fmt.Sprintf(`,{"type":"btn","data":{"down":%t,"button":"left"}}`, step.button == 1)
+	}
+	return `{"execute":"input-send-event","arguments":{"events":[` + events + `]}}`
 }

@@ -22,6 +22,14 @@ func runHelloBridge() {
 				logf("Windows Hello: accept: %v", err)
 				return
 			}
+			// Only this launcher's QEMU may use the port. Any other local
+			// process, including one in another Windows session, could
+			// otherwise take the single slot or ask for prompts.
+			if pid, err := loopbackPeerPID(conn); err != nil || pid == 0 || pid != qemuPid.Load() {
+				logf("Windows Hello: refused a connection that is not from Omarchy's QEMU")
+				conn.Close()
+				continue
+			}
 			if !active.CompareAndSwap(false, true) {
 				conn.Close()
 				continue

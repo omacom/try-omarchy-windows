@@ -59,6 +59,10 @@ Patch 0101 makes `try-omarchy-runtime` depend on the integration packages in
 the spec's `integrationDepends` and raises its package release to 5, so the
 next Update > Omarchy installs any that a disk created by an older image lacks.
 
+Patch 0102 applies fixes from an independent review of the Windows Hello
+broker, the 1Password agent, drop delivery and display sync (compatibility
+revision 39).
+
 The second command needs Docker and currently takes about ten minutes. Release
 CI also boots the resulting factory image with `scripts/release/smoke-guest.py`
 before it uploads anything.
