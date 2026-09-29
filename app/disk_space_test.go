@@ -81,26 +81,26 @@ func TestGuestInstallSpaceRequiredIncludesResumeAndReserve(t *testing.T) {
 }
 
 func TestEstimatedSparseRootfsBytesUsesConservativeMeasuredRatio(t *testing.T) {
-	got, err := estimatedSparseRootfsBytes(6 << 30)
+	got, err := estimatedSparseRootfsBytes(8 << 30)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := int64(4) << 30; got != want {
+	if want := int64(7) << 30; got != want {
 		t.Fatalf("estimated sparse rootfs = %d, want %d", got, want)
 	}
 }
 
-func TestSparseEstimateAllowsMeasuredSevenGiBInstall(t *testing.T) {
-	rootfsAllocated, err := estimatedSparseRootfsBytes(6 << 30)
+// The v0.6.1 image, 7516192768 bytes logical, measured 6090129408 bytes
+// allocated (5.67 GiB) after unpacking on NTFS. The old two-thirds estimate
+// (4.67 GiB) passed the preflight on a drive that then filled up mid-unpack.
+func TestSparseEstimateCoversMeasuredV061Install(t *testing.T) {
+	const logical, measured = int64(7516192768), int64(6090129408)
+	got, err := estimatedSparseRootfsBytes(logical)
 	if err != nil {
 		t.Fatal(err)
 	}
-	required, err := guestInstallSpaceRequired(1445169669, rootfsAllocated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if required >= 7<<30 {
-		t.Fatalf("required = %d, want less than 7 GiB", required)
+	if got < measured {
+		t.Fatalf("estimated sparse rootfs = %d, below the measured %d", got, measured)
 	}
 }
 

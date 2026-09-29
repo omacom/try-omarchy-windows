@@ -98,13 +98,16 @@ func guestInstallSpaceRequired(archiveRemaining, rootfsAllocatedBytes int64) (in
 }
 
 // estimatedSparseRootfsBytes budgets for the zero blocks decompress omits.
-// The current 6.00 GiB image measures 3.87 GiB allocated; two thirds leaves
-// some headroom, with diskSpaceReserve covering normal release-to-release drift.
+// The v0.6.1 image is 7.00 GiB logical and measures 5.67 GiB allocated on
+// NTFS (81%). Seven eighths leaves headroom for package growth between
+// releases, with diskSpaceReserve on top. Two thirds, measured on an older
+// 6.00 GiB image, let setup pass the preflight and then run out of space
+// while unpacking.
 func estimatedSparseRootfsBytes(logicalBytes int64) (int64, error) {
 	if logicalBytes <= 0 || logicalBytes > maxGuestArtifactBytes {
 		return 0, fmt.Errorf("invalid logical rootfs size")
 	}
-	return logicalBytes - logicalBytes/3, nil
+	return logicalBytes - logicalBytes/8, nil
 }
 
 func rootfsInstallBytes(logicalBytes int64, portable bool) (int64, error) {
