@@ -21,6 +21,7 @@ import (
 var diagnosticFiles = []string{
 	storageSettingsFilename,
 	resourcePreferencesFilename,
+	keyboardPreferencesFilename,
 	"guest/" + installReceiptFilename,
 	"runtime/" + runtimeReceiptFilename,
 	updateStateFilename,

@@ -26,7 +26,7 @@ Already have WINQ-EMU at `C:\WINQ-EMU`, or stock QEMU from the old bootstrap? Th
 - **Windows key** acts as Super, but only while the Try Omarchy window is focused. Everywhere else it stays your normal Windows key, so the Start menu and Win+Shift+S keep working.
 - **Ctrl+Alt+F** fullscreens the VM window itself on your Windows desktop (SUPER+F, below, is the in-Omarchy one).
 - **Ctrl+Alt+G** grabs or releases raw keyboard input. If the host steals a shortcut you meant for Omarchy, grab first. Same trick if you're driving the VM over VNC or RDP and focus gets weird.
-- **Alt+Tab** switches windows inside Omarchy while its window is focused. Use **Ctrl+Alt+Tab** for the Windows task switcher, or click another Windows window.
+- **Alt+Tab** switches windows inside Omarchy while its window is focused. Use **Ctrl+Alt+Tab** for the Windows task switcher, or click another Windows window. If you would rather Alt+Tab always go to Windows, turn off **Send Alt+Tab to Omarchy** in Settings > General. The change applies right away.
 - **Ctrl+Alt+End** sends Ctrl+Alt+Delete to Omarchy, where it closes all windows. Windows keeps Ctrl+Alt+Delete for its own security screen and no app can pass it through, the same reason Hyper-V uses Ctrl+Alt+End. Over Remote Desktop, Ctrl+Alt+End opens the remote PC's security screen instead.
 - Hyprland is keyboard-first by design and the first hour is the adjustment period. Learn two keys and the rest follows: **SUPER+SPACE** opens the Omarchy menu, **SUPER+K** opens the keybinding viewer with every binding and its description. The everyday starters: SUPER+RETURN opens a terminal, SUPER+W closes the focused window, SUPER+F fullscreens it.
 

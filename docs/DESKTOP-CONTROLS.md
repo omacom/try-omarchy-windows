@@ -4,7 +4,7 @@ This guide describes the published `v0.5.0` release.
 
 Settings has four pages:
 
-- **General:** fullscreen and monitor selection, automatic startup, CPU/RAM profiles, disk capacity, installation location and shared folder.
+- **General:** fullscreen and monitor selection, automatic startup, Alt+Tab, CPU/RAM profiles, disk capacity, installation location and shared folder.
 - **Devices:** camera selection and access, microphone access, live playback/recording choices with the bundled r20c runtime, plus Windows privacy and sound settings links.
 - **Advanced:** guest displays, rendering, port forwards, SSH and automatic launcher update checks.
 - **Recovery:** backup, restore, snapshots, reset, move, cleanup, portable copy and uninstall.
@@ -39,9 +39,11 @@ one display. It has no Settings control; start with `-disable-pinch` to keep
 ordinary two-finger input. See [trackpad pinch](PINCH-ZOOM.md).
 
 Holding Alt and tapping Tab cycles windows inside Omarchy the same way it does
-on a Linux PC. The Omarchy window's title bar follows the Windows light or dark
-app theme. To approve `sudo` with Windows Hello instead of the guest password,
-see [Windows Hello for guest sudo](WINDOWS-HELLO.md).
+on a Linux PC. Turn off **Send Alt+Tab to Omarchy** in Settings > General to
+keep Alt+Tab for the Windows task switcher; it applies while Omarchy runs.
+The Omarchy window's title bar follows the Windows light or dark app theme. To
+approve `sudo` with Windows Hello instead of the guest password, see
+[Windows Hello for guest sudo](WINDOWS-HELLO.md).
 
 Camera selection uses the Windows device identity, not its position in a list.
 If the chosen camera is disconnected, capture stays unavailable instead of

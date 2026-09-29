@@ -782,6 +782,7 @@ func main() {
 	reclaimDir.Store(&cfg.dir)
 	reclaimSupported.Store(cfg.diskFormat == "raw")
 	go runGuestAgent(cfg.dir)
+	go watchKeyboardPreferences(cfg.dir)
 	go runWinKeyHook()
 	go runWinKeyQmp()
 	go runTitleEnforcer(cfg.dir, cfg.fullscreen, cfg.fullscreenDisplay)
