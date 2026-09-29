@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.6.1 - 2026-09-29
+
+- Settings > General has a "Send Alt+Tab to Omarchy while its window is
+  focused" checkbox. It stays on by default. Turn it off and Alt+Tab opens the
+  Windows task switcher again. The change applies without restarting Omarchy.
+- On laptops with Modern Standby, Omarchy no longer drops to a black screen or
+  the login screen when Windows wakes after more than a few minutes of sleep.
+  Core guest services were being restarted on wake because their watchdog
+  timers ran out while Omarchy was frozen.
+- A monitor scale set in `~/.config/hypr/monitors.lua` stays after a theme
+  switch or `hyprctl reload` instead of returning to the automatic scale.
+- Guest packages are refreshed to current Arch versions.
+
 ## v0.6.0 - 2026-09-27
 
 - Unlock 1Password with Windows Hello. If you install 1Password in Omarchy and
