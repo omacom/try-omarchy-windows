@@ -6,7 +6,7 @@ candidate against locally served, authenticated assets.
 
 ## Hardware testing
 
-The published baseline is [v0.6.1](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.6.1).
+The published baseline is [v0.6.2](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.6.2).
 Reports on earlier previews remain useful, but must not be recorded as acceptance
 of unreleased master changes. Maintainers pin signed candidates and exact
 launcher/runtime/guest hashes before combined candidate rounds.
@@ -53,7 +53,11 @@ personal details. Do not upload the guest disk or a full backup.
   declining leaves them unchanged, and accepting preserves the original file
   before restoring defaults without changing guest files.
 - [ ] Cancel a download, relaunch, and finish setup without a broken install.
-- [ ] Instant account and personalized account both reach the desktop.
+- [ ] New setup defaults to "Choose my username and password". Both that path
+  and Quick start reach the desktop; existing installs keep their account choice.
+- [ ] Quick-start SSH rejects password login and accepts the authorized key,
+  including after upgrading an existing quick-start guest. Accounts you created
+  yourself keep password login.
 - [ ] GPU rendering, then CPU fallback, both reach the desktop.
 - [ ] Keyboard and Windows key work only in the intended window; host shortcuts
   still work after switching away. Windows handles Win+L itself.

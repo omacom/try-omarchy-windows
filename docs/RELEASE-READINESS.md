@@ -3,8 +3,19 @@
 ## Current decision
 
 The current normal version is
+[`v0.6.2`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.6.2),
+published as Latest on September 29. New installs default to your own account,
+and the quick-start account accepts only SSH keys. Existing quick-start guests
+receive that restriction on their first boot after updating; accounts you
+created yourself keep password login. Setup checks space for the unpacked guest
+before downloading. The
+[publish run](https://github.com/omacom/try-omarchy-windows/actions/runs/36624010076)
+passed signing and public asset verification. See the
+[changelog](../CHANGELOG.md#v062---2026-09-29) for the security fix and setup changes.
+
+The preceding release,
 [`v0.6.1`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.6.1),
-published as Latest on September 29 with a setting that gives Alt+Tab back to
+was published on September 29 with a setting that gives Alt+Tab back to
 Windows, the fix for services restarting after Modern Standby, monitor scale
 kept across reloads and refreshed guest packages. Its
 [candidate and release record](evidence/V061-SIGNED-CANDIDATE-2026-09-29.md)
@@ -31,7 +42,7 @@ public `SHA256SUMS` digest is
 passed on the AMD Windows 11 laptop, including public update, GPU desktop,
 live audio, reboot persistence, clean second launch, and interrupted-update
 rollback. Two physical audio endpoints per direction and hotplug remain
-untested. Windows Hello sudo, true LAN bridging, and embedded Windows app
+untested. True LAN bridging and embedded Windows app
 windows remain feature work; they do not hold back normal 0.x releases. Broader
 user reports continue to guide hardware fixes.
 
@@ -92,12 +103,18 @@ below and use reports from this normal 0.x release to prioritize further work.
 
 The live [Try Omarchy site](https://tryomarchy.com/) uses the same Omarchy
 mark as the Windows app and the same green accent. Its download serves the
-Latest launcher, now `v0.3.0`; on September 24 the live download matched the
+Latest launcher. On September 24 the live download matched the
 published launcher hash and the version text named `v0.3.0`. Its setup and uninstall descriptions
 match the app's actual behavior; the site no longer promises that uninstalling
 means deleting a single folder or that the next normal release must be 1.0.
 Desktop and phone-width Chromium renders were inspected. The live `/download`
 redirect points to the published Latest launcher.
+On September 29, the live Windows setup steps and shared-account FAQ were
+checked against v0.6.2: the account choice comes before the download, your own
+account is the default, and quick-start SSH accepts only keys. The separate
+tryomarchy.com deployment is live; the upstream
+[Omarchy site PR #461](https://github.com/omacom/omarchy-site/pull/461)
+remains open.
 The site's macOS link and the README now point to
 `https://github.com/omacom/try-omarchy`; the live support answer points to the
 built-in diagnostics and GitHub bug-report flow.
