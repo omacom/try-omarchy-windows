@@ -71,6 +71,12 @@ scale is rounded to the closest value Hyprland accepts for that mode.
 Compatibility revision 40 delivers the script and the fragment to existing
 guests.
 
+Patch 0104 turns off system service watchdogs with a top-level `service.d`
+drop-in. The guest clock keeps running while Windows sleeps, so after a resume
+systemd treated logind, journald and udevd as hung and restarted them under the
+running desktop. Compatibility revision 41 delivers the drop-in to existing
+guests.
+
 The second command needs Docker and currently takes about ten minutes. Release
 CI also boots the resulting factory image with `scripts/release/smoke-guest.py`
 before it uploads anything.
