@@ -1,6 +1,6 @@
-# Try Omarchy Windows continuation - September 27, 2026
+# Try Omarchy Windows continuation - September 29, 2026
 
-The current normal release is [v0.6.0](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.6.0), published and Latest. It drops Windows files into the app under the pointer, unlocks 1Password with Windows Hello, applies local port-forward changes while Omarchy runs and brings newer integration packages to existing disks; see the [v0.6.0 candidate and release record](evidence/V060-SIGNED-CANDIDATE-2026-09-27.md). Its acceptance included a public update from an installed v0.5.0 launcher. [v0.5.0](evidence/V050-SIGNED-CANDIDATE-2026-09-26.md) added opt-in Windows Hello sudo.
+The current normal release is [v0.6.1](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.6.1), published and Latest. It adds a setting that sends Alt+Tab to Windows, stops guest services restarting after Modern Standby, keeps a monitor scale set in `monitors.lua` across reloads and refreshes guest packages; see the [v0.6.1 candidate and release record](evidence/V061-SIGNED-CANDIDATE-2026-09-29.md). Its acceptance included a public update from an installed v0.6.0 launcher. [v0.6.0](evidence/V060-SIGNED-CANDIDATE-2026-09-27.md) added drops into apps and 1Password unlock with Windows Hello.
 
 [v0.3.0](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.3.0) added live Windows audio device switching to the v0.2.0 features. The [signed and public acceptance record](evidence/V030-SIGNED-CANDIDATE-2026-09-24.md) links the public update check, exact hashes, physical upgrade, audio checks, reboot and rollback results. The user's normal Windows installation was not changed. The Intel/NVIDIA PC remains booted into Omarchy at the owner's request.
 

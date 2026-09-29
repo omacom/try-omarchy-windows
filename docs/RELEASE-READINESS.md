@@ -1,15 +1,19 @@
-# Release readiness review - September 27, 2026
+# Release readiness review - September 29, 2026
 
 ## Current decision
 
 The current normal version is
-[`v0.6.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.6.0),
-published as Latest on September 27 with drops into apps, 1Password unlock
-with Windows Hello, live port-forward changes and package catch-up for older
-disks. Its
-[candidate and release record](evidence/V060-SIGNED-CANDIDATE-2026-09-27.md)
+[`v0.6.1`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.6.1),
+published as Latest on September 29 with a setting that gives Alt+Tab back to
+Windows, the fix for services restarting after Modern Standby, monitor scale
+kept across reloads and refreshed guest packages. Its
+[candidate and release record](evidence/V061-SIGNED-CANDIDATE-2026-09-29.md)
 covers the signed candidate, rollback, upgrade, fresh install and a public
-update from an installed v0.5.0 launcher.
+update from an installed v0.6.0 launcher.
+[`v0.6.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.6.0)
+added drops into apps, 1Password unlock with Windows Hello, live port-forward
+changes and package catch-up on September 27; see its
+[record](evidence/V060-SIGNED-CANDIDATE-2026-09-27.md).
 [`v0.5.0`](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.5.0)
 added opt-in Windows Hello sudo the day before; see its
 [record](evidence/V050-SIGNED-CANDIDATE-2026-09-26.md).
