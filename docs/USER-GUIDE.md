@@ -4,7 +4,7 @@ This guide covers setup, everyday controls, storage, and advanced options. For h
 
 ## Install and update
 
-Download [TryOmarchy.exe](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (~10 MB, [SHA256](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and open it. First run asks where to store the virtual machine, graphics runtime, and downloads. Use the default Local AppData location or choose another local drive or folder. If Windows Hypervisor Platform is not enabled, setup asks permission to enable it and restarts once. The app then downloads the GPU runtime (a portable [WINQ-EMU](https://github.com/cmspam/winq-emu) tree, ~84 MB) and the Omarchy image (~2 GB), both SHA256-verified. Choose the instant trial account to go straight to the desktop, or use Omarchy's setup form to choose your own account. Later launches open Settings before boot unless you choose a direct-launch shortcut.
+Download [TryOmarchy.exe](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe) (~10 MB, [SHA256](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe.sha256)) and open it. First run asks where to store the virtual machine, graphics runtime, and downloads. Use the default Local AppData location or choose another local drive or folder. If Windows Hypervisor Platform is not enabled, setup asks permission to enable it and restarts once. The app then downloads the GPU runtime (a portable [WINQ-EMU](https://github.com/cmspam/winq-emu) tree, ~84 MB) and the Omarchy image (~2 GB), both SHA256-verified. Then choose an account. Your own account is preselected and uses Omarchy's setup form to pick a username and password. The quick start skips that form and signs in as `omarchy` / `omarchy`. Later launches open Settings before boot unless you choose a direct-launch shortcut.
 
 Releases are Authenticode-signed by **Brandon South** through Azure Artifact Signing with a Microsoft identity-verified certificate. Windows shows that name as the verified publisher. Check it in the file's Properties > Digital Signatures tab or run `Get-AuthenticodeSignature .\TryOmarchy.exe` in PowerShell; the SignerCertificate subject should read `CN=Brandon South`. A publisher change will be announced in the changelog.
 
@@ -197,6 +197,8 @@ asks the guest to start sshd for that boot. Nothing on your network can reach
 it. Your `~/.ssh/id_ed25519.pub` (or `id_ecdsa.pub`, `id_rsa.pub`) is authorized
 for the Omarchy account automatically; pass `-ssh-key PATH` to pick another
 public key, or use none and log in with the password you chose in Omarchy.
+The quick-start account only accepts keys over SSH, since its password is
+public.
 Then:
 
 ```
@@ -266,9 +268,9 @@ TryOmarchy.exe is just the launcher. On first run it fetches the GPU runtime (~8
 
 A live USB requires rebooting and needs extra setup to keep changes between sessions. Try Omarchy runs beside your Windows apps and keeps its files between launches.
 
-### What are the instant trial credentials?
+### What are the quick-start credentials?
 
-The local trial account is named `omarchy` and its lock-screen password is `omarchy`. Sudo does not ask for a password in instant trial mode. Try Omarchy does not enable SSH or expose inbound network ports unless you ask for a forward with `-ssh` or `-forward`, and those bind to `127.0.0.1` only.
+The quick-start account is named `omarchy` and its lock-screen password is `omarchy`. Sudo does not ask for a password on this account. Run `passwd` in Omarchy to set your own password. SSH accepts only keys for this account, because its password is public. Try Omarchy does not enable SSH or expose inbound network ports unless you ask for a forward with `-ssh` or `-forward`. Those bind to `127.0.0.1` unless you choose a LAN forward, which other devices on your network can reach.
 
 ### How do I remove Try Omarchy?
 

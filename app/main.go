@@ -143,7 +143,7 @@ func main() {
 	flag.BoolVar(&cfg.hostCursor, "host-cursor", false, "force the legacy Windows cursor over the guest")
 	flag.BoolVar(&cfg.experimentalPinch, "experimental-pinch", false, "force Precision Touchpad pinch on for a guest configured by hand")
 	flag.BoolVar(&cfg.disablePinch, "disable-pinch", false, "keep ordinary Windows two-finger input instead of forwarding touchpad pinch")
-	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the trial account")
+	flag.BoolVar(&cfg.instant, "instant", false, "skip first-boot questions and use the quick-start account (omarchy / omarchy)")
 	flag.BoolVar(&cfg.portable, "portable", false, "run entirely from data and payload folders beside the executable")
 	var forwards forwardList
 	flag.Var(&forwards, "forward", "forward a Windows port into Omarchy: tcp:2222:22 (local), tcp:192.168.1.5:8080:80 (LAN); repeatable")

@@ -17,7 +17,7 @@ const (
 
 func provisionAccountHint(instant bool) string {
 	if instant {
-		return "Trial account: " + trialUsername + "    Password: " + trialPassword
+		return "Quick-start account: " + trialUsername + "    Password: " + trialPassword
 	}
 	return "Use the username and password you choose inside Omarchy"
 }

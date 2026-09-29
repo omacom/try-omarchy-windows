@@ -15,7 +15,7 @@ In an Omarchy terminal:
 sudo try-omarchy-windows-hello enable
 ```
 
-`sudo` asks for the guest password first. Instant trial accounts have
+`sudo` asks for the guest password first. Quick-start accounts have
 passwordless sudo, so Hello only matters once the account has a password. Windows then asks to create a passkey
 for "Try Omarchy" and for Windows Hello once. After that, each `sudo` in that
 guest shows one Windows Hello prompt; cancel it to type the password instead.

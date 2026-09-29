@@ -1,0 +1,223 @@
+From 3403c7c633e7a70cfec1c6247304ab9fb50b4ec2 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 14:43:56 -0400
+Subject: [PATCH] Accept only SSH keys for the quick-start account
+
+The quick-start account's password is public (omarchy) and its sudo asks for
+no password. A port forward to guest port 22, which Windows can bind to the
+LAN, started sshd with Arch's default config, so anyone who could reach the
+port could log in with that password and get root.
+
+A Match User omarchy drop-in turns off password and keyboard-interactive
+login for that account only. New quick-start installs get it when the account
+is created. Catch-up adds it once to existing quick-start disks; removing it
+afterwards is the user's choice. Own accounts keep password login.
+
+The first-desktop notice now says "Quick-start login" and suggests passwd.
+Compatibility revision 42 delivers the drop-in and scripts to existing guests.
+---
+ .../usr/local/lib/try-omarchy/catch-up        | 16 ++++++++++++++
+ .../lib/try-omarchy/provision-instant-trial   |  1 +
+ .../usr/local/lib/try-omarchy/show-welcome    |  2 +-
+ .../share/try-omarchy/quick-start-sshd.conf   |  6 +++++
+ guest/scripts/finalize-rootfs.sh              |  4 +++-
+ guest/tests/test_overlay_scripts.py           | 22 ++++++++++++++++++-
+ guest/tests/verify.py                         | 17 +++++++++++---
+ 7 files changed, 62 insertions(+), 6 deletions(-)
+ create mode 100644 guest/factory-overlay/usr/share/try-omarchy/quick-start-sshd.conf
+
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+index c717257..25ecb2e 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+@@ -10,6 +10,8 @@
+ #   - switch on Omarchy's suspend-off toggle, since a VM cannot suspend
+ #   - load the virtual pinch touchpad's device-only rules from input.lua,
+ #     once per user, keeping the original file beside it
++#   - make SSH accept only keys for the quick-start account, whose password
++#     is public, once per disk
+ # Runs once per integration revision, before the display manager.
+ set -euo pipefail
+ 
+@@ -21,6 +23,8 @@ toggle_templates=${TRY_OMARCHY_TOGGLE_TEMPLATES:-/usr/share/omarchy/default/hypr
+ omarchy_version=${TRY_OMARCHY_OMARCHY_VERSION:-/usr/share/omarchy/version}
+ pinch_fragment=${TRY_OMARCHY_PINCH_FRAGMENT:-/usr/share/try-omarchy/skel-fragments/hypr-input-pinch.append.lua}
+ homes=${TRY_OMARCHY_HOMES:-/home}
++quick_start_sshd=${TRY_OMARCHY_QUICK_START_SSHD:-/usr/share/try-omarchy/quick-start-sshd.conf}
++sshd_config_dir=${TRY_OMARCHY_SSHD_CONFIG_DIR:-/etc/ssh/sshd_config.d}
+ 
+ revision=$(cut -d: -f1 "$revision_file" 2>/dev/null || echo 0)
+ marker="$state_dir/catch-up-revision"
+@@ -160,6 +164,17 @@ load_pinch_rules() {
+   fi
+ }
+ 
++secure_quick_start_ssh() {
++  # Disks created before this revision let SSH accept the public quick-start
++  # password. Add the key-only rule once; a later removal is the user's choice.
++  local record=$state_dir/quick-start-sshd
++  [[ "$(cat "$state_dir/provision-mode" 2>/dev/null || true)" == instant-trial ]] || return 0
++  [[ -f $quick_start_sshd && ! -e $record ]] || return 0
++  install -Dm644 "$quick_start_sshd" "$sshd_config_dir/90-try-omarchy-quick-start.conf"
++  : >"$record"
++  echo "made SSH accept only keys for the quick-start account"
++}
++
+ legacy_pinch_comment="-- Try Omarchy's host pinch device carries gestures only."
+ legacy_pinch_load='dofile("/usr/share/try-omarchy/pinch-input.lua")'
+ 
+@@ -171,5 +186,6 @@ for home in "$homes"/*; do
+   enable_suspend_off "$home" || true
+   load_pinch_rules "$home" || true
+ done
++secure_quick_start_ssh || true
+ printf '%s\n' "$revision" >"$marker"
+ exit 0
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial b/guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial
+index f146c15..1f61880 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/provision-instant-trial
+@@ -46,6 +46,7 @@ cat >"/etc/sudoers.d/00-try-omarchy-trial" <<SUDOERS
+ $username ALL=(ALL:ALL) NOPASSWD: ALL
+ SUDOERS
+ chmod 440 /etc/sudoers.d/00-try-omarchy-trial
++install -Dm644 /usr/share/try-omarchy/quick-start-sshd.conf /etc/ssh/sshd_config.d/90-try-omarchy-quick-start.conf
+ 
+ mkdir -p /var/lib/sddm /etc/sddm.conf.d /var/lib/try-omarchy
+ printf '[Last]\nSession=omarchy.desktop\nUser=%s\n' "$username" >/var/lib/sddm/state.conf
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/show-welcome b/guest/factory-overlay/usr/local/lib/try-omarchy/show-welcome
+index 7c0155c..0b00a02 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/show-welcome
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/show-welcome
+@@ -7,7 +7,7 @@ state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/try-omarchy
+ marker=$state_dir/welcome-shown
+ [[ ! -e $marker ]] || exit 0
+ 
+-body=$'Trial login: omarchy    Password: omarchy\nSudo does not require a password.\n\nSUPER+SPACE opens the menu.  SUPER+K shows all keybindings.'
++body=$'Quick-start login: omarchy    Password: omarchy\nSudo does not ask for a password. Run passwd to set your own password.\n\nSUPER+SPACE opens the menu.  SUPER+K shows all keybindings.'
+ for attempt in {1..30}; do
+   if notify-send \
+     --app-name='Try Omarchy' \
+diff --git a/guest/factory-overlay/usr/share/try-omarchy/quick-start-sshd.conf b/guest/factory-overlay/usr/share/try-omarchy/quick-start-sshd.conf
+new file mode 100644
+index 0000000..a7ea40a
+--- /dev/null
++++ b/guest/factory-overlay/usr/share/try-omarchy/quick-start-sshd.conf
+@@ -0,0 +1,6 @@
++# The quick-start account's password is public (omarchy), so SSH accepts only
++# keys for it. Try Omarchy authorizes your key when you forward a port to SSH.
++# Delete this file to allow password logins again after changing the password.
++Match User omarchy
++  PasswordAuthentication no
++  KbdInteractiveAuthentication no
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 2861e2a..cdbfe12 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -158,6 +158,7 @@ compat_paths=(
+   usr/local/lib/try-omarchy/battery-apply
+   usr/local/lib/try-omarchy/apply-host-locale
+   usr/local/lib/try-omarchy/catch-up
++  usr/share/try-omarchy/quick-start-sshd.conf
+   usr/local/lib/try-omarchy/guest-ready
+   usr/local/lib/try-omarchy/request-sshd
+   usr/local/lib/try-omarchy/share-link
+@@ -202,7 +203,8 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # sync and Hyprland config reloads.
+ # Revision 41 turns off system service watchdogs, which fire after Windows
+ # sleeps and restart logind under the running desktop.
+-compat_revision=41
++# Revision 42 makes SSH accept only keys for the quick-start account.
++compat_revision=42
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index 0ca76dc..6c0e5f3 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -29,6 +29,7 @@ CATCH_UP = OVERLAY / "usr/local/lib/try-omarchy/catch-up"
+ FRAGMENT = OVERLAY / "usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua"
+ PINCH_FRAGMENT = OVERLAY / "usr/share/try-omarchy/skel-fragments/hypr-input-pinch.append.lua"
+ PINCH_READY = OVERLAY / "usr/local/lib/try-omarchy/pinch-ready"
++QUICK_START_SSHD = OVERLAY / "usr/share/try-omarchy/quick-start-sshd.conf"
+ EXPORT = OVERLAY / "usr/local/bin/try-omarchy-export"
+ 
+ def generated_key(directory: Path) -> str:
+@@ -687,7 +688,9 @@ class CatchUpTests(OverlayCase):
+                                TRY_OMARCHY_QEMU_FRAGMENT=str(FRAGMENT), TRY_OMARCHY_OMARCHY_MONITORS=str(self.default),
+                                TRY_OMARCHY_TOGGLE_TEMPLATES=str(self.templates), TRY_OMARCHY_HOMES=str(self.homes),
+                                TRY_OMARCHY_OMARCHY_VERSION=str(self.omarchy_version),
+-                               TRY_OMARCHY_PINCH_FRAGMENT=str(PINCH_FRAGMENT))
++                               TRY_OMARCHY_PINCH_FRAGMENT=str(PINCH_FRAGMENT),
++                               TRY_OMARCHY_QUICK_START_SSHD=str(QUICK_START_SSHD),
++                               TRY_OMARCHY_SSHD_CONFIG_DIR=str(self.root / "sshd_config.d"))
+ 
+     def seed_toggles(self) -> None:
+         for name in ("flags", "window-no-gaps", "single-window-aspect-ratio"):
+@@ -712,6 +715,23 @@ class CatchUpTests(OverlayCase):
+         self.run_catch_up()
+         self.assertEqual(monitors.read_text(), "user edits\n")
+ 
++    def test_quick_start_disk_gets_key_only_ssh_once(self) -> None:
++        dropin = self.root / "sshd_config.d/90-try-omarchy-quick-start.conf"
++        self.state.mkdir(parents=True)
++        (self.state / "provision-mode").write_text("instant-trial\n")
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(dropin.read_text(), QUICK_START_SSHD.read_text())
++        # Removing it is the user's choice; a later revision does not add it back.
++        dropin.unlink()
++        self.version.write_text("13:7.2.3-arch1\n")
++        self.assertEqual(self.run_catch_up().returncode, 0)
++        self.assertFalse(dropin.exists())
++
++    def test_own_account_disk_keeps_its_ssh_settings(self) -> None:
++        self.assertEqual(self.run_catch_up().returncode, 0)
++        self.assertFalse((self.root / "sshd_config.d").exists())
++
+     def test_edited_files_and_deliberate_toggles_are_left_alone(self) -> None:
+         monitors = self.user / ".config/hypr/monitors.lua"
+         monitors.write_text("hl.monitor({ output = \"DP-1\", scale = 2 })\n" + self.old_fragment)
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 119311e..e72e55b 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -217,12 +217,22 @@ def main() -> None:
+         "instant mode creates, finalizes, and autologs into its trial account",
+     )
+     check(
+-        "root:" not in instant_trial and "sshd" not in instant_trial,
++        "root:" not in instant_trial
++        and "sshd.service" not in instant_trial
++        and "systemctl enable" not in instant_trial,
+         "instant mode does not enable root or remote login",
+     )
++    quick_start_sshd = read(GUEST / "factory-overlay/usr/share/try-omarchy/quick-start-sshd.conf")
++    check(
++        "/etc/ssh/sshd_config.d/90-try-omarchy-quick-start.conf" in instant_trial
++        and "Match User omarchy" in quick_start_sshd
++        and "PasswordAuthentication no" in quick_start_sshd
++        and "KbdInteractiveAuthentication no" in quick_start_sshd,
++        "SSH accepts only keys for the quick-start account's public password",
++    )
+     check(
+         "notify-send" in welcome
+-        and "Trial login: omarchy" in welcome
++        and "Quick-start login: omarchy" in welcome
+         and "Password: omarchy" in welcome
+         and "welcome-shown" in welcome,
+         "instant mode shows the trial credentials once on the first desktop",
+@@ -283,7 +293,8 @@ def main() -> None:
+         "system services run without watchdogs, which fire after Windows sleeps",
+     )
+     check(
+-        "compat_revision=41" in finalize_rootfs
++        "compat_revision=42" in finalize_rootfs
++        and "usr/share/try-omarchy/quick-start-sshd.conf" in compat_paths
+         and "etc/systemd/system/service.d/10-try-omarchy-watchdog.conf" in compat_paths
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+         and "usr/local/bin/omarchy-native-display-sync" in compat_paths
+-- 
+2.55.0
+

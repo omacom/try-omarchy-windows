@@ -69,5 +69,9 @@ else
 fi
 [[ $(cat /run/try-omarchy/pinch-gestures) == ready ]]
 sudo python3 /mnt/host/pinch-udev.py
+# Revision 42 makes SSH accept only keys for the quick-start account on disks
+# that already have it; the seed boot created that account.
+cmp /etc/ssh/sshd_config.d/90-try-omarchy-quick-start.conf /usr/share/try-omarchy/quick-start-sshd.conf
+[[ -f /var/lib/try-omarchy/quick-start-sshd ]]
 sha256sum "$input" > "$HOME/upgrade-input-after.sha256"
 sync

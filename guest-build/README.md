@@ -77,6 +77,15 @@ systemd treated logind, journald and udevd as hung and restarted them under the
 running desktop. Compatibility revision 41 delivers the drop-in to existing
 guests.
 
+Patch 0107 makes SSH accept only keys for the quick-start account, whose
+password (`omarchy`) is public and whose sudo asks for no password. A forward
+to guest port 22 can be bound to the LAN, and Arch's default sshd config allows
+password login. A `Match User omarchy` drop-in in `/etc/ssh/sshd_config.d`
+turns that off for this account only. New quick-start installs get it when the
+account is created, and catch-up adds it once to existing quick-start disks.
+The first-desktop notice now says "Quick-start login" and suggests `passwd`.
+Compatibility revision 42 delivers the drop-in and scripts to existing guests.
+
 The second command needs Docker and currently takes about ten minutes. Release
 CI also boots the resulting factory image with `scripts/release/smoke-guest.py`
 before it uploads anything.
@@ -129,6 +138,9 @@ Windows VM tests unless noted in the release checklist):
 - `tryomarchy.sshd=1` (set by the launcher when a host port forwards to guest
   port 22) starts sshd for that boot only and authorizes the launcher-supplied
   public key; sshd config and enablement stay untouched
+- The quick-start account (`omarchy`, whose password is public) accepts only
+  SSH keys through a `Match User omarchy` drop-in; own accounts keep password
+  login
 - `try-omarchy-export` archives an allowlist of desktop configuration, the
   theme, and added packages with a restore script for a real Omarchy install
   (docs/MIGRATION.md)

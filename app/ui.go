@@ -174,9 +174,10 @@ func (ui *progressUI) chooseInstantMode() bool {
 	}
 	reply := make(chan setupPromptResult, 1)
 	ui.prompts <- setupPromptRequest{kind: setupPromptProvision, reply: reply}
-	result := <-reply
-	ui.setInstantMode(result.primary)
-	return result.primary
+	// The first option is the user's own account, so quick start is the second.
+	instant := !(<-reply).primary
+	ui.setInstantMode(instant)
+	return instant
 }
 
 func (ui *progressUI) chooseShortcuts() (bool, bool) {
@@ -270,8 +271,8 @@ func (ui *progressUI) run() {
 		}
 		switch promptKind {
 		case setupPromptProvision:
-			setText(hPromptOption1, mark(primary)+"  INSTANT TRIAL  (omarchy / omarchy)")
-			setText(hPromptOption2, mark(!primary)+"  CHOOSE MY USERNAME AND PASSWORD")
+			setText(hPromptOption1, mark(primary)+"  CHOOSE MY USERNAME AND PASSWORD")
+			setText(hPromptOption2, mark(!primary)+"  QUICK START  (omarchy / omarchy)")
 		case setupPromptSharedFolder:
 			setText(hPromptOption1, mark(primary)+"  CREATE OMARCHY SHARED  (RECOMMENDED)")
 			setText(hPromptOption2, mark(!primary)+"  NOT NOW")
@@ -290,12 +291,20 @@ func (ui *progressUI) run() {
 			show(h, visible)
 		}
 	}
-	finishPrompt := func(hwnd uintptr) {
+	var finishPrompt func(hwnd uintptr)
+	// Cancelling never picks the quick-start account or creates a shared
+	// folder: the first option means the user's own account on the account
+	// prompt, and "not now" is the second option on the shared folder prompt.
+	cancelPrompt := func(hwnd uintptr) {
+		primary, secondary = promptKind == setupPromptProvision, false
+		finishPrompt(hwnd)
+	}
+	finishPrompt = func(hwnd uintptr) {
 		if promptKind == setupPromptNone || promptReply == nil {
 			return
 		}
 		if promptKind == setupPromptProvision {
-			ui.setInstantMode(primary)
+			ui.setInstantMode(!primary)
 		}
 		promptReply <- setupPromptResult{primary: primary, secondary: secondary}
 		promptReply = nil
@@ -339,7 +348,7 @@ func (ui *progressUI) run() {
 				switch promptKind {
 				case setupPromptProvision:
 					setText(hPromptTitle, "CHOOSE YOUR FIRST LAUNCH")
-					setText(hPromptBody, "Start instantly, or create your own Linux account.")
+					setText(hPromptBody, "Create your own Linux account, or start instantly as omarchy.")
 				case setupPromptSharedFolder:
 					setText(hPromptTitle, "SHARE FILES WITH WINDOWS")
 					setText(hPromptBody, "Omarchy can read and change only the folder created for sharing.")
@@ -402,8 +411,7 @@ func (ui *progressUI) run() {
 			}
 			if wParam == vkEscape {
 				if ui.confirmCancel(hCancel) && promptKind != setupPromptNone {
-					primary, secondary = false, false
-					finishPrompt(hwnd)
+					cancelPrompt(hwnd)
 				}
 			}
 			return 0
@@ -411,8 +419,7 @@ func (ui *progressUI) run() {
 			switch wParam & 0xffff {
 			case cancelControlID:
 				if ui.confirmCancel(hCancel) && promptKind != setupPromptNone {
-					primary, secondary = false, false
-					finishPrompt(hwnd)
+					cancelPrompt(hwnd)
 				}
 			case promptOption1ID:
 				if promptKind == setupPromptProvision || promptKind == setupPromptSharedFolder {
@@ -435,8 +442,7 @@ func (ui *progressUI) run() {
 			return 0
 		case wmClose:
 			if ui.confirmCancel(hCancel) && promptKind != setupPromptNone {
-				primary, secondary = false, false
-				finishPrompt(hwnd)
+				cancelPrompt(hwnd)
 			}
 			return 0
 		case wmDestroy:

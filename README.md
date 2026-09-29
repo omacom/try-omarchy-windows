@@ -27,7 +27,7 @@ Try Omarchy runs [Omarchy](https://omarchy.org) in a virtual machine. You can ex
 
 1. **Download and open [TryOmarchy.exe](https://github.com/omacom/try-omarchy-windows/releases/latest/download/TryOmarchy.exe).** The launcher is about 10 MB and is signed by Brandon South. You can check the signature in the file's **Properties > Digital Signatures** tab.
 2. **Choose where to keep Omarchy.** The default is `%LOCALAPPDATA%\TryOmarchy`. Setup may enable Windows Hypervisor Platform and request one restart. It then downloads and verifies the graphics runtime and guest image, about 2 GB in total.
-3. **Choose an instant trial or set up your own account.** Once the desktop opens, press **Super+Space** for the Omarchy menu and **Super+K** to see the keybindings.
+3. **Set up your own account, or pick the quick start.** Your own account is the default. The quick start signs in as `omarchy` / `omarchy` with no setup. Once the desktop opens, press **Super+Space** for the Omarchy menu and **Super+K** to see the keybindings.
 
 See the [user guide](docs/USER-GUIDE.md) for updates, shortcuts, storage, settings, and removal.
 

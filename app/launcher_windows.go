@@ -212,7 +212,7 @@ func chooseProvisionMode(cfg *config, newInstall bool) {
 	if cfg.instant {
 		getUI().setInstantMode(true)
 		if err := writeProvisionMode(cfg.dir, provisionModeInstant); err != nil {
-			fatal("Could not save the instant trial choice: %v", err)
+			fatal("Could not save the quick-start choice: %v", err)
 		}
 		return
 	}
