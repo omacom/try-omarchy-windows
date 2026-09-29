@@ -1,0 +1,26 @@
+From 16750b347a71aaf9c0c786be398b00ef4709c820 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 13:21:05 +0000
+Subject: [PATCH] Refresh the guest package lock
+
+librsvg 2:2.62.3-1 -> 2:2.62.4-1
+---
+ guest/packages.lock.json | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index 151979a..56fa085 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -337,7 +337,7 @@
+     "libraqm": "0.11.0-1",
+     "libraw": "0.22.2-1",
+     "libraw1394": "2.1.2-4",
+-    "librsvg": "2:2.62.3-1",
++    "librsvg": "2:2.62.4-1",
+     "libsamplerate": "0.2.2-3",
+     "libsasl": "2.1.28-5",
+     "libseccomp": "2.6.0-1",
+-- 
+2.55.0
+
