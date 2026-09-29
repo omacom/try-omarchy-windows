@@ -1,0 +1,26 @@
+From 49c1bcf3f817e020b0b805d108c74686e32f7746 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 18:50:59 +0000
+Subject: [PATCH] Refresh the guest package lock
+
+libpng 1.6.58-2 -> 1.6.59-1
+---
+ guest/packages.lock.json | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index 56fa085..d0199e2 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -327,7 +327,7 @@
+     "libpipewire": "1:1.6.9-1",
+     "libplacebo": "7.360.1-6",
+     "libplist": "2.7.0-3",
+-    "libpng": "1.6.58-2",
++    "libpng": "1.6.59-1",
+     "libportal": "0.11.0-1",
+     "libportal-gtk4": "0.11.0-1",
+     "libproxy": "0.5.12-1",
+-- 
+2.55.0
+
