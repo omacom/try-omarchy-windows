@@ -497,11 +497,6 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 						}
 					}
 				}
-				altTabCheck, _, _ := procSendMessageW.Call(hAltTab, bmGetcheck, 0, 0)
-				if err := saveKeyboardPreferences(dataDir, keyboardPreferences{AltTabToWindows: altTabCheck != bstChecked}); err != nil {
-					errorBox("Other settings were saved, but the Alt+Tab choice could not be saved:\n\n" + err.Error())
-					return 0
-				}
 				if audioSupported {
 					microphoneCheck, _, _ := procSendMessageW.Call(hMicrophoneOn, bmGetcheck, 0, 0)
 					microphoneDisabled := microphoneCheck != bstChecked
@@ -549,6 +544,15 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 				if err := saveApprovedWindowsApps(dataDir, approvedApps); err != nil {
 					errorBox("Other settings were saved, but approved Windows apps could not be saved:\n\n" + err.Error())
 					return 0
+				}
+				// Only write the file for a real change. Older launchers reject
+				// backups that contain files they do not know.
+				altTabCheck, _, _ := procSendMessageW.Call(hAltTab, bmGetcheck, 0, 0)
+				if toWindows := altTabCheck != bstChecked; toWindows != keyboardPrefs.AltTabToWindows {
+					if err := saveKeyboardPreferences(dataDir, keyboardPreferences{AltTabToWindows: toWindows}); err != nil {
+						errorBox("Other settings were saved, but the Alt+Tab choice could not be saved:\n\n" + err.Error())
+						return 0
+					}
 				}
 				saved = true
 				procDestroyWindow.Call(h)
