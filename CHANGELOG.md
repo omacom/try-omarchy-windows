@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.6.2 - 2026-09-29
+
+- Security: SSH no longer accepts the quick-start account's public password.
+  With a port forward to guest port 22, and especially a LAN forward, anyone
+  who could reach the port could log in as `omarchy` / `omarchy` and use its
+  passwordless sudo. The quick-start account now accepts only SSH keys, which
+  Try Omarchy authorizes for you. Existing quick-start installs get the change
+  on their first boot after the update. Your own accounts keep password login.
+- New installs now preselect your own account on the first-launch screen. The
+  quick start (`omarchy` / `omarchy`) is still one click away. Existing
+  installs keep the choice they made.
+- The quick-start welcome notice suggests running `passwd` to set your own
+  password.
+- Setup checks for enough free space to unpack the Omarchy image before it
+  downloads, instead of running out partway through.
+
 ## v0.6.1 - 2026-09-29
 
 - Settings > General has a "Send Alt+Tab to Omarchy while its window is
