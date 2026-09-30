@@ -1,0 +1,88 @@
+From 6346227c40b3cf218de8e0183ab6cf7e491d098d Mon Sep 17 00:00:00 2001
+From: Brandon South <btsouth@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 11:46:35 -0400
+Subject: [PATCH] Refresh the QML time-zone cache with the guest clock
+
+---
+ .../patches/omarchy/clock-timezone-refresh.patch | 11 +++++++++++
+ guest/spec.json                                  | 16 +++++++++++++++-
+ guest/tests/verify.py                            |  4 ++--
+ 3 files changed, 28 insertions(+), 3 deletions(-)
+ create mode 100644 guest/patches/omarchy/clock-timezone-refresh.patch
+
+diff --git a/guest/patches/omarchy/clock-timezone-refresh.patch b/guest/patches/omarchy/clock-timezone-refresh.patch
+new file mode 100644
+index 0000000..27cb8c3
+--- /dev/null
++++ b/guest/patches/omarchy/clock-timezone-refresh.patch
+@@ -0,0 +1,11 @@
++diff --git a/shell/plugins/panels/clock/BarWidget.qml b/shell/plugins/panels/clock/BarWidget.qml
++--- a/shell/plugins/panels/clock/BarWidget.qml
+++++ b/shell/plugins/panels/clock/BarWidget.qml
++@@ -32,6 +32,7 @@
++   readonly property var verticalLines: displayText.split("\n")
++ 
++   function refresh() {
+++    Date.timeZoneUpdated()
++     displayDate = new Date()
++     if (panelLoader.item && panelLoader.item.refresh) panelLoader.item.refresh()
++   }
+diff --git a/guest/spec.json b/guest/spec.json
+index bc7b01c..015c78d 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -30,7 +30,7 @@
+     "versionFile": "4.0.0.alpha",
+     "channel": "quattro",
+     "license": "MIT",
+-    "packageRelease": 6,
++    "packageRelease": 7,
+     "integrationDepends": [
+       "fcitx5",
+       "fcitx5-gtk",
+@@ -152,6 +152,20 @@
+             "afterSha256": "1c22eee021850489fb46b2ca4a50a7398fb9c15c1c70a7ecb36a18574ff46636"
+           }
+         ]
++      },
++      {
++        "id": "clock-timezone-refresh",
++        "description": "Refresh the QML date engine time-zone cache before refreshing the guest clock.",
++        "reference": "https://doc.qt.io/qt-6/qml-qtqml-date.html#timeZoneUpdated-method",
++        "patch": "patches/omarchy/clock-timezone-refresh.patch",
++        "patchSha256": "1f42c15449c3a308e0c66f55c264b79910055efb18f26df73829b348341a6a1d",
++        "targets": [
++          {
++            "path": "shell/plugins/panels/clock/BarWidget.qml",
++            "beforeSha256": "cfcdaeedc4ae5832b37271a84bb92ee762301022e2443a0f769992fa792acf28",
++            "afterSha256": "29cd6b0c67dd97f18f9f5f9ee7e402f13d79d4ddc5e78dc08a838a3e03565a51"
++          }
++        ]
+       }
+     ],
+     "requiredPaths": [
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 81a84af..b21176f 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -67,7 +67,7 @@ def main() -> None:
+     backports = authenticity["backports"]
+     check(
+         [backport.get("id") for backport in backports]
+-        == ["notification-hover-close", "notification-screen-privacy", "setup-host-timezone"],
++        == ["notification-hover-close", "notification-screen-privacy", "setup-host-timezone", "clock-timezone-refresh"],
+         "Omarchy backports are explicitly ordered and identified",
+     )
+     for backport in backports:
+@@ -80,7 +80,7 @@ def main() -> None:
+         )
+         check(
+             backport.get("reference", "").startswith(
+-                ("https://github.com/basecamp/omarchy/", "https://github.com/omacom/try-omarchy/commit/e1a0dbe9820a8f7554ac3b930c2f13e1f41b25a1")
++                ("https://github.com/basecamp/omarchy/", "https://github.com/omacom/try-omarchy/commit/e1a0dbe9820a8f7554ac3b930c2f13e1f41b25a1", "https://doc.qt.io/qt-6/qml-qtqml-date.html#timeZoneUpdated-method")
+             ),
+             f"backport has a review reference: {backport['id']}",
+         )
+-- 
+2.43.0
+

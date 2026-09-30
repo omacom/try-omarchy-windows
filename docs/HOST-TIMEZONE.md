@@ -20,5 +20,9 @@ RTC settings, or password policy. Unknown zones and failed updates leave the
 guest selection intact. A manual choice made on an older Windows image is
 preserved when its recorded host zone differs from the current guest zone.
 
+On existing disks, **Update > Omarchy** installs the runtime clock refresh
+backport. The zone itself follows without that package update, but an older
+shell can keep displaying its previous zone until it is restarted.
+
 This behavior is implemented for a future guest payload. It is not part of
 the published `v0.6.2` image.
