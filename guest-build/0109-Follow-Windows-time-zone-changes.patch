@@ -1,4 +1,4 @@
-From 4648c0376d151a47c6eb4219fb01e00bb426377e Mon Sep 17 00:00:00 2001
+From fbd13b6da5bd15b7fed28fa1c1636eba1184757d Mon Sep 17 00:00:00 2001
 From: Brandon South <btsouth@users.noreply.github.com>
 Date: Wed, 30 Sep 2026 11:20:24 -0400
 Subject: [PATCH] Follow Windows time-zone changes until the guest opts out
@@ -290,7 +290,7 @@ index 0000000..736d038
 +Categories=Settings;
 diff --git a/guest/patches/omarchy/setup-host-timezone.patch b/guest/patches/omarchy/setup-host-timezone.patch
 new file mode 100644
-index 0000000..5fa5557
+index 0000000..c106a9d
 --- /dev/null
 +++ b/guest/patches/omarchy/setup-host-timezone.patch
 @@ -0,0 +1,20 @@
@@ -308,7 +308,7 @@ index 0000000..5fa5557
 ++  local host_hint=${TRY_OMARCHY_HOST_ZONE:-/run/try-omarchy/host-timezone}
 ++  if [[ -f $host_hint ]]; then
 ++    guess=$(cat "$host_hint")
-++    if ! timedatectl list-timezones | grep -Fxq -- "$guess"; then guess=""; fi
+++    if ! timedatectl list-timezones | grep -Fx -- "$guess" >/dev/null; then guess=""; fi
 ++  fi
 ++  if [[ -z $guess ]]; then guess=$(tzupdate -p 2>/dev/null) || guess=""; fi
 + 
@@ -341,7 +341,7 @@ index cdbfe12..2c1c7f4 100755
  
  # Fail the build if DKMS or networking modules were not packaged for this kernel.
 diff --git a/guest/spec.json b/guest/spec.json
-index 7544f61..3f70414 100644
+index 7544f61..bc7b01c 100644
 --- a/guest/spec.json
 +++ b/guest/spec.json
 @@ -30,7 +30,7 @@
@@ -377,12 +377,12 @@ index 7544f61..3f70414 100644
 +        "description": "Select the validated Windows time-zone hint in the first-boot personal setup form.",
 +        "reference": "https://github.com/omacom/try-omarchy/commit/e1a0dbe9820a8f7554ac3b930c2f13e1f41b25a1",
 +        "patch": "patches/omarchy/setup-host-timezone.patch",
-+        "patchSha256": "ba473bd56a7e51d962307c0acd507a62c00f87a3815617edfe338afb7b9993b6",
++        "patchSha256": "eb29717db81c9c55be4755b5e00648169ae53c8ecc4feac11da74628bef01efc",
 +        "targets": [
 +          {
 +            "path": "install/provisioning/setup-form.sh",
 +            "beforeSha256": "0fbb8c3c8b151e5ff884c16d381e12fda53cc16adfd08a684d41e7327250665d",
-+            "afterSha256": "b030cb06f02e4519a32c487fa51a0e51050ee57cd9c41011318e0b481b4fe8c7"
++            "afterSha256": "1c22eee021850489fb46b2ca4a50a7398fb9c15c1c70a7ecb36a18574ff46636"
 +          }
 +        ]
        }
@@ -400,7 +400,7 @@ index 7544f61..3f70414 100644
  }
 diff --git a/guest/tests/test_timezone.py b/guest/tests/test_timezone.py
 new file mode 100644
-index 0000000..113ec56
+index 0000000..510d399
 --- /dev/null
 +++ b/guest/tests/test_timezone.py
 @@ -0,0 +1,128 @@
@@ -519,7 +519,7 @@ index 0000000..113ec56
 +        wrapper.write_text('#!/usr/bin/python3\nimport os,runpy\nos.geteuid=lambda:0\nrunpy.run_path(' + repr(str(SCRIPT)) + ',run_name="__main__")\n')
 +        wrapper.chmod(0o755)
 +        env['TRY_OMARCHY_TIMEZONE_HELPER'] = str(wrapper)
-+        script = GUEST / 'factory-overlay/usr/local/lib/try-omarchy/apply-host-locale' 
++        script = GUEST / 'factory-overlay/usr/local/lib/try-omarchy/apply-host-locale'
 +        for zone in ['America/Chicago', 'Europe/Berlin']:
 +            cmdline.write_text('tryomarchy.tz=' + zone + '\n')
 +            result = subprocess.run([str(script)], env=env, text=True, capture_output=True)

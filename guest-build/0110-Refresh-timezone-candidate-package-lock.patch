@@ -1,0 +1,52 @@
+From 5a48e101299cc7bf1e9da09e4eec42144d0e230e Mon Sep 17 00:00:00 2001
+From: Brandon South <btsouth@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 11:27:32 -0400
+Subject: [PATCH] Refresh four pins for the Windows time-zone candidate
+
+---
+ guest/packages.lock.json | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index d0199e2..d42d7af 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -61,7 +61,7 @@
+     "diffutils": "3.12-2",
+     "dkms": "3.4.3-2",
+     "double-conversion": "3.4.0-1",
+-    "dua-cli": "2.45.0-1",
++    "dua-cli": "2.45.1-1",
+     "duktape": "2.7.0-7",
+     "e2fsprogs": "1.47.4-1",
+     "elfutils": "0.196-1",
+@@ -266,7 +266,7 @@
+     "libglvnd": "1.7.0-3",
+     "libgomp": "16.2.1+r23+gd564253eb6c8-1",
+     "libgpg-error": "1.61-1",
+-    "libgsf": "1.14.58-1",
++    "libgsf": "1.14.60-1",
+     "libgudev": "238-3",
+     "libgxps": "0.3.2-5",
+     "libheif": "1.23.5-1",
+@@ -479,7 +479,7 @@
+     "openjpeg2": "2.5.4-1",
+     "openjph": "0.32.0-1",
+     "openssh": "10.5p1-1",
+-    "openssl": "3.6.4-1",
++    "openssl": "3.6.5-1",
+     "opus": "1.6.1-1",
+     "orc": "0.4.44-1",
+     "osinfo-db": "20260812-1",
+@@ -496,7 +496,7 @@
+     "patch": "2.8-1",
+     "pciutils": "3.15.0-1",
+     "pcre": "8.45-5",
+-    "pcre2": "10.48-1",
++    "pcre2": "10.49-1",
+     "pcsclite": "2.5.2-1",
+     "perl": "5.42.2-2",
+     "perl-error": "0.17030-3",
+-- 
+2.43.0
+
