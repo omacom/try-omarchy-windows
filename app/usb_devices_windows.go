@@ -23,11 +23,16 @@ type usbUIState struct {
 	busy, closing, done  bool
 	cancel               context.CancelFunc
 	results              chan usbUIResult
+	selectionMode        bool
+	dir, qemu            string
+	preference           usbPreferences
 }
 
 var usbUI *usbUIState
 var usbUIRegistered bool
 var usbUICallback = syscall.NewCallback(usbWindowProc)
+
+var usbSelectionInventory = inventoryUSBDevices
 
 const usbResultMessage = 0x8031
 
@@ -40,7 +45,7 @@ func (s *usbUIState) start(action string) {
 		return
 	}
 	var selected usbDevice
-	if action != "refresh" {
+	if action != "refresh" && !(s.selectionMode && action == "detach") {
 		index, _, _ := procSendMessageW.Call(s.list, 0x188, 0, 0)
 		if index >= uintptr(len(s.devices)) {
 			usbSetText(s.status, "Select a USB device first.")
@@ -55,9 +60,41 @@ func (s *usbUIState) start(action string) {
 			usbSetText(s.status, "This device is already available to Windows.")
 			return
 		}
-		if action == "attach" && msgBox("Attach "+selected.Name+" to Omarchy?\n\nWindows applications will lose access until you release it. Eject mounted storage before switching it.", mbYesNo|mbIconQuestion|mbDefbutton2) != idYes {
+		if action == "attach" && !s.selectionMode && msgBox("Attach "+selected.Name+" to Omarchy?\n\nWindows applications will lose access until you release it. Eject mounted storage before switching it.", mbYesNo|mbIconQuestion|mbDefbutton2) != idYes {
 			return
 		}
+	}
+	if s.selectionMode && action != "refresh" {
+		updated := s.preference
+		if action == "attach" {
+			if msgBox("Attach "+selected.Name+" whenever Omarchy starts?\n\nWindows applications will lose access until Omarchy stops or you release the device. Eject mounted storage first. This choice stays with this USB port.", mbYesNo|mbIconQuestion|mbDefbutton2) != idYes {
+				return
+			}
+			updated.Device = selectionForUSB(selected)
+			updated.Enabled = true
+		} else {
+			updated.Enabled = false
+		}
+		guard, err := lockMoveStore(hostMoveStore())
+		if err == nil {
+			err = checkMovedSettings(s.dir)
+			if err == nil {
+				err = saveUSBPreferences(s.dir, updated)
+			}
+			guard.Close()
+		}
+		if err != nil {
+			usbSetText(s.status, "Could not save USB choice: "+err.Error())
+			return
+		}
+		s.preference = updated
+		s.showDevices(s.devices)
+		message := "Saved. The chosen device applies next time Omarchy starts."
+		if !updated.Enabled {
+			message = "Saved. Omarchy will not attach a USB device on its next start."
+		}
+		usbSetText(s.status, message)
+		return
 	}
 	s.busy = true
 	for _, button := range s.buttons {
@@ -74,6 +111,15 @@ func (s *usbUIState) start(action string) {
 	go func() {
 		defer cancel()
 		var result usbUIResult
+		if s.selectionMode {
+			result.devices, result.err = usbSelectionInventory(ctx, s.qemu)
+			if result.err == nil {
+				result.devices = usbSelectionChoices(result.devices, s.preference.Device)
+			}
+			s.results <- result
+			procPostMessageW.Call(s.window, usbResultMessage, 0, 0)
+			return
+		}
 		client, err := dialQMPControl(ctx, qmpToolsPort)
 		if err == nil {
 			defer client.Close()
@@ -92,6 +138,41 @@ func (s *usbUIState) start(action string) {
 		s.results <- result
 		procPostMessageW.Call(s.window, usbResultMessage, 0, 0)
 	}()
+}
+func (s *usbUIState) showDevices(devices []usbDevice) {
+	s.devices = devices
+	procSendMessageW.Call(s.list, 0x184, 0, 0)
+	for _, device := range s.devices {
+		state := "Available to Windows"
+		if s.selectionMode && !device.Connected {
+			state = "Not connected"
+		}
+		if s.selectionMode && s.preference.Enabled && s.preference.Device != nil && s.preference.Device.matches(device) {
+			state += "; selected for next start"
+		}
+		if device.Claimed {
+			state = "Attached to Omarchy"
+			if !device.Connected {
+				state = "Unplugged; release to clear"
+			}
+		}
+		label := fmt.Sprintf("%s   [%s]   USB %d/%s", device.Name, state, device.Bus, device.Port)
+		p, _ := syscall.UTF16PtrFromString(label)
+		procSendMessageW.Call(s.list, 0x180, 0, uintptr(unsafe.Pointer(p)))
+	}
+	if len(s.devices) > 0 {
+		index := 0
+		if s.selectionMode && s.preference.Device != nil {
+			for i, d := range s.devices {
+				if s.preference.Device.matches(d) {
+					index = i
+					break
+				}
+			}
+		}
+		procSendMessageW.Call(s.list, 0x186, uintptr(index), 0)
+	}
+	usbSetText(s.status, fmt.Sprintf("%d devices. Refresh after connecting or unplugging a device.", len(s.devices)))
 }
 func usbWindowProc(hwnd, message, w, l uintptr) uintptr {
 	s := usbUI
@@ -117,24 +198,7 @@ func usbWindowProc(hwnd, message, w, l uintptr) uintptr {
 			usbSetText(s.status, result.err.Error())
 			return 0
 		}
-		s.devices = result.devices
-		procSendMessageW.Call(s.list, 0x184, 0, 0)
-		for _, device := range s.devices {
-			state := "Available to Windows"
-			if device.Claimed {
-				state = "Attached to Omarchy"
-				if !device.Connected {
-					state = "Unplugged; release to clear"
-				}
-			}
-			label := fmt.Sprintf("%s   [%s]   USB %d/%s", device.Name, state, device.Bus, device.Port)
-			p, _ := syscall.UTF16PtrFromString(label)
-			procSendMessageW.Call(s.list, 0x180, 0, uintptr(unsafe.Pointer(p)))
-		}
-		if len(s.devices) > 0 {
-			procSendMessageW.Call(s.list, 0x186, 0, 0)
-		}
-		usbSetText(s.status, fmt.Sprintf("%d devices. Refresh after connecting or unplugging a device.", len(s.devices)))
+		s.showDevices(result.devices)
 		return 0
 	case wmCommand:
 		switch w & 0xffff {
@@ -165,10 +229,23 @@ func usbWindowProc(hwnd, message, w, l uintptr) uintptr {
 	r, _, _ := procDefWindowProcW.Call(hwnd, message, w, l)
 	return r
 }
-func runUSBDeviceUI() error {
+func runUSBDeviceUI() error                    { return runUSBWindow("", "", false) }
+func runUSBSelectionUI(dir, qemu string) error { return runUSBWindow(dir, qemu, true) }
+func runUSBWindow(dir, qemu string, selection bool) error {
 	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	s := &usbUIState{results: make(chan usbUIResult, 1), brand: newWindowBrand()}
+	// Retire this UI thread on return, including its posted WM_QUIT.
+	s := &usbUIState{results: make(chan usbUIResult, 1), brand: newWindowBrand(), dir: dir, qemu: qemu, selectionMode: selection}
+	if selection {
+		var err error
+		err = checkMovedSettings(dir)
+		if err == nil {
+			s.preference, err = loadUSBPreferences(dir)
+		}
+		if err != nil {
+			s.brand.close()
+			return err
+		}
+	}
 	defer s.brand.close()
 	usbUI = s
 	defer func() { usbUI = nil }()
@@ -217,7 +294,11 @@ func runUSBDeviceUI() error {
 		s.brand.control(h, class, style)
 		return h
 	}
-	control("STATIC", "Attach a device to Omarchy, then release it when you want to use it in Windows.", 16, 16, width-32, 40, ssNoprefix, 0)
+	body := "Attach a device to Omarchy, then release it when you want to use it in Windows."
+	if selection {
+		body = "Choose one USB device for the next start. Missing or busy devices stay in Windows. No drivers are installed."
+	}
+	control("STATIC", body, 16, 16, width-32, 40, ssNoprefix, 0)
 	s.list = control("LISTBOX", "", 16, 64, width-32, height-168, wsTabstop|wsBorder|wsVscroll|1, 4300)
 	s.status = control("STATIC", "", 16, height-94, width-32, 48, ssNoprefix, 0)
 	for _, button := range []struct {
@@ -225,6 +306,12 @@ func runUSBDeviceUI() error {
 		x    int
 		id   uintptr
 	}{{"Refresh", 16, 4301}, {"Attach", 128, 4302}, {"Release", 240, 4303}} {
+		if selection && button.id == 4302 {
+			button.text = "Save choice"
+		}
+		if selection && button.id == 4303 {
+			button.text = "Don't attach"
+		}
 		s.buttons = append(s.buttons, control("BUTTON", button.text, button.x, height-44, 100, 28, wsTabstop, button.id))
 	}
 	s.brand.primary, _, _ = user32.NewProc("GetDlgItem").Call(s.window, 4302)

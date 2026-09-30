@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -152,6 +153,7 @@ func main() {
 	flag.BoolVar(&cfg.lanPublic, "lan-public", false, "allow explicitly selected LAN forwards on public networks")
 	sshPort := flag.Int("ssh", 0, "forward this Windows loopback port to Omarchy's sshd and start sshd for the session")
 	openAbout := flag.Bool("about", false, "show version information and check for updates")
+	usbSelection := flag.Bool("usb-selection", false, "internal: edit startup USB selection for an explicit data folder")
 	openDevices := flag.Bool("devices", false, "manage USB devices in the running VM")
 	recoveryAction := flag.String("recovery", "", "open backup, restore, snapshots, portable-create, reset, move, or uninstall controls")
 	uninstall := flag.Bool("uninstall", false, "remove this Try Omarchy installation: shortcuts, the Apps & features entry, and the data folder")
@@ -184,6 +186,7 @@ func main() {
 		runAbout()
 		return
 	}
+
 	if *openDevices {
 		if err := runUSBDeviceUI(); err != nil {
 			fatal("Could not open USB devices: %v", err)
@@ -205,6 +208,20 @@ func main() {
 	}
 	explicitFlags := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicitFlags[f.Name] = true })
+	if *usbSelection {
+		if !explicitFlags["dir"] || cfg.portable || *openDevices || maintenance || *openSettings || *uninstall {
+			fatal("USB selection requires its own command with an explicit -dir data folder.")
+		}
+		qemu := filepath.Join(cfg.dir, "runtime", "bin", "qemu-system-x86_64w.exe")
+		external := filepath.Join(cfg.winqEmu, "bin", "qemu-system-x86_64w.exe")
+		if info, e := os.Stat(external); e == nil && info.Mode().IsRegular() {
+			qemu = external
+		}
+		if err := runUSBSelectionUI(cfg.dir, qemu); err != nil {
+			fatal("Could not choose a USB device: %v", err)
+		}
+		return
+	}
 	if explicitFlags["recovery"] && *recoveryAction == "" {
 		fatal("Choose a recovery action: backup, restore, or reset.")
 	}
@@ -1004,6 +1021,22 @@ func supervise(cfg *config, cmdline string) bool {
 		}
 		if qmp != nil {
 			guestUp.Store(true)
+			if pref, e := loadUSBPreferences(cfg.dir); e != nil {
+				logf("USB choice not applied: %v", e)
+			} else if pref.Enabled {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				client, e := dialQMPControl(ctx, qmpToolsPort)
+				if e == nil {
+					e = (usbBroker{client}).AttachSaved(ctx, pref)
+					client.Close()
+				}
+				cancel()
+				if e != nil {
+					logf("USB choice not applied: %v", e)
+				} else {
+					logf("saved USB device attached")
+				}
+			}
 			// QMP answers while the guest is kernel-panicked, and a graphics
 			// runtime can start QMP before failing later in guest boot. Keep all
 			// update components rollback-capable until the in-guest readiness

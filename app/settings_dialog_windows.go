@@ -69,6 +69,7 @@ const (
 	settingsAppRemoveID          = 2124
 	settingsAppListID            = 2125
 	settingsAltTabID             = 2126
+	settingsUSBSelectionID       = 2127
 	settingsSaveID               = 2001
 	settingsCancelID             = 2002
 	settingsBrowseID             = 2003
@@ -419,6 +420,19 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 				}
 				if err != nil {
 					errorBox(err.Error())
+				}
+			case settingsUSBSelectionID:
+				self, e := os.Executable()
+				if e == nil {
+					cmd := exec.Command(self, "-dir", dataDir, "-usb-selection", "-winq", filepath.Dir(filepath.Dir(audioQEMU)))
+					configureDiskTool(cmd)
+					e = cmd.Start()
+					if e == nil {
+						cmd.Process.Release()
+					}
+				}
+				if e != nil {
+					errorBox("Could not open USB choices: " + e.Error())
 				}
 			case settingsMicrophonePrivacyID:
 				openWindowsURL("ms-settings:privacy-microphone")
@@ -976,6 +990,11 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	mk("BUTTON", "Camera privacy...", left, y, 210, 28, wsTabstop, settingsPrivacyID)
 	mk("BUTTON", "Microphone privacy...", left+224, y, 224, 28, wsTabstop, settingsMicrophonePrivacyID)
 	y += 40
+	section("USB")
+	mk("BUTTON", "USB device for next start...", left, y, 260, 28, wsTabstop, settingsUSBSelectionID)
+	y += 36
+	mk("STATIC", "Choose one device to attach at startup. Live Attach and Release remain in the tray's USB devices menu.", left, y, clientW-2*left, 42, ssNoprefix, 0)
+	y += 50
 	pages[1] = append(pages[1], scroll.controls...)
 	pageHeights[1] = y
 	scroll.controls = nil

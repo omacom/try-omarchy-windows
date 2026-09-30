@@ -3,9 +3,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -116,5 +118,77 @@ func TestNativeUSBManagerRefreshAndClose(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("USB manager did not close")
+	}
+}
+
+func TestNativeUSBSelectionConfirmDisableAndClose(t *testing.T) {
+	if os.Getenv("TRYOMARCHY_NATIVE_UI_TEST") != "1" {
+		t.Skip("requires interactive Windows desktop")
+	}
+	dir := t.TempDir()
+	previous := usbSelectionInventory
+	usbSelectionInventory = func(context.Context, string) ([]usbDevice, error) { return parseUSBHostDevices(usbSample) }
+	defer func() { usbSelectionInventory = previous }()
+	done := make(chan error, 1)
+	go func() { done <- runUSBSelectionUI(dir, "fixture-runtime") }()
+	wait := func(condition func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(8 * time.Second)
+		for time.Now().Before(deadline) {
+			if condition() {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatal("native USB state did not appear")
+	}
+	find := func(class, title string) uintptr {
+		c, _ := syscall.UTF16PtrFromString(class)
+		p, _ := syscall.UTF16PtrFromString(title)
+		h, _, _ := user32.NewProc("FindWindowW").Call(uintptr(unsafe.Pointer(c)), uintptr(unsafe.Pointer(p)))
+		if h != 0 {
+			var pid uint32
+			user32.NewProc("GetWindowThreadProcessId").Call(h, uintptr(unsafe.Pointer(&pid)))
+			if pid != uint32(os.Getpid()) {
+				return 0
+			}
+		}
+		return h
+	}
+	var h, list uintptr
+	wait(func() bool {
+		h = find("TryOmarchyUSBDevices", "USB devices")
+		if h == 0 {
+			return false
+		}
+		list, _, _ = user32.NewProc("GetDlgItem").Call(h, 4300)
+		count, _, _ := procSendMessageW.Call(list, 0x18b, 0, 0)
+		return count == 1
+	})
+	defer procPostMessageW.Call(h, wmClose, 0, 0)
+	for _, reply := range []uintptr{idNo, idYes} {
+		procPostMessageW.Call(h, wmCommand, 4302, 0)
+		var confirmation uintptr
+		wait(func() bool { confirmation = find("#32770", "Try Omarchy"); return confirmation != 0 })
+		procPostMessageW.Call(confirmation, wmCommand, reply, 0)
+		wait(func() bool { return find("#32770", "Try Omarchy") == 0 })
+		if reply == idNo {
+			if _, err := os.Stat(filepath.Join(dir, usbPreferencesFilename)); !os.IsNotExist(err) {
+				t.Fatal("declining granted startup USB access", err)
+			}
+		} else {
+			wait(func() bool { p, e := loadUSBPreferences(dir); return e == nil && p.Enabled && p.Device != nil })
+		}
+	}
+	procPostMessageW.Call(h, wmCommand, 4303, 0)
+	wait(func() bool { p, e := loadUSBPreferences(dir); return e == nil && !p.Enabled && p.Device != nil })
+	procPostMessageW.Call(h, wmClose, 0, 0)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("USB selection did not close")
 	}
 }
