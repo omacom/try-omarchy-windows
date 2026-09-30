@@ -1,5 +1,8 @@
 # USB devices
 
+USB passthrough is experimental and depends on the device's Windows driver.
+Try Omarchy does not replace drivers.
+
 ## USB selection before launch
 
 Settings > Devices > **USB device for next start...** remembers one device at

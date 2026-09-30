@@ -990,7 +990,7 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	mk("BUTTON", "Camera privacy...", left, y, 210, 28, wsTabstop, settingsPrivacyID)
 	mk("BUTTON", "Microphone privacy...", left+224, y, 224, 28, wsTabstop, settingsMicrophonePrivacyID)
 	y += 40
-	section("USB")
+	section("USB (experimental)")
 	mk("BUTTON", "USB device for next start...", left, y, 260, 28, wsTabstop, settingsUSBSelectionID)
 	y += 36
 	mk("STATIC", "Choose one device to attach at startup. Live Attach and Release remain in the tray's USB devices menu.", left, y, clientW-2*left, 42, ssNoprefix, 0)

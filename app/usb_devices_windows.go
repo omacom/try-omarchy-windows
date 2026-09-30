@@ -296,7 +296,7 @@ func runUSBWindow(dir, qemu string, selection bool) error {
 	}
 	body := "Attach a device to Omarchy, then release it when you want to use it in Windows."
 	if selection {
-		body = "Choose one USB device for the next start. Missing or busy devices stay in Windows. No drivers are installed."
+		body = "Experimental. Choose one device for the next start. Missing or busy devices are skipped. No drivers are installed."
 	}
 	control("STATIC", body, 16, 16, width-32, 40, ssNoprefix, 0)
 	s.list = control("LISTBOX", "", 16, 64, width-32, height-168, wsTabstop|wsBorder|wsVscroll|1, 4300)
