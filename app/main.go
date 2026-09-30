@@ -43,6 +43,7 @@ type config struct {
 	instant, portable           bool
 	guestDir, vmDir, disk       string
 	qmpDir                      string
+	followHostTimeZone          bool
 	diskFormat                  string
 	qemu                        string
 	useGpu                      bool
@@ -814,6 +815,16 @@ func main() {
 	runClipboardBridge()
 	runCameraBridge(cfg.desktop)
 	runHelloBridge()
+	cfg.followHostTimeZone = *timeZoneFlag != "keep" && guestAcceptsTimeZone(spec)
+	if cfg.followHostTimeZone {
+		stopTimeZone := startTimeZoneBridge(func() string {
+			if *timeZoneFlag != "" {
+				return *timeZoneFlag
+			}
+			return ianaZoneForWindows(hostTimeZoneKey())
+		})
+		defer stopTimeZone()
+	}
 	if audioRuntimeSupportsLiveRouting(cfg.qemu) {
 		runAudioBridge(cfg.dir, cfg.qemu, cfg.desktop.MicrophoneDisabled)
 	}

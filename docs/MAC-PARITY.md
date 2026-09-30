@@ -56,7 +56,7 @@ are separate from its published `v0.4.1` release. Equivalent behavior is tracked
 | Bridged networking | NAT and explicit port forwarding exist | [True LAN bridge #166](https://github.com/omacom/try-omarchy-windows/issues/166), with supported adapter, privilege and firewall handling |
 | Host battery | Shipped in `v0.2.0`; the AMD laptop's 99% charging state appeared as BAT0/ADP0 and in UPower | Desktop/no-battery transition remains to be observed on a suitable host |
 | Guest RAM reclamation | Shipped with r19 in `v0.2.0`; three physical touch/free cycles returned about 797 MiB after the third 768 MiB allocation | Follow up on concrete memory reports |
-| Keyboard and language | Windows time zone, keyboard layout and display language are read at launch | Mac main now follows time-zone changes while running and offers an explicit return to host following. Windows live time-zone following remains a gap; physical ANSI/ISO/JIS geometry and broader input-method acceptance remain open |
+| Keyboard and language | Windows keyboard layout and display language are read at launch. A candidate live time-zone channel preserves manual guest choices and offers Follow Windows Time Zone | Live following and the personal setup host-zone default require the new guest payload; public `v0.6.2` still reads the zone only at launch; physical ANSI/ISO/JIS geometry and broader input-method acceptance remain open |
 
 Public `v0.6.2` is the current Windows release. Windows Hello sudo shipped in
 `v0.5.0`; process-scoped 1Password unlock and direct application drops shipped in

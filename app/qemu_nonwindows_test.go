@@ -29,6 +29,7 @@ type config struct {
 	instant, portable           bool
 	guestDir, vmDir, disk       string
 	qmpDir                      string
+	followHostTimeZone          bool
 	diskFormat                  string
 	qemu                        string
 	useGpu                      bool

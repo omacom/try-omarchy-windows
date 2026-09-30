@@ -1,0 +1,596 @@
+From 4648c0376d151a47c6eb4219fb01e00bb426377e Mon Sep 17 00:00:00 2001
+From: Brandon South <btsouth@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 11:20:24 -0400
+Subject: [PATCH] Follow Windows time-zone changes until the guest opts out
+
+---
+ .../try-omarchy-timezone.service              |   1 +
+ .../system/try-omarchy-timezone.service       |  12 ++
+ .../rules.d/96-try-omarchy-timezone.rules     |   1 +
+ .../usr/local/bin/try-omarchy-timezone        | 182 ++++++++++++++++++
+ .../local/lib/try-omarchy/apply-host-locale   |  11 +-
+ .../try-omarchy-follow-timezone.desktop       |   8 +
+ .../patches/omarchy/setup-host-timezone.patch |  20 ++
+ guest/scripts/finalize-rootfs.sh              |   8 +-
+ guest/spec.json                               |  23 ++-
+ guest/tests/test_timezone.py                  | 128 ++++++++++++
+ guest/tests/verify.py                         |  21 +-
+ 11 files changed, 401 insertions(+), 14 deletions(-)
+ create mode 120000 guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-timezone.service
+ create mode 100644 guest/factory-overlay/etc/systemd/system/try-omarchy-timezone.service
+ create mode 100644 guest/factory-overlay/etc/udev/rules.d/96-try-omarchy-timezone.rules
+ create mode 100755 guest/factory-overlay/usr/local/bin/try-omarchy-timezone
+ create mode 100644 guest/factory-overlay/usr/share/applications/try-omarchy-follow-timezone.desktop
+ create mode 100644 guest/patches/omarchy/setup-host-timezone.patch
+ create mode 100644 guest/tests/test_timezone.py
+
+diff --git a/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-timezone.service b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-timezone.service
+new file mode 120000
+index 0000000..dbb1e04
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/multi-user.target.wants/try-omarchy-timezone.service
+@@ -0,0 +1 @@
++../try-omarchy-timezone.service
+\ No newline at end of file
+diff --git a/guest/factory-overlay/etc/systemd/system/try-omarchy-timezone.service b/guest/factory-overlay/etc/systemd/system/try-omarchy-timezone.service
+new file mode 100644
+index 0000000..1317b42
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/try-omarchy-timezone.service
+@@ -0,0 +1,12 @@
++[Unit]
++Description=Follow the Windows time zone until changed inside Omarchy
++After=systemd-udev-trigger.service try-omarchy-host-locale.service
++ConditionPathExists=/dev/virtio-ports/dev.tryomarchy.timezone
++
++[Service]
++ExecStart=/usr/local/bin/try-omarchy-timezone
++Restart=always
++RestartSec=2
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/guest/factory-overlay/etc/udev/rules.d/96-try-omarchy-timezone.rules b/guest/factory-overlay/etc/udev/rules.d/96-try-omarchy-timezone.rules
+new file mode 100644
+index 0000000..66717e1
+--- /dev/null
++++ b/guest/factory-overlay/etc/udev/rules.d/96-try-omarchy-timezone.rules
+@@ -0,0 +1 @@
++SUBSYSTEM=="virtio-ports", ATTR{name}=="dev.tryomarchy.timezone", OWNER="root", GROUP="root", MODE="0600"
+diff --git a/guest/factory-overlay/usr/local/bin/try-omarchy-timezone b/guest/factory-overlay/usr/local/bin/try-omarchy-timezone
+new file mode 100755
+index 0000000..1f8be18
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/bin/try-omarchy-timezone
+@@ -0,0 +1,182 @@
++#!/usr/bin/python3 -I
++"""Follow Windows until a guest user changes /etc/localtime.
++
++Based on Try Omarchy Mac's host-zone integration at e1a0dbe9820a8f7554ac3b930c2f13e1f41b25a1.
++"""
++
++import json
++import fcntl
++import os
++from pathlib import Path
++import re
++import subprocess
++import sys
++import tempfile
++
++PORT = Path("/dev/virtio-ports/dev.tryomarchy.timezone")
++STATE = Path(os.environ.get("TRY_OMARCHY_STATE_DIR", "/var/lib/try-omarchy")) / "timezone.json"
++LOCALTIME = Path(os.environ.get("TRY_OMARCHY_LOCALTIME", "/etc/localtime"))
++ZONEINFO = Path(os.environ.get("TRY_OMARCHY_ZONEINFO", "/usr/share/zoneinfo"))
++HOST_ZONE = Path(os.environ.get("TRY_OMARCHY_HOST_ZONE", "/run/try-omarchy/host-timezone"))
++
++
++def zone_path(zone, zoneinfo=ZONEINFO):
++    if (not isinstance(zone, str) or not 0 < len(zone) <= 128
++            or not re.fullmatch(r"[A-Za-z0-9_+/-]+", zone)
++            or any(part in ("", ".", "..") for part in zone.split("/"))):
++        raise ValueError("invalid host time zone")
++    path = zoneinfo / zone
++    if not path.is_file() or not path.resolve().is_relative_to(zoneinfo.resolve()):
++        raise ValueError("host time zone is unavailable in the guest")
++    return path
++
++
++def fingerprint(localtime=LOCALTIME):
++    info = localtime.lstat()
++    # Include the target and inode so a manual replacement with the same zone
++    # also opts out. A tzdata package update doesn't replace this symlink.
++    return [info.st_ino, info.st_mtime_ns,
++            os.readlink(localtime) if localtime.is_symlink() else "file"]
++
++
++def save_state(state, path=STATE):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    descriptor, temporary = tempfile.mkstemp(prefix=".timezone-", dir=path.parent)
++    try:
++        with os.fdopen(descriptor, "w") as output:
++            json.dump(state, output)
++            output.flush()
++            os.fsync(output.fileno())
++        os.replace(temporary, path)
++    finally:
++        if os.path.exists(temporary):
++            os.unlink(temporary)
++
++
++def synchronize(zone, state_path=STATE, localtime=LOCALTIME, zoneinfo=ZONEINFO, apply=None, force=False, legacy_path=None):
++    target = zone_path(zone, zoneinfo)
++    state = None
++    if not force:
++        try:
++            state = json.loads(state_path.read_text())
++        except FileNotFoundError:
++            pass
++        if state is not None and (not isinstance(state, dict)
++                or state.get("mode") not in ("auto", "manual")
++                or (state["mode"] == "auto" and
++                    (not isinstance(state.get("zone"), str)
++                     or not isinstance(state.get("fingerprint"), list)
++                     or len(state["fingerprint"]) != 3))):
++            raise ValueError("invalid saved time-zone state")
++    current = fingerprint(localtime)
++    if force:
++        state = None
++    elif state is None and legacy_path is not None and legacy_path.exists():
++        previous = zone_path(legacy_path.read_text().strip(), zoneinfo)
++        if localtime.resolve() != previous.resolve():
++            save_state({"mode": "manual"}, state_path)
++            return False
++    if state is not None:
++        if state["mode"] == "manual":
++            return False
++        if current != state["fingerprint"]:
++            save_state({"mode": "manual"}, state_path)
++            print("Guest time zone changed manually; keeping the guest selection.", flush=True)
++            return False
++    if localtime.is_symlink() and localtime.resolve() == target.resolve():
++        if state is None or state["zone"] != zone:
++            save_state({"mode": "auto", "zone": zone, "fingerprint": current}, state_path)
++        return False
++    # Use timedated so its D-Bus clients see the change too. Leave the RTC and
++    # NTP clock discipline alone: they both continue to use UTC.
++    if apply is None:
++        subprocess.run(["timedatectl", "set-timezone", zone], check=True, timeout=5)
++    else:
++        apply(target)
++    save_state({"mode": "auto", "zone": zone, "fingerprint": fingerprint(localtime)}, state_path)
++    print(f"Following Windows time zone: {zone}", flush=True)
++    return True
++
++
++def follow(zone=None, force=False, initialize=False):
++    # Serialize the daemon, boot initializer, and user action. Otherwise a
++    # simultaneous snapshot could mistake our own update for a manual change.
++    STATE.parent.mkdir(parents=True, exist_ok=True)
++    with (STATE.parent / "timezone.lock").open("a") as lock:
++        fcntl.flock(lock, fcntl.LOCK_EX)
++        if zone is None:
++            zone = HOST_ZONE.read_text().strip()
++        zone_path(zone)
++        HOST_ZONE.parent.mkdir(parents=True, exist_ok=True)
++        if not HOST_ZONE.exists() or HOST_ZONE.read_text().strip() != zone:
++            HOST_ZONE.write_text(zone + "\n")
++        def early_apply(target):
++            descriptor, name = tempfile.mkstemp(prefix=".localtime-", dir=LOCALTIME.parent)
++            os.close(descriptor)
++            os.unlink(name)
++            try:
++                os.symlink(target, name)
++                os.replace(name, LOCALTIME)
++            finally:
++                if os.path.lexists(name):
++                    os.unlink(name)
++        return synchronize(zone, force=force, apply=early_apply if initialize else None,
++                           legacy_path=STATE.parent / "host-timezone")
++
++
++def refresh_desktops():
++    # The current Quickshell clock caches its zone; ask each logged-in user
++    # session to refresh using the same action as Omarchy's timezone picker.
++    import pwd
++    for user in pwd.getpwall():
++        runtime = Path(f"/run/user/{user.pw_uid}")
++        if 1000 <= user.pw_uid < 65534 and runtime.is_dir():
++            omarchy = Path(user.pw_dir) / ".local/share/omarchy"
++            if not omarchy.is_dir():
++                omarchy = Path("/usr/share/omarchy")
++            try:
++                subprocess.run(["runuser", "-u", user.pw_name, "--", "env",
++                                f"XDG_RUNTIME_DIR={runtime}",
++                                f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
++                                f"OMARCHY_PATH={omarchy}",
++                                "omarchy-shell", "-q", "omarchy.clock", "refresh"],
++                               check=False, timeout=5)
++            except (OSError, subprocess.TimeoutExpired) as error:
++                print(f"Could not refresh {user.pw_name}'s clock: {error}", file=sys.stderr, flush=True)
++
++
++def main():
++    if os.geteuid() != 0:
++        raise PermissionError("time zone synchronization requires root")
++    if len(sys.argv) == 3 and sys.argv[1] == "--initialize":
++        # Early sysinit precedes timedated. Only change the symlink here.
++        follow(sys.argv[2], initialize=True)
++        return
++    if sys.argv[1:] == ["--follow-windows"]:
++        if follow(force=True):
++            refresh_desktops()
++        print("Time zone will now follow Windows.", flush=True)
++        return
++    if sys.argv[1:]:
++        raise ValueError("unexpected arguments")
++    with PORT.open("r+b", buffering=0) as port:
++        # Opening the virtio port isn't visible to the host bridge. Its periodic
++        # snapshots guarantee delivery even when its first send was lost.
++        while True:
++            line = port.readline(4097)
++            if not line:
++                raise OSError("Windows time zone channel disconnected")
++            if len(line) > 4096 or not line.endswith(b"\n"):
++                raise ValueError("oversized time zone message")
++            try:
++                message = json.loads(line)
++                if not isinstance(message, dict) or set(message) != {"type", "zone"} or message["type"] != "timezone":
++                    raise ValueError("unexpected time zone message")
++                if follow(message["zone"]):
++                    refresh_desktops()
++            except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
++                print(f"Rejected time zone message: {error}", file=sys.stderr, flush=True)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/apply-host-locale b/guest/factory-overlay/usr/local/lib/try-omarchy/apply-host-locale
+index 51e27a3..8717164 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/apply-host-locale
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/apply-host-locale
+@@ -5,6 +5,7 @@
+ # last, so a change made inside the guest survives until Windows itself
+ # changes. Omarchy's Hyprland input config reads XKBLAYOUT and XKBVARIANT
+ # from /etc/vconsole.conf, so writing that file is enough for the desktop.
++# The current time-zone helper preserves manual guest changes across host changes.
+ set -euo pipefail
+ 
+ cmdline_file=${TRY_OMARCHY_CMDLINE:-/proc/cmdline}
+@@ -31,7 +32,15 @@ done
+ mkdir -p "$state_dir"
+ 
+ apply_zone() {
+-  local zone=$1 marker="$state_dir/host-timezone"
++  local zone=$1 marker="$state_dir/host-timezone" helper=${TRY_OMARCHY_TIMEZONE_HELPER:-/usr/local/bin/try-omarchy-timezone}
++  if [[ -x $helper ]]; then
++    if "$helper" --initialize "$zone"; then
++      printf '%s\n' "$zone" >"$marker"
++    else
++      echo "Could not follow the Windows time zone; keeping the guest selection" >&2
++    fi
++    return 0
++  fi
+   [[ $zone =~ ^[A-Za-z][A-Za-z0-9_+./-]{0,63}$ && $zone != *..* ]] || { echo "ignoring an invalid time zone on the kernel command line" >&2; return 0; }
+   [[ "$(cat "$marker" 2>/dev/null || true)" != "$zone" ]] || return 0
+   if [[ ! -f $zoneinfo/$zone ]]; then
+diff --git a/guest/factory-overlay/usr/share/applications/try-omarchy-follow-timezone.desktop b/guest/factory-overlay/usr/share/applications/try-omarchy-follow-timezone.desktop
+new file mode 100644
+index 0000000..736d038
+--- /dev/null
++++ b/guest/factory-overlay/usr/share/applications/try-omarchy-follow-timezone.desktop
+@@ -0,0 +1,8 @@
++[Desktop Entry]
++Type=Application
++Name=Follow Windows Time Zone
++Comment=Use Windows time-zone changes again after choosing a guest zone
++Exec=sudo /usr/local/bin/try-omarchy-timezone --follow-windows
++Terminal=true
++Icon=preferences-system-time
++Categories=Settings;
+diff --git a/guest/patches/omarchy/setup-host-timezone.patch b/guest/patches/omarchy/setup-host-timezone.patch
+new file mode 100644
+index 0000000..5fa5557
+--- /dev/null
++++ b/guest/patches/omarchy/setup-host-timezone.patch
+@@ -0,0 +1,20 @@
++diff --git a/install/provisioning/setup-form.sh b/install/provisioning/setup-form.sh
++--- a/install/provisioning/setup-form.sh
+++++ b/install/provisioning/setup-form.sh
++@@ -170,7 +170,15 @@
++ # often; guard it or a `set -e` caller dies before the filter fallback.
++ omarchy_prompt_timezone() {
++   local guess status
++-  guess=$(tzupdate -p 2>/dev/null) || guess=""
+++  # The VM launcher supplies a validated host hint. Keep geolocation as a
+++  # fallback for environments without a host time-zone integration.
+++  guess=""
+++  local host_hint=${TRY_OMARCHY_HOST_ZONE:-/run/try-omarchy/host-timezone}
+++  if [[ -f $host_hint ]]; then
+++    guess=$(cat "$host_hint")
+++    if ! timedatectl list-timezones | grep -Fxq -- "$guess"; then guess=""; fi
+++  fi
+++  if [[ -z $guess ]]; then guess=$(tzupdate -p 2>/dev/null) || guess=""; fi
++ 
++   if [[ -n $guess ]]; then
++     timezone=$(timedatectl list-timezones | gum choose --height 10 --selected "$guess" --header "Timezone") && status=0 || status=$?
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index cdbfe12..2c1c7f4 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -73,6 +73,11 @@ version = subprocess.check_output(["pacman", "-Q", "try-omarchy-runtime"], text=
+ UPDATE_MANIFEST
+ 
+ compat_paths=(
++  usr/local/bin/try-omarchy-timezone
++  usr/share/applications/try-omarchy-follow-timezone.desktop
++  etc/systemd/system/try-omarchy-timezone.service
++  etc/systemd/system/multi-user.target.wants/try-omarchy-timezone.service
++  etc/udev/rules.d/96-try-omarchy-timezone.rules
+   usr/local/lib/try-omarchy/vulkan-env
+   usr/share/uwsm/env.d/20-try-omarchy-vulkan
+   etc/profile.d/try-omarchy-vulkan.sh
+@@ -204,7 +209,8 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 41 turns off system service watchdogs, which fire after Windows
+ # sleeps and restart logind under the running desktop.
+ # Revision 42 makes SSH accept only keys for the quick-start account.
+-compat_revision=42
++# Revision 43 follows Windows time-zone changes while preserving guest choices.
++compat_revision=43
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/spec.json b/guest/spec.json
+index 7544f61..3f70414 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -30,7 +30,7 @@
+     "versionFile": "4.0.0.alpha",
+     "channel": "quattro",
+     "license": "MIT",
+-    "packageRelease": 5,
++    "packageRelease": 6,
+     "integrationDepends": [
+       "fcitx5",
+       "fcitx5-gtk",
+@@ -99,11 +99,11 @@
+       "bin",
+       "config",
+       "default",
+-      "install",
+       "migrations"
+     ],
+     "backportedRuntimeTrees": [
+-      "shell"
++      "shell",
++      "install"
+     ],
+     "backports": [
+       {
+@@ -138,6 +138,20 @@
+             "afterSha256": "02512cc96ecb82005b82e947ed891549d1721cbefad14fdb2eca9ab50e88c9eb"
+           }
+         ]
++      },
++      {
++        "id": "setup-host-timezone",
++        "description": "Select the validated Windows time-zone hint in the first-boot personal setup form.",
++        "reference": "https://github.com/omacom/try-omarchy/commit/e1a0dbe9820a8f7554ac3b930c2f13e1f41b25a1",
++        "patch": "patches/omarchy/setup-host-timezone.patch",
++        "patchSha256": "ba473bd56a7e51d962307c0acd507a62c00f87a3815617edfe338afb7b9993b6",
++        "targets": [
++          {
++            "path": "install/provisioning/setup-form.sh",
++            "beforeSha256": "0fbb8c3c8b151e5ff884c16d381e12fda53cc16adfd08a684d41e7327250665d",
++            "afterSha256": "b030cb06f02e4519a32c487fa51a0e51050ee57cd9c41011318e0b481b4fe8c7"
++          }
++        ]
+       }
+     ],
+     "requiredPaths": [
+@@ -220,7 +234,8 @@
+       "hda-duplex"
+     ],
+     "optionalDevices": [
+-      "virtio-pinch-pci"
++      "virtio-pinch-pci",
++      "dev.tryomarchy.timezone"
+     ]
+   }
+ }
+diff --git a/guest/tests/test_timezone.py b/guest/tests/test_timezone.py
+new file mode 100644
+index 0000000..113ec56
+--- /dev/null
++++ b/guest/tests/test_timezone.py
+@@ -0,0 +1,128 @@
++"""Real file fixtures for host following, manual opt-out, and setup defaults."""
++import importlib.machinery
++import importlib.util
++import json
++import os
++from pathlib import Path
++import subprocess
++import tempfile
++import unittest
++from unittest.mock import patch
++
++GUEST = Path(__file__).resolve().parents[1]
++SCRIPT = GUEST / 'factory-overlay/usr/local/bin/try-omarchy-timezone'
++loader = importlib.machinery.SourceFileLoader('timezone_helper', str(SCRIPT))
++spec = importlib.util.spec_from_loader(loader.name, loader)
++helper = importlib.util.module_from_spec(spec)
++loader.exec_module(helper)
++
++class TimeZoneTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.root = Path(self.tmp.name)
++        self.zones = self.root / 'zoneinfo'
++        for zone in ['Etc/UTC', 'America/Chicago', 'Europe/Berlin']:
++            p = self.zones / zone
++            p.parent.mkdir(parents=True, exist_ok=True)
++            p.write_text(zone)
++        self.local = self.root / 'localtime'
++        self.local.symlink_to(self.zones / 'Etc/UTC')
++        self.state = self.root / 'state/timezone.json'
++        self.applied = []
++
++    def replace(self, target):
++        name = self.root / 'localtime-new'
++        name.symlink_to(target)
++        name.replace(self.local)
++
++    def sync(self, zone, **kw):
++        def apply(target):
++            self.applied.append(target)
++            self.replace(target)
++        return helper.synchronize(zone, self.state, self.local, self.zones, apply, **kw)
++
++    def test_changes_and_repeated_snapshot(self):
++        self.assertTrue(self.sync('America/Chicago'))
++        self.assertFalse(self.sync('America/Chicago'))
++        self.assertTrue(self.sync('Europe/Berlin'))
++        self.assertEqual(len(self.applied), 2)
++        self.assertEqual(json.loads(self.state.read_text())['mode'], 'auto')
++
++    def test_manual_choice_survives_host_change_and_restart(self):
++        self.sync('America/Chicago')
++        self.replace(self.zones / 'Etc/UTC')
++        self.assertFalse(self.sync('Europe/Berlin'))
++        self.assertFalse(self.sync('America/Chicago'))
++        self.assertEqual(self.local.resolve(), self.zones / 'Etc/UTC')
++        self.assertEqual(json.loads(self.state.read_text()), {'mode': 'manual'})
++        self.assertTrue(self.sync('Europe/Berlin', force=True))
++
++    def test_same_zone_manual_replacement_opts_out(self):
++        self.sync('America/Chicago')
++        self.replace(self.zones / 'America/Chicago')
++        self.assertFalse(self.sync('Europe/Berlin'))
++        self.assertEqual(self.local.resolve(), self.zones / 'America/Chicago')
++
++    def test_legacy_manual_override_is_preserved(self):
++        legacy = self.root / 'legacy'
++        legacy.write_text('America/Chicago\n')
++        self.assertFalse(self.sync('Europe/Berlin', legacy_path=legacy))
++        self.assertEqual(self.local.resolve(), self.zones / 'Etc/UTC')
++
++    def test_legacy_following_adopts_new_host_zone(self):
++        legacy = self.root / 'legacy'
++        legacy.write_text('Etc/UTC\n')
++        self.assertTrue(self.sync('Europe/Berlin', legacy_path=legacy))
++
++    def test_invalid_zone_cannot_change_localtime_or_state(self):
++        escaped = self.zones / 'Escaped'
++        escaped.symlink_to(self.root / 'outside')
++        (self.root / 'outside').write_text('x')
++        before = helper.fingerprint(self.local)
++        for zone in ['../outside', 'Etc//UTC', 'Missing/Zone', 'Escaped', 'Etc/UTC\n', {}, '']:
++            with self.subTest(zone=zone), self.assertRaises(ValueError):
++                self.sync(zone)
++        self.assertEqual(helper.fingerprint(self.local), before)
++        self.assertFalse(self.state.exists())
++
++    def test_corrupt_state_preserves_guest_until_explicit_follow(self):
++        self.state.parent.mkdir()
++        for value in ['{', '[]', '{"mode":"wrong"}', '{"mode":"auto"}']:
++            self.state.write_text(value)
++            with self.subTest(value=value), self.assertRaises(ValueError):
++                self.sync('America/Chicago')
++            self.assertEqual(self.local.resolve(), self.zones / 'Etc/UTC')
++        self.assertTrue(self.sync('America/Chicago', force=True))
++
++    def test_apply_failure_does_not_record_success(self):
++        with patch.object(helper.subprocess, 'run', side_effect=subprocess.TimeoutExpired('timedatectl', 5)):
++            with self.assertRaises(subprocess.TimeoutExpired):
++                helper.synchronize('Europe/Berlin', self.state, self.local, self.zones)
++        self.assertFalse(self.state.exists())
++        self.assertEqual(self.local.resolve(), self.zones / 'Etc/UTC')
++
++    def test_early_initializer_and_legacy_marker_via_real_scripts(self):
++        cmdline = self.root / 'cmdline'
++        cmdline.write_text('tryomarchy.tz=America/Chicago\n')
++        env = dict(os.environ, TRY_OMARCHY_CMDLINE=str(cmdline), TRY_OMARCHY_STATE_DIR=str(self.state.parent),
++                   TRY_OMARCHY_LOCALTIME=str(self.local), TRY_OMARCHY_ZONEINFO=str(self.zones),
++                   TRY_OMARCHY_HOST_ZONE=str(self.root / 'run/host-timezone'), TRY_OMARCHY_TIMEZONE_HELPER=str(SCRIPT))
++        # Root is simulated only inside the file fixture; no system paths are used.
++        wrapper = self.root / 'timezone-wrapper'
++        wrapper.write_text('#!/usr/bin/python3\nimport os,runpy\nos.geteuid=lambda:0\nrunpy.run_path(' + repr(str(SCRIPT)) + ',run_name="__main__")\n')
++        wrapper.chmod(0o755)
++        env['TRY_OMARCHY_TIMEZONE_HELPER'] = str(wrapper)
++        script = GUEST / 'factory-overlay/usr/local/lib/try-omarchy/apply-host-locale' 
++        for zone in ['America/Chicago', 'Europe/Berlin']:
++            cmdline.write_text('tryomarchy.tz=' + zone + '\n')
++            result = subprocess.run([str(script)], env=env, text=True, capture_output=True)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            self.assertEqual(self.local.resolve(), self.zones / zone)
++            self.assertEqual((self.state.parent / 'host-timezone').read_text(), zone + '\n')
++        self.replace(self.zones / 'Etc/UTC')
++        subprocess.run([str(script)], env=env, check=True, capture_output=True)
++        self.assertEqual(self.local.resolve(), self.zones / 'Etc/UTC')
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index e72e55b..81a84af 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -49,7 +49,7 @@ def main() -> None:
+     check(spec["runtime"]["storage"]["expandedSizeMiB"] == 24576, "working disk expands to 24 GiB")
+     # The launcher attaches the pinch touchpad only to images that declare it,
+     # which is safe because pinch-ready (checked below) gates the device.
+-    check(spec["runtime"].get("optionalDevices") == ["virtio-pinch-pci"], "guest accepts the gated pinch touchpad")
++    check(spec["runtime"].get("optionalDevices") == ["virtio-pinch-pci", "dev.tryomarchy.timezone"], "guest declares the gated pinch and time-zone channels")
+     check(set(spec["inputs"]) == {"packages", "packageLock", "pacmanConfig"}, "spec has a minimal input set")
+     for path in spec["inputs"].values():
+         check((GUEST / path).is_file(), f"spec input exists: {path}")
+@@ -59,15 +59,16 @@ def main() -> None:
+     backported_trees = authenticity["backportedRuntimeTrees"]
+     check(
+         "shell" not in verbatim_trees
+-        and backported_trees == ["shell"]
++        and backported_trees == ["shell", "install"]
++        and "install" not in verbatim_trees
+         and not set(verbatim_trees) & set(backported_trees),
+-        "the patched shell tree is separated from verbatim upstream runtime trees",
++        "patched runtime trees are separated from verbatim upstream trees",
+     )
+     backports = authenticity["backports"]
+     check(
+         [backport.get("id") for backport in backports]
+-        == ["notification-hover-close", "notification-screen-privacy"],
+-        "Omarchy notification backports are explicitly ordered and identified",
++        == ["notification-hover-close", "notification-screen-privacy", "setup-host-timezone"],
++        "Omarchy backports are explicitly ordered and identified",
+     )
+     for backport in backports:
+         patch_path = GUEST / backport["patch"]
+@@ -79,9 +80,9 @@ def main() -> None:
+         )
+         check(
+             backport.get("reference", "").startswith(
+-                "https://github.com/basecamp/omarchy/"
++                ("https://github.com/basecamp/omarchy/", "https://github.com/omacom/try-omarchy/commit/e1a0dbe9820a8f7554ac3b930c2f13e1f41b25a1")
+             ),
+-            f"backport has an upstream review reference: {backport['id']}",
++            f"backport has a review reference: {backport['id']}",
+         )
+         for target in backport["targets"]:
+             digests = (target.get("beforeSha256", ""), target.get("afterSha256", ""))
+@@ -293,7 +294,11 @@ def main() -> None:
+         "system services run without watchdogs, which fire after Windows sleeps",
+     )
+     check(
+-        "compat_revision=42" in finalize_rootfs
++        "compat_revision=43" in finalize_rootfs
++        and "usr/local/bin/try-omarchy-timezone" in compat_paths
++        and "etc/systemd/system/multi-user.target.wants/try-omarchy-timezone.service" in compat_paths
++        and "etc/udev/rules.d/96-try-omarchy-timezone.rules" in compat_paths
++        and "usr/share/applications/try-omarchy-follow-timezone.desktop" in compat_paths
+         and "usr/share/try-omarchy/quick-start-sshd.conf" in compat_paths
+         and "etc/systemd/system/service.d/10-try-omarchy-watchdog.conf" in compat_paths
+         and "usr/local/lib/try-omarchy/catch-up" in compat_paths
+-- 
+2.43.0
+

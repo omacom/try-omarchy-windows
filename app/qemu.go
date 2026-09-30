@@ -132,6 +132,9 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		"-no-reboot",
 		"-name", appTitle,
 	)
+	if cfg.followHostTimeZone {
+		args = append(args, "-chardev", fmt.Sprintf("socket,id=timezone0,host=127.0.0.1,port=%d,reconnect-ms=1000", timeZoneBridgePort), "-device", "virtserialport,chardev=timezone0,name=dev.tryomarchy.timezone")
+	}
 	if cfg.audio == "sdl" && audioRuntimeSupportsLiveRouting(cfg.qemu) {
 		args = append(args,
 			"-chardev", fmt.Sprintf("socket,id=audio0,host=127.0.0.1,port=%d,reconnect-ms=1000", audioBridgePort),
