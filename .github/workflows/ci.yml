@@ -14,8 +14,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   launcher:
+    timeout-minutes: 20
     name: Launcher
     runs-on: ubuntu-latest
     steps:
@@ -57,6 +62,7 @@ jobs:
         run: scripts/release/validate-pin.py --require-public "$(sed -n 's/.*releases\/download\/\([^\"]*\).*/\1/p' app/manifest.go)"
 
   windows-launcher:
+    timeout-minutes: 20
     name: Windows launcher
     runs-on: windows-latest
     steps:
@@ -78,6 +84,7 @@ jobs:
         run: go test ./...
 
   importer:
+    timeout-minutes: 20
     name: Importer
     runs-on: ubuntu-latest
     steps:
@@ -96,6 +103,7 @@ jobs:
           "$RUNNER_TEMP/importer/try-omarchy-import.pyz" --version
 
   guest-contract:
+    timeout-minutes: 20
     name: Guest contract
     runs-on: ubuntu-latest
     steps:

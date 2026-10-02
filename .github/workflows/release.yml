@@ -25,6 +25,7 @@ permissions:
 
 jobs:
   guard:
+    timeout-minutes: 10
     name: Validate request
     runs-on: ubuntu-latest
     steps:
