@@ -42,14 +42,21 @@ func (s *settingsScroll) move(offset int32) {
 		offset = maximum
 	}
 	s.offset = offset
+	// Move the whole page before painting. Sequential moves can otherwise copy
+	// pixels from overlapping old control positions, especially under DPI
+	// virtualization. The viewport clips children out of its background erase.
+	const moveFlags = 0x0004 | 0x0010 | 0x0008 | 0x0100 // NOZORDER | NOACTIVATE | NOREDRAW | NOCOPYBITS
 	for _, c := range s.controls {
 		y := c.y - s.top - offset
-		procSetWindowPos.Call(c.handle, 0, uintptr(c.x), uintptr(y), uintptr(c.w), uintptr(c.h), 0x0004|0x0010)
-	} // no z-order change or activation
+		procSetWindowPos.Call(c.handle, 0, uintptr(c.x), uintptr(y), uintptr(c.w), uintptr(c.h), moveFlags)
+	}
 	info := settingsScrollInfo{mask: 0x7, max: max(int32(0), s.content-s.top-1), page: uint32(s.height), pos: offset}
 	info.size = uint32(unsafe.Sizeof(info))
 	procSetScrollInfo.Call(s.window, 1, uintptr(unsafe.Pointer(&info)), 1)
-	procInvalidateRect.Call(s.viewport, 0, 1)
+	// Erase and repaint every child at its final position, including transparent
+	// labels; invalidating only the WS_CLIPCHILDREN viewport leaves them stale.
+	const repaintFlags = 0x0001 | 0x0004 | 0x0080 | 0x0100 // INVALIDATE | ERASE | ALLCHILDREN | UPDATENOW
+	procRedrawWindow.Call(s.viewport, 0, 0, repaintFlags)
 }
 
 func (s *settingsScroll) handle(message, wParam uintptr) bool {
