@@ -4,9 +4,12 @@ Use a separate data folder and a copy of any existing guest. Keep the original
 backup untouched. Follow [RELEASING.md](RELEASING.md) for running a signed draft
 candidate against locally served, authenticated assets.
 
+For maintainer release rounds, use [the repeatable acceptance routine](RELEASE-ACCEPTANCE.md).
+The full checklist below supports deeper checks and additional hardware reports.
+
 ## Hardware testing
 
-The published baseline is [v0.6.2](https://github.com/omacom/try-omarchy-windows/releases/tag/v0.6.2).
+Record the published baseline used for the test and the exact candidate hashes.
 Reports on earlier previews remain useful, but must not be recorded as acceptance
 of unreleased master changes. Maintainers pin signed candidates and exact
 launcher/runtime/guest hashes before combined candidate rounds.
