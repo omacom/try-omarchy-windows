@@ -1,0 +1,448 @@
+From: Try Omarchy contributors
+Subject: [PATCH] sdl: preserve precise wheels through virtio input
+
+Carry fractional SDL detents to Linux in 120 units per notch, with legacy
+wheel events at whole boundaries. Route wheel axes separately from X/Y so
+PS/2 and USB handlers retain the discrete button path. Pinch stays separate.
+
+diff --git a/hw/input/virtio-input-hid.c b/hw/input/virtio-input-hid.c
+index 00d064acce..d62752be77 100644
+--- a/hw/input/virtio-input-hid.c
++++ b/hw/input/virtio-input-hid.c
+@@ -37,6 +37,8 @@ static const unsigned short keymap_button[INPUT_BUTTON__MAX] = {
+ static const unsigned short axismap_rel[INPUT_AXIS__MAX] = {
+     [INPUT_AXIS_X]                   = REL_X,
+     [INPUT_AXIS_Y]                   = REL_Y,
++    [INPUT_AXIS_WHEEL]               = REL_WHEEL_HI_RES,
++    [INPUT_AXIS_HWHEEL]              = REL_HWHEEL_HI_RES,
+ };
+ 
+ static const unsigned short axismap_abs[INPUT_AXIS__MAX] = {
+@@ -78,10 +80,20 @@ static void virtio_input_extend_config(VirtIOInput *vinput,
+     virtio_input_add_config(vinput, &ext);
+ }
+ 
++static bool virtio_input_has_rel(VirtIOInput *vinput, unsigned int code)
++{
++    virtio_input_config *rel = virtio_input_find_config(
++        vinput, VIRTIO_INPUT_CFG_EV_BITS, EV_REL);
++
++    return rel && rel->size > code / 8 &&
++           (rel->u.bitmap[code / 8] & (1 << (code % 8)));
++}
++
+ static void virtio_input_handle_event(DeviceState *dev, QemuConsole *src,
+                                       InputEvent *evt)
+ {
+     VirtIOInput *vinput = VIRTIO_INPUT(dev);
++    VirtIOInputHID *vhid = VIRTIO_INPUT_HID(dev);
+     virtio_input_event event;
+     int qcode;
+     InputKeyEvent *key;
+@@ -108,14 +120,31 @@ static void virtio_input_handle_event(DeviceState *dev, QemuConsole *src,
+         break;
+     case INPUT_EVENT_KIND_BTN:
+         btn = evt->u.btn.data;
+-        if ((btn->button == INPUT_BUTTON_WHEEL_UP ||
+-             btn->button == INPUT_BUTTON_WHEEL_DOWN) &&
+-            btn->down) {
+-            event.type  = cpu_to_le16(EV_REL);
+-            event.code  = cpu_to_le16(REL_WHEEL);
+-            event.value = cpu_to_le32(btn->button == INPUT_BUTTON_WHEEL_UP
+-                                      ? 1 : -1);
+-            virtio_input_send(vinput, &event);
++        if (btn->button == INPUT_BUTTON_WHEEL_UP ||
++            btn->button == INPUT_BUTTON_WHEEL_DOWN ||
++            btn->button == INPUT_BUTTON_WHEEL_LEFT ||
++            btn->button == INPUT_BUTTON_WHEEL_RIGHT) {
++            bool vertical = btn->button == INPUT_BUTTON_WHEEL_UP ||
++                            btn->button == INPUT_BUTTON_WHEEL_DOWN;
++            int code = vertical ? REL_WHEEL : REL_HWHEEL;
++            int hires = vertical ? REL_WHEEL_HI_RES : REL_HWHEEL_HI_RES;
++            int value = btn->button == INPUT_BUTTON_WHEEL_UP ||
++                        btn->button == INPUT_BUTTON_WHEEL_RIGHT ? 1 : -1;
++
++            if (!btn->down) {
++                break;
++            }
++            event.type = cpu_to_le16(EV_REL);
++            if (virtio_input_has_rel(vinput, hires)) {
++                event.code = cpu_to_le16(hires);
++                event.value = cpu_to_le32(value * 120);
++                virtio_input_send(vinput, &event);
++            }
++            if (virtio_input_has_rel(vinput, code)) {
++                event.code = cpu_to_le16(code);
++                event.value = cpu_to_le32(value);
++                virtio_input_send(vinput, &event);
++            }
+         } else if (keymap_button[btn->button]) {
+             event.type  = cpu_to_le16(EV_KEY);
+             event.code  = cpu_to_le16(keymap_button[btn->button]);
+@@ -131,6 +160,33 @@ static void virtio_input_handle_event(DeviceState *dev, QemuConsole *src,
+         break;
+     case INPUT_EVENT_KIND_REL:
+         move = evt->u.rel.data;
++        if (move->axis == INPUT_AXIS_WHEEL ||
++            move->axis == INPUT_AXIS_HWHEEL) {
++            bool vertical = move->axis == INPUT_AXIS_WHEEL;
++            int64_t *remainder = vertical ? &vhid->wheel_remainder :
++                                           &vhid->hwheel_remainder;
++            int code = vertical ? REL_WHEEL : REL_HWHEEL;
++            int32_t value = move->value;
++            int64_t total = *remainder + value;
++            int steps = total / 120;
++
++            event.type = cpu_to_le16(EV_REL);
++            if (virtio_input_has_rel(vinput, axismap_rel[move->axis])) {
++                event.code = cpu_to_le16(axismap_rel[move->axis]);
++                event.value = cpu_to_le32(value);
++                virtio_input_send(vinput, &event);
++            }
++            *remainder = total % 120;
++            if (steps && virtio_input_has_rel(vinput, code)) {
++                event.code = cpu_to_le16(code);
++                event.value = cpu_to_le32(steps);
++                virtio_input_send(vinput, &event);
++            }
++            break;
++        }
++        if (move->axis != INPUT_AXIS_X && move->axis != INPUT_AXIS_Y) {
++            break;
++        }
+         event.type  = cpu_to_le16(EV_REL);
+         event.code  = cpu_to_le16(axismap_rel[move->axis]);
+         event.value = cpu_to_le32(move->value);
+@@ -202,6 +258,8 @@ static void virtio_input_hid_change_active(VirtIOInput *vinput)
+     if (vinput->active) {
+         qemu_input_handler_activate(vhid->hs);
+     } else {
++        vhid->wheel_remainder = 0;
++        vhid->hwheel_remainder = 0;
+         qemu_input_handler_deactivate(vhid->hs);
+     }
+ }
+@@ -321,7 +379,8 @@ static const TypeInfo virtio_keyboard_info = {
+ 
+ static const QemuInputHandler virtio_mouse_handler = {
+     .name  = VIRTIO_ID_NAME_MOUSE,
+-    .mask  = INPUT_EVENT_MASK_BTN | INPUT_EVENT_MASK_REL,
++    .mask  = INPUT_EVENT_MASK_BTN | INPUT_EVENT_MASK_REL |
++             INPUT_EVENT_MASK_WHEEL,
+     .event = virtio_input_handle_event,
+     .sync  = virtio_input_handle_sync,
+ };
+@@ -345,8 +404,10 @@ static struct virtio_input_config virtio_mouse_config[] = {
+         .subsel    = EV_REL,
+         .size      = 2,
+         .u.bitmap  = {
+-            (1 << REL_X) | (1 << REL_Y),
+-            (1 << (REL_WHEEL - 8))
++            (1 << REL_X) | (1 << REL_Y) | (1 << REL_HWHEEL),
++            (1 << (REL_WHEEL - 8)) |
++            (1 << (REL_WHEEL_HI_RES - 8)) |
++            (1 << (REL_HWHEEL_HI_RES - 8))
+         },
+     },
+     { /* end of list */ },
+@@ -375,7 +436,8 @@ static const TypeInfo virtio_mouse_info = {
+ 
+ static const QemuInputHandler virtio_tablet_handler = {
+     .name  = VIRTIO_ID_NAME_TABLET,
+-    .mask  = INPUT_EVENT_MASK_BTN | INPUT_EVENT_MASK_ABS,
++    .mask  = INPUT_EVENT_MASK_BTN | INPUT_EVENT_MASK_ABS |
++             INPUT_EVENT_MASK_WHEEL,
+     .event = virtio_input_handle_event,
+     .sync  = virtio_input_handle_sync,
+ };
+@@ -406,8 +468,10 @@ static struct virtio_input_config virtio_tablet_config[] = {
+         .subsel    = EV_REL,
+         .size      = 2,
+         .u.bitmap  = {
+-            0,
+-            (1 << (REL_WHEEL - 8))
++            (1 << REL_HWHEEL),
++            (1 << (REL_WHEEL - 8)) |
++            (1 << (REL_WHEEL_HI_RES - 8)) |
++            (1 << (REL_HWHEEL_HI_RES - 8))
+         },
+     },{
+         .select    = VIRTIO_INPUT_CFG_ABS_INFO,
+diff --git a/include/hw/virtio/virtio-input.h b/include/hw/virtio/virtio-input.h
+index a382d9f135..05e7d14718 100644
+--- a/include/hw/virtio/virtio-input.h
++++ b/include/hw/virtio/virtio-input.h
+@@ -90,6 +90,8 @@ struct VirtIOInputHID {
+     const QemuInputHandler            *handler;
+     QemuInputHandlerState             *hs;
+     int                               ledstate;
++    int64_t                           wheel_remainder;
++    int64_t                           hwheel_remainder;
+ };
+ 
+ struct VirtIOInputHost {
+diff --git a/include/ui/input.h b/include/ui/input.h
+index 8f9aac562e..6983ec6b35 100644
+--- a/include/ui/input.h
++++ b/include/ui/input.h
+@@ -9,6 +9,8 @@
+ #define INPUT_EVENT_MASK_REL   (1<<INPUT_EVENT_KIND_REL)
+ #define INPUT_EVENT_MASK_ABS   (1<<INPUT_EVENT_KIND_ABS)
+ #define INPUT_EVENT_MASK_MTT   (1<<INPUT_EVENT_KIND_MTT)
++/* Wheel REL axes must never reach handlers that only understand X/Y. */
++#define INPUT_EVENT_MASK_WHEEL (1<<INPUT_EVENT_KIND__MAX)
+ 
+ #define INPUT_EVENT_ABS_MIN    0x0000
+ #define INPUT_EVENT_ABS_MAX    0x7FFF
+@@ -58,6 +60,7 @@ void qemu_input_update_buttons(QemuConsole *src, uint32_t *button_map,
+                                uint32_t button_old, uint32_t button_new);
+ 
+ bool qemu_input_is_absolute(QemuConsole *con);
++bool qemu_input_has_wheel(QemuConsole *con);
+ int qemu_input_scale_axis(int value,
+                           int min_in, int max_in,
+                           int min_out, int max_out);
+diff --git a/include/ui/sdl2-scroll.h b/include/ui/sdl2-scroll.h
+new file mode 100644
+index 0000000000..b5a7a0a3d4
+--- /dev/null
++++ b/include/ui/sdl2-scroll.h
+@@ -0,0 +1,37 @@
++/* SDL wheel conversion, independent of SDL for testing.
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++#ifndef QEMU_SDL2_SCROLL_H
++#define QEMU_SDL2_SCROLL_H
++
++#include <limits.h>
++#include <math.h>
++#include <stdint.h>
++
++typedef struct SDLScroll {
++    double x, y;
++    int64_t legacy_x, legacy_y;
++} SDLScroll;
++
++/* SDL units are detents, including fractional Windows WHEEL_DELTA / 120.
++ * Retain fractions of a Linux hi-res unit between frames.
++ */
++static inline int sdl_scroll_axis(double delta, double *remainder)
++{
++    double total = delta * 120.0 + *remainder;
++    int value;
++
++    if (!isfinite(total)) {
++        *remainder = 0.0;
++        return 0;
++    }
++    if (total >= INT_MAX || total <= INT_MIN) {
++        *remainder = 0.0;
++        return total >= INT_MAX ? INT_MAX : INT_MIN;
++    }
++    value = (int)total;
++    *remainder = total - value;
++    return value;
++}
++
++#endif
+diff --git a/include/ui/sdl2.h b/include/ui/sdl2.h
+index 1076dd2314..9201d31961 100644
+--- a/include/ui/sdl2.h
++++ b/include/ui/sdl2.h
+@@ -22,6 +22,7 @@
+ #endif
+ 
+ #include "ui/kbd-state.h"
++#include "ui/sdl2-scroll.h"
+ #ifdef CONFIG_OPENGL
+ # include "ui/egl-helpers.h"
+ #endif
+@@ -47,6 +48,7 @@ struct sdl2_console {
+     bool gui_keysym;
+     SDL_GLContext winctx;
+     QKbdState *kbd;
++    SDLScroll scroll;
+     bool has_dmabuf;
+ #ifdef CONFIG_OPENGL
+     QemuGLShader *gls;
+diff --git a/qapi/ui.json b/qapi/ui.json
+index 9ad68f44cc..aedeca0edb 100644
+--- a/qapi/ui.json
++++ b/qapi/ui.json
+@@ -1068,12 +1068,17 @@
+ ##
+ # @InputAxis:
+ #
+-# Position axis of a pointer input device (mouse, tablet).
++# Position or wheel axis of a pointer input device (mouse, tablet).
++#
++# @wheel: vertical wheel movement in 120 units per detent (downstream)
++#
++# @hwheel: horizontal wheel movement in 120 units per detent
++#     (downstream)
+ #
+ # Since: 2.0
+ ##
+ { 'enum'  : 'InputAxis',
+-  'data'  : [ 'x', 'y' ] }
++  'data'  : [ 'x', 'y', 'wheel', 'hwheel' ] }
+ 
+ ##
+ # @InputMultiTouchType:
+diff --git a/ui/input.c b/ui/input.c
+index 147e69c1c3..bdd625ea96 100644
+--- a/ui/input.c
++++ b/ui/input.c
+@@ -122,6 +122,23 @@ qemu_input_find_handler(uint32_t mask, QemuConsole *con)
+     return NULL;
+ }
+ 
++bool qemu_input_has_wheel(QemuConsole *con)
++{
++    QemuInputHandlerState *s = qemu_input_find_handler(INPUT_EVENT_MASK_BTN, con);
++
++    return s && (s->handler->mask & INPUT_EVENT_MASK_WHEEL);
++}
++
++static uint32_t qemu_input_event_mask(InputEvent *evt)
++{
++    if (evt->type == INPUT_EVENT_KIND_REL &&
++        (evt->u.rel.data->axis == INPUT_AXIS_WHEEL ||
++         evt->u.rel.data->axis == INPUT_AXIS_HWHEEL)) {
++        return INPUT_EVENT_MASK_WHEEL;
++    }
++    return 1 << evt->type;
++}
++
+ void qmp_input_send_event(const char *device,
+                           bool has_head, int64_t head,
+                           InputEventList *events, Error **errp)
+@@ -150,7 +167,7 @@ void qmp_input_send_event(const char *device,
+     for (e = events; e != NULL; e = e->next) {
+         InputEvent *event = e->value;
+ 
+-        if (!qemu_input_find_handler(1 << event->type, con)) {
++        if (!qemu_input_find_handler(qemu_input_event_mask(event), con)) {
+             error_setg(errp, "Input handler not found for "
+                              "event type %s",
+                             InputEventKind_str(event->type));
+@@ -310,7 +327,7 @@ void qemu_input_event_send_impl(QemuConsole *src, InputEvent *evt)
+     qemu_input_event_trace(src, evt);
+ 
+     /* send event */
+-    s = qemu_input_find_handler(1 << evt->type, src);
++    s = qemu_input_find_handler(qemu_input_event_mask(evt), src);
+     if (!s) {
+         return;
+     }
+diff --git a/ui/sdl2.c b/ui/sdl2.c
+index 20e6c91979..4fee363446 100644
+--- a/ui/sdl2.c
++++ b/ui/sdl2.c
+@@ -160,6 +160,7 @@ void sdl2_window_destroy(struct sdl2_console *scon)
+         return;
+     }
+ 
++    scon->scroll = (SDLScroll) {0};
+     win_pinch_destroy(scon);
+     if (scon->winctx) {
+         SDL_GL_DeleteContext(scon->winctx);
+@@ -609,32 +610,67 @@ static void handle_mousebutton(SDL_Event *ev)
+     }
+ }
+ 
++static void sdl_send_wheel_buttons(struct sdl2_console *scon, int value,
++                                   InputButton positive, InputButton negative)
++{
++    InputButton button = value > 0 ? positive : negative;
++
++    for (int64_t i = 0; i < llabs((int64_t)value); i++) {
++        qemu_input_queue_btn(scon->dcl.con, button, true);
++        qemu_input_event_sync();
++        qemu_input_queue_btn(scon->dcl.con, button, false);
++        qemu_input_event_sync();
++    }
++}
++
+ static void handle_mousewheel(SDL_Event *ev)
+ {
+     struct sdl2_console *scon = get_scon_from_window(ev->wheel.windowID);
+     SDL_MouseWheelEvent *wev = &ev->wheel;
+-    InputButton btn;
++    double x, y;
++    int dx, dy;
+ 
+-    if (!scon || !qemu_console_is_graphic(scon->dcl.con)) {
++    if (!scon || !scon->real_window || !scon->surface ||
++        !qemu_console_is_graphic(scon->dcl.con)) {
+         return;
+     }
+ 
+-    if (wev->y > 0) {
+-        btn = INPUT_BUTTON_WHEEL_UP;
+-    } else if (wev->y < 0) {
+-        btn = INPUT_BUTTON_WHEEL_DOWN;
+-    } else if (wev->x < 0) {
+-        btn = INPUT_BUTTON_WHEEL_RIGHT;
+-    } else if (wev->x > 0) {
+-        btn = INPUT_BUTTON_WHEEL_LEFT;
+-    } else {
++#if SDL_VERSION_ATLEAST(2, 0, 18)
++    x = wev->preciseX;
++    y = wev->preciseY;
++#else
++    x = wev->x;
++    y = wev->y;
++#endif
++    if (wev->direction == SDL_MOUSEWHEEL_FLIPPED) {
++        x = -x;
++        y = -y;
++    }
++    dx = sdl_scroll_axis(x, &scon->scroll.x);
++    dy = sdl_scroll_axis(y, &scon->scroll.y);
++    if (qemu_input_has_wheel(scon->dcl.con)) {
++        scon->scroll.legacy_x = scon->scroll.legacy_y = 0;
++        if (dx) {
++            qemu_input_queue_rel(scon->dcl.con, INPUT_AXIS_HWHEEL, dx);
++        }
++        if (dy) {
++            qemu_input_queue_rel(scon->dcl.con, INPUT_AXIS_WHEEL, dy);
++        }
++        if (dx || dy) {
++            qemu_input_event_sync();
++        }
+         return;
+     }
+ 
+-    qemu_input_queue_btn(scon->dcl.con, btn, true);
+-    qemu_input_event_sync();
+-    qemu_input_queue_btn(scon->dcl.con, btn, false);
+-    qemu_input_event_sync();
++    /* PS/2 and USB handlers keep their button path at whole detents. */
++    scon->scroll.legacy_x += dx;
++    scon->scroll.legacy_y += dy;
++    sdl_send_wheel_buttons(scon, scon->scroll.legacy_x / 120,
++                          INPUT_BUTTON_WHEEL_RIGHT, INPUT_BUTTON_WHEEL_LEFT);
++    sdl_send_wheel_buttons(scon, scon->scroll.legacy_y / 120,
++                          INPUT_BUTTON_WHEEL_UP, INPUT_BUTTON_WHEEL_DOWN);
++    scon->scroll.legacy_x %= 120;
++    scon->scroll.legacy_y %= 120;
+ }
+ 
+ static void handle_windowevent(SDL_Event *ev)
+@@ -676,6 +712,7 @@ static void handle_windowevent(SDL_Event *ev)
+         scon->ignore_hotkeys = get_mod_state();
+         break;
+     case SDL_WINDOWEVENT_FOCUS_LOST:
++        scon->scroll = (SDLScroll) {0};
+         if (gui_grab && !gui_fullscreen) {
+             sdl_grab_end(scon);
+         }
+@@ -779,6 +816,7 @@ void sdl2_poll_events(struct sdl2_console *scon)
+ 
+     if (scon->last_vm_running != runstate_is_running()) {
+         scon->last_vm_running = runstate_is_running();
++        scon->scroll = (SDLScroll) {0};
+         sdl_update_caption(scon);
+     }
+ 

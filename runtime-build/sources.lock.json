@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "name": "winq-emu-alpha10-source-r20c",
+  "name": "winq-emu-alpha10-source-r20c-precise-scroll",
   "sourceDateEpoch": 1777269494,
   "qemu": {
     "repository": "https://github.com/cmspam/winq-emu-qemu.git",
@@ -77,6 +77,10 @@
       {
         "file": "patches/qemu/0017-defer-idle-sdl-playback-open.patch",
         "sha256": "81a20e6bb025eccaf9edc5f4f13a0b3d3d3a4a799a377ac00eb64dabce2ed221"
+      },
+      {
+        "file": "patches/qemu/0018-preserve-precise-sdl-scroll.patch",
+        "sha256": "ef1400c2cd50f6898b33bae4676cf0aad20eca577f3b2146b956da4339f17496"
       }
     ]
   },

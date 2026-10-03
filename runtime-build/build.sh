@@ -110,6 +110,8 @@ python "$recipe/test-file-drop.py" "$qemu_source/ui/sdl2.c"
 python "$recipe/test-windows-share.py" "$qemu_source/hw/9pfs/9p-util-win32.c"
 python "$recipe/test-sdl-scanout.py" "$qemu_source/ui/sdl2-gl.c"
 python "$recipe/test-sdl-input.py" "$qemu_source/ui/sdl2.c"
+python "$recipe/test-sdl-scroll.py" "$qemu_source"
+python "$recipe/test-virtio-scroll.py" "$qemu_source"
 python "$recipe/test-sdl-context.py" "$qemu_source/ui/sdl2.c"
 python "$recipe/test-sdl-audio.py" "$qemu_source/audio/sdlaudio.c"
 python "$recipe/test-windows-pinch.py"
@@ -246,7 +248,7 @@ tar -C "$qemu_source" --exclude=.git --exclude='*/.git' -cf - . | \
     tar -C "$source_bundle/qemu" -xf -
 tar -C "$virgl_source" --exclude=.git --exclude='*/.git' -cf - . | \
     tar -C "$source_bundle/virglrenderer" -xf -
-cp "$recipe"/*.py "$recipe"/*.sh "$recipe"/*.json "$recipe"/*.txt \
+cp "$recipe"/*.py "$recipe"/*.sh "$recipe"/*.json "$recipe"/*.txt "$recipe"/*.c \
     "$source_bundle/build-recipe/"
 if [[ -d "$recipe/patches" ]]; then
     cp -R "$recipe/patches" "$source_bundle/build-recipe/patches"

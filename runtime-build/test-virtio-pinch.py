@@ -80,19 +80,20 @@ class VirtioPinchTests(unittest.TestCase):
             self.process.wait(timeout=5)
 
     def connect(self, path):
-        sock = socket.socket(socket.AF_INET)
-        self.addCleanup(sock.close)
-        sock.settimeout(5)
         deadline = time.monotonic() + 20
         while True:
+            sock = socket.socket(socket.AF_INET)
+            sock.settimeout(5)
             try:
                 sock.connect(path)
                 break
             except (FileNotFoundError, ConnectionRefusedError):
+                sock.close()
                 if self.process.poll() is not None or time.monotonic() > deadline:
                     self.log.seek(0)
                     self.fail(self.log.read())
                 time.sleep(0.01)
+        self.addCleanup(sock.close)
         stream = sock.makefile("rwb", buffering=0)
         self.addCleanup(stream.close)
         return stream

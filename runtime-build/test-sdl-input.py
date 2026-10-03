@@ -11,7 +11,7 @@ source = parser.parse_args().source.read_text(encoding='utf-8')
 lookup = source[source.index('static struct sdl2_console *get_scon_from_window('):
                 source.index('void sdl2_window_create(')]
 handlers = source[source.index('static void handle_mousemotion('):
-                  source.index('static void handle_mousewheel(')]
+                  source.index('static void sdl_send_wheel_buttons(')]
 harness = r'''
 #include <assert.h>
 #include <stdbool.h>
