@@ -22,6 +22,21 @@ runtime-build/build.sh runtime-output
 Do not update `guest-build/runtime.lock.json` until the resulting runtime has
 passed the Windows test checklist in `docs/RUNTIME-VALIDATION.md`.
 
+The renderer image dispatch checks the exact host-allocation external format
+capabilities before creating or querying an internal host variant, including
+the maintenance4 requirements path. Rejected variants keep plain backing and
+advertise its non-host-visible memory types. Disjoint images keep plain backing
+because independent plane bindings cannot select one shared alternate handle;
+requirements2 and maintenance4 preserve each plane's requirements. Explicit
+external images keep their existing route. Unknown creation-info chains also
+keep plain backing rather than assuming host-import support.
+
+`test-image-capabilities.py <patched-renderer-source>` compiles the actual image
+dispatch against mocked Vulkan entry points. It runs on Linux or MSYS2 without
+a GPU or desktop and covers capability rejection, usable fallback masks,
+dual backing, disjoint planes and bindings, and maintenance4. These checks do
+not establish the cause of issue #276 or prove behavior on a Windows driver.
+
 The r16 candidate adds independent startup SDL playback/recording selection via
 `0013-select-sdl-audio-devices.patch`, with per-direction Windows-default fallback.
 The build runs `test-sdl-audio.py` against the patched route function. On a

@@ -102,7 +102,7 @@
       },
       {
         "file": "patches/virglrenderer/0003-preserve-device-local-resources-until-memory-binding.patch",
-        "sha256": "b670661e2811a01ff53496a2beb492150bfe739258bd76c7d5e2d9b0e5669be7"
+        "sha256": "7dbf0722d095de28c7ff2efdab57dbe2af63217b54f9b5c363ae1ffd49e4519d"
       }
     ]
   }

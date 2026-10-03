@@ -307,7 +307,7 @@
  #ifdef _WIN32
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
-@@ -6,11 +6,52 @@
+@@ -6,12 +6,115 @@
  #include "vkr_image.h"
  
  #include "vkr_image_gen.h"
@@ -317,9 +317,72 @@
  
  #ifndef DRM_FORMAT_MOD_LINEAR
  #define DRM_FORMAT_MOD_LINEAR 0ULL
-+#endif
+ #endif
 +
 +#ifdef _WIN32
++static bool
++vkr_image_needs_host_backing(struct vkr_device *dev, const VkImageCreateInfo *info)
++{
++   return dev->physical_device->host_external_memory_host &&
++      !vkr_find_struct(info->pNext, VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO) &&
++      !(info->flags & VK_IMAGE_CREATE_SPARSE_BINDING_BIT);
++}
++
++static bool
++vkr_image_supports_host_backing(struct vkr_device *dev, const VkImageCreateInfo *info)
++{
++   if (!vkr_image_needs_host_backing(dev, info))
++      return false;
++   /* A single selected handle cannot represent independently bound planes.
++    * Keep disjoint images on their plain backing and query each plane as-is.
++    */
++   if (info->flags & VK_IMAGE_CREATE_DISJOINT_BIT)
++      return false;
++   /* Only forward create-info chains valid for the format capability query.
++    * Unknown creation parameters must not imply host-import support.
++    */
++   for (const VkBaseInStructure *next = info->pNext; next; next = next->pNext)
++      if (next->sType != VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO &&
++          next->sType != VK_STRUCTURE_TYPE_IMAGE_STENCIL_USAGE_CREATE_INFO)
++         return false;
++
++   struct vkr_physical_device *physical = dev->physical_device;
++   VkPhysicalDeviceExternalImageFormatInfo external = {
++      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
++      .pNext = info->pNext,
++      .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
++   };
++   VkPhysicalDeviceImageFormatInfo2 query = {
++      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
++      .pNext = &external,
++      .format = info->format,
++      .type = info->imageType,
++      .tiling = info->tiling,
++      .usage = info->usage,
++      .flags = info->flags,
++   };
++   VkExternalImageFormatProperties external_props = {
++      .sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
++   };
++   VkImageFormatProperties2 props = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
++      .pNext = &external_props,
++   };
++   VkResult ret = physical->proc_table.GetPhysicalDeviceImageFormatProperties2(
++      physical->base.handle.physical_device, &query, &props);
++   const VkExternalMemoryProperties *memory = &external_props.externalMemoryProperties;
++   const VkImageFormatProperties *limits = &props.imageFormatProperties;
++   return ret == VK_SUCCESS &&
++      (memory->externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) &&
++      (memory->compatibleHandleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT) &&
++      info->extent.width <= limits->maxExtent.width &&
++      info->extent.height <= limits->maxExtent.height &&
++      info->extent.depth <= limits->maxExtent.depth &&
++      info->mipLevels <= limits->maxMipLevels &&
++      info->arrayLayers <= limits->maxArrayLayers &&
++      (info->samples & limits->sampleCounts);
++}
++
 +static void
 +vkr_image_merge_requirements(struct vkr_device *dev, VkMemoryRequirements *plain,
 +                              const VkMemoryRequirements *host)
@@ -357,45 +420,49 @@
 +   if (other)
 +      dev->proc_table.DestroyImage(dev->base.handle.device, other, NULL);
 +}
- #endif
  
  static void
-@@ -95,9 +136,32 @@
+ vkr_image_prepare_host_create_info(struct vkr_device *dev,
+@@ -32,6 +135,8 @@
+    storage->pNext = external;
+    *info = storage;
+ }
++
++#endif
  
-    VkImageCreateInfo host_info;
-    VkExternalMemoryImageCreateInfo host_external;
+ static void
+ vkr_dispatch_vkCreateImage(struct vn_dispatch_context *dispatch,
+@@ -93,11 +198,25 @@
+    }
+ #endif
+ 
+-   VkImageCreateInfo host_info;
+-   VkExternalMemoryImageCreateInfo host_external;
 -   vkr_image_prepare_host_create_info(vkr_device_from_handle(args->device),
 -                                     &args->pCreateInfo, &host_info, &host_external);
-+   struct vkr_device *create_dev = vkr_device_from_handle(args->device);
-+   bool dual = false;
-+#ifdef _WIN32
-+   dual = create_dev->physical_device->host_external_memory_host &&
-+      !vkr_find_struct(args->pCreateInfo->pNext, VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO) &&
-+      !(args->pCreateInfo->flags & VK_IMAGE_CREATE_SPARSE_BINDING_BIT);
-+#endif
-+   if (!dual)
-+      vkr_image_prepare_host_create_info(create_dev, &args->pCreateInfo, &host_info, &host_external);
     struct vkr_image *img = vkr_image_create_and_add(dispatch->data, args);
 +#ifdef _WIN32
-+   if (img && dual) {
++   if (img && vkr_image_needs_host_backing(dev, args->pCreateInfo)) {
 +      img->plain_image = img->base.handle.image;
-+      const VkImageCreateInfo *info = args->pCreateInfo;
-+      vkr_image_prepare_host_create_info(create_dev, &info, &host_info, &host_external);
-+      VkResult ret = create_dev->proc_table.CreateImage(create_dev->base.handle.device,
-+         info, NULL, &img->host_image);
-+      VkMemoryRequirements host_req = {0};
-+      if (ret == VK_SUCCESS)
-+         create_dev->proc_table.GetImageMemoryRequirements(create_dev->base.handle.device,
-+            img->host_image, &host_req);
-+      create_dev->proc_table.GetImageMemoryRequirements(create_dev->base.handle.device,
-+         img->plain_image, &img->combined_requirements);
-+      vkr_image_merge_requirements(create_dev, &img->combined_requirements, &host_req);
++      if (vkr_image_supports_host_backing(dev, args->pCreateInfo)) {
++         VkImageCreateInfo host_info;
++         VkExternalMemoryImageCreateInfo host_external;
++         const VkImageCreateInfo *info = args->pCreateInfo;
++         vkr_image_prepare_host_create_info(dev, &info, &host_info, &host_external);
++         VkResult ret = dev->proc_table.CreateImage(dev->base.handle.device,
++            info, NULL, &img->host_image);
++         if (ret != VK_SUCCESS)
++            img->host_image = VK_NULL_HANDLE;
++      }
++      /* Requirements are queried on demand, never with the legacy query here:
++       * it is illegal for disjoint images and cannot represent their planes.
++       */
 +   }
 +#endif
  #ifdef _WIN32
     if (img && shim_linear)
        img->dma_buf_shim_linear = true;
-@@ -110,6 +174,11 @@
+@@ -110,6 +229,11 @@
  vkr_dispatch_vkDestroyImage(struct vn_dispatch_context *dispatch,
                              struct vn_command_vkDestroyImage *args)
  {
@@ -407,7 +474,7 @@
     vkr_image_destroy_and_remove(dispatch->data, args);
  }
  
-@@ -121,8 +190,16 @@
+@@ -121,8 +245,24 @@
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
  
@@ -415,16 +482,24 @@
 +   struct vkr_image *obj = vkr_image_from_handle(args->image);
 +#endif
     vn_replace_vkGetImageMemoryRequirements_args_handle(args);
-    vk->GetImageMemoryRequirements(args->device, args->image, args->pMemoryRequirements);
 +#ifdef _WIN32
 +   if (obj->plain_image)
-+      *(args->pMemoryRequirements) = obj->combined_requirements;
++      args->image = obj->plain_image;
++#endif
+    vk->GetImageMemoryRequirements(args->device, args->image, args->pMemoryRequirements);
++#ifdef _WIN32
++   if (obj->plain_image) {
++      VkMemoryRequirements host_req = {0};
++      if (obj->host_image)
++         vk->GetImageMemoryRequirements(args->device, obj->host_image, &host_req);
++      vkr_image_merge_requirements(dev, args->pMemoryRequirements, &host_req);
++   }
 +#endif
 +
  }
  
  static void
-@@ -133,8 +210,28 @@
+@@ -133,8 +273,36 @@
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
  
@@ -432,18 +507,27 @@
 +   struct vkr_image *obj = vkr_image_from_handle(args->pInfo->image);
 +#endif
     vn_replace_vkGetImageMemoryRequirements2_args_handle(args);
-    vk->GetImageMemoryRequirements2(args->device, args->pInfo, args->pMemoryRequirements);
+-   vk->GetImageMemoryRequirements2(args->device, args->pInfo, args->pMemoryRequirements);
++   VkImageMemoryRequirementsInfo2 info = *args->pInfo;
++#ifdef _WIN32
++   if (obj->plain_image)
++      info.image = obj->plain_image;
++#endif
++   vk->GetImageMemoryRequirements2(args->device, &info, args->pMemoryRequirements);
 +#ifdef _WIN32
 +   if (obj->plain_image) {
-+      args->pMemoryRequirements->memoryRequirements = obj->combined_requirements;
++      VkMemoryDedicatedRequirements dedicated = {.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
++      VkMemoryRequirements2 host_req = {.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, .pNext = &dedicated};
++      if (obj->host_image) {
++         /* Preserve the full input chain, including any plane selection. */
++         info.image = obj->host_image;
++         vk->GetImageMemoryRequirements2(args->device, &info, &host_req);
++      }
++      vkr_image_merge_requirements(dev, &args->pMemoryRequirements->memoryRequirements,
++                                   &host_req.memoryRequirements);
 +      VkMemoryDedicatedRequirements *out = vkr_find_struct(args->pMemoryRequirements->pNext,
 +         VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS);
-+      VkImage other = obj->base.handle.image == obj->plain_image ? obj->host_image : obj->plain_image;
-+      if (out && other) {
-+         VkMemoryDedicatedRequirements dedicated = {.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
-+         VkMemoryRequirements2 req = {.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, .pNext = &dedicated};
-+         VkImageMemoryRequirementsInfo2 info = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2, .image = other};
-+         vk->GetImageMemoryRequirements2(args->device, &info, &req);
++      if (out) {
 +         out->requiresDedicatedAllocation |= dedicated.requiresDedicatedAllocation;
 +         out->prefersDedicatedAllocation |= dedicated.prefersDedicatedAllocation;
 +      }
@@ -453,7 +537,7 @@
  }
  
  static void
-@@ -172,6 +269,14 @@
+@@ -172,6 +340,14 @@
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
  
@@ -468,7 +552,7 @@
     vn_replace_vkBindImageMemory_args_handle(args);
     args->ret =
        vk->BindImageMemory(args->device, args->image, args->memory, args->memoryOffset);
-@@ -184,6 +289,16 @@
+@@ -184,6 +360,16 @@
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
  
@@ -485,30 +569,29 @@
     vn_replace_vkBindImageMemory2_args_handle(args);
     args->ret = vk->BindImageMemory2(args->device, args->bindInfoCount, args->pBindInfos);
  }
-@@ -346,11 +461,33 @@
+@@ -344,13 +530,29 @@
+    struct vn_device_proc_table *vk = &dev->proc_table;
+ 
     VkDeviceImageMemoryRequirements info = *args->pInfo;
-    VkImageCreateInfo create_info;
-    VkExternalMemoryImageCreateInfo external_info;
+-   VkImageCreateInfo create_info;
+-   VkExternalMemoryImageCreateInfo external_info;
 -   vkr_image_prepare_host_create_info(dev, &info.pCreateInfo, &create_info, &external_info);
-+   bool dual = false;
-+#ifdef _WIN32
-+   dual = dev->physical_device->host_external_memory_host &&
-+      !vkr_find_struct(info.pCreateInfo->pNext, VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO) &&
-+      !(info.pCreateInfo->flags & VK_IMAGE_CREATE_SPARSE_BINDING_BIT);
-+#endif
-+   if (!dual)
-+      vkr_image_prepare_host_create_info(dev, &info.pCreateInfo, &create_info, &external_info);
-    args->pInfo = &info;
+-   args->pInfo = &info;
     vn_replace_vkGetDeviceImageMemoryRequirements_args_handle(args);
 -   vk->GetDeviceImageMemoryRequirements(args->device, args->pInfo,
 -                                        args->pMemoryRequirements);
-+   vk->GetDeviceImageMemoryRequirements(args->device, args->pInfo, args->pMemoryRequirements);
++   vk->GetDeviceImageMemoryRequirements(args->device, &info, args->pMemoryRequirements);
 +#ifdef _WIN32
-+   if (dual) {
++   if (vkr_image_needs_host_backing(dev, info.pCreateInfo)) {
 +      VkMemoryDedicatedRequirements dedicated = {.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
 +      VkMemoryRequirements2 host_req = {.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, .pNext = &dedicated};
-+      vkr_image_prepare_host_create_info(dev, &info.pCreateInfo, &create_info, &external_info);
-+      vk->GetDeviceImageMemoryRequirements(args->device, &info, &host_req);
++      if (vkr_image_supports_host_backing(dev, info.pCreateInfo)) {
++         VkImageCreateInfo create_info;
++         VkExternalMemoryImageCreateInfo external_info;
++         vkr_image_prepare_host_create_info(dev, &info.pCreateInfo, &create_info, &external_info);
++         /* The copied info retains planeAspect for disjoint queries. */
++         vk->GetDeviceImageMemoryRequirements(args->device, &info, &host_req);
++      }
 +      vkr_image_merge_requirements(dev, &args->pMemoryRequirements->memoryRequirements, &host_req.memoryRequirements);
 +      VkMemoryDedicatedRequirements *out = vkr_find_struct(args->pMemoryRequirements->pNext,
 +         VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS);
@@ -524,20 +607,19 @@
  static void
 --- a/src/venus/vkr_image.h
 +++ b/src/venus/vkr_image.h
-@@ -10,6 +10,12 @@
+@@ -10,6 +10,11 @@
  
  struct vkr_image {
     struct vkr_object base;
 +#ifdef _WIN32
 +   VkImage plain_image;
 +   VkImage host_image;
-+   VkMemoryRequirements combined_requirements;
 +#endif
 +
  
  #ifdef _WIN32
     /* Set when the image was created through the VK_EXT_image_drm_format_modifier
-@@ -42,6 +48,11 @@
+@@ -42,6 +47,11 @@
                         VK_OBJECT_TYPE_SAMPLER_YCBCR_CONVERSION,
                         VkSamplerYcbcrConversion)
  
