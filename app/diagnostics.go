@@ -27,6 +27,8 @@ var diagnosticFiles = []string{
 	updateStateFilename,
 	payloadUpdateStateFilename,
 	renderProbeFilename,
+	gpuFreezeFilename,
+	gpuLaunchFilename,
 	"vm/shell.log",
 	"vm/qemu-stderr.log",
 	"vm/qemu.log",
@@ -71,7 +73,7 @@ func writeDiagnostics(dir string, facts map[string]string) (string, error) {
 	for _, k := range keys {
 		fmt.Fprintf(&sb, "%s: %s\n", k, facts[k])
 	}
-	if err := addDiagnosticText(w, "facts.txt", sb.String()); err != nil {
+	if err := addDiagnosticText(w, "facts.txt", redactDiagnosticText(sb.String(), diagnosticRedactions(dir))); err != nil {
 		return fail(err)
 	}
 	var included []string
@@ -278,6 +280,10 @@ func launcherFacts(cfg *config) map[string]string {
 		"display.drivers":   cfg.displayDriver,
 		"time":              time.Now().Format(time.RFC3339),
 	}
+	for k, v := range gpuLaunchFacts(cfg.dir) {
+		facts[k] = v
+	}
+	facts["qemu.stderr.rendererReport"] = gpuRuntimeReports(filepath.Join(cfg.dir, "vm"))
 	for k, v := range hostFacts() {
 		facts[k] = v
 	}

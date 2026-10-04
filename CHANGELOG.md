@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Recover from GPU display freezes with a CPU or GPU restart choice and diagnostics saved before the virtual machine is stopped (#276).
+
 ## v0.9.0 - 2026-10-04
 
 - Audio opens Windows playback and recording devices at their own sample rate,

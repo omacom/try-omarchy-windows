@@ -73,6 +73,7 @@ type config struct {
 	renderMode    string
 	runtimeID     string
 	displayDriver string
+	temporaryCPU  bool // recovery override; never record a remembered Auto CPU result
 }
 
 // memoryStarved reports whether the current attempt's QEMU died because the
@@ -939,6 +940,10 @@ func supervise(cfg *config, cmdline string) bool {
 		pinch := pinchEnabled(cfg)
 		logf("touchpad pinch forwarding: %v (guest declares device: %v)", pinch, cfg.guestPinch)
 		proc.Env = pinchEnvironment(proc.Env, pinch)
+		if cfg.useGpu {
+			cfg.displayDriver = displayDriverIdentity()
+			logGPULaunchFacts(cfg, proc.Env, dxgiAdapterFacts(), qemuGPUPreference(cfg.qemu))
+		}
 		// The w-binary's startup errors (bad args, SDL init) only ever reach
 		// stderr; without this they vanish and a dead QEMU is undebuggable.
 		if ef, err := os.OpenFile(filepath.Join(cfg.vmDir, "qemu-stderr.log"),
@@ -1094,7 +1099,12 @@ func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
 	logf("supervisor: watching guest lifecycle and file drops")
 	lines := qmp.readLines()
 	reason := ""
-	silent := 0
+	silence := qmpSilence{}
+	postReady := false
+	frozen := false
+	suggestCPU := false
+	var freezeBundle string
+	var freezeSnapshotErr error
 	tick := 0
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -1115,6 +1125,10 @@ func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
 			stopDeadline = time.After(30 * time.Second)
 		}
 		if guestReady.Swap(false) {
+			postReady = true
+			if cfg.useGpu {
+				recordGPURuntimeReport(cfg.dir, cfg.vmDir)
+			}
 			commitLauncherUpdate(cfg.dir)
 			commitPayloadUpdates(cfg.dir)
 			commitCheckpointBoot(cfg.dir)
@@ -1133,7 +1147,7 @@ func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
 				procDown = waitExit(exited, 15*time.Second, cfg)
 				break
 			}
-			silent = 0
+			silence.answered()
 			if paths, point, ok := droppedFilesEvent(line); ok {
 				logf("file drop: received %d item(s)", len(paths))
 				if err := sendDroppedFilesAt(paths, guestDropPoint(point), cursorPosition()); err != nil {
@@ -1169,9 +1183,25 @@ func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
 					procDown = waitExit(exited, 15*time.Second, cfg)
 					break
 				}
-				silent++
-				if silent >= 9 {
-					logf("QEMU main loop stopped answering - guest is down")
+				if silence.probe() {
+					logf("QEMU main loop stopped answering after %d unanswered five-second probes", qmpHangMisses)
+					// Save the live process's evidence before waitExit can kill it.
+					// Intentional shutdown/cancel is not a display freeze.
+					if cfg.useGpu && postReady && stopDeadline == nil && !setupCancelled() && !pendingReboot.Load() {
+						frozen = true
+						var err error
+						suggestCPU, err = recordGPUFreeze(cfg.dir, cfg.renderMode, cfg.useGpu, postReady, cfg.runtimeID, cfg.displayDriver)
+						if err != nil {
+							logf("could not record GPU freeze: %v", err)
+						}
+						recordGPURuntimeReport(cfg.dir, cfg.vmDir)
+						freezeBundle, freezeSnapshotErr = writeDiagnostics(cfg.dir, gpuFreezeFacts(cfg))
+						if freezeSnapshotErr != nil {
+							logf("GPU freeze diagnostics failed: %v", freezeSnapshotErr)
+						} else {
+							logf("GPU freeze diagnostics saved before cleanup: %s", freezeBundle)
+						}
+					}
 					procDown = waitExit(exited, 15*time.Second, cfg)
 				}
 			}
@@ -1201,6 +1231,12 @@ drained:
 	}
 	guestUp.Store(false)
 	qemuPid.Store(0)
+	if cfg.useGpu && !frozen {
+		recordGPURuntimeReport(cfg.dir, cfg.vmDir)
+	}
+	if frozen && reason == "" && !setupCancelled() && !pendingReboot.Load() {
+		return recoverGPUFreeze(cfg, freezeBundle, freezeSnapshotErr, suggestCPU)
+	}
 	// A QEMU wedged during the guest's reset can die without ever delivering
 	// its SHUTDOWN event, making reboot and poweroff indistinguishable over
 	// QMP (and the wedge also loses the serial file's final flush, so the
@@ -1298,7 +1334,7 @@ func waitExit(exited <-chan error, grace time.Duration, cfg *config) bool {
 // (settings say CPU) must not later be mistaken for a probe failure, so only
 // automatic and forced-GPU launches record CPU.
 func recordRenderResult(cfg *config) {
-	if cfg.runtimeID == "" || (cfg.renderMode == renderCPU && !cfg.useGpu) {
+	if !shouldRecordRenderResult(cfg.runtimeID, cfg.renderMode, cfg.useGpu, cfg.temporaryCPU) {
 		return
 	}
 	result := renderCPU

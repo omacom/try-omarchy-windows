@@ -52,6 +52,7 @@ type config struct {
 	renderMode    string
 	runtimeID     string
 	displayDriver string
+	temporaryCPU  bool
 }
 
 type progressUI struct{}

@@ -632,5 +632,15 @@
   "error.usb.saved_missing": "saved USB device {device} is not connected at its selected port",
   "error.hello.passkeys": "this Windows version cannot list passkeys; remove it in Settings > Accounts > Passkeys",
   "error.hello.none": "no Windows Hello authenticator",
-  "setup.keys.compact": "Super+Space: menu. Super+K: all keybindings."
+  "setup.keys.compact": "Super+Space: menu. Super+K: all keybindings.",
+  "recovery.gpu.title": "Omarchy’s display froze",
+  "recovery.gpu.body": "Omarchy’s display froze while using GPU rendering. The virtual machine stopped responding and has been closed. You can restart with CPU rendering for this session without changing Settings, or try GPU rendering again. Unsaved work may have been lost.",
+  "recovery.gpu.suggest": "Automatic mode has seen two display freezes with this runtime and display driver set. We recommend CPU rendering. Choose Always use CPU rendering to save that choice in Settings.",
+  "recovery.gpu.saved": "Diagnostics were saved before the virtual machine was stopped:\n{path}",
+  "recovery.gpu.save_failed": "Diagnostics could not be saved: {error}",
+  "recovery.gpu.cpu_once": "Restart with CPU rendering this time",
+  "recovery.gpu.gpu": "Restart with GPU rendering",
+  "recovery.gpu.close": "Close",
+  "recovery.gpu.cpu_always": "Always use CPU rendering",
+  "recovery.gpu.settings_failed": "Could not save CPU rendering in Settings: {error}"
 }
