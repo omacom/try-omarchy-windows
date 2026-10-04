@@ -29,6 +29,7 @@ var (
 	dxgiAdapter1IID = mmGUIDValue{0x29038f61, 0x3839, 0x4626, [8]byte{0x91, 0xfd, 0x08, 0x68, 0x79, 0x01, 0x1a, 0x05}}
 )
 
+//go:uintptrescapes
 func dxgiCall(object uintptr, slot int, args ...uintptr) uintptr {
 	table := *(*uintptr)(unsafe.Pointer(object))
 	method := *(*uintptr)(unsafe.Pointer(table + uintptr(slot)*unsafe.Sizeof(uintptr(0))))
