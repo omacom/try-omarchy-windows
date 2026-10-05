@@ -330,3 +330,10 @@ stopping on unrelated or package-owned conflicts. Compatibility revision 55
 repairs only the reviewed default conflict handler before login, including disks
 that already reached revisions 51 through 54. Runtime `4.0.4-6` packages the same
 handler for fresh guests.
+
+Patch 0135 restores the one-second retry of the Windows audio catalog while
+PipeWire's QEMU transport is not ready at startup. It keeps the catalog until
+the routes exist, then continues the volume handshake. Compatibility revision
+56 delivers the corrected bridge to existing disks, including v0.3.0 through
+v0.9.0 guests and disks already at revision 55. Runtime `4.0.4-7` carries the
+matching package release for fresh installations and subsequent updates.

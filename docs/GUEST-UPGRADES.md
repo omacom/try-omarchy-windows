@@ -50,6 +50,13 @@ conflicts and files owned by another package still stop the update. Customized
 or linked conflict handlers are preserved. Runtime `4.0.4-6` carries the same
 repair for fresh installations and subsequent updates.
 
+Compatibility revision 56 delivers the audio bridge that retries the Windows
+device catalog until PipeWire's QEMU transport is ready. Existing v0.3.0 through
+v0.9.0 disks and revision-55 disks receive the corrected file before login,
+without requiring **Update > Omarchy** or a kernel change. Fresh images include
+the same bridge. Runtime `4.0.4-7` advances the package release for subsequent
+runtime updates.
+
 If repository publication fails, inspect:
 
 ```sh
