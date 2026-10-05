@@ -1,0 +1,29 @@
+From 37dbebf8d4d34443bcb3198a2635064dc377e45a Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Mon, 5 Oct 2026 09:37:48 -0400
+Subject: [PATCH] Make the host volume timeout test deterministic
+
+---
+ guest/tests/test_windows_volume_sync.py | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/guest/tests/test_windows_volume_sync.py b/guest/tests/test_windows_volume_sync.py
+index d01b622..68225b9 100644
+--- a/guest/tests/test_windows_volume_sync.py
++++ b/guest/tests/test_windows_volume_sync.py
+@@ -206,6 +206,12 @@ class VolumeSyncTests(unittest.TestCase):
+         self.assertFalse(self.pactl.transport_muted)
+ 
+     def test_host_timeout_restores_current_controls_until_new_handshake(self):
++        # Establish an active handshake at an exact timestamp, independent of
++        # setUp's timing and floating-point rounding at the timeout boundary.
++        with mock.patch.object(bridge.time, "monotonic", return_value=100.0):
++            self.volume.capable = True
++            self.volume.apply(state(2))
++        self.assertTrue(self.mirror.sync_enabled)
+         self.pactl.routes[self.default] = (21000, True)
+         with mock.patch.object(bridge.time, "monotonic", return_value=self.volume.last_host_state + bridge.VOLUME_HOST_TIMEOUT):
+             self.assertFalse(self.volume.check_host())
+-- 
+2.56.0
+
