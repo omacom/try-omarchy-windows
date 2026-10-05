@@ -1,0 +1,36 @@
+From 0b0c59937182bf1221020ef65ca204d99de8bfc4 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 12:34:28 +0000
+Subject: [PATCH] Refresh the guest package lock
+
+iniparser 4.3.0-1 -> 4.3.2-1
+upower 1.91.4-1 -> 1.91.5-1
+---
+ guest/packages.lock.json | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index 1a7728d..96f366f 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -177,7 +177,7 @@
+     "imagemagick": "7.1.2.32-1",
+     "imath": "3.2.3-1",
+     "imv": "5.0.1-2",
+-    "iniparser": "4.3.0-1",
++    "iniparser": "4.3.2-1",
+     "inotify-tools": "4.26.262-1",
+     "iproute2": "7.2.0-1",
+     "iptables": "1:1.8.13-1",
+@@ -602,7 +602,7 @@
+     "udisks2": "2.11.2-1",
+     "unibilium": "2.1.4-1",
+     "unzip": "6.0-23",
+-    "upower": "1.91.4-1",
++    "upower": "1.91.5-1",
+     "util-linux": "2.42.4-1",
+     "util-linux-libs": "2.42.4-1",
+     "uwsm": "0.27.0-1",
+-- 
+2.55.0
+
