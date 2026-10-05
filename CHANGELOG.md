@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.10.0 - 2026-10-05
 
 - On NVIDIA graphics, GPU mode no longer freezes when Media Player opens, and
   GTK4 apps such as Files open instead of crashing. Guest Vulkan apps use
