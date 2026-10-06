@@ -12,6 +12,7 @@ var (
 	procSetWindowPlacement  = user32.NewProc("SetWindowPlacement")
 	procEnumDisplayMonitors = user32.NewProc("EnumDisplayMonitors")
 	procGetMonitorInfoW     = user32.NewProc("GetMonitorInfoW")
+	procMonitorFromWindow   = user32.NewProc("MonitorFromWindow")
 	// One callback for the process: syscall.NewCallback never frees its slot.
 	enumMonitorsCallback = syscall.NewCallback(enumMonitorsProc)
 	enumMonitorDetails   []hostMonitor
@@ -32,6 +33,7 @@ const (
 	swShowMaximized  = 3
 	swShowNoActivate = 4
 	swShowNA         = 8
+	monitorNearest   = 2
 )
 
 type windowPlacementStruct struct {
@@ -68,6 +70,25 @@ func hostMonitors() []hostMonitor {
 	procEnumDisplayMonitors.Call(0, 0, enumMonitorsCallback, 0)
 	// Enumeration order is not a promise that the primary display is first.
 	return primaryFirstMonitors(enumMonitorDetails)
+}
+
+// hostMonitorForWindow returns the monitor nearest the window. The cursor
+// guard uses it so a fullscreen display window is clipped to the display it
+// actually occupies, including one to the left of or above the primary.
+func hostMonitorForWindow(hwnd uintptr) (hostMonitor, bool) {
+	monitor, _, _ := procMonitorFromWindow.Call(hwnd, monitorNearest)
+	if monitor == 0 {
+		return hostMonitor{}, false
+	}
+	info := monitorInfoEx{Size: uint32(unsafe.Sizeof(monitorInfoEx{}))}
+	if ok, _, _ := procGetMonitorInfoW.Call(monitor, uintptr(unsafe.Pointer(&info))); ok == 0 {
+		return hostMonitor{}, false
+	}
+	host := hostMonitor{syscall.UTF16ToString(info.Device[:]), info.Bounds, info.Flags&1 != 0, info.Work}
+	if host.Bounds.width() <= 0 || host.Bounds.height() <= 0 {
+		return hostMonitor{}, false
+	}
+	return host, true
 }
 
 // A missing selected display falls back to the primary display. Keep the

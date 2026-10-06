@@ -49,8 +49,9 @@ const (
 )
 
 type recordedDisplay struct {
-	pid   uint32
-	index int
+	pid     uint32
+	index   int
+	grabbed bool
 }
 
 func clearWindowEventState(hwnd uintptr) {
@@ -125,7 +126,7 @@ func restoreDisplayTitle(hwnd uintptr) {
 	if !ok {
 		return
 	}
-	retitledDisplays.Store(hwnd, recordedDisplay{qemuPid.Load(), index})
+	retitledDisplays.Store(hwnd, recordedDisplay{qemuPid.Load(), index, displayTitleGrabbed(syscall.UTF16ToString(buf[:]))})
 	value, _ := syscall.UTF16PtrFromString(displayWindowTitle(index))
 	procSetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(value)))
 }
@@ -138,6 +139,18 @@ func recordedDisplayIndex(hwnd uintptr) (int, bool) {
 	}
 	display := value.(recordedDisplay)
 	return display.index, display.pid == qemuPid.Load()
+}
+
+// recordedDisplayGrab reports the last QEMU grab state seen for a display
+// window. Missing state is treated as released so the guard never clips a
+// window the launcher did not observe through QEMU's title.
+func recordedDisplayGrab(hwnd uintptr) bool {
+	value, ok := retitledDisplays.Load(hwnd)
+	if !ok {
+		return false
+	}
+	display := value.(recordedDisplay)
+	return display.pid == qemuPid.Load() && display.grabbed
 }
 
 // takeUserMoved reports, once, that the user moved or resized the window.

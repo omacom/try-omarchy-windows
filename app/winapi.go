@@ -277,10 +277,15 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), maxTitle)
 	title := syscall.UTF16ToString(buf[:])
 	state, known := enumTitleWindows[hwnd]
-	index, parsed := displayIndexFromTitle(title)
+	index, fromTitle := displayIndexFromTitle(title)
+	parsed := fromTitle
 	if !parsed {
 		// The title hook may have renamed it before this saw QEMU's title.
 		index, parsed = recordedDisplayIndex(hwnd)
+	}
+	grabbed := recordedDisplayGrab(hwnd)
+	if fromTitle {
+		grabbed = displayTitleGrabbed(title)
 	}
 	if !known || parsed && state.index != index {
 		if !parsed {
@@ -305,7 +310,7 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		}
 		setTaskbarIdentity(hwnd)
 	}
-	retitledDisplays.Store(hwnd, recordedDisplay{enumTitlePid, state.index})
+	retitledDisplays.Store(hwnd, recordedDisplay{enumTitlePid, state.index, grabbed})
 	if curtainUp.Load() {
 		concealForCurtain(hwnd)
 		curtainTaskbar(hwnd)
