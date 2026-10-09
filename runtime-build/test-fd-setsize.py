@@ -15,9 +15,10 @@ if sys.platform != "win32":
 meson = (args.source / "meson.build").read_text()
 start = meson.index("elif host_os == 'windows'")
 end = meson.index("\nendif", start)
-match = re.search(r"-DFD_SETSIZE=(\d+)", meson[start:end])
-assert match, "QEMU's Windows flags do not set FD_SETSIZE"
-size = int(match.group(1))
+matches = re.findall(r"^\s*qemu_common_flags \+= '-DFD_SETSIZE=(\d+)'\s*$",
+                     meson[start:end], re.MULTILINE)
+assert len(matches) == 1, "QEMU's Windows flags must set FD_SETSIZE exactly once"
+size = int(matches[0])
 sockets = 100
 assert size >= sockets, f"FD_SETSIZE {size} is below the {sockets} sockets tested"
 
