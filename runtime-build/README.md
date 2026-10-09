@@ -185,3 +185,13 @@ The build runs `test-sdl-cursor.py` against the real cursor, grab, fullscreen,
 window-event and window-destruction functions with mocked SDL. Windows motion,
 click alignment, mixed DPI and physical multi-monitor behavior remain to verify
 with the separate guest cursor fix and a built runtime.
+
+`0024-raise-windows-fd-setsize-for-slirp.patch` builds QEMU with
+`FD_SETSIZE=4096`. The Windows main loop polls slirp's host sockets with
+`select()`, and Winsock's `fd_set` holds 64 sockets by default; `FD_SET`
+silently ignores the rest. A guest with more than 64 open flows (a browser,
+a package update, Tailscale) stops receiving replies on the extra sockets:
+UDP answers and TCP data reach QEMU's sockets on the host but never reach the
+guest, and forwarded ports stop accepting. Restarting the VM only helped until
+the socket count grew again. `select()` cost follows the number of sockets
+passed, not the declared size, so the larger limit costs nothing when idle.

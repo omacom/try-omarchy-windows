@@ -101,6 +101,10 @@
       {
         "file": "patches/qemu/0023-show-guest-cursors-in-sdl-windows.patch",
         "sha256": "1305bb5e384cba185b4259a2935b0528404c18ee38d10e9084d25cac346e4bde"
+      },
+      {
+        "file": "patches/qemu/0024-raise-windows-fd-setsize-for-slirp.patch",
+        "sha256": "ba94ed3e314c9388aeba6e888747d92e797f1c98c9c546b4ed71a76f10163059"
       }
     ]
   },
