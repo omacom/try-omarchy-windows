@@ -1148,7 +1148,7 @@ index 0000000..100e825
 +      _wremove(to);
 +      _wrename(from, to);
 +   }
-+   *file = _wfopen(path, L"w");
++   *file = _wfopen(path, L"wb");
 +#else
 +   const char *path = flight ? flightpath : logpath;
 +   char from[4160], to[4160];
@@ -1246,8 +1246,8 @@ index 0000000..100e825
 +   swprintf(logpath, 32768, L"%ls\\venus-%llu-%llu.log", folder, (unsigned long long)pid,
 +            (unsigned long long)now_ms());
 +   swprintf(flightpath, 32768, L"%ls.inflight", logpath);
-+   logfile = _wfopen(logpath, L"w");
-+   flightfile = _wfopen(flightpath, L"w");
++   logfile = _wfopen(logpath, L"wb");
++   flightfile = _wfopen(flightpath, L"wb");
 +#else
 +   pid = getpid();
 +   const char *base = getenv("LOCALAPPDATA");
