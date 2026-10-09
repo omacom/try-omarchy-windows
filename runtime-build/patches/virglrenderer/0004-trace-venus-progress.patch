@@ -129,8 +129,8 @@ index c97d8cb..1b636c9 100644
                         UNUSED void *user_data)
  {
 -   (void)message;
-+   uint64_t t = WINQ_TRACE_ENTER(0, 0, "proxy.vkr.debug", "level=%u message_bytes=%zu",
-+                                 log_level, message ? strlen(message) : 0);
++   uint64_t t = WINQ_TRACE_ENTER(0, 0, "proxy.vkr.debug", "level=%u message_bytes=%" PRIu64,
++                                 log_level, (uint64_t)(message ? strlen(message) : 0));
 +   WINQ_TRACE_EXIT(t, "metadata_only=1");
  }
  
@@ -906,7 +906,7 @@ index e03e51b..126fb05 100644
  
 +   uint64_t trace = WINQ_TRACE_ENTER(
 +      ((struct vkr_context *)ring->dispatch.data)->ctx_id, 0, "ring.write_extra",
-+      "ring=%" PRIu64 " offset=%zu size=4", ring->id, offset);
++      "ring=%" PRIu64 " offset=%" PRIu64 " size=4", ring->id, (uint64_t)offset);
     atomic_store_explicit(extra->cached_data, val, memory_order_release);
 +   WINQ_TRACE_EXIT(trace, "written=1");
  

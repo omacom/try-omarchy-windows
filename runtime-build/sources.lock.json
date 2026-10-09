@@ -126,7 +126,7 @@
       },
       {
         "file": "patches/virglrenderer/0004-trace-venus-progress.patch",
-        "sha256": "5ae49df3d32cdef715c785433bfea673e1c55a16e34fd7f2951c1bf689b93b8a"
+        "sha256": "5cc75f5814720314bf1ddaadf6f7256b539c8015ac5918a9242ceedb8a243ef1"
       }
     ]
   }
