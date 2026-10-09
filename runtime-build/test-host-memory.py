@@ -28,6 +28,8 @@ harness = r'''
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#define WINQ_TRACE_ENTER(...) 0
+#define WINQ_TRACE_EXIT(call, ...) do { (void)(call); } while (0)
 #define MAX2(a,b) ((a)>(b)?(a):(b))
 struct vkr_host_memory { struct vkr_host_memory *next; int fd; void *mapping; };
 struct physical { uint64_t min_host_pointer_alignment; VkPhysicalDeviceMemoryProperties memory_properties; };

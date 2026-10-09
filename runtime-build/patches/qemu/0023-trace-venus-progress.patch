@@ -1,0 +1,289 @@
+Subject: Trace renderer and SDL progress
+
+Opt-in metadata logging for issue 276. Native waits, timeouts, resource
+choices and result handling are unchanged. WINQ_VENUS_TRACE=1 enables it.
+
+diff --git a/hw/display/virtio-gpu-virgl.c b/hw/display/virtio-gpu-virgl.c
+index fa79d9b..6c40243 100644
+--- a/hw/display/virtio-gpu-virgl.c
++++ b/hw/display/virtio-gpu-virgl.c
+@@ -116,7 +116,10 @@ static void virtio_gpu_virgl_resume_cmdq_bh(void *opaque)
+         return;
+     }
+ 
++    uint64_t cmdq_trace =
++        WINQ_TRACE_ENTER(0, 0, "qemu.process_cmdq", "metadata=1");
+     virtio_gpu_process_cmdq(g);
++    WINQ_TRACE_EXIT(cmdq_trace, "return=void");
+ }
+ 
+ /*
+@@ -636,7 +639,11 @@ static void virgl_cmd_submit_3d(VirtIOGPU *g,
+         g->stats.bytes_3d += cs.size;
+     }
+ 
+-    virgl_renderer_submit_cmd(buf, cs.hdr.ctx_id, cs.size / 4);
++    uint64_t venus_trace =
++        WINQ_TRACE_ENTER(cs.hdr.ctx_id, 0, "qemu.renderer.submit",
++                         "bytes=%u words=%u", cs.size, cs.size / 4);
++    int trace_ret = virgl_renderer_submit_cmd(buf, cs.hdr.ctx_id, cs.size / 4);
++    WINQ_TRACE_EXIT(venus_trace, "result=%d", trace_ret);
+ 
+ out:
+     g_free(buf);
+@@ -875,7 +882,13 @@ static void virgl_cmd_resource_create_blob(VirtIOGPU *g,
+     virgl_args.iovecs = res->base.iov;
+     virgl_args.num_iovs = res->base.iov_cnt;
+ 
++    uint64_t venus_trace = WINQ_TRACE_ENTER(
++        cblob.hdr.ctx_id, 0, "qemu.renderer.blob",
++        "res=%u blob=%" PRIu64 " size=%" PRIu64 " mem=%u flags=0x%x",
++        cblob.resource_id, cblob.blob_id, cblob.size, cblob.blob_mem,
++        cblob.blob_flags);
+     ret = virgl_renderer_resource_create_blob(&virgl_args);
++    WINQ_TRACE_EXIT(venus_trace, "result=%d", ret);
+     if (ret) {
+         qemu_log_mask(LOG_GUEST_ERROR, "%s: virgl blob create error: %s\n",
+                       __func__, strerror(-ret));
+@@ -1144,9 +1157,14 @@ void virtio_gpu_virgl_process_cmd(VirtIOGPU *g,
+     if (cmd->cmd_hdr.flags & VIRTIO_GPU_FLAG_INFO_RING_IDX) {
+         const uint32_t flags = VIRGL_RENDERER_FENCE_FLAG_MERGEABLE;
+ 
++        uint64_t venus_trace = WINQ_TRACE_ENTER(
++            cmd->cmd_hdr.ctx_id, 0, "qemu.renderer.context_fence",
++            "ring=%u fence_id=%" PRIu64 " flags=0x%x", cmd->cmd_hdr.ring_idx,
++            cmd->cmd_hdr.fence_id, flags);
+         ret = virgl_renderer_context_create_fence(cmd->cmd_hdr.ctx_id, flags,
+                                                   cmd->cmd_hdr.ring_idx,
+                                                   cmd->cmd_hdr.fence_id);
++        WINQ_TRACE_EXIT(venus_trace, "result=%d", ret);
+         if (ret) {
+             qemu_log_mask(LOG_GUEST_ERROR,
+                           "%s: virgl_renderer_context_create_fence error: %s",
+@@ -1160,7 +1178,11 @@ void virtio_gpu_virgl_process_cmd(VirtIOGPU *g,
+      * Unlike other virglrenderer functions, this one returns a positive
+      * error code.
+      */
++    uint64_t venus_trace =
++        WINQ_TRACE_ENTER(0, 0, "qemu.renderer.fence", "fence_id=%" PRIu64,
++                         cmd->cmd_hdr.fence_id);
+     ret = virgl_renderer_create_fence(cmd->cmd_hdr.fence_id, 0);
++    WINQ_TRACE_EXIT(venus_trace, "result=%d", ret);
+     if (ret) {
+         qemu_log_mask(LOG_GUEST_ERROR,
+                       "%s: virgl_renderer_create_fence error: %s",
+@@ -1187,7 +1209,12 @@ static void virgl_write_fence(void *opaque, uint32_t fence)
+             continue;
+         }
+         trace_virtio_gpu_fence_resp(cmd->cmd_hdr.fence_id);
++        uint64_t response_trace =
++            WINQ_TRACE_ENTER(cmd->cmd_hdr.ctx_id, 0, "qemu.fence.response",
++                             "ring=%u fence_id=%" PRIu64, cmd->cmd_hdr.ring_idx,
++                             cmd->cmd_hdr.fence_id);
+         virtio_gpu_ctrl_response_nodata(g, cmd, VIRTIO_GPU_RESP_OK_NODATA);
++        WINQ_TRACE_EXIT(response_trace, "return=void");
+         QTAILQ_REMOVE(&g->fenceq, cmd, next);
+         g_free(cmd);
+         g->inflight--;
+@@ -1208,7 +1235,12 @@ static void virgl_write_context_fence(void *opaque, uint32_t ctx_id,
+             cmd->cmd_hdr.ctx_id == ctx_id && cmd->cmd_hdr.ring_idx == ring_idx &&
+             cmd->cmd_hdr.fence_id <= fence_id) {
+             trace_virtio_gpu_fence_resp(cmd->cmd_hdr.fence_id);
++            uint64_t response_trace =
++                WINQ_TRACE_ENTER(cmd->cmd_hdr.ctx_id, 0, "qemu.fence.response",
++                                 "ring=%u fence_id=%" PRIu64,
++                                 cmd->cmd_hdr.ring_idx, cmd->cmd_hdr.fence_id);
+             virtio_gpu_ctrl_response_nodata(g, cmd, VIRTIO_GPU_RESP_OK_NODATA);
++            WINQ_TRACE_EXIT(response_trace, "return=void");
+             QTAILQ_REMOVE(&g->fenceq, cmd, next);
+             g_free(cmd);
+             g->inflight--;
+@@ -1270,7 +1302,12 @@ static void virtio_gpu_virgl_async_fence_bh(void *opaque)
+                     continue;
+                 }
+             }
++            uint64_t response_trace =
++                WINQ_TRACE_ENTER(cmd->cmd_hdr.ctx_id, 0, "qemu.fence.response",
++                                 "ring=%u fence_id=%" PRIu64,
++                                 cmd->cmd_hdr.ring_idx, cmd->cmd_hdr.fence_id);
+             virtio_gpu_ctrl_response_nodata(g, cmd, VIRTIO_GPU_RESP_OK_NODATA);
++            WINQ_TRACE_EXIT(response_trace, "return=void");
+             QTAILQ_REMOVE(&g->fenceq, cmd, next);
+             g_free(cmd);
+         }
+@@ -1396,8 +1433,14 @@ static void virtio_gpu_fence_poll(void *opaque)
+         return;
+     }
+ 
++    uint64_t poll_trace =
++        WINQ_TRACE_ENTER(0, 0, "qemu.renderer.poll", "metadata=1");
+     virgl_renderer_poll();
++    WINQ_TRACE_EXIT(poll_trace, "return=void");
++    uint64_t cmdq_trace =
++        WINQ_TRACE_ENTER(0, 0, "qemu.process_cmdq", "metadata=1");
+     virtio_gpu_process_cmdq(g);
++    WINQ_TRACE_EXIT(cmdq_trace, "return=void");
+     if (!QTAILQ_EMPTY(&g->cmdq) || !QTAILQ_EMPTY(&g->fenceq)) {
+         timer_mod(gl->fence_poll, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 1);
+     }
+diff --git a/ui/meson.build b/ui/meson.build
+index 69404bc..2ae87aa 100644
+--- a/ui/meson.build
++++ b/ui/meson.build
+@@ -127,6 +127,9 @@ if sdl.found()
+     'sdl2.c',
+   ))
+   sdl_ss.add(when: opengl, if_true: files('sdl2-gl.c'))
++  if virgl.found()
++    sdl_ss.add(virgl) # Shared diagnostic registry with the renderer.
++  endif
+   sdl_ss.add(when: x11, if_true: files('x_keymap.c'))
+   ui_modules += {'sdl' : sdl_ss}
+ endif
+diff --git a/ui/sdl2-gl.c b/ui/sdl2-gl.c
+index 7606a6d..d6712bc 100644
+--- a/ui/sdl2-gl.c
++++ b/ui/sdl2-gl.c
+@@ -31,6 +31,15 @@
+ #include "ui/console.h"
+ #include "ui/input.h"
+ #include "ui/sdl2.h"
++#ifdef CONFIG_VIRGL
++#include <virglrenderer.h>
++#else
++#define WINQ_TRACE_ENTER(...) 0
++#define WINQ_TRACE_EXIT(call, ...)                                             \
++  do {                                                                         \
++    (void)(call);                                                              \
++  } while (0)
++#endif
+ 
+ static void sdl2_set_scanout_mode(struct sdl2_console *scon, bool scanout)
+ {
+@@ -52,13 +61,25 @@ static void sdl2_gl_render_surface(struct sdl2_console *scon)
+ {
+     int ww, wh;
+ 
+-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    uint64_t current_trace = WINQ_TRACE_ENTER(
++        0, 0, "qemu.SDL_GL_MakeCurrent", "window=%p context=%p",
++        (void *)scon->real_window, (void *)scon->winctx);
++    int current_result = SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    WINQ_TRACE_EXIT(current_trace, "result=%d", current_result);
++    (void)current_result;
+ 
+     SDL_GetWindowSize(scon->real_window, &ww, &wh);
+     surface_gl_setup_viewport(scon->gls, scon->surface, ww, wh);
+ 
++    uint64_t surface_trace = WINQ_TRACE_ENTER(
++        0, 0, "qemu.GL_render_surface", "window=%p width=%d height=%d",
++        (void *)scon->real_window, ww, wh);
+     surface_gl_render_texture(scon->gls, scon->surface);
++    WINQ_TRACE_EXIT(surface_trace, "return=void");
++    uint64_t swap_trace = WINQ_TRACE_ENTER(
++        0, 0, "qemu.SDL_GL_SwapWindow", "window=%p", (void *)scon->real_window);
+     SDL_GL_SwapWindow(scon->real_window);
++    WINQ_TRACE_EXIT(swap_trace, "return=void");
+ }
+ 
+ void sdl2_gl_update(DisplayChangeListener *dcl,
+@@ -72,7 +93,12 @@ void sdl2_gl_update(DisplayChangeListener *dcl,
+         return;
+     }
+ 
+-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    uint64_t current_trace = WINQ_TRACE_ENTER(
++        0, 0, "qemu.SDL_GL_MakeCurrent", "window=%p context=%p",
++        (void *)scon->real_window, (void *)scon->winctx);
++    int current_result = SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    WINQ_TRACE_EXIT(current_trace, "result=%d", current_result);
++    (void)current_result;
+     surface_gl_update_texture(scon->gls, scon->surface, x, y, w, h);
+     scon->updates++;
+ }
+@@ -85,7 +111,12 @@ void sdl2_gl_switch(DisplayChangeListener *dcl,
+ 
+     assert(scon->opengl);
+ 
+-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    uint64_t current_trace = WINQ_TRACE_ENTER(
++        0, 0, "qemu.SDL_GL_MakeCurrent", "window=%p context=%p",
++        (void *)scon->real_window, (void *)scon->winctx);
++    int current_result = SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    WINQ_TRACE_EXIT(current_trace, "result=%d", current_result);
++    (void)current_result;
+     surface_gl_destroy_texture(scon->gls, scon->surface);
+ 
+     scon->surface = new_surface;
+@@ -153,7 +184,12 @@ QEMUGLContext sdl2_gl_create_context(DisplayGLCtx *dgc,
+ 
+     current_ctx = SDL_GL_GetCurrentContext();
+ 
+-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    uint64_t current_trace = WINQ_TRACE_ENTER(
++        0, 0, "qemu.SDL_GL_MakeCurrent", "window=%p context=%p",
++        (void *)scon->real_window, (void *)scon->winctx);
++    int current_result = SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    WINQ_TRACE_EXIT(current_trace, "result=%d", current_result);
++    (void)current_result;
+ 
+     SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+     if (scon->opts->gl == DISPLAY_GL_MODE_ON ||
+@@ -229,7 +265,12 @@ void sdl2_gl_scanout_texture(DisplayChangeListener *dcl,
+     scon->h = h;
+     scon->y0_top = backing_y_0_top;
+ 
+-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    uint64_t current_trace = WINQ_TRACE_ENTER(
++        0, 0, "qemu.SDL_GL_MakeCurrent", "window=%p context=%p",
++        (void *)scon->real_window, (void *)scon->winctx);
++    int current_result = SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    WINQ_TRACE_EXIT(current_trace, "result=%d", current_result);
++    (void)current_result;
+ 
+     sdl2_set_scanout_mode(scon, true);
+     egl_fb_setup_for_tex(&scon->guest_fb, backing_width, backing_height,
+@@ -250,14 +291,28 @@ void sdl2_gl_scanout_flush(DisplayChangeListener *dcl,
+         return;
+     }
+ 
+-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    uint64_t current_trace = WINQ_TRACE_ENTER(
++        0, 0, "qemu.SDL_GL_MakeCurrent", "window=%p context=%p",
++        (void *)scon->real_window, (void *)scon->winctx);
++    int current_result = SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    WINQ_TRACE_EXIT(current_trace, "result=%d", current_result);
++    (void)current_result;
+     SDL_GL_SetSwapInterval(0);
+ 
+     SDL_GetWindowSize(scon->real_window, &ww, &wh);
+     egl_fb_setup_default(&scon->win_fb, ww, wh, 0, 0);
++    uint64_t blit_trace = WINQ_TRACE_ENTER(
++        0, 0, "qemu.GL_blit",
++        "window=%p width=%d height=%d framebuffer=%u y0_top=%u",
++        (void *)scon->real_window, ww, wh, scon->guest_fb.framebuffer,
++        scon->y0_top);
+     egl_fb_blit(&scon->win_fb, &scon->guest_fb, !scon->y0_top);
++    WINQ_TRACE_EXIT(blit_trace, "return=void");
+ 
++    uint64_t swap_trace = WINQ_TRACE_ENTER(
++        0, 0, "qemu.SDL_GL_SwapWindow", "window=%p", (void *)scon->real_window);
+     SDL_GL_SwapWindow(scon->real_window);
++    WINQ_TRACE_EXIT(swap_trace, "return=void");
+ 
+     /* Keep poll rate high while frames are being presented */
+     scon->idle_counter = 0;
+@@ -272,7 +327,12 @@ void sdl2_gl_scanout_dmabuf(DisplayChangeListener *dcl,
+     const int *fds;
+ 
+     assert(scon->opengl);
+-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    uint64_t current_trace = WINQ_TRACE_ENTER(
++        0, 0, "qemu.SDL_GL_MakeCurrent", "window=%p context=%p",
++        (void *)scon->real_window, (void *)scon->winctx);
++    int current_result = SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
++    WINQ_TRACE_EXIT(current_trace, "result=%d", current_result);
++    (void)current_result;
+ 
+     egl_dmabuf_import_texture(dmabuf);
+     if (!qemu_dmabuf_get_texture(dmabuf)) {

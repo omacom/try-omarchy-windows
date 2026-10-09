@@ -12,6 +12,7 @@ python "$recipe/test-image-capabilities.py" "$source"
 meson setup "$output/build" "$source" --buildtype=release --prefix=/ucrt64 -Dvenus=true -Dvideo=true -Dtests=false
 meson compile -C "$output/build"
 meson install -C "$output/build"
+python "$recipe/test-venus-trace.py" /ucrt64/bin/libvirglrenderer-1.dll
 mkdir -p "$output/bin" "$output/source/build-recipe"
 cp /ucrt64/bin/libvirglrenderer-1.dll "$output/bin/"
 "$recipe/collect-dlls.sh" "$output/bin" "$output/dll-sources.txt"

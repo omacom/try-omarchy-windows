@@ -16,6 +16,9 @@ harness = r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
+#define WINQ_TRACE_ENTER(...) 0
+#define WINQ_TRACE_EXIT(call, ...) do { (void)(call); } while (0)
 #define container_of(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 typedef struct { bool placeholder; int width, height; } DisplaySurface;
 typedef struct { int con; } DisplayChangeListener;
@@ -29,7 +32,7 @@ struct sdl2_console {
 static void egl_fb_destroy(int *fb) { *fb = 0; }
 static void surface_gl_destroy_texture(void *gls, DisplaySurface *surface) {}
 static void surface_gl_create_texture(void *gls, DisplaySurface *surface) { assert(gls); }
-static void SDL_GL_MakeCurrent(int window, int context) {}
+static int SDL_GL_MakeCurrent(int window, int context) { return 0; }
 static bool surface_is_placeholder(DisplaySurface *surface) { return surface->placeholder; }
 static int qemu_console_get_index(int con) { return con; }
 static void qemu_gl_fini_shader(void *gls) {}

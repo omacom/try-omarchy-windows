@@ -31,6 +31,11 @@ harness = r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <inttypes.h>
+static bool winq_venus_trace_enabled(void) { return false; }
+static uint64_t trace_stub(const char *fmt, ...) { (void)fmt; return 0; }
+#define WINQ_TRACE_ENTER(ctx, dev, op, ...) trace_stub(__VA_ARGS__)
+#define WINQ_TRACE_EXIT(call, ...) do { (void)(call); } while (0)
 #include <stdio.h>
 #include <string.h>
 #ifndef _WIN32
@@ -60,7 +65,7 @@ struct vkr_device {
  struct vn_device_proc_table proc_table;
 };
 struct vkr_image {
- struct { union { VkImage image; } handle; } base;
+ struct { uint64_t id; union { VkImage image; } handle; } base;
  VkImage plain_image, host_image;
  VkMemoryRequirements combined_requirements; /* Also permits testing the old patch. */
  bool dma_buf_shim_linear;

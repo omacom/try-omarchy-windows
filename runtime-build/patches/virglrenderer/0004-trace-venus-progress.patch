@@ -1,0 +1,1402 @@
+Subject: Trace Venus progress and in-flight calls
+
+Opt-in metadata logging for issue 276. Native waits, timeouts, resource
+choices and result handling are unchanged. WINQ_VENUS_TRACE=1 enables it.
+
+diff --git a/src/meson.build b/src/meson.build
+index ecb99c9..5c8ab3a 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -29,6 +29,7 @@ virgl_sources = [
+    'virgl_fence.c',
+    'virgl_resource.c',
+    'virgl_util.c',
++   'winq_venus_trace.c',
+ ]
+ 
+ vrend_sources = [
+@@ -84,9 +85,12 @@ venus_sources = [
+    'venus/vkr_renderer.c',
+    'venus/vkr_ring.c',
+    'venus/vkr_transport.c',
+-   'venus/vkr_win32_shim.c',
+ ]
+ 
++if with_host_windows
++   venus_sources += ['venus/vkr_win32_shim.c']
++endif
++
+ venus_codegen = custom_target(
+    'venus_codegen',
+    input : ['venus/vkr_device_object.py', 'venus/vkr_device_object.json'],
+diff --git a/src/proxy/proxy_context.c b/src/proxy/proxy_context.c
+index c6b6d81..0cb622b 100644
+--- a/src/proxy/proxy_context.c
++++ b/src/proxy/proxy_context.c
+@@ -136,7 +136,11 @@ proxy_context_retire_timeline_fences_locked(struct proxy_context *ctx,
+       if (!proxy_fence_is_signaled(fence, timeline->cur_seqno) && !force_retire_all)
+          return false;
+ 
++      uint64_t trace = WINQ_TRACE_ENTER(ctx->base.ctx_id, 0, "proxy.fence_retire",
++                                        "ring=%u fence_id=%" PRIu64 " seqno=%u", ring_idx,
++                                        fence->fence_id, timeline->cur_seqno);
+       ctx->base.fence_retire(&ctx->base, ring_idx, fence->fence_id);
++      WINQ_TRACE_EXIT(trace, "returned=1");
+ 
+       list_del(&fence->head);
+       proxy_context_free_fence(ctx, fence);
+@@ -366,24 +370,37 @@ proxy_context_get_blob(struct virgl_context *base,
+    const struct render_context_op_header hdr = {
+       .op = RENDER_CONTEXT_OP_CREATE_RESOURCE,
+    };
++   uint64_t request_trace =
++      WINQ_TRACE_ENTER(ctx->base.ctx_id, 0, "proxy.blob.request",
++                       "res=%u blob=%" PRIu64 " size=%" PRIu64 " flags=0x%x", res_id,
++                       blob_id, blob_size, blob_flags);
+    if (!proxy_socket_send_request(&ctx->socket, &hdr, sizeof(hdr)) ||
+        !proxy_socket_send_request(&ctx->socket, &res_id, sizeof(res_id)) ||
+        !proxy_socket_send_request(&ctx->socket, &blob_id, sizeof(blob_id)) ||
+        !proxy_socket_send_request(&ctx->socket, &blob_size, sizeof(blob_size)) ||
+        !proxy_socket_send_request(&ctx->socket, &blob_flags, sizeof(blob_flags))) {
++      WINQ_TRACE_EXIT(request_trace, "sent=0");
+       proxy_log("failed to get blob %" PRIu64, blob_id);
+       return -1;
+    }
+ 
++   WINQ_TRACE_EXIT(request_trace, "sent=1");
+    struct render_context_op_create_resource_reply reply;
+    int reply_fd;
+    int reply_fd_count;
++   uint64_t reply_trace = WINQ_TRACE_ENTER(ctx->base.ctx_id, 0, "proxy.blob.reply",
++                                           "res=%u blob=%" PRIu64 " size=%" PRIu64,
++                                           res_id, blob_id, blob_size);
+    if (!proxy_socket_receive_reply_with_fds(&ctx->socket, &reply, sizeof(reply),
+                                             &reply_fd, 1, &reply_fd_count)) {
++      WINQ_TRACE_EXIT(reply_trace, "received=0");
+       proxy_log("failed to get reply of blob %" PRIu64, blob_id);
+       return -1;
+    }
+ 
++   WINQ_TRACE_EXIT(reply_trace, "received=1 fd_count=%d fd=%d type=%u map=0x%x",
++                   reply_fd_count, reply_fd_count ? reply_fd : -1, reply.fd_type,
++                   reply.map_info);
+    if (!reply_fd_count) {
+       proxy_log("invalid reply for blob %" PRIu64, blob_id);
+       return -1;
+diff --git a/src/proxy/proxy_server.c b/src/proxy/proxy_server.c
+index c97d8cb..1b636c9 100644
+--- a/src/proxy/proxy_server.c
++++ b/src/proxy/proxy_server.c
+@@ -5,6 +5,8 @@
+ 
+ #include "proxy_server.h"
+ 
++#include "virglrenderer.h"
++
+ #ifdef _WIN32
+ #include <windows.h>
+ #include <errno.h>
+@@ -204,15 +206,26 @@ server_retire_fence_cb(uint32_t ctx_id, uint32_t ring_idx, uint64_t fence_id)
+    if (!state)
+       return;
+ 
++   uint64_t trace = WINQ_TRACE_ENTER(ctx_id, 0, "proxy.retirement",
++                                     "ring=%u fence_id=%" PRIu64, ring_idx, fence_id);
+    mtx_lock(&state->workers_mutex);
+    struct server_context_worker *w = server_find_worker(state, ctx_id);
+    if (w && w->timeline_seqnos && (int)ring_idx < w->timeline_count) {
+       uint32_t seqno = (uint32_t)fence_id;
++      uint64_t write_trace = WINQ_TRACE_ENTER(ctx_id, 0, "proxy.timeline.write",
++                                              "ring=%u seqno=%u", ring_idx, seqno);
+       atomic_store(&w->timeline_seqnos[ring_idx], seqno);
+-      if (w->fence_eventfd >= 0)
++      WINQ_TRACE_EXIT(write_trace, "written=1");
++      if (w->fence_eventfd >= 0) {
++         uint64_t event_trace = WINQ_TRACE_ENTER(ctx_id, 0, "proxy.event.write",
++                                                 "ring=%u seqno=%u eventfd=%d", ring_idx,
++                                                 seqno, w->fence_eventfd);
+          write_eventfd(w->fence_eventfd, 1);
++         WINQ_TRACE_EXIT(event_trace, "returned=1");
++      }
+    }
+    mtx_unlock(&state->workers_mutex);
++   WINQ_TRACE_EXIT(trace, "returned=1");
+ }
+ 
+ static void
+@@ -220,7 +233,9 @@ server_cb_debug_logger(UNUSED enum virgl_log_level_flags log_level,
+                        const char *message,
+                        UNUSED void *user_data)
+ {
+-   (void)message;
++   uint64_t t = WINQ_TRACE_ENTER(0, 0, "proxy.vkr.debug", "level=%u message_bytes=%zu",
++                                 log_level, message ? strlen(message) : 0);
++   WINQ_TRACE_EXIT(t, "metadata_only=1");
+ }
+ 
+ static const struct vkr_renderer_callbacks server_vkr_cbs = {
+@@ -231,6 +246,7 @@ static const struct vkr_renderer_callbacks server_vkr_cbs = {
+ static FILE *
+ server_dbgf(const char *fmt, ...)
+ {
++   /* Keep logger behavior; the dedicated tracer does not need this FILE*. */
+    (void)fmt;
+    return NULL;
+ }
+@@ -407,6 +423,10 @@ server_context_worker_thread(void *arg)
+          };
+          int res_fd = -1;
+ 
++         uint64_t trace =
++            WINQ_TRACE_ENTER(w->ctx_id, 0, "proxy.server.blob",
++                             "res=%u blob=%" PRIu64 " size=%" PRIu64 " flags=0x%x",
++                             res_id, blob_id, blob_size, blob_flags);
+          mtx_lock(&state->renderer_mutex);
+          bool ok = vkr_renderer_create_resource(
+             w->ctx_id, res_id, blob_id,
+@@ -414,14 +434,21 @@ server_context_worker_thread(void *arg)
+             &reply.fd_type, &res_fd, &reply.map_info,
+             &reply.vulkan_info);
+          mtx_unlock(&state->renderer_mutex);
++         WINQ_TRACE_EXIT(trace, "ok=%u type=%u fd=%d map=0x%x", ok, reply.fd_type, res_fd,
++                         reply.map_info);
+ 
++         uint64_t reply_trace = WINQ_TRACE_ENTER(w->ctx_id, 0, "proxy.server.blob.reply",
++                                                 "res=%u blob=%" PRIu64 " type=%u fd=%d",
++                                                 res_id, blob_id, reply.fd_type, res_fd);
++         bool sent;
+          if (!ok || res_fd < 0) {
+             reply.fd_type = VIRGL_RESOURCE_FD_INVALID;
+-            server_send_reply(w->socket_fd, &reply, sizeof(reply));
++            sent = server_send_reply(w->socket_fd, &reply, sizeof(reply));
+          } else {
+-            server_send_reply_with_fds(w->socket_fd, &reply, sizeof(reply),
+-                                       &res_fd, 1);
++            sent = server_send_reply_with_fds(w->socket_fd, &reply, sizeof(reply),
++                                              &res_fd, 1);
+          }
++         WINQ_TRACE_EXIT(reply_trace, "sent=%u", sent);
+          break;
+       }
+ 
+@@ -746,7 +773,9 @@ proxy_server_init_fd(struct proxy_server *srv)
+ struct proxy_server *
+ proxy_server_create(void)
+ {
++#ifdef _WIN32
+    server_dbgf("proxy_server_create called\n");
++#endif
+    struct proxy_server *srv = calloc(1, sizeof(*srv));
+    if (!srv)
+       return NULL;
+diff --git a/src/venus/vkr_allocator.c b/src/venus/vkr_allocator.c
+index cb29dc0..35de613 100644
+--- a/src/venus/vkr_allocator.c
++++ b/src/venus/vkr_allocator.c
+@@ -25,8 +25,11 @@
+ #include "vkr_allocator.h"
+ 
+ #include <errno.h>
++#include <inttypes.h>
+ #include <stdlib.h>
+ #include <string.h>
++
++#include "virglrenderer.h"
+ #ifdef _WIN32
+ #include <windows.h>
+ #include <vulkan/vulkan.h>
+@@ -172,7 +175,14 @@ vkr_allocator_allocate_memory(struct virgl_resource *res)
+ #endif
+ 
+    VkDeviceMemory mem_handle;
+-   if (vk->AllocateMemory(dev_handle, &alloc_info, NULL, &mem_handle) != VK_SUCCESS) {
++   uint64_t trace = WINQ_TRACE_ENTER(
++      0, (uint64_t)(uintptr_t)dev_handle, "vkAllocateMemory.allocator",
++      "res=%u size=%" PRIu64 " type=%u fd=%d", res->res_id,
++      (uint64_t)alloc_info.allocationSize, alloc_info.memoryTypeIndex, fd);
++   VkResult result = vk->AllocateMemory(dev_handle, &alloc_info, NULL, &mem_handle);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d memory=0x%" PRIx64, result,
++                   result == VK_SUCCESS ? (uint64_t)(uintptr_t)mem_handle : 0);
++   if (result != VK_SUCCESS) {
+ #ifdef _WIN32
+       CloseHandle(dup_handle);
+ #endif
+@@ -341,6 +351,16 @@ vkr_allocator_init(void)
+          goto fail;
+       }
+ 
++      if (winq_venus_trace_enabled()) {
++         const uint8_t *u = id_props.deviceUUID;
++         uint64_t t = WINQ_TRACE_ENTER(
++            0, (uint64_t)(uintptr_t)vkr_allocator.devices[i], "device.identity.allocator",
++            "name=%s "
++            "uuid=%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
++            props2.properties.deviceName, u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7],
++            u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
++         WINQ_TRACE_EXIT(t, "VkResult=%d", res);
++      }
+       vkr_allocator_dev_proc_table_init(vkr_allocator.devices[i], vk->GetDeviceProcAddr,
+                                         &vkr_allocator.proc_tables[i]);
+    }
+@@ -379,8 +399,14 @@ vkr_allocator_resource_map(struct virgl_resource *res, void **map, uint64_t *out
+       return -EINVAL;
+ 
+    void *ptr;
+-   if (mem_info->vk->MapMemory(mem_info->device, mem_info->device_memory, 0,
+-                               mem_info->size, 0, &ptr) != VK_SUCCESS) {
++   uint64_t trace = WINQ_TRACE_ENTER(
++      0, (uint64_t)(uintptr_t)mem_info->device, "vkMapMemory.allocator",
++      "res=%u memory=0x%" PRIx64 " size=%" PRIu64, res->res_id,
++      (uint64_t)(uintptr_t)mem_info->device_memory, (uint64_t)mem_info->size);
++   VkResult result = mem_info->vk->MapMemory(mem_info->device, mem_info->device_memory, 0,
++                                             mem_info->size, 0, &ptr);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d", result);
++   if (result != VK_SUCCESS) {
+       vkr_allocator_free_memory(mem_info);
+       return -EINVAL;
+    }
+diff --git a/src/venus/vkr_buffer.c b/src/venus/vkr_buffer.c
+index 192da9e..a80078b 100644
+--- a/src/venus/vkr_buffer.c
++++ b/src/venus/vkr_buffer.c
+@@ -243,14 +243,29 @@ vkr_dispatch_vkBindBufferMemory(UNUSED struct vn_dispatch_context *dispatch,
+ #ifdef _WIN32
+       struct vkr_buffer *obj = vkr_buffer_from_handle(args->buffer);
+       struct vkr_device_memory *memory = vkr_device_memory_from_handle(args->memory);
+-      if (!vkr_buffer_select_host_memory(obj, memory && memory->host_memory)) {
++      uint64_t variant_trace = WINQ_TRACE_ENTER(
++         dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++         "resource.variant.buffer",
++         "id=%" PRIu64 " host=%u plain=0x%" PRIx64 " hostHandle=0x%" PRIx64, obj->base.id,
++         memory && memory->host_memory, (uint64_t)(uintptr_t)obj->plain_buffer,
++         (uint64_t)(uintptr_t)obj->host_buffer);
++      bool selected = vkr_buffer_select_host_memory(obj, memory && memory->host_memory);
++      WINQ_TRACE_EXIT(variant_trace, "selected=%u handle=0x%" PRIx64, selected,
++                      (uint64_t)(uintptr_t)obj->base.handle.buffer);
++      if (!selected) {
+          args->ret = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+          return;
+       }
+ #endif
+    vn_replace_vkBindBufferMemory_args_handle(args);
++   uint64_t trace = WINQ_TRACE_ENTER(
++      dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++      "vkBindBufferMemory", "buffer=0x%" PRIx64 " memory=0x%" PRIx64 " offset=%" PRIu64,
++      (uint64_t)(uintptr_t)args->buffer, (uint64_t)(uintptr_t)args->memory,
++      (uint64_t)args->memoryOffset);
+    args->ret =
+       vk->BindBufferMemory(args->device, args->buffer, args->memory, args->memoryOffset);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d", args->ret);
+ }
+ 
+ static void
+@@ -264,14 +279,39 @@ vkr_dispatch_vkBindBufferMemory2(UNUSED struct vn_dispatch_context *dispatch,
+    for (uint32_t i = 0; i < args->bindInfoCount; i++) {
+       struct vkr_buffer *obj = vkr_buffer_from_handle(args->pBindInfos[i].buffer);
+       struct vkr_device_memory *memory = vkr_device_memory_from_handle(args->pBindInfos[i].memory);
+-      if (!vkr_buffer_select_host_memory(obj, memory && memory->host_memory)) {
++      uint64_t variant_trace = WINQ_TRACE_ENTER(
++         dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++         "resource.variant.buffer",
++         "id=%" PRIu64 " host=%u plain=0x%" PRIx64 " hostHandle=0x%" PRIx64, obj->base.id,
++         memory && memory->host_memory, (uint64_t)(uintptr_t)obj->plain_buffer,
++         (uint64_t)(uintptr_t)obj->host_buffer);
++      bool selected = vkr_buffer_select_host_memory(obj, memory && memory->host_memory);
++      WINQ_TRACE_EXIT(variant_trace, "selected=%u handle=0x%" PRIx64, selected,
++                      (uint64_t)(uintptr_t)obj->base.handle.buffer);
++      if (!selected) {
+          args->ret = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+          return;
+       }
+    }
+ #endif
+    vn_replace_vkBindBufferMemory2_args_handle(args);
++   if (winq_venus_trace_enabled()) {
++      for (uint32_t i = 0; i < args->bindInfoCount; i++) {
++         const VkBindBufferMemoryInfo *b = &args->pBindInfos[i];
++         uint64_t t = WINQ_TRACE_ENTER(
++            dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++            "bind.info.buffer",
++            "index=%u buffer=0x%" PRIx64 " memory=0x%" PRIx64 " offset=%" PRIu64, i,
++            (uint64_t)(uintptr_t)b->buffer, (uint64_t)(uintptr_t)b->memory,
++            (uint64_t)b->memoryOffset);
++         WINQ_TRACE_EXIT(t, "metadata=1");
++      }
++   }
++   uint64_t trace =
++      WINQ_TRACE_ENTER(dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++                       "vkBindBufferMemory2", "count=%u", args->bindInfoCount);
+    args->ret = vk->BindBufferMemory2(args->device, args->bindInfoCount, args->pBindInfos);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d", args->ret);
+ }
+ 
+ static void
+diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
+index 1593065..77612bc 100644
+--- a/src/venus/vkr_context.c
++++ b/src/venus/vkr_context.c
+@@ -478,6 +478,9 @@ vkr_context_wait_ring_seqno(struct vkr_context *ctx,
+ 
+    bool ok = true;
+ 
++   uint64_t trace = WINQ_TRACE_ENTER(ctx->ctx_id, 0, "ring.wait_head",
++                                     "ring=%" PRIu64 " head=%u target=%" PRIu64, ring->id,
++                                     vkr_ring_load_head(ring), ring_seqno);
+    mtx_lock(&ctx->wait_ring.mutex);
+    ctx->wait_ring.id = ring->id;
+    ctx->wait_ring.seqno = ring_seqno;
+@@ -487,6 +490,7 @@ vkr_context_wait_ring_seqno(struct vkr_context *ctx,
+    }
+    ctx->wait_ring.id = 0;
+    mtx_unlock(&ctx->wait_ring.mutex);
++   WINQ_TRACE_EXIT(trace, "ok=%u head=%u", ok, vkr_ring_load_head(ring));
+ 
+    return ok;
+ }
+diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
+index 07cd7dd..5f11c5d 100644
+--- a/src/venus/vkr_device.c
++++ b/src/venus/vkr_device.c
+@@ -499,6 +499,18 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
+    }
+ 
+    dev->physical_device = physical_dev;
++   dev->trace_ctx_id = ctx->ctx_id;
++   if (winq_venus_trace_enabled()) {
++      const uint8_t *u = physical_dev->id_properties.deviceUUID;
++      uint64_t t = WINQ_TRACE_ENTER(
++         ctx->ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device, "device.identity",
++         "name=%s "
++         "uuid=%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x "
++         "logical_id=%" PRIu64,
++         physical_dev->properties.deviceName, u[0], u[1], u[2], u[3], u[4], u[5], u[6],
++         u[7], u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15], dev->base.id);
++      WINQ_TRACE_EXIT(t, "VkResult=%d", args->ret);
++   }
+ 
+    vkr_device_init_proc_table(dev, physical_dev->api_version,
+                               args->pCreateInfo->ppEnabledExtensionNames,
+@@ -671,7 +683,11 @@ vkr_device_destroy(struct vkr_context *ctx, struct vkr_device *dev, bool destroy
+ #endif
+    /* Imported host addresses must survive all GPU work and driver teardown. */
+    if (ctx->on_worker_thread || has_host_memory) {
++      uint64_t trace =
++         WINQ_TRACE_ENTER(ctx->ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++                          "vkDeviceWaitIdle", "metadata=1");
+       VkResult result = vk->DeviceWaitIdle(device);
++      WINQ_TRACE_EXIT(trace, "VkResult=%d", result);
+       if (result != VK_SUCCESS)
+          vkr_log("vkDeviceWaitIdle(%p) failed(%d)", dev, (int32_t)result);
+    }
+diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
+index e296416..9d83063 100644
+--- a/src/venus/vkr_device.h
++++ b/src/venus/vkr_device.h
+@@ -35,6 +35,7 @@ struct vkr_win32_deferred_handle {
+ 
+ struct vkr_device {
+    struct vkr_object base;
++   uint32_t trace_ctx_id;
+ 
+    struct vkr_physical_device *physical_device;
+ 
+diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
+index 4be15d3..c977434 100644
+--- a/src/venus/vkr_device_memory.c
++++ b/src/venus/vkr_device_memory.c
+@@ -372,8 +372,17 @@ vkr_host_memory_create(struct vkr_device *dev, VkMemoryAllocateInfo *info,
+    VkMemoryHostPointerPropertiesEXT props = {
+       .sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT,
+    };
+-   VkResult ret = dev->GetMemoryHostPointerPropertiesEXT(dev->base.handle.device,
+-      VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, host->mapping, &props);
++   uint64_t trace =
++      WINQ_TRACE_ENTER(dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++                       "vkGetMemoryHostPointerPropertiesEXT",
++                       "requested=%" PRIu64 " rounded=%" PRIu64 " alignment=%" PRIu64
++                       " type=%u pointer=%p handleType=HOST_ALLOCATION",
++                       (uint64_t)info->allocationSize, size, alignment,
++                       info->memoryTypeIndex, host->mapping);
++   VkResult ret = dev->GetMemoryHostPointerPropertiesEXT(
++      dev->base.handle.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
++      host->mapping, &props);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d memoryTypeBits=0x%x", ret, props.memoryTypeBits);
+    if (ret != VK_SUCCESS || !(props.memoryTypeBits & (1u << info->memoryTypeIndex))) {
+       vkr_host_memory_destroy(host);
+       return ret != VK_SUCCESS ? ret : VK_ERROR_INVALID_EXTERNAL_HANDLE;
+@@ -461,7 +470,14 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+    VkImportMemoryHostPointerInfoEXT local_host_import;
+    if (physical_dev->host_external_memory_host && !might_export && !res_info &&
+        (property_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+-      args->ret = vkr_host_memory_create(dev, alloc_info, &host_memory, &local_host_import);
++      uint64_t host_trace = WINQ_TRACE_ENTER(
++         ctx->ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device, "host_memory.create",
++         "size=%" PRIu64 " type=%u flags=0x%x export=%u",
++         (uint64_t)alloc_info->allocationSize, mem_type_index, property_flags,
++         might_export);
++      args->ret =
++         vkr_host_memory_create(dev, alloc_info, &host_memory, &local_host_import);
++      WINQ_TRACE_EXIT(host_trace, "VkResult=%d", args->ret);
+       if (args->ret != VK_SUCCESS)
+          return;
+    } else
+@@ -587,10 +603,30 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+       VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO);
+    if (dedicated) {
+       bool valid = true;
+-      if (dedicated->buffer)
+-         valid = vkr_buffer_select_host_memory(vkr_buffer_from_handle(dedicated->buffer), host_memory != NULL);
+-      if (dedicated->image)
+-         valid = valid && vkr_image_select_host_memory(vkr_image_from_handle(dedicated->image), host_memory != NULL);
++      if (dedicated->buffer) {
++         struct vkr_buffer *obj = vkr_buffer_from_handle(dedicated->buffer);
++         uint64_t t = WINQ_TRACE_ENTER(
++            ctx->ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++            "resource.variant.dedicated.buffer",
++            "id=%" PRIu64 " host=%u plain=0x%" PRIx64 " hostHandle=0x%" PRIx64,
++            obj->base.id, host_memory != NULL, (uint64_t)(uintptr_t)obj->plain_buffer,
++            (uint64_t)(uintptr_t)obj->host_buffer);
++         valid = vkr_buffer_select_host_memory(obj, host_memory != NULL);
++         WINQ_TRACE_EXIT(t, "selected=%u handle=0x%" PRIx64, valid,
++                         (uint64_t)(uintptr_t)obj->base.handle.buffer);
++      }
++      if (dedicated->image && valid) {
++         struct vkr_image *obj = vkr_image_from_handle(dedicated->image);
++         uint64_t t = WINQ_TRACE_ENTER(
++            ctx->ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++            "resource.variant.dedicated.image",
++            "id=%" PRIu64 " host=%u plain=0x%" PRIx64 " hostHandle=0x%" PRIx64,
++            obj->base.id, host_memory != NULL, (uint64_t)(uintptr_t)obj->plain_image,
++            (uint64_t)(uintptr_t)obj->host_image);
++         valid = valid && vkr_image_select_host_memory(obj, host_memory != NULL);
++         WINQ_TRACE_EXIT(t, "selected=%u handle=0x%" PRIx64, valid,
++                         (uint64_t)(uintptr_t)obj->base.handle.image);
++      }
+       if (!valid) {
+          vkr_host_memory_destroy(host_memory);
+          args->ret = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+@@ -598,7 +634,19 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+       }
+    }
+ #endif
++   unsigned trace_host_pointer = 0;
++#ifdef _WIN32
++   trace_host_pointer = host_memory != NULL;
++#endif
++   uint64_t path_trace = WINQ_TRACE_ENTER(
++      ctx->ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device, "memory.path",
++      "size=%" PRIu64 " type=%u propertyFlags=0x%x guestExport=0x%x hostExport=0x%x "
++                      "import=%u fdTypes=0x%x hostPointer=%u",
++      (uint64_t)alloc_info->allocationSize, mem_type_index, property_flags,
++      guest_export_handle_types, export_info ? export_info->handleTypes : 0,
++      res_info != NULL, valid_fd_types, trace_host_pointer);
+    struct vkr_device_memory *mem = vkr_device_memory_create_and_add(ctx, args);
++   WINQ_TRACE_EXIT(path_trace, "VkResult=%d", args->ret);
+    if (!mem) {
+ #ifdef _WIN32
+       vkr_host_memory_destroy(host_memory);
+@@ -715,8 +763,13 @@ vkr_dispatch_vkGetMemoryResourcePropertiesMESA(
+          .pNext = NULL,
+          .memoryTypeBits = 0,
+       };
++      uint64_t trace = WINQ_TRACE_ENTER(
++         dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++         "vkGetMemoryWin32HandlePropertiesKHR", "handle=%p type=OPAQUE_WIN32", handle);
+       args->ret = dev->GetMemoryWin32HandlePropertiesKHR(
+          args->device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT, handle, &props);
++      WINQ_TRACE_EXIT(trace, "VkResult=%d memoryTypeBits=0x%x", args->ret,
++                      props.memoryTypeBits);
+       if (args->ret != VK_SUCCESS)
+          return;
+ 
+@@ -903,8 +956,14 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+             .memory = mem->base.handle.device_memory,
+             .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,
+          };
++         uint64_t trace = WINQ_TRACE_ENTER(
++            mem->device->trace_ctx_id,
++            (uint64_t)(uintptr_t)mem->device->base.handle.device,
++            "vkGetMemoryWin32HandleKHR", "memory=0x%" PRIx64 " size=%" PRIu64 " type=%u",
++            (uint64_t)(uintptr_t)info.memory, mem->allocation_size, info.handleType);
+          VkResult ret = mem->device->GetMemoryWin32HandleKHR(
+             mem->device->base.handle.device, &info, &handle);
++         WINQ_TRACE_EXIT(trace, "VkResult=%d handle=%p", ret, handle);
+          if (ret != VK_SUCCESS) {
+             vkr_log("mem win32 handle export failed (vk ret %d)", ret);
+             return false;
+diff --git a/src/venus/vkr_device_object.py b/src/venus/vkr_device_object.py
+index 343b9ba..62f340a 100644
+--- a/src/venus/vkr_device_object.py
++++ b/src/venus/vkr_device_object.py
+@@ -331,7 +331,20 @@ def simple_object_generator(json_obj):
+     '''
+     contents = ''
+ 
+-    contents += SIMPLE_OBJECT_CREATE_DRIVER_HANDLE_TEMPL.format(**json_obj)
++    driver_template = SIMPLE_OBJECT_CREATE_DRIVER_HANDLE_TEMPL
++    if json_obj['proc_create'] == 'AllocateMemory':
++        driver_template = driver_template.replace(
++            '   args->ret = vk->{proc_create}',
++            '   uint64_t trace = WINQ_TRACE_ENTER(ctx->ctx_id, (uint64_t)(uintptr_t)args->device,\n'
++            '      "vkAllocateMemory", "size=%" PRIu64 " type=%u",\n'
++            '      (uint64_t)args->pAllocateInfo->allocationSize, args->pAllocateInfo->memoryTypeIndex);\n'
++            '   args->ret = vk->{proc_create}')
++        driver_template = driver_template.replace(
++            '   return args->ret;',
++            '   WINQ_TRACE_EXIT(trace, "VkResult=%d memory=0x%" PRIx64, args->ret,\n'
++            '      args->ret == VK_SUCCESS ? (uint64_t)(uintptr_t)obj->base.handle.device_memory : 0);\n'
++            '   return args->ret;')
++    contents += driver_template.format(**json_obj)
+     contents += SIMPLE_OBJECT_CREATE_TEMPL.format(**json_obj)
+     contents += SIMPLE_OBJECT_CREATE_AND_ADD_TEMPL.format(**json_obj)
+ 
+diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
+index 035de43..e3b41b8 100644
+--- a/src/venus/vkr_image.c
++++ b/src/venus/vkr_image.c
+@@ -343,14 +343,29 @@ vkr_dispatch_vkBindImageMemory(UNUSED struct vn_dispatch_context *dispatch,
+ #ifdef _WIN32
+       struct vkr_image *obj = vkr_image_from_handle(args->image);
+       struct vkr_device_memory *memory = vkr_device_memory_from_handle(args->memory);
+-      if (!vkr_image_select_host_memory(obj, memory && memory->host_memory)) {
++      uint64_t variant_trace = WINQ_TRACE_ENTER(
++         dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++         "resource.variant.image",
++         "id=%" PRIu64 " host=%u plain=0x%" PRIx64 " hostHandle=0x%" PRIx64, obj->base.id,
++         memory && memory->host_memory, (uint64_t)(uintptr_t)obj->plain_image,
++         (uint64_t)(uintptr_t)obj->host_image);
++      bool selected = vkr_image_select_host_memory(obj, memory && memory->host_memory);
++      WINQ_TRACE_EXIT(variant_trace, "selected=%u handle=0x%" PRIx64, selected,
++                      (uint64_t)(uintptr_t)obj->base.handle.image);
++      if (!selected) {
+          args->ret = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+          return;
+       }
+ #endif
+    vn_replace_vkBindImageMemory_args_handle(args);
++   uint64_t trace = WINQ_TRACE_ENTER(
++      dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++      "vkBindImageMemory", "image=0x%" PRIx64 " memory=0x%" PRIx64 " offset=%" PRIu64,
++      (uint64_t)(uintptr_t)args->image, (uint64_t)(uintptr_t)args->memory,
++      (uint64_t)args->memoryOffset);
+    args->ret =
+       vk->BindImageMemory(args->device, args->image, args->memory, args->memoryOffset);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d", args->ret);
+ }
+ 
+ static void
+@@ -364,14 +379,39 @@ vkr_dispatch_vkBindImageMemory2(UNUSED struct vn_dispatch_context *dispatch,
+    for (uint32_t i = 0; i < args->bindInfoCount; i++) {
+       struct vkr_image *obj = vkr_image_from_handle(args->pBindInfos[i].image);
+       struct vkr_device_memory *memory = vkr_device_memory_from_handle(args->pBindInfos[i].memory);
+-      if (!vkr_image_select_host_memory(obj, memory && memory->host_memory)) {
++      uint64_t variant_trace = WINQ_TRACE_ENTER(
++         dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++         "resource.variant.image",
++         "id=%" PRIu64 " host=%u plain=0x%" PRIx64 " hostHandle=0x%" PRIx64, obj->base.id,
++         memory && memory->host_memory, (uint64_t)(uintptr_t)obj->plain_image,
++         (uint64_t)(uintptr_t)obj->host_image);
++      bool selected = vkr_image_select_host_memory(obj, memory && memory->host_memory);
++      WINQ_TRACE_EXIT(variant_trace, "selected=%u handle=0x%" PRIx64, selected,
++                      (uint64_t)(uintptr_t)obj->base.handle.image);
++      if (!selected) {
+          args->ret = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+          return;
+       }
+    }
+ #endif
+    vn_replace_vkBindImageMemory2_args_handle(args);
++   if (winq_venus_trace_enabled()) {
++      for (uint32_t i = 0; i < args->bindInfoCount; i++) {
++         const VkBindImageMemoryInfo *b = &args->pBindInfos[i];
++         uint64_t t = WINQ_TRACE_ENTER(
++            dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++            "bind.info.image",
++            "index=%u image=0x%" PRIx64 " memory=0x%" PRIx64 " offset=%" PRIu64, i,
++            (uint64_t)(uintptr_t)b->image, (uint64_t)(uintptr_t)b->memory,
++            (uint64_t)b->memoryOffset);
++         WINQ_TRACE_EXIT(t, "metadata=1");
++      }
++   }
++   uint64_t trace =
++      WINQ_TRACE_ENTER(dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++                       "vkBindImageMemory2", "count=%u", args->bindInfoCount);
+    args->ret = vk->BindImageMemory2(args->device, args->bindInfoCount, args->pBindInfos);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d", args->ret);
+ }
+ 
+ static void
+diff --git a/src/venus/vkr_queue.c b/src/venus/vkr_queue.c
+index e111881..94ca428 100644
+--- a/src/venus/vkr_queue.c
++++ b/src/venus/vkr_queue.c
+@@ -17,6 +17,77 @@
+ #include "vkr_physical_device.h"
+ #include "vkr_queue_gen.h"
+ 
++/* Metadata only: handles and timeline values, never guest command contents. */
++static void
++vkr_trace_submit(struct vkr_queue *queue, uint32_t count, const VkSubmitInfo *submits)
++{
++   if (!winq_venus_trace_enabled())
++      return;
++   uint32_t ctx = queue->context->ctx_id;
++   uint64_t dev = (uint64_t)(uintptr_t)queue->device->base.handle.device;
++   for (uint32_t i = 0; i < count; i++) {
++      const VkSubmitInfo *s = &submits[i];
++      const VkTimelineSemaphoreSubmitInfo *t =
++         vkr_find_struct(s->pNext, VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO);
++      uint64_t call = WINQ_TRACE_ENTER(
++         ctx, dev, "submit.info",
++         "queue=0x%" PRIx64 " index=%u commands=%u waits=%u signals=%u",
++         (uint64_t)(uintptr_t)queue->base.handle.queue, i, s->commandBufferCount,
++         s->waitSemaphoreCount, s->signalSemaphoreCount);
++      WINQ_TRACE_EXIT(call, "metadata=1");
++      for (uint32_t j = 0; j < s->waitSemaphoreCount; j++) {
++         call = WINQ_TRACE_ENTER(
++            ctx, dev, "submit.wait",
++            "index=%u semaphore=0x%" PRIx64 " stage=0x%x timeline=%u value=%" PRIu64, i,
++            (uint64_t)(uintptr_t)s->pWaitSemaphores[j], s->pWaitDstStageMask[j],
++            t != NULL,
++            t && j < t->waitSemaphoreValueCount ? t->pWaitSemaphoreValues[j] : 0);
++         WINQ_TRACE_EXIT(call, "metadata=1");
++      }
++      for (uint32_t j = 0; j < s->signalSemaphoreCount; j++) {
++         call = WINQ_TRACE_ENTER(
++            ctx, dev, "submit.signal",
++            "index=%u semaphore=0x%" PRIx64 " timeline=%u value=%" PRIu64, i,
++            (uint64_t)(uintptr_t)s->pSignalSemaphores[j], t != NULL,
++            t && j < t->signalSemaphoreValueCount ? t->pSignalSemaphoreValues[j] : 0);
++         WINQ_TRACE_EXIT(call, "metadata=1");
++      }
++   }
++}
++
++static void
++vkr_trace_submit2(struct vkr_queue *queue, uint32_t count, const VkSubmitInfo2 *submits)
++{
++   if (!winq_venus_trace_enabled())
++      return;
++   uint32_t ctx = queue->context->ctx_id;
++   uint64_t dev = (uint64_t)(uintptr_t)queue->device->base.handle.device;
++   for (uint32_t i = 0; i < count; i++) {
++      const VkSubmitInfo2 *s = &submits[i];
++      uint64_t call = WINQ_TRACE_ENTER(
++         ctx, dev, "submit2.info",
++         "queue=0x%" PRIx64 " index=%u flags=0x%x commands=%u waits=%u signals=%u",
++         (uint64_t)(uintptr_t)queue->base.handle.queue, i, s->flags,
++         s->commandBufferInfoCount, s->waitSemaphoreInfoCount,
++         s->signalSemaphoreInfoCount);
++      WINQ_TRACE_EXIT(call, "metadata=1");
++      for (unsigned signal = 0; signal < 2; signal++) {
++         uint32_t n = signal ? s->signalSemaphoreInfoCount : s->waitSemaphoreInfoCount;
++         const VkSemaphoreSubmitInfo *infos =
++            signal ? s->pSignalSemaphoreInfos : s->pWaitSemaphoreInfos;
++         for (uint32_t j = 0; j < n; j++) {
++            const VkSemaphoreSubmitInfo *b = &infos[j];
++            call = WINQ_TRACE_ENTER(ctx, dev, signal ? "submit2.signal" : "submit2.wait",
++                                    "index=%u semaphore=0x%" PRIx64 " value=%" PRIu64
++                                    " stage=0x%" PRIx64 " deviceIndex=%u",
++                                    i, (uint64_t)(uintptr_t)b->semaphore, b->value,
++                                    (uint64_t)b->stageMask, b->deviceIndex);
++            WINQ_TRACE_EXIT(call, "metadata=1");
++         }
++      }
++   }
++}
++
+ static struct vkr_queue *
+ vkr_device_get_any_queue(struct vkr_device *dev)
+ {
+@@ -57,11 +128,28 @@ vkr_queue_submit_empty(struct vkr_queue *queue,
+       .pSignalSemaphores = signal_semaphores,
+    };
+ 
++   uint64_t lock_trace = WINQ_TRACE_ENTER(
++      queue->context->ctx_id, (uint64_t)(uintptr_t)queue->device->base.handle.device,
++      "queue.vk_mutex", "queue=0x%" PRIx64,
++      (uint64_t)(uintptr_t)queue->base.handle.queue);
+    mtx_lock(&queue->vk_mutex);
+-   VkResult result =
+-      vk->QueueSubmit(queue->base.handle.queue, 1, &submit_info, fence);
++   WINQ_TRACE_EXIT(lock_trace, "acquired=1");
++   vkr_trace_submit(queue, 1, &submit_info);
++   uint64_t trace = WINQ_TRACE_ENTER(
++      queue->context->ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++      "vkQueueSubmit.empty",
++      "queue=0x%" PRIx64 " waits=%u signals=%u fence=0x%" PRIx64 " completion=%u",
++      (uint64_t)(uintptr_t)queue->base.handle.queue, wait_count, signal_count,
++      (uint64_t)(uintptr_t)fence, wait_for_completion);
++   VkResult result = vk->QueueSubmit(queue->base.handle.queue, 1, &submit_info, fence);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d", result);
+    if (result == VK_SUCCESS && wait_for_completion) {
++      uint64_t wait_trace = WINQ_TRACE_ENTER(
++         queue->context->ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++         "vkWaitForFences.empty", "fence=0x%" PRIx64 " timeout=UINT64_MAX",
++         (uint64_t)(uintptr_t)fence);
+       result = vk->WaitForFences(dev->base.handle.device, 1, &fence, true, UINT64_MAX);
++      WINQ_TRACE_EXIT(wait_trace, "VkResult=%d", result);
+    }
+    mtx_unlock(&queue->vk_mutex);
+ 
+@@ -131,7 +219,12 @@ static inline void
+ vkr_queue_sync_retire(struct vkr_queue *queue, struct vkr_queue_sync *sync)
+ {
+    TRACE_FUNC();
++   uint64_t trace = WINQ_TRACE_ENTER(
++      queue->context->ctx_id, (uint64_t)(uintptr_t)queue->device->base.handle.device,
++      "fence.retire.callback", "ring=%u fence_id=%" PRIu64, sync->ring_idx,
++      sync->fence_id);
+    queue->context->retire_fence(queue->context->ctx_id, sync->ring_idx, sync->fence_id);
++   WINQ_TRACE_EXIT(trace, "returned=1");
+    vkr_device_free_queue_sync(queue->device, sync);
+ }
+ 
+@@ -150,8 +243,20 @@ vkr_queue_sync_submit(struct vkr_queue *queue,
+    if (!sync)
+       return false;
+ 
++   uint64_t lock_trace = WINQ_TRACE_ENTER(
++      queue->context->ctx_id, (uint64_t)(uintptr_t)queue->device->base.handle.device,
++      "queue.vk_mutex", "queue=0x%" PRIx64,
++      (uint64_t)(uintptr_t)queue->base.handle.queue);
+    mtx_lock(&queue->vk_mutex);
++   WINQ_TRACE_EXIT(lock_trace, "acquired=1");
++   uint64_t trace = WINQ_TRACE_ENTER(
++      queue->context->ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++      "vkQueueSubmit.completion",
++      "queue=0x%" PRIx64 " fence=0x%" PRIx64 " ring=%u fence_id=%" PRIu64 " flags=0x%x",
++      (uint64_t)(uintptr_t)queue->base.handle.queue, (uint64_t)(uintptr_t)sync->fence,
++      ring_idx, fence_id, flags);
+    VkResult result = vk->QueueSubmit(queue->base.handle.queue, 0, NULL, sync->fence);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d", result);
+    mtx_unlock(&queue->vk_mutex);
+ 
+    if (result == VK_ERROR_DEVICE_LOST) {
+@@ -259,8 +364,16 @@ vkr_queue_thread(void *arg)
+       if (sync->device_lost) {
+          result = VK_ERROR_DEVICE_LOST;
+       } else {
++         uint64_t trace = WINQ_TRACE_ENTER(
++            ctx->ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++            "vkWaitForFences.retry",
++            "queue=0x%" PRIx64 " fence=0x%" PRIx64 " ring=%u fence_id=%" PRIu64
++            " timeout_ns=3000000000",
++            (uint64_t)(uintptr_t)queue->base.handle.queue,
++            (uint64_t)(uintptr_t)sync->fence, sync->ring_idx, sync->fence_id);
+          result = vk->WaitForFences(dev->base.handle.device, 1, &sync->fence, true,
+                                     ns_per_sec * 3);
++         WINQ_TRACE_EXIT(trace, "VkResult=%d", result);
+       }
+ 
+       mtx_lock(&queue->sync_thread.mutex);
+@@ -456,10 +569,22 @@ vkr_dispatch_vkQueueSubmit(UNUSED struct vn_dispatch_context *dispatch,
+    struct vn_device_proc_table *vk = &queue->device->proc_table;
+ 
+    vn_replace_vkQueueSubmit_args_handle(args);
++   vkr_trace_submit(queue, args->submitCount, args->pSubmits);
+ 
++   uint64_t lock_trace = WINQ_TRACE_ENTER(
++      queue->context->ctx_id, (uint64_t)(uintptr_t)queue->device->base.handle.device,
++      "queue.vk_mutex", "queue=0x%" PRIx64,
++      (uint64_t)(uintptr_t)queue->base.handle.queue);
+    mtx_lock(&queue->vk_mutex);
++   WINQ_TRACE_EXIT(lock_trace, "acquired=1");
++   uint64_t trace = WINQ_TRACE_ENTER(
++      queue->context->ctx_id, (uint64_t)(uintptr_t)queue->device->base.handle.device,
++      "vkQueueSubmit", "queue=0x%" PRIx64 " count=%u fence=0x%" PRIx64,
++      (uint64_t)(uintptr_t)args->queue, args->submitCount,
++      (uint64_t)(uintptr_t)args->fence);
+    args->ret =
+       vk->QueueSubmit(args->queue, args->submitCount, args->pSubmits, args->fence);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d", args->ret);
+    mtx_unlock(&queue->vk_mutex);
+ }
+ 
+@@ -473,9 +598,20 @@ vkr_dispatch_vkQueueBindSparse(UNUSED struct vn_dispatch_context *dispatch,
+ 
+    vn_replace_vkQueueBindSparse_args_handle(args);
+ 
++   uint64_t lock_trace = WINQ_TRACE_ENTER(
++      queue->context->ctx_id, (uint64_t)(uintptr_t)queue->device->base.handle.device,
++      "queue.vk_mutex", "queue=0x%" PRIx64,
++      (uint64_t)(uintptr_t)queue->base.handle.queue);
+    mtx_lock(&queue->vk_mutex);
++   WINQ_TRACE_EXIT(lock_trace, "acquired=1");
++   uint64_t trace = WINQ_TRACE_ENTER(
++      queue->context->ctx_id, (uint64_t)(uintptr_t)queue->device->base.handle.device,
++      "vkQueueBindSparse", "queue=0x%" PRIx64 " count=%u fence=0x%" PRIx64,
++      (uint64_t)(uintptr_t)args->queue, args->bindInfoCount,
++      (uint64_t)(uintptr_t)args->fence);
+    args->ret =
+       vk->QueueBindSparse(args->queue, args->bindInfoCount, args->pBindInfo, args->fence);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d", args->ret);
+    mtx_unlock(&queue->vk_mutex);
+ }
+ 
+@@ -497,10 +633,22 @@ vkr_dispatch_vkQueueSubmit2(UNUSED struct vn_dispatch_context *dispatch,
+    struct vn_device_proc_table *vk = &queue->device->proc_table;
+ 
+    vn_replace_vkQueueSubmit2_args_handle(args);
++   vkr_trace_submit2(queue, args->submitCount, args->pSubmits);
+ 
++   uint64_t lock_trace = WINQ_TRACE_ENTER(
++      queue->context->ctx_id, (uint64_t)(uintptr_t)queue->device->base.handle.device,
++      "queue.vk_mutex", "queue=0x%" PRIx64,
++      (uint64_t)(uintptr_t)queue->base.handle.queue);
+    mtx_lock(&queue->vk_mutex);
++   WINQ_TRACE_EXIT(lock_trace, "acquired=1");
++   uint64_t trace = WINQ_TRACE_ENTER(
++      queue->context->ctx_id, (uint64_t)(uintptr_t)queue->device->base.handle.device,
++      "vkQueueSubmit2", "queue=0x%" PRIx64 " count=%u fence=0x%" PRIx64,
++      (uint64_t)(uintptr_t)args->queue, args->submitCount,
++      (uint64_t)(uintptr_t)args->fence);
+    args->ret =
+       vk->QueueSubmit2(args->queue, args->submitCount, args->pSubmits, args->fence);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d", args->ret);
+    mtx_unlock(&queue->vk_mutex);
+ }
+ 
+@@ -548,8 +696,13 @@ vkr_dispatch_vkWaitForFences(UNUSED struct vn_dispatch_context *dispatch,
+    struct vn_device_proc_table *vk = &dev->proc_table;
+ 
+    vn_replace_vkWaitForFences_args_handle(args);
++   uint64_t trace =
++      WINQ_TRACE_ENTER(dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device,
++                       "vkWaitForFences.guest", "count=%u waitAll=%u timeout_ns=%" PRIu64,
++                       args->fenceCount, args->waitAll, args->timeout);
+    args->ret = vk->WaitForFences(args->device, args->fenceCount, args->pFences,
+                                  args->waitAll, args->timeout);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d", args->ret);
+ }
+ 
+ static void
+@@ -631,7 +784,12 @@ vkr_dispatch_vkWaitSemaphores(UNUSED struct vn_dispatch_context *dispatch,
+    struct vn_device_proc_table *vk = &dev->proc_table;
+ 
+    vn_replace_vkWaitSemaphores_args_handle(args);
++   uint64_t trace = WINQ_TRACE_ENTER(
++      dev->trace_ctx_id, (uint64_t)(uintptr_t)dev->base.handle.device, "vkWaitSemaphores",
++      "count=%u flags=0x%x timeout_ns=%" PRIu64, args->pWaitInfo->semaphoreCount,
++      args->pWaitInfo->flags, args->timeout);
+    args->ret = vk->WaitSemaphores(args->device, args->pWaitInfo, args->timeout);
++   WINQ_TRACE_EXIT(trace, "VkResult=%d", args->ret);
+ }
+ 
+ static void
+diff --git a/src/venus/vkr_ring.c b/src/venus/vkr_ring.c
+index e03e51b..126fb05 100644
+--- a/src/venus/vkr_ring.c
++++ b/src/venus/vkr_ring.c
+@@ -67,7 +67,11 @@ vkr_ring_store_head(struct vkr_ring *ring, uint32_t ring_head)
+    /* the renderer is expected to load the head with memory_order_acquire,
+     * forming a release-acquire ordering
+     */
++   uint64_t trace = WINQ_TRACE_ENTER(((struct vkr_context *)ring->dispatch.data)->ctx_id,
++                                     0, "ring.store_head", "ring=%" PRIu64 " head=%u",
++                                     ring->id, ring_head);
+    atomic_store_explicit(ring->control.head, ring_head, memory_order_release);
++   WINQ_TRACE_EXIT(trace, "written=1");
+ }
+ 
+ static uint32_t
+@@ -482,7 +486,11 @@ vkr_ring_write_extra(struct vkr_ring *ring, size_t offset, uint32_t val)
+       extra->cached_data = get_resource_pointer(ring->resource, extra->offset + offset);
+    }
+ 
++   uint64_t trace = WINQ_TRACE_ENTER(
++      ((struct vkr_context *)ring->dispatch.data)->ctx_id, 0, "ring.write_extra",
++      "ring=%" PRIu64 " offset=%zu size=4", ring->id, offset);
+    atomic_store_explicit(extra->cached_data, val, memory_order_release);
++   WINQ_TRACE_EXIT(trace, "written=1");
+ 
+    {
+       TRACE_SCOPE("ring extra done");
+@@ -518,8 +526,13 @@ vkr_ring_wait_virtqueue_seqno(struct vkr_ring *ring, uint64_t seqno)
+    bool ok = true;
+ 
+    mtx_lock(&ring->mutex);
++   uint64_t trace = WINQ_TRACE_ENTER(
++      ((struct vkr_context *)ring->dispatch.data)->ctx_id, 0, "ring.wait_virtqueue",
++      "ring=%" PRIu64 " head=%u current=%" PRIu64 " target=%" PRIu64, ring->id,
++      vkr_ring_load_head(ring), ring->virtqueue_seqno, seqno);
+    while (ok && ring->started && ring->virtqueue_seqno < seqno)
+       ok = cnd_wait(&ring->cond, &ring->mutex) == thrd_success;
++   WINQ_TRACE_EXIT(trace, "ok=%u current=%" PRIu64, ok, ring->virtqueue_seqno);
+    mtx_unlock(&ring->mutex);
+ 
+    return ok;
+diff --git a/src/virglrenderer.h b/src/virglrenderer.h
+index 0bcafef..3d43314 100644
+--- a/src/virglrenderer.h
++++ b/src/virglrenderer.h
+@@ -38,6 +38,27 @@ struct iovec;
+ 
+ #define VIRGL_EXPORT  __attribute__((visibility("default")))
+ 
++/* Diagnostic build API. One registry/watchdog per process, shared with QEMU.
++ * Arguments must contain metadata only, never command buffers or guest strings.
++ * Callers gate argument evaluation so disabled tracing does no formatting/I/O.
++ */
++VIRGL_EXPORT bool winq_venus_trace_enabled(void);
++VIRGL_EXPORT uint64_t winq_venus_trace_enter(uint32_t ctx, uint64_t device,
++                                             const char *op, const char *fmt,
++                                             ...)
++    __attribute__((format(printf, 4, 5)));
++VIRGL_EXPORT void winq_venus_trace_exit(uint64_t call, const char *fmt, ...)
++    __attribute__((format(printf, 2, 3)));
++#define WINQ_TRACE_ENTER(ctx, dev, op, ...)                                    \
++  (winq_venus_trace_enabled()                                                  \
++       ? winq_venus_trace_enter(ctx, dev, op, __VA_ARGS__)                     \
++       : 0)
++#define WINQ_TRACE_EXIT(call, ...)                                             \
++  do {                                                                         \
++    if (call)                                                                  \
++      winq_venus_trace_exit(call, __VA_ARGS__);                                \
++  } while (0)
++
+ typedef void *virgl_renderer_gl_context;
+ 
+ struct virgl_renderer_gl_ctx_param {
+diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
+index 562efdc..64ac527 100644
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -13565,14 +13565,26 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+             return EINVAL;
+          }
+ 
++         uint64_t trace = WINQ_TRACE_ENTER(
++             ctx->ctx_id, 0, "glCreateMemoryObjectsEXT", "res=%u size=%" PRIu64,
++             res->res_id, (uint64_t)res->map_size);
+          glCreateMemoryObjectsEXT(1, &mem_object);
++         WINQ_TRACE_EXIT(trace, "return=void object=%u", mem_object);
+          GLint params = GL_TRUE;
++         uint64_t param_trace = WINQ_TRACE_ENTER(
++             ctx->ctx_id, 0, "glMemoryObjectParameterivEXT",
++             "res=%u object=%u dedicated=%d", res->res_id, mem_object, params);
+          glMemoryObjectParameterivEXT(mem_object,
+-                                      GL_DEDICATED_MEMORY_OBJECT_EXT,
+-                                      &params);
++                                      GL_DEDICATED_MEMORY_OBJECT_EXT, &params);
++         WINQ_TRACE_EXIT(param_trace, "return=void");
++         uint64_t import_trace = WINQ_TRACE_ENTER(
++             ctx->ctx_id, 0, "glImportMemoryWin32HandleEXT",
++             "res=%u object=%u size=%" PRIu64 " handle=%p type=OPAQUE_WIN32",
++             res->res_id, mem_object, (uint64_t)res->map_size, dup_handle);
+          glImportMemoryWin32HandleEXT(mem_object, res->map_size,
+                                       GL_HANDLE_TYPE_OPAQUE_WIN32_EXT,
+                                       dup_handle);
++         WINQ_TRACE_EXIT(import_trace, "return=void");
+          os_close_fd(fd);
+          (void)dup_handle; /* ownership transferred to the memory object */
+ #else
+@@ -13583,7 +13595,11 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+          }
+ 
+          /* Create a GL memory object importing memory from an FD */
++         uint64_t trace = WINQ_TRACE_ENTER(
++             ctx->ctx_id, 0, "glCreateMemoryObjectsEXT", "res=%u size=%" PRIu64,
++             res->res_id, (uint64_t)res->map_size);
+          glCreateMemoryObjectsEXT(1, &mem_object);
++         WINQ_TRACE_EXIT(trace, "return=void object=%u", mem_object);
+          GLint params = GL_TRUE;
+          glMemoryObjectParameterivEXT(mem_object, GL_DEDICATED_MEMORY_OBJECT_EXT, &params);
+          glImportMemoryFdEXT(mem_object, res->map_size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, fd);
+@@ -13595,13 +13611,38 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+          gr->storage_bits |= VREND_STORAGE_GL_TEXTURE | VREND_STORAGE_GL_MEMOBJ;
+ 
+          /* Create a GL texture which uses that memory as storage */
++         uint64_t glGenTextures_trace =
++             WINQ_TRACE_ENTER(ctx->ctx_id, 0, "glGenTextures",
++                              "res=%u object=%u", res->res_id, mem_object);
+          glGenTextures(1, &gr->gl_id);
++         WINQ_TRACE_EXIT(glGenTextures_trace, "return=void");
++         uint64_t glBindTexture_import_trace =
++             WINQ_TRACE_ENTER(ctx->ctx_id, 0, "glBindTexture.import",
++                              "res=%u target=0x%x texture=%u", res->res_id,
++                              gr->target, gr->gl_id);
+          glBindTexture(gr->target, gr->gl_id);
++         WINQ_TRACE_EXIT(glBindTexture_import_trace, "return=void");
+          GLsizei width = (GLsizei)args->width;
+          GLsizei height = (GLsizei)args->height;
++         uint64_t glTexParameteri_tiling_trace = WINQ_TRACE_ENTER(
++             ctx->ctx_id, 0, "glTexParameteri.tiling",
++             "res=%u target=0x%x type=LINEAR_TILING", res->res_id, gr->target);
+          glTexParameteri(gr->target, GL_TEXTURE_TILING_EXT, GL_LINEAR_TILING_EXT);
+-         glTexStorageMem2DEXT(gr->target, 1, internalformat, width, height, mem_object, 0);
++         WINQ_TRACE_EXIT(glTexParameteri_tiling_trace, "return=void");
++         uint64_t storage_trace =
++             WINQ_TRACE_ENTER(ctx->ctx_id, 0, "glTexStorageMem2DEXT",
++                              "res=%u object=%u texture=%u target=0x%x "
++                              "format=0x%x width=%d height=%d",
++                              res->res_id, mem_object, gr->gl_id, gr->target,
++                              internalformat, width, height);
++         glTexStorageMem2DEXT(gr->target, 1, internalformat, width, height,
++                              mem_object, 0);
++         WINQ_TRACE_EXIT(storage_trace, "return=void");
++         uint64_t glBindTexture_restore_trace =
++             WINQ_TRACE_ENTER(ctx->ctx_id, 0, "glBindTexture.restore",
++                              "res=%u target=0x%x", res->res_id, gr->target);
+          glBindTexture(gr->target, 0);
++         WINQ_TRACE_EXIT(glBindTexture_restore_trace, "return=void");
+          gr->is_imported = true;
+       }
+       res->pipe_resource = &gr->base;
+diff --git a/src/winq_venus_trace.c b/src/winq_venus_trace.c
+new file mode 100644
+index 0000000..100e825
+--- /dev/null
++++ b/src/winq_venus_trace.c
+@@ -0,0 +1,351 @@
++/* SPDX-License-Identifier: MIT */
++/* Opt-in metadata tracing. No renderer lock, wait, timeout or memory policy
++ * is changed. Registry lock is never held across an instrumented operation.
++ */
++#include "c11/threads.h"
++#include "config.h"
++#include "virglrenderer.h"
++#include <errno.h>
++#include <inttypes.h>
++#include <stdatomic.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++#ifdef _WIN32
++#include <wchar.h>
++#include <windows.h>
++#else
++#include <sys/stat.h>
++#include <sys/syscall.h>
++#include <unistd.h>
++#endif
++
++#define TRACE_LIMIT (16u * 1024u * 1024u)
++#define TRACE_BACKUPS 3
++struct trace_call
++{
++   struct trace_call *next;
++   uint64_t id, tid, start, device;
++   uint32_t ctx;
++   bool reported;
++   char op[96], args[768];
++};
++static once_flag once = ONCE_FLAG_INIT;
++static atomic_int enabled = ATOMIC_VAR_INIT(-1);
++static atomic_bool stop;
++static mtx_t mutex;
++static thrd_t watchdog;
++static bool watchdog_started;
++static struct trace_call *calls;
++static uint64_t serial, pid;
++static FILE *logfile, *flightfile;
++static size_t logbytes, flightbytes;
++#ifdef _WIN32
++static wchar_t logpath[32768], flightpath[32768];
++static LARGE_INTEGER frequency;
++#else
++static char logpath[4096], flightpath[4120];
++#endif
++
++static uint64_t now_ms(void)
++{
++#ifdef _WIN32
++   LARGE_INTEGER t;
++   QueryPerformanceCounter(&t);
++   return (uint64_t)(t.QuadPart / frequency.QuadPart) * 1000 +
++          (uint64_t)(t.QuadPart % frequency.QuadPart) * 1000 / frequency.QuadPart;
++#else
++   struct timespec t;
++   clock_gettime(CLOCK_MONOTONIC, &t);
++   return (uint64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
++#endif
++}
++static uint64_t thread_id(void)
++{
++#ifdef _WIN32
++   return GetCurrentThreadId();
++#else
++   return (uint64_t)syscall(SYS_gettid);
++#endif
++}
++static void clean_line(char *s)
++{
++   for (; *s; s++)
++      if (*s == '\r' || *s == '\n')
++         *s = ' ';
++}
++/* Called under the trace mutex only. Each channel is bounded to 64 MiB.
++ * The separate in-flight channel preserves dumps during busy timeout logs.
++ */
++static void rotate(bool flight)
++{
++   FILE **file = flight ? &flightfile : &logfile;
++   size_t *bytes = flight ? &flightbytes : &logbytes;
++   if (*file)
++      fclose(*file);
++#ifdef _WIN32
++   const wchar_t *path = flight ? flightpath : logpath;
++   wchar_t from[32768], to[32768];
++   for (int n = TRACE_BACKUPS; n >= 1; n--)
++   {
++      swprintf(to, 32768, L"%ls.%d", path, n);
++      if (n == 1)
++         swprintf(from, 32768, L"%ls", path);
++      else
++         swprintf(from, 32768, L"%ls.%d", path, n - 1);
++      _wremove(to);
++      _wrename(from, to);
++   }
++   *file = _wfopen(path, L"w");
++#else
++   const char *path = flight ? flightpath : logpath;
++   char from[4160], to[4160];
++   for (int n = TRACE_BACKUPS; n >= 1; n--)
++   {
++      snprintf(to, sizeof(to), "%s.%d", path, n);
++      if (n == 1)
++         snprintf(from, sizeof(from), "%s", path);
++      else
++         snprintf(from, sizeof(from), "%s.%d", path, n - 1);
++      remove(to);
++      rename(from, to);
++   }
++   *file = fopen(path, "w");
++#endif
++   if (*file)
++      setvbuf(*file, NULL, _IOLBF, 0);
++   *bytes = 0;
++}
++static void emit(bool flight, const struct trace_call *c, const char *phase,
++                 const char *extra)
++{
++   FILE **file = flight ? &flightfile : &logfile;
++   size_t *bytes = flight ? &flightbytes : &logbytes;
++   if (*bytes >= TRACE_LIMIT)
++      rotate(flight);
++   if (!*file)
++      return;
++   int n = fprintf(*file,
++                   "ms=%" PRIu64 " pid=%" PRIu64 " tid=%" PRIu64 " ctx=%u dev=0x%" PRIx64
++                   " call=%" PRIu64 " %s op=%s %s %s\n",
++                   now_ms(), pid, c->tid, c->ctx, c->device, c->id, phase, c->op, c->args,
++                   extra);
++   if (n > 0)
++      *bytes += n;
++   fflush(*file);
++}
++static int watch(void *unused)
++{
++   (void)unused;
++   while (!atomic_load_explicit(&stop, memory_order_relaxed))
++   {
++      const struct timespec pause = {.tv_sec = 1};
++      thrd_sleep(&pause, NULL);
++      mtx_lock(&mutex);
++      uint64_t now = now_ms();
++      for (struct trace_call *trigger = calls; trigger; trigger = trigger->next)
++      {
++         if (trigger->reported || now - trigger->start <= 5000)
++            continue;
++         trigger->reported = true;
++         char detail[160];
++         snprintf(detail, sizeof(detail), "age_ms=%" PRIu64 " dump_trigger=%" PRIu64,
++                  now - trigger->start, trigger->id);
++         emit(false, trigger, "IN-FLIGHT", detail);
++         /* One complete open-call dump for each newly stuck call. */
++         for (struct trace_call *c = calls; c; c = c->next)
++         {
++            snprintf(detail, sizeof(detail), "age_ms=%" PRIu64 " dump_trigger=%" PRIu64,
++                     now - c->start, trigger->id);
++            emit(true, c, "IN-FLIGHT", detail);
++         }
++      }
++      mtx_unlock(&mutex);
++   }
++   return 0;
++}
++static void init(void)
++{
++   const char *flag = getenv("WINQ_VENUS_TRACE");
++   if (!flag || strcmp(flag, "1"))
++   {
++      atomic_store(&enabled, 0);
++      return;
++   }
++   if (mtx_init(&mutex, mtx_plain) != thrd_success)
++   {
++      atomic_store(&enabled, 0);
++      return;
++   }
++#ifdef _WIN32
++   pid = GetCurrentProcessId();
++   QueryPerformanceFrequency(&frequency);
++   wchar_t folder[32768];
++   DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", folder, 32768);
++   if (!len || len > 32000)
++   {
++      atomic_store(&enabled, 0);
++      return;
++   }
++   wcscat(folder, L"\\winq-emu");
++   CreateDirectoryW(folder, NULL);
++   wcscat(folder, L"\\venus-trace");
++   CreateDirectoryW(folder, NULL);
++   swprintf(logpath, 32768, L"%ls\\venus-%llu-%llu.log", folder, (unsigned long long)pid,
++            (unsigned long long)now_ms());
++   swprintf(flightpath, 32768, L"%ls.inflight", logpath);
++   logfile = _wfopen(logpath, L"w");
++   flightfile = _wfopen(flightpath, L"w");
++#else
++   pid = getpid();
++   const char *base = getenv("LOCALAPPDATA");
++   char folder[4000];
++   if (!base)
++      base = "/tmp";
++   if (snprintf(folder, sizeof(folder), "%s/winq-emu", base) >= (int)sizeof(folder) - 32)
++   {
++      atomic_store(&enabled, 0);
++      return;
++   }
++   mkdir(folder, 0700);
++   strcat(folder, "/venus-trace");
++   mkdir(folder, 0700);
++   snprintf(logpath, sizeof(logpath), "%s/venus-%" PRIu64 "-%" PRIu64 ".log", folder, pid,
++            now_ms());
++   snprintf(flightpath, sizeof(flightpath), "%s.inflight", logpath);
++   logfile = fopen(logpath, "w");
++   flightfile = fopen(flightpath, "w");
++#endif
++   if (logfile)
++      setvbuf(logfile, NULL, _IOLBF, 0);
++   if (flightfile)
++      setvbuf(flightfile, NULL, _IOLBF, 0);
++   if (!logfile || !flightfile)
++   {
++      atomic_store(&enabled, 0);
++      return;
++   }
++#ifdef _WIN32
++   /* Never join from DLL_PROCESS_DETACH under the Windows loader lock.
++    * Pin the diagnostic DLL while its process-lifetime watcher is running.
++    * Windows terminates this thread along with the process.
++    */
++   HMODULE module;
++   GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
++                          GET_MODULE_HANDLE_EX_FLAG_PIN,
++                      (LPCWSTR)(uintptr_t)watch, &module);
++#endif
++   watchdog_started = thrd_create(&watchdog, watch, NULL) == thrd_success;
++   struct trace_call info = {.tid = thread_id()};
++   strcpy(info.op, "trace.init");
++   emit(false, &info, "INFO",
++        watchdog_started ? "watchdog=on cap_bytes=16777216 backups=3"
++                         : "watchdog=FAILED");
++   atomic_store(&enabled, 1);
++}
++bool winq_venus_trace_enabled(void)
++{
++   int current = atomic_load_explicit(&enabled, memory_order_relaxed);
++   if (current >= 0)
++      return current == 1;
++   int saved_errno = errno;
++#ifdef _WIN32
++   DWORD saved_error = GetLastError();
++#endif
++   if (atomic_load_explicit(&enabled, memory_order_relaxed) < 0)
++      call_once(&once, init);
++   bool on = atomic_load_explicit(&enabled, memory_order_relaxed) == 1;
++   errno = saved_errno;
++#ifdef _WIN32
++   SetLastError(saved_error);
++#endif
++   return on;
++}
++uint64_t winq_venus_trace_enter(uint32_t ctx, uint64_t device, const char *op,
++                                const char *fmt, ...)
++{
++   if (!winq_venus_trace_enabled())
++      return 0;
++   int saved_errno = errno;
++#ifdef _WIN32
++   DWORD saved_error = GetLastError();
++#endif
++   struct trace_call *c = calloc(1, sizeof(*c));
++   if (!c)
++   {
++      errno = saved_errno;
++#ifdef _WIN32
++      SetLastError(saved_error);
++#endif
++      return 0;
++   }
++   c->ctx = ctx;
++   c->device = device;
++   c->tid = thread_id();
++   c->start = now_ms();
++   snprintf(c->op, sizeof(c->op), "%s", op);
++   va_list ap;
++   va_start(ap, fmt);
++   vsnprintf(c->args, sizeof(c->args), fmt, ap);
++   va_end(ap);
++   clean_line(c->args);
++   mtx_lock(&mutex);
++   c->id = ++serial;
++   c->next = calls;
++   calls = c;
++   emit(false, c, "ENTER", "");
++   uint64_t id = c->id;
++   mtx_unlock(&mutex);
++   errno = saved_errno;
++#ifdef _WIN32
++   SetLastError(saved_error);
++#endif
++   return id;
++}
++void winq_venus_trace_exit(uint64_t id, const char *fmt, ...)
++{
++   if (!id || !winq_venus_trace_enabled())
++      return;
++   int saved_errno = errno;
++#ifdef _WIN32
++   DWORD saved_error = GetLastError();
++#endif
++   char detail[768];
++   va_list ap;
++   va_start(ap, fmt);
++   vsnprintf(detail, sizeof(detail), fmt, ap);
++   va_end(ap);
++   clean_line(detail);
++   mtx_lock(&mutex);
++   struct trace_call **prev = &calls;
++   while (*prev && (*prev)->id != id)
++      prev = &(*prev)->next;
++   if (*prev)
++   {
++      struct trace_call *c = *prev;
++      emit(false, c, "EXIT", detail);
++      *prev = c->next;
++      free(c);
++   }
++   mtx_unlock(&mutex);
++   errno = saved_errno;
++#ifdef _WIN32
++   SetLastError(saved_error);
++#endif
++}
++#ifndef _WIN32
++__attribute__((destructor)) static void fini(void)
++{
++   if (watchdog_started)
++   {
++      atomic_store(&stop, true);
++      thrd_join(watchdog, NULL);
++   }
++   if (logfile)
++      fclose(logfile);
++   if (flightfile)
++      fclose(flightfile);
++}
++
++#endif

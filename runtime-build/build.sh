@@ -130,6 +130,7 @@ meson setup "$virgl_build" "$virgl_source" \
     -Dtests=false
 meson compile -C "$virgl_build"
 meson install -C "$virgl_build"
+python "$recipe/test-venus-trace.py" /ucrt64/bin/libvirglrenderer-1.dll
 
 qemu_build="$work/qemu-build"
 mkdir -p "$qemu_build"

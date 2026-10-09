@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "name": "winq-emu-alpha10-source-r22",
+  "name": "winq-emu-alpha10-venus-trace-276",
   "sourceDateEpoch": 1777269494,
   "qemu": {
     "repository": "https://github.com/cmspam/winq-emu-qemu.git",
@@ -97,6 +97,10 @@
       {
         "file": "patches/qemu/0022-keep-sdl-capture-running-without-a-microphone.patch",
         "sha256": "94835ab3e9fe7bf348401ff5d50424f8c116511ef60c138e4de7e73fb4461cec"
+      },
+      {
+        "file": "patches/qemu/0023-trace-venus-progress.patch",
+        "sha256": "8d477227c0e40a93cc56645573cdc0dfc89481150143a416074269a185fdb3e4"
       }
     ]
   },
@@ -119,6 +123,10 @@
       {
         "file": "patches/virglrenderer/0003-preserve-device-local-resources-until-memory-binding.patch",
         "sha256": "7dbf0722d095de28c7ff2efdab57dbe2af63217b54f9b5c363ae1ffd49e4519d"
+      },
+      {
+        "file": "patches/virglrenderer/0004-trace-venus-progress.patch",
+        "sha256": "5ae49df3d32cdef715c785433bfea673e1c55a16e34fd7f2951c1bf689b93b8a"
       }
     ]
   }
