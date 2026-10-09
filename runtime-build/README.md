@@ -193,5 +193,7 @@ silently ignores the rest. A guest with more than 64 open flows (a browser,
 a package update, Tailscale) stops receiving replies on the extra sockets:
 UDP answers and TCP data reach QEMU's sockets on the host but never reach the
 guest, and forwarded ports stop accepting. Restarting the VM only helped until
-the socket count grew again. `select()` cost follows the number of sockets
-passed, not the declared size, so the larger limit costs nothing when idle.
+the socket count grew again. The larger sets take about 96 KB of main-loop
+stack, well inside QEMU's 2 MB thread stacks. `test-fd-setsize.py` binds 100
+loopback sockets and checks that `select()` reports the last one ready with the
+pinned size, and misses it with Winsock's default.
