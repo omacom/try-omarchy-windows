@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Omarchy's network keeps working when many connections are open. Before,
+  replies stopped arriving once more than 64 were open until Omarchy restarted.
 - The cursor is drawn by Windows with Omarchy's shapes, so it moves as smoothly
   as the Windows pointer even when the desktop is busy. Existing installs get it
   after running Update > Omarchy once (#321).

@@ -1,0 +1,13 @@
+--- a/meson.build
++++ b/meson.build
+@@ -375,6 +375,10 @@
+ elif host_os == 'haiku'
+   qemu_common_flags += ['-DB_USE_POSITIVE_POSIX_ERRORS', '-D_BSD_SOURCE', '-fPIC']
+ elif host_os == 'windows'
++  # The main loop select()s slirp sockets through fd_set, which Winsock caps
++  # at FD_SETSIZE (64 by default). FD_SET silently drops the rest, so busy
++  # guests stop receiving replies on any socket past the 64th.
++  qemu_common_flags += '-DFD_SETSIZE=4096'
+   # plugins use delaylib, and clang needs to be used with lld to make it work.
+   if compiler.get_id() == 'clang' and compiler.get_linker_id() != 'ld.lld'
+     error('On windows, you need to use lld with clang - use msys2 clang64/clangarm64 env')
