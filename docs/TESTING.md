@@ -45,8 +45,7 @@ Results and steps for any failure:
 ```
 
 Use diagnostics from the tray or `TryOmarchy.exe -diagnostics` for failures.
-Review the zip before attaching it; logs can contain local paths and other
-personal details. Do not upload the guest disk or a full backup.
+Do not upload the guest disk or a full backup.
 
 ## Everyday use
 
