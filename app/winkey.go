@@ -380,13 +380,15 @@ func runTitleEnforcer(dir string, fullscreen bool, fullscreenDisplay string) {
 }
 
 // runCursorReleaseGuard keeps the SDL frontend from confining the Windows
-// cursor to the VM. SDL re-applies its grab whenever the window gains focus,
-// so this must watch the full lifetime rather than run only at launch.
+// cursor to the VM in windowed mode. In fullscreen it preserves SDL's grab
+// while keeping its clip away from an auto-hidden taskbar edge. SDL re-applies
+// its grab whenever the window gains focus, so this must watch the full
+// lifetime rather than run only at launch.
 func runCursorReleaseGuard() {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for range ticker.C {
-		releaseQemuCursor()
+		updateQemuCursorClip()
 	}
 }
 

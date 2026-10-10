@@ -88,6 +88,13 @@ func displayIndexFromTitle(title string) (int, bool) {
 	return index, err == nil && index >= 0 && index < maximumGuestDisplays
 }
 
+// displayTitleGrabbed reports QEMU's SDL grab state from the title it writes
+// when the grab changes. The launcher rewrites that title immediately, so this
+// is read by the window-event hook before the replacement.
+func displayTitleGrabbed(title string) bool {
+	return strings.Contains(title, " to exit grab")
+}
+
 func displayPlacementFilename(index int) string {
 	if index == 0 {
 		return windowPlacementFilename

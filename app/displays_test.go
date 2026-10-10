@@ -60,6 +60,24 @@ func TestQEMUGrabTitleBecomesOurs(t *testing.T) {
 	}
 }
 
+func TestDisplayTitleGrabState(t *testing.T) {
+	tests := []struct {
+		title string
+		want  bool
+	}{
+		{"QEMU (" + appTitle + "-0) - Press Ctrl-Alt-G to exit grab", true},
+		{"QEMU (" + appTitle + "-1) - Press Ctrl-Alt-Shift-G to exit grab", true},
+		{"QEMU (" + appTitle + "-0)", false},
+		{"QEMU (" + appTitle + "-1) [Stopped]", false},
+		{appTitle, false},
+	}
+	for _, tt := range tests {
+		if got := displayTitleGrabbed(tt.title); got != tt.want {
+			t.Errorf("displayTitleGrabbed(%q) = %t; want %t", tt.title, got, tt.want)
+		}
+	}
+}
+
 func TestDisplayIdentityAndIndependentPlacements(t *testing.T) {
 	index, ok := displayIndexFromTitle("QEMU (" + appTitle + "-2) [Stopped]")
 	if !ok || index != 2 {
