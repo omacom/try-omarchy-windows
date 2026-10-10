@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -34,6 +35,23 @@ func hostFacts() map[string]string {
 	facts["host.memoryTotalMiB"] = fmt.Sprint(total)
 	facts["host.memoryAvailableMiB"] = fmt.Sprint(avail)
 	return facts
+}
+
+// hostIdentityNames returns the signed-in account's display name and each
+// part of it, which show up in device names such as "Ana's AirPods".
+func hostIdentityNames() []string {
+	const nameDisplay = 3
+	proc := syscall.NewLazyDLL("secur32.dll").NewProc("GetUserNameExW")
+	size := uint32(256)
+	buf := make([]uint16, size)
+	if r, _, _ := proc.Call(nameDisplay, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size))); r == 0 {
+		return nil
+	}
+	display := strings.TrimSpace(syscall.UTF16ToString(buf))
+	if display == "" {
+		return nil
+	}
+	return append([]string{display}, strings.Fields(display)...)
 }
 
 const mbIconInformation = 0x40

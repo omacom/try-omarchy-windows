@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Diagnostics bundle for issue reports: the launcher and QEMU logs, the
@@ -156,7 +159,7 @@ func addDiagnosticText(w *zip.Writer, name, text string) error {
 	return err
 }
 
-func addDiagnosticFile(w *zip.Writer, name, source string, info os.FileInfo, redactions []string) error {
+func addDiagnosticFile(w *zip.Writer, name, source string, info os.FileInfo, redactions diagnosticRedactor) error {
 	in, err := os.Open(source)
 	if err != nil {
 		return err
@@ -219,35 +222,110 @@ func sanitizedDiagnosticSettings(dir string) (string, bool) {
 	return string(data) + "\n", true
 }
 
-func diagnosticRedactions(dir string) []string {
-	values := []string{dir, os.Getenv("USERPROFILE"), os.Getenv("LOCALAPPDATA")}
+// diagnosticRedactor removes what identifies a person or their network from
+// every text entry, so a bundle can be attached to a public issue as is.
+// Paths are replaced wherever they appear; names only as whole words, so a
+// short account name does not eat parts of unrelated log text.
+type diagnosticRedactor struct {
+	paths []string
+	names []string
+}
+
+// Names that are also ordinary words in the logs. Redacting them would hide
+// more than it protects.
+var diagnosticCommonNames = map[string]bool{
+	"admin": true, "administrator": true, "default": true, "guest": true,
+	"omarchy": true, "owner": true, "public": true, "root": true,
+	"system": true, "user": true, "users": true, "windows": true, "workgroup": true,
+}
+
+func diagnosticRedactions(dir string) diagnosticRedactor {
+	paths := []string{dir, os.Getenv("USERPROFILE"), os.Getenv("LOCALAPPDATA"), os.Getenv("APPDATA"), os.Getenv("TEMP"), os.Getenv("TMP")}
 	if home, err := os.UserHomeDir(); err == nil {
-		values = append(values, home)
+		paths = append(paths, home)
 	}
+	// The shared folder and key file can live anywhere, not just in the profile.
+	if s, err := loadSettings(settingsPath(dir)); err == nil {
+		paths = append(paths, s.Share, s.SSHKey)
+	}
+	names := []string{os.Getenv("USERNAME"), os.Getenv("COMPUTERNAME"), os.Getenv("USERDOMAIN")}
+	names = append(names, hostIdentityNames()...)
+
+	var r diagnosticRedactor
 	seen := map[string]bool{}
-	var out []string
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
+	for _, value := range paths {
+		value = strings.TrimRight(strings.TrimSpace(value), `\/`)
+		if len(value) < 3 {
 			continue
 		}
-		for _, form := range []string{value, filepath.ToSlash(value)} {
-			if !seen[form] {
-				seen[form] = true
-				out = append(out, form)
+		for _, form := range []string{value, strings.ReplaceAll(value, `\`, "/"), strings.ReplaceAll(value, `\`, `\\`)} {
+			if key := strings.ToLower(form); !seen[key] {
+				seen[key] = true
+				r.paths = append(r.paths, form)
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return len(out[i]) > len(out[j]) })
-	return out
+	for _, value := range names {
+		value = strings.TrimSpace(value)
+		key := strings.ToLower(value)
+		if len(value) < 3 || diagnosticCommonNames[key] || seen[key] {
+			continue
+		}
+		seen[key] = true
+		r.names = append(r.names, value)
+	}
+	sort.Slice(r.paths, func(i, j int) bool { return len(r.paths[i]) > len(r.paths[j]) })
+	sort.Slice(r.names, func(i, j int) bool { return len(r.names[i]) > len(r.names[j]) })
+	return r
 }
 
-func redactDiagnosticText(text string, redactions []string) string {
-	for _, value := range redactions {
+// Other accounts' profile folders, in plain or JSON-escaped form.
+var diagnosticProfilePath = regexp.MustCompile(`(?i)\b([a-z]:)(\\{1,2}|/)users(\\{1,2}|/)[^\\/\s"'<>|:*?]+`)
+
+// Dotted number runs. Only runs of exactly four are addresses; longer runs
+// are versions such as display driver builds.
+var diagnosticDottedNumbers = regexp.MustCompile(`\d+(?:\.\d+)+`)
+
+// diagnosticPrivateNetworks are the home, office and VPN ranges a LAN
+// address, router or tailnet peer comes from. Public addresses stay: in these
+// logs they are servers such as GitHub, and driver versions look the same.
+var diagnosticPrivateNetworks = []netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("169.254.0.0/16"),
+}
+
+// QEMU's user network is the same on every machine and explains guest
+// networking problems.
+var diagnosticGuestNetwork = netip.MustParsePrefix("10.0.2.0/24")
+
+func redactDiagnosticText(text string, r diagnosticRedactor) string {
+	for _, value := range r.paths {
 		// Windows paths are case-insensitive, and different APIs do not always
 		// preserve their original casing in logs.
 		text = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(value)).ReplaceAllString(text, "<redacted-path>")
 	}
+	text = diagnosticProfilePath.ReplaceAllString(text, "${1}${2}Users${3}<redacted>")
+	for _, value := range r.names {
+		text = replaceDiagnosticWord(text, value, "<redacted-name>")
+	}
+	text = diagnosticDottedNumbers.ReplaceAllStringFunc(text, func(match string) string {
+		if strings.Count(match, ".") != 3 {
+			return match
+		}
+		addr, err := netip.ParseAddr(match)
+		if err != nil || diagnosticGuestNetwork.Contains(addr) {
+			return match
+		}
+		for _, network := range diagnosticPrivateNetworks {
+			if network.Contains(addr) {
+				return "<redacted-ip>"
+			}
+		}
+		return match
+	})
 	// Public keys are not private, but their comments commonly contain a user
 	// and computer name. The key is not needed to diagnose guest startup.
 	const keyPrefix = "tryomarchy.sshkey="
@@ -266,6 +344,27 @@ func redactDiagnosticText(text string, redactions []string) string {
 		offset = start + len(keyReplacement)
 	}
 	return text
+}
+
+// replaceDiagnosticWord replaces word, ignoring case, wherever it is not part
+// of a longer word.
+func replaceDiagnosticWord(text, word, replacement string) string {
+	pattern := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(word))
+	isWord := func(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }
+	var out strings.Builder
+	last := 0
+	for _, match := range pattern.FindAllStringIndex(text, -1) {
+		before, _ := utf8.DecodeLastRuneInString(text[:match[0]])
+		after, _ := utf8.DecodeRuneInString(text[match[1]:])
+		if (match[0] > 0 && isWord(before)) || (match[1] < len(text) && isWord(after)) {
+			continue
+		}
+		out.WriteString(text[last:match[0]])
+		out.WriteString(replacement)
+		last = match[1]
+	}
+	out.WriteString(text[last:])
+	return out.String()
 }
 
 // launcherFacts is the part of the facts file every platform can fill in.

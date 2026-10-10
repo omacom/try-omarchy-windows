@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Diagnostics remove folder paths, account, computer and display names, and
+  private network addresses from every file, so the zip can be shared as is.
 - The cursor is drawn by Windows with Omarchy's shapes, so it moves as smoothly
   as the Windows pointer even when the desktop is busy. Existing installs get it
   after running Update > Omarchy once (#321).

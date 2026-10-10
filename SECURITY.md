@@ -7,8 +7,7 @@ Please report security issues privately, not as a public issue. Use GitHub's
 (the repository's **Security** tab, then **Report a vulnerability**).
 
 Include the Try Omarchy version, your Windows version and steps to reproduce.
-Review any diagnostics zip before attaching it, and do not attach guest disks or
-backups. Reporters who want credit will be credited.
+Do not attach guest disks or backups. Reporters who want credit will be credited.
 
 ## Supported versions
 

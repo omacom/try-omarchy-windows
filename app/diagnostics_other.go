@@ -7,3 +7,5 @@ import "runtime"
 func hostFacts() map[string]string {
 	return map[string]string{"host.os": runtime.GOOS, "host.cpuArch": runtime.GOARCH}
 }
+
+func hostIdentityNames() []string { return nil }

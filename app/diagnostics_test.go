@@ -98,6 +98,37 @@ func TestWriteDiagnosticsBundlesLogsStateAndFactsOnly(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsRedactPersonalDetailsOutsideKnownFolders(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("USERNAME", "Ana")
+	t.Setenv("COMPUTERNAME", "ANA-LAPTOP")
+	t.Setenv("USERDOMAIN", "WORKGROUP")
+	if err := os.WriteFile(settingsPath(dir), []byte(`{"schemaVersion":1,"share":"D:\\Clients\\Acme Plans","sshKey":"E:\\keys\\ana.pub"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	log := strings.Join([]string{
+		`shared folder: D:\Clients\Acme Plans contains links: d:/clients/acme plans/x`,
+		`ssh key E:\keys\ana.pub`,
+		`settings at C:\Users\bob\AppData and "C:\\Users\\carol\\x"`,
+		`audio: Ana's AirPods on ANA-LAPTOP for user ana`,
+		`banana analysis stays, as does the user account and the workgroup`,
+		`forwards: tcp:192.168.1.40:2222-:22, peer 100.101.102.103, router 10.1.1.1:53`,
+		`guest 10.0.2.15 via 10.0.2.2, loopback 127.0.0.1, github 140.82.112.3:443`,
+		`driver 11.11.58.136 and 31.0.21921.1000 and 10.0.26200`,
+	}, "\n")
+	got := redactDiagnosticText(log, diagnosticRedactions(dir))
+	for _, private := range []string{"Clients", "clients", "Acme", "keys", "bob", "carol", "Ana", "ana's", "ANA-LAPTOP", "192.168.1.40", "100.101.102.103", "10.1.1.1"} {
+		if strings.Contains(got, private) {
+			t.Fatalf("%q was not redacted:\n%s", private, got)
+		}
+	}
+	for _, kept := range []string{"banana analysis", "user account", "workgroup", "C:\\Users\\<redacted>\\AppData", `C:\\Users\\<redacted>\\x`, "10.0.2.15", "10.0.2.2", "127.0.0.1", "140.82.112.3", "11.11.58.136", "31.0.21921.1000", "10.0.26200"} {
+		if !strings.Contains(got, kept) {
+			t.Fatalf("%q was lost:\n%s", kept, got)
+		}
+	}
+}
+
 func TestWriteDiagnosticsWithNothingToCollectStillWritesFacts(t *testing.T) {
 	dir := t.TempDir()
 	facts := launcherFacts(&config{dir: dir, winqEmu: `C:\WINQ-EMU`, noGpu: true})
