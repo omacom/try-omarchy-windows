@@ -28,6 +28,7 @@ var (
 	lwinKey        = routedKey{qcode: "meta_l"} // hook-thread only
 	rwinKey        = routedKey{qcode: "meta_r"} // hook-thread only
 	printKey       = routedKey{qcode: "print"}  // hook-thread only
+	superG         superGForwarder              // hook-thread only
 	altTab         altTabForwarder              // hook-thread only
 	ctrlAltEndSent bool                         // hook-thread only
 	hookChaining   bool                         // hook-thread only
@@ -160,6 +161,20 @@ func hookCallback(nCode, wParam, lParam uintptr) uintptr {
 		if vk == vkG {
 			pid := qemuPid.Load()
 			held, _, _ := procGetAsyncKeyState.Call(vkG) // state before this change
+			ctrl, _, _ := procGetAsyncKeyState.Call(vkControl)
+			menu, _, _ := procGetAsyncKeyState.Call(vkMenu)
+			shift, _, _ := procGetAsyncKeyState.Call(0x10) // VK_SHIFT
+			keys, swallow := superG.route(
+				pid != 0 && foregroundPid() == pid,
+				lwinKey.side == keySideGuest || rwinKey.side == keySideGuest,
+				(ctrl|menu|shift)&0x8000 != 0,
+				held&0x8000 != 0,
+				wParam == wmKeydown || wParam == wmSyskeydown,
+			)
+			sendKeys(keys)
+			if swallow {
+				return 1
+			}
 			control, _, _ := procGetAsyncKeyState.Call(vkLControl)
 			alt, _, _ := procGetAsyncKeyState.Call(vkLMenu)
 			if isCursorReleaseChord(wParam == wmKeydown || wParam == wmSyskeydown, held&0x8000 != 0, control&0x8000 != 0, alt&0x8000 != 0, pid != 0 && foregroundPid() == pid) {
