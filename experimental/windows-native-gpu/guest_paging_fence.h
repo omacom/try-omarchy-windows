@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Process-local diagnostic mapping of the private QEMU read-only PCI hub.
 #pragma once
+#include "guest_bridge_log.h"
 #include "driver_wire.h"
 #include "guest_kernel_aperture.h"
 #include "guest_direct_read_probe.h"
@@ -54,7 +55,7 @@ class Fences {
     void discover() {
         if (kernel.enabled()) {
             slotCount = kernel.info().fence_slots;
-            std::fprintf(stderr, "LINUX_BRIDGE fenceHubLayout=true slots=%u stride=4096 readonly=true kernel=true\n", slotCount);
+            guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE fenceHubLayout=true slots=%u stride=4096 readonly=true kernel=true\n", slotCount);
             return;
         }
         const char* directory = "/sys/bus/pci/devices";
@@ -82,7 +83,7 @@ class Fences {
         if (enable.fd < 0 || write(enable.fd, "1", 1) != 1) throw std::runtime_error("Cannot enable private fence hub");
         resource.open(found + "/resource0", O_RDONLY | O_CLOEXEC | O_SYNC);
         if (resource.fd < 0) throw std::runtime_error("Fence BAR unavailable");
-        std::fprintf(stderr, "LINUX_BRIDGE fenceHubLayout=true slots=%u stride=4096 readonly=true\n", slotCount);
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE fenceHubLayout=true slots=%u stride=4096 readonly=true\n", slotCount);
     }
 public:
     Fences() = default;
@@ -110,7 +111,7 @@ public:
             throw;
         }
         reads += guest_direct_read::ProbeLoads; ++created;
-        std::fprintf(stderr, "LINUX_BRIDGE %sFenceMapped=true direct=true loads=%u offset=%llu value=%llu\n",
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE %sFenceMapped=true direct=true loads=%u offset=%llu value=%llu\n",
                      category, guest_direct_read::ProbeLoads, static_cast<unsigned long long>(offset), static_cast<unsigned long long>(observed));
         return const_cast<std::uint64_t*>(fence);
     }
@@ -122,7 +123,7 @@ public:
         const auto observed = guest_direct_read::fenceProbe([&]() { return *found->second.fence; });
         if (!guest_direct_read::retired(observed,target) || word(0x48) != before) throw std::runtime_error("Guest fence did not directly observe paging retirement");
         reads += guest_direct_read::ProbeLoads;
-        std::fprintf(stderr, "LINUX_BRIDGE pagingFenceRetired=true direct=true loads=%u target=%llu observed=%llu operation=%s\n",
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE pagingFenceRetired=true direct=true loads=%u target=%llu observed=%llu operation=%s\n",
                      guest_direct_read::ProbeLoads, static_cast<unsigned long long>(target), static_cast<unsigned long long>(observed), operation);
     }
     bool waitRetired(std::uint32_t object, std::uint64_t target, const char* owner) {
@@ -140,7 +141,7 @@ public:
         } while (std::chrono::steady_clock::now() < deadline);
         if (word(0x48) != before) throw std::runtime_error("CPU wait used emulated fence reads");
         if (observed < target) return false;
-        std::fprintf(stderr, "LINUX_BRIDGE cpuFenceWaitRetired=true direct=true target=%llu observed=%llu owner=%s\n",
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE cpuFenceWaitRetired=true direct=true target=%llu observed=%llu owner=%s\n",
                      static_cast<unsigned long long>(target), static_cast<unsigned long long>(observed), owner);
         return true;
     }
@@ -150,7 +151,7 @@ public:
         if (kernel.enabled()) kernel.unmap(found->second.page, 4096);
         else if (munmap(found->second.page, 4096)) throw std::runtime_error("Guest fence unmap failed");
         mappings.erase(found);
-        std::fprintf(stderr, "LINUX_BRIDGE guestFenceUnmapped=true\n");
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE guestFenceUnmapped=true\n");
     }
     unsigned total() const { return created; }
     int syncFile(const void* word,std::uint64_t value,int nativeFd=-1) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Explicit guest-kernel path. Never falls back to raw sysfs BAR access.
 #pragma once
+#include "guest_bridge_log.h"
 #include "guest-kernel/wddm_aperture.h"
 #include "guest_broker_client.h"
 #include "guest_async_cpu_wait.h"
@@ -156,7 +157,7 @@ public:
             if (!views.emplace(data, View{arg.cookie, bytes, std::move(notification)}).second)
                 throw std::runtime_error("Overlapping kernel aperture virtual mappings");
         } catch (...) { munmap(data, bytes); revoke(arg.cookie); throw; }
-        std::fprintf(stderr, "LINUX_BRIDGE kernelApertureLease=true kind=%u bytes=%zu cookie=%llu\n", kind, bytes,
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE kernelApertureLease=true kind=%u bytes=%zu cookie=%llu\n", kind, bytes,
                      static_cast<unsigned long long>(arg.cookie));
         return data;
     }
@@ -167,7 +168,7 @@ public:
         if (munmap(data, bytes)) failed("munmap");
         revoke(found->second.cookie);
         views.erase(found);
-        std::fprintf(stderr, "LINUX_BRIDGE kernelApertureRevoked=true\n");
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE kernelApertureRevoked=true\n");
     }
     int syncFile(const void* word,std::uint64_t value,int nativeFd=-1) {
         const auto address=reinterpret_cast<std::uintptr_t>(word);

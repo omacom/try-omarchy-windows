@@ -14,14 +14,14 @@ Normal launcher integration and a stable interactive desktop remain in developme
 
 ![Three GPU apps complete 1800 handoffs; backend 4/8; desktop product 0/4](https://raw.githubusercontent.com/7Wdev/try-omarchy-windows/windows-nvgpu-lab/docs/images/gpu-backend-progress-three-apps-2026-10-27.svg)
 
-**Original launcher profile — October 31, 2026:** the preserved argument flow
-now boots a private guest and produces an actual **3840×2160 NVIDIA desktop
-frame**, with complete source/SDL pixels matching exactly. Named graphics-device
-discovery coexists with upstream camera/authentication devices. Only **three
-handoffs** complete; the 1,800-frame workload remains rejected. Normal account
-startup, launcher activation and ordinary input remain unverified. All tests stay
-on inactive private desktops without host input. Counts stay **4/8, 0/4, 3/3**.
-[Actual frame, fixes and retained failures](docs/LAUNCHER-GUEST-GRAPHICS-BOOTSTRAP.md).
+**Original launcher profile — November 1, 2026:** a private guest completes
+**1,800 GPU handoffs in 59.1 seconds**, with authenticated guest completion and
+exact first/final **3840×2160** source/SDL pixels. Routine trace reduction retains
+both browser sessions' GPU diagnostics. The previous 90-second deadline miss
+remains recorded; timing variability, full per-application correlation, normal
+account startup, launcher activation and physical input remain open. Tests use
+inactive private desktops without host input. Counts stay **4/8, 0/4, 3/3**.
+[Actual frame, diagnostic changes and tested limits](docs/GPU-DIAGNOSTIC-RETENTION.md).
 [Argument and ownership contract](docs/ORIGINAL-LAUNCHER-GPU-PROFILE.md).
 
 **Go supervisor boundary — October 29, 2026:** prepared native owners now use

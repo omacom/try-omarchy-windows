@@ -1,6 +1,6 @@
 # NVIDIA backend progress
 
-Updated **2026-10-31**. This page tracks the experimental QEMU/WHPX Windows-native
+Updated **2026-11-01**. This page tracks the experimental QEMU/WHPX Windows-native
 NVIDIA backend. The released Try Omarchy launcher continues using the upstream
 graphics runtime.
 
@@ -8,15 +8,15 @@ graphics runtime.
 
 ## What is verified now?
 
-**Original launcher profile — October 31, 2026:** the runtime now boots the
-private RAM-overlay probe through the original Go arguments and displays an
-actual 3840×2160 NVIDIA source through QEMU SDL. Complete first-frame pixels
-match exactly. Named graphics discovery preserves coexistence with upstream
-camera/authentication devices. Run 10 completes three handoffs, 772 submissions
-and natural VM exit with cleanup; the original 1,800-frame workload remains
-rejected. Earlier startup/profile failures stay recorded. Normal account/session,
-activation and ordinary input remain unverified. Counts stay **4/8, 0/4, 3/3**.
-[Actual frame, fixes and exact limits](LAUNCHER-GUEST-GRAPHICS-BOOTSTRAP.md).
+**Original launcher profile — November 1, 2026:** run 25 completes the private
+RAM-overlay probe's unchanged 1,800-frame workload in 59.064 seconds through the
+original Go arguments. Authenticated guest END/ACK and complete first/final 4K
+source/SDL pixels pass, with 4,406 native submissions and clean teardown. Bounded
+collector snapshots now retain both browser sessions' GPU records. Run 24's
+90-second deadline miss stays rejected; performance variability and full
+per-application native-work correlation remain open. Normal account/session,
+activation and physical input remain unverified. Counts stay **4/8, 0/4, 3/3**.
+[Actual frame, diagnostic fixes, retained failures and limits](GPU-DIAGNOSTIC-RETENTION.md).
 [Argument/runtime contract](ORIGINAL-LAUNCHER-GPU-PROFILE.md).
 
 **Go supervisor boundary — October 29, 2026:** the normal supervisor's internal

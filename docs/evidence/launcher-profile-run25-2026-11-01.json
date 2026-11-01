@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "date": "2026-11-01",
+  "run": 25,
+  "scope": "bounded original-argument-profile GPU handoff, full-pixel and cleanup regression; product and complete application lifecycle not accepted",
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 5090 Laptop GPU",
+    "nvidiaVersion": "621.01"
+  },
+  "thresholds": {
+    "orderedFrames": 1800,
+    "deadlineSeconds": 90,
+    "sourceWidth": 3840,
+    "sourceHeight": 2160
+  },
+  "results": {
+    "orderedGpuHandoffs": 1800,
+    "authenticatedGuestEndAndAck": true,
+    "controllerElapsedSeconds": 59.064241,
+    "firstAndFinalMaximumChannelError": 0,
+    "nativeSubmissions": 4406,
+    "nativeSubmissionFailures": 0,
+    "healthQueries": 4832,
+    "healthFailures": 0,
+    "peakAllocationRecords": 1063,
+    "allocationRecordLimit": 2048,
+    "peakReportedGpuUsageBytes": 1355952128,
+    "reportedUsageLimitBytes": 4294967296,
+    "naturalVmExit": true,
+    "trackedResourcesReclaimedBeforeExit": true,
+    "ownedJobActiveProcessesAfterCleanup": 0,
+    "privateDesktopClosed": true,
+    "hostInputSent": false
+  },
+  "collector": {
+    "groups": [
+      {
+        "scope": "session",
+        "records": 95,
+        "lineLimit": 160,
+        "collectorExit": 0
+      },
+      {
+        "scope": "applications",
+        "records": 102,
+        "lineLimit": 160,
+        "collectorExit": 0
+      },
+      {
+        "scope": "browser",
+        "records": 34,
+        "lineLimit": 96,
+        "collectorExit": 0
+      },
+      {
+        "scope": "journal-loss",
+        "records": 0,
+        "lineLimit": 16,
+        "collectorExit": 1
+      },
+      {
+        "scope": "queue-timing",
+        "records": 64,
+        "lineLimit": 64,
+        "collectorExit": 0
+      }
+    ],
+    "queueTimingsTailSamplesOnly": true,
+    "journalLossAbsenceProvesCompleteness": false,
+    "producerProcessIdentityIndependentlyAttested": false
+  },
+  "hashes": {
+    "sourceReceipt": "8e1e3ce59d79e1733b2bc9d8ff42581f2cb6b0584c24b31b97d5f2f78148dfa2",
+    "serialJournal": "60a1a2b3c66dbb2ec5dba33c3beb592c1268fac4e7563c2a091489a89ed31936",
+    "nativeLog": "c0d395cab46a3b0956b6a3d321158861f3c261deee1a5c5c7d23b3ff486fd798",
+    "isolationReceipt": "cf2bac2f89529b9212157295229d0ea08abdc9ce4c0b4d7d5194c91e0433a8a7",
+    "guestInputReceipt": "ec48ce625b130bcd8b1a99ef21fb713fbf1761942f8f12e0ce0c26edd1d0020e",
+    "nativeAudit": "9180d70749c2d06b3348f834d7bbdd1045ba376d58e1b5f124e8750aebfcaf19",
+    "fullPixelAudit": "e06dfabb27bdb91a5040ce625414a96ba3ff6f96feea303ac415d136f104b5de",
+    "semanticInspection": "40a64f9712216b8d96dc9f4f71b92c1ababd880e60da2b4bb261579ed143774f",
+    "queueProgressInspection": "1a2fca662981ff5a6deaede22d9e83d5d1d0deffa1b79b388598f25c7453b671",
+    "collectorCompile": "6a2499785eb3fe76005ec809c94f5805a7f44286f68bf4e0bb62eb0cf9027885",
+    "quietShimCompileAndMappingControls": "22b30d9fbb5f14ec1ba87214f6da337e9a6b5e493d9d38860847801b8cb99cd3",
+    "finalPng": "b5724109b91345d307b0bd682929439fd3eabbd63e8ff9dec84586349cfd6f2b",
+    "pixelOracle": "256965f1dc6bc7a58f87f4b49883c3e21712c13a36520fb178c368f3136af0b7"
+  },
+  "fullApplicationNativeWorkCorrelation": false,
+  "normalAccountStartup": false,
+  "physicalWindowsInputAccepted": false,
+  "sustainedDailyUseAccepted": false,
+  "matchedNativePerformanceMeasured": false,
+  "fullApiAndNvidiaFeatureSupportAccepted": false,
+  "dailyUseAccepted": false,
+  "retainedFailures": [
+    {
+      "run": 22,
+      "overallRejected": true,
+      "journalMessagesSuppressed": 37050,
+      "isolationReceiptMissing": true
+    },
+    {
+      "run": 23,
+      "overallRejected": true,
+      "guestBooted": false,
+      "reason": "private harness overlong QMP path"
+    },
+    {
+      "run": 24,
+      "overallRejected": true,
+      "workloadFrames": 1454,
+      "elapsedSeconds": 90.0262,
+      "additionalFailureDrainFrames": 1
+    }
+  ],
+  "privateRawArtifactsPublished": false
+}

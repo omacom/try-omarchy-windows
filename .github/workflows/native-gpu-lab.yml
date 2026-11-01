@@ -119,6 +119,10 @@ jobs:
           sudo python3 experimental/windows-native-gpu/test_guest_graphics_port.py --device-fixtures -v
           python3 experimental/windows-native-gpu/launcher-guest-bootstrap/generate.py "$RUNNER_TEMP/launcher-guest-bootstrap"
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iexperimental/windows-native-gpu "$RUNNER_TEMP/launcher-guest-bootstrap/normal_root_graphics_service.c" -o "$RUNNER_TEMP/launcher-guest-bootstrap/service"
+      - name: Check guest trace preservation and bounded progress reads
+        run: |
+          python3 experimental/windows-native-gpu/test_guest_bridge_log.py
+          python3 experimental/windows-native-gpu/test_guest_progress_snapshot.py
       - name: Check bounded SDL relay host command grammar
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror experimental/qemu/sdl_command_test.c -o /tmp/sdl-command-test

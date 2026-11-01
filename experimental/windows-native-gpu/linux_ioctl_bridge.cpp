@@ -30,6 +30,7 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include "guest_bridge_log.h"
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -130,17 +131,17 @@ public:
         for (;;) {
             const auto result = waitpid(child, &status, WNOHANG);
             if (result == child) {
-                std::fprintf(stderr, "LINUX_BRIDGE workerReaped=true exit=%d\n", WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE workerReaped=true exit=%d\n", WIFEXITED(status) ? WEXITSTATUS(status) : -1);
                 child = -1;
                 return;
             }
             if (result < 0 && errno != EINTR) {
-                std::fprintf(stderr, "LINUX_BRIDGE workerReaped=false errno=%d\n", errno); return;
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE workerReaped=false errno=%d\n", errno); return;
             }
             if (std::chrono::steady_clock::now() >= deadline) {
                 // WSL interop owns the Windows process. Never claim that
                 // killing the Linux relay necessarily kills that process.
-                std::fprintf(stderr, "LINUX_BRIDGE workerReaped=false timeout=true\n"); return;
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE workerReaped=false timeout=true\n"); return;
             }
             timespec pause{0, 10000000}; nanosleep(&pause, nullptr);
         }
@@ -156,13 +157,13 @@ public:
                 if ((worker && *worker) || (port && *port) || !kernel || std::strcmp(kernel,"1")) throw Error(EINVAL);
                 broker = true;
                 (void)guest_broker::client().info();
-                std::fprintf(stderr,"LINUX_BRIDGE transport=authenticated-broker nativeWorkerClients=1\n"); return;
+                guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE transport=authenticated-broker nativeWorkerClients=1\n"); return;
             }
             if ((!worker || !*worker) == (!port || !*port)) throw Error(EINVAL);
             if (port && *port) {
                 input = output = rawOpen(port, O_RDWR | O_CLOEXEC | O_NONBLOCK);
                 if (input < 0) throw Error(errno);
-                std::fprintf(stderr, "LINUX_BRIDGE transport=virtio-port\n"); return;
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE transport=virtio-port\n"); return;
             }
             if (worker[0] != '/') throw Error(EINVAL);
             int toChild[2]{-1, -1}, fromChild[2]{-1, -1};
@@ -204,7 +205,7 @@ public:
             rawClose(toChild[0]); rawClose(fromChild[1]);
             if (error) { rawClose(toChild[1]); rawClose(fromChild[0]); throw Error(error); }
             output = toChild[1]; input = fromChild[0];
-            std::fprintf(stderr, "LINUX_BRIDGE transport=owned-worker-stdio\n");
+            guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE transport=owned-worker-stdio\n");
         } catch (...) { broken = true; disconnect(); throw; }
     }
     std::vector<std::uint8_t> exchange(const std::vector<std::uint8_t>& packet) {
@@ -309,7 +310,7 @@ class Bridge {
             transport.fail();throw Error(EPROTO);
         }
         known.insert(ticket);
-        std::fprintf(stderr,"LINUX_BRIDGE recipientReferenceAdopted=true kind=%u ticket=%u referenceLimit=%zu liveReferences=%zu authenticatedBroker=true\n",kind,ticket,referenceLimit,known.size());
+        guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE recipientReferenceAdopted=true kind=%u ticket=%u referenceLimit=%zu liveReferences=%zu authenticatedBroker=true\n",kind,ticket,referenceLimit,known.size());
         return true;
     }
     void reapObjectTickets() {
@@ -325,7 +326,7 @@ class Bridge {
             checkNt(result.result.ntstatus);
             tickets.erase(ticket);
             if (kind==WDDM_OBJECT_SYNC) exportedSyncSources.erase(ticket);
-            std::fprintf(stderr, "LINUX_BRIDGE kernelObjectReaped=true ticket=%u\n", ticket);
+            guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE kernelObjectReaped=true ticket=%u\n", ticket);
         }
     }
     void beginSharedFences() {
@@ -339,7 +340,7 @@ class Bridge {
             transport.fail(); throw Error(EPROTO);
         }
         sharedFencesNegotiated = true;
-        std::fprintf(stderr, "LINUX_BRIDGE nativeSyncSharingNegotiated=true kernelObjectFds=true\n");
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeSyncSharingNegotiated=true kernelObjectFds=true\n");
     }
     void beginSharedResources() {
         if (sharedResourcesNegotiated) return;
@@ -360,7 +361,7 @@ class Bridge {
         }
         sharedResourcesNegotiated = true;
         resourceReferenceLimit=profile.handleLimit;
-        std::fprintf(stderr, "LINUX_BRIDGE nativeResourceSharingNegotiated=true kernelObjectFds=true dmaBuf=false\n");
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeResourceSharingNegotiated=true kernelObjectFds=true dmaBuf=false\n");
     }
     static constexpr std::uint32_t GuestLuidLow = 0x57475055;
     static constexpr std::int32_t GuestLuidHigh = 0;
@@ -393,7 +394,7 @@ class Bridge {
             transport.fail(); throw Error(EPROTO);
         }
         negotiated = true;
-        std::fprintf(stderr, "LINUX_BRIDGE vendor=%u device=%u realDxgForwarding=false\n", caps.vendor, caps.device);
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE vendor=%u device=%u realDxgForwarding=false\n", caps.vendor, caps.device);
         const auto coordinated=std::getenv("WDDM_BRIDGE_ACTOR_PROFILE");
         if(coordinated && *coordinated) {
             if(!gpu_diagnostic::HighResolution || (std::strcmp(coordinated,"10") && std::strcmp(coordinated,"11") && std::strcmp(coordinated,"12") && std::strcmp(coordinated,"13") && std::strcmp(coordinated,"14")) || !guest_broker::clientEnabled()) throw Error(EINVAL);
@@ -408,7 +409,7 @@ class Bridge {
             coordinatedReportedGpuByteLimit=group.capacity.reportedGpuByteLimit;
             beginOpenGl(coordinatedProfileVersion);
             coordinatedProfileNegotiated=true;
-            std::fprintf(stderr,"LINUX_BRIDGE coordinatedNativeProfile=true version=%u cpuAndGpuBudgetsShared=true\n",coordinatedProfileVersion);
+            guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE coordinatedNativeProfile=true version=%u cpuAndGpuBudgetsShared=true\n",coordinatedProfileVersion);
         }
     }
     std::uint32_t create(Op op, std::uint32_t parent = 0) {
@@ -459,25 +460,26 @@ class Bridge {
             transport.fail(); throw Error(EPROTO);
         }
         checkNt(result.result.ntstatus); cpuLocks.erase(allocation);
-        std::fprintf(stderr, "LINUX_BRIDGE nativeVendorCpuUnlocked=true\n");
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeVendorCpuUnlocked=true\n");
     }
 public:
     std::mutex guard;
     void finish() {
-        std::fprintf(stderr, "LINUX_BRIDGE summary completedQueries=%u privateQueries=%u nativeContexts=%u realDxgForwarding=false\n",
+        guest_bridge_log::report();
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE summary completedQueries=%u privateQueries=%u nativeContexts=%u realDxgForwarding=false\n",
                      completedQueries, privateQueries, contexts);
-        std::fprintf(stderr, "LINUX_BRIDGE pagingSummary queues=%u directLoads=%llu\n", pagingFences.total(),
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE pagingSummary queues=%u directLoads=%llu\n", pagingFences.total(),
                      static_cast<unsigned long long>(pagingFences.directLoads()));
-        std::fprintf(stderr, "LINUX_BRIDGE allocationCpuSummary mapped=%u unmapped=%u directLoads=%llu\n",
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE allocationCpuSummary mapped=%u unmapped=%u directLoads=%llu\n",
                      allocationMemory.total(), allocationMemory.released(), static_cast<unsigned long long>(allocationMemory.directLoads()));
         for (unsigned n = 0; n < 256; ++n)
-            if (counts[n]) std::fprintf(stderr, "LINUX_BRIDGE ioctlSummary nr=%u count=%u\n", n, counts[n]);
+            if (counts[n]) guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE ioctlSummary nr=%u count=%u\n", n, counts[n]);
         // Driver DSO finalizers and other threads can still read existing CPU
         // views after this atexit hook. Keep mappings/controllers and client
         // descriptors alive; exit_group closes/revokes them after all finalizers.
         // Closing client FDs here also permits reuse before a late DSO closes
         // its original descriptor. The bounded bridge allocation is process-owned.
-        std::fprintf(stderr, "LINUX_BRIDGE processExitViewsRetained=true pagingFences=%zu hwQueueFences=%zu syncFences=%zu allocationViews=%zu release=kernel-process-exit\n",
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE processExitViewsRetained=true pagingFences=%zu hwQueueFences=%zu syncFences=%zu allocationViews=%zu release=kernel-process-exit\n",
                      pagingFences.active(), hwQueueFences.active(), syncFences.active(), allocationMemory.active());
         transport.finish();
     }
@@ -536,7 +538,7 @@ public:
                     struct Attributes { std::uint32_t length, pad; std::uint64_t root, name; std::uint32_t flags, pad2; std::uint64_t security, qos; } attributes{};
                     static_assert(sizeof attributes == 48, "x64 object attributes");
                     std::memcpy(&attributes, a.pObjectAttributes, sizeof attributes);
-                    std::fprintf(stderr, "LINUX_BRIDGE shareAttributes length=%u flags=%u hasRoot=%u hasName=%u hasSecurity=%u hasQos=%u\n",
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE shareAttributes length=%u flags=%u hasRoot=%u hasName=%u hasSecurity=%u hasQos=%u\n",
                         attributes.length, attributes.flags, attributes.root ? 1u : 0u,
                         attributes.name ? 1u : 0u, attributes.security ? 1u : 0u, attributes.qos ? 1u : 0u);
                     // The real Linux D3D12 runtime passes length zero for
@@ -547,7 +549,7 @@ public:
                 }
                 const auto object = a.ObjectHandleArray[0];
                 const auto source = syncObjects.find(object);
-                std::fprintf(stderr, "LINUX_BRIDGE nativeShareObjectInput resource=%s sync=%s\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeShareObjectInput resource=%s sync=%s\n",
                     vendorResources.count(object) ? "true" : "false", source != syncObjects.end() ? "true" : "false");
                 if (vendorResources.count(object)) {
                     if (!sharedResources.count(object)) throw Error(EINVAL);
@@ -623,7 +625,7 @@ public:
                     if (capacity) std::memcpy(a.pPrivateRuntimeData, result.data.data() + sizeof info, capacity);
                     a.PrivateRuntimeDataSize = info.runtimeBytes; a.TotalPrivateDriverDataSize = info.driverBytes;
                     a.ResourcePrivateDriverDataSize = info.resourceDriverBytes; a.NumAllocations = info.allocations;
-                    std::fprintf(stderr, "LINUX_BRIDGE nativeResourceInfoQueried=true runtimeBytes=%u driverBytes=%u resourceDriverBytes=%u allocations=%u copied=%u\n",
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeResourceInfoQueried=true runtimeBytes=%u driverBytes=%u resourceDriverBytes=%u allocations=%u copied=%u\n",
                         info.runtimeBytes, info.driverBytes, info.resourceDriverBytes, info.allocations, capacity);
                     return 0;
                 }
@@ -636,13 +638,13 @@ public:
                 if (result.header.handle != ticket || result.result.ntstatus >= 0 || result.result.value) {
                     transport.fail(); throw Error(EPROTO);
                 }
-                std::fprintf(stderr, "LINUX_BRIDGE nativeSyncResourceQueryRejected=true ntstatus=%d\n", result.result.ntstatus);
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeSyncResourceQueryRejected=true ntstatus=%d\n", result.result.ntstatus);
                 checkNt(result.result.ntstatus);
                 throw Error(EPROTO);
             }
             case 66: {
                 auto& a = args<D3DKMT_OPENRESOURCEFROMNTHANDLE>(requestNumber, pointer);
-                std::fprintf(stderr, "LINUX_BRIDGE nativeResourceImportInput allocations=%u runtimeBytes=%u driverBytes=%u resourceDriverBytes=%u hasAllocationInfo=%u hasRuntime=%u hasDriver=%u hasResourceDriver=%u keyedRuntimeBytes=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeResourceImportInput allocations=%u runtimeBytes=%u driverBytes=%u resourceDriverBytes=%u hasAllocationInfo=%u hasRuntime=%u hasDriver=%u hasResourceDriver=%u keyedRuntimeBytes=%u\n",
                     a.NumAllocations, a.PrivateRuntimeDataSize, a.TotalPrivateDriverDataBufferSize, a.ResourcePrivateDriverDataSize,
                     a.pOpenAllocationInfo2 ? 1u : 0u, a.pPrivateRuntimeData ? 1u : 0u, a.pTotalPrivateDriverDataBuffer ? 1u : 0u, a.pResourcePrivateDriverData ? 1u : 0u, a.KeyedMutexPrivateRuntimeDataSize);
                 const SharedResourceOpenDesc desc{a.hDevice, a.PrivateRuntimeDataSize, a.TotalPrivateDriverDataBufferSize, a.ResourcePrivateDriverDataSize};
@@ -660,7 +662,7 @@ public:
                 if (!resolveNativeTicket(static_cast<int>(handle), ticket, WDDM_OBJECT_RESOURCE)) throw Error(errno);
                 if (!exportedResourceTickets.count(ticket)) { transport.fail(); throw Error(EPROTO); }
                 const auto dataBytes = desc.runtimeBytes + desc.driverBytes + desc.resourceDriverBytes;
-                std::fprintf(stderr, "LINUX_BRIDGE nativeResourceImportForwarded=true boundedBytes=%u\n", dataBytes);
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeResourceImportForwarded=true boundedBytes=%u\n", dataBytes);
                 const auto result = call(request(Op::ImportResource, ticket, desc), sizeof(SharedResourceOpenReply) + dataBytes, true);
                 SharedResourceOpenReply output{}; std::memcpy(&output, result.data.data(), sizeof output);
                 if (result.result.ntstatus > 0 || output.reserved ||
@@ -712,14 +714,14 @@ public:
                 allocation.PrivateDriverDataSize = output.allocationDriverBytes; allocation.GpuVirtualAddress = result.result.value;
                 std::memset(allocation.Reserved, 0, sizeof allocation.Reserved);
                 a.hResource = output.resource; a.hKeyedMutex = 0; a.hSyncObject = 0;
-                std::fprintf(stderr, "LINUX_BRIDGE nativeResourceFdImported=true allocations=1 rawHostHandle=false\n");
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeResourceFdImported=true allocations=1 rawHostHandle=false\n");
                 return 0;
             }
             case 64: {
                 auto& a = args<D3DKMT_OPENSYNCOBJECTFROMNTHANDLE2>(requestNumber, pointer);
                 const auto handle = reinterpret_cast<std::intptr_t>(a.hNtHandle);
                 SharedSyncOpenDesc desc{a.hDevice, a.Flags.Value, a.MonitoredFence.EngineAffinity, 0};
-                std::fprintf(stderr, "LINUX_BRIDGE nativeSyncFdImportInput flags=%u affinity=%u outputFieldsIgnored=true\n", desc.flags, desc.affinity);
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeSyncFdImportInput flags=%u affinity=%u outputFieldsIgnored=true\n", desc.flags, desc.affinity);
                 // The active MonitoredFence union contains two out-only
                 // addresses and input EngineAffinity; its inactive Reserved
                 // arm and ABI padding are not input validation fields.
@@ -750,7 +752,7 @@ public:
                 a.hSyncObject = result.header.handle;
                 a.MonitoredFence.FenceValueCPUVirtualAddress = fence;
                 a.MonitoredFence.FenceValueGPUVirtualAddress = output.gpuAddress;
-                std::fprintf(stderr, "LINUX_BRIDGE nativeSyncFdImported=true gpuMapped=%u\n", output.gpuAddress ? 1u : 0u);
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeSyncFdImported=true gpuMapped=%u\n", output.gpuAddress ? 1u : 0u);
                 return 0;
             }
             case 62: {
@@ -778,10 +780,10 @@ public:
             case 9: {
                 auto& a = args<D3DKMT_QUERYADAPTERINFO>(requestNumber, pointer);
                 const auto type = static_cast<unsigned>(a.Type);
-                std::fprintf(stderr, "LINUX_BRIDGE query type=%u bytes=%u\n", type, a.PrivateDriverDataSize);
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE query type=%u bytes=%u\n", type, a.PrivateDriverDataSize);
                 if (!type) {
                     bool loaded = false; dl_iterate_phdr(findNvidiaModule, &loaded);
-                    std::fprintf(stderr, "LINUX_BRIDGE nvidiaUmdPresentDuringPrivateQuery=%s\n", loaded ? "true" : "false");
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nvidiaUmdPresentDuringPrivateQuery=%s\n", loaded ? "true" : "false");
                 }
                 if (!a.pPrivateDriverData || !validQuery({type, a.PrivateDriverDataSize, 0, 0})) throw Error(ENOSYS);
                 const auto begin = static_cast<const std::uint8_t*>(a.pPrivateDriverData);
@@ -800,11 +802,11 @@ public:
                 }
                 std::memcpy(a.pPrivateDriverData, data.data(), data.size()); checkNt(result.ntstatus);
                 ++completedQueries; if (type == 0) ++privateQueries;
-                std::fprintf(stderr, "LINUX_BRIDGE queryCompleted type=%u bytes=%zu\n", type, data.size()); return 0;
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE queryCompleted type=%u bytes=%zu\n", type, data.size()); return 0;
             }
             case 10: {
                 auto& a=args<D3DKMT_QUERYVIDEOMEMORYINFO>(requestNumber,pointer);
-                std::fprintf(stderr,"LINUX_BRIDGE memoryBudgetInput ownedAdapter=%u group=%u physicalAdapter=%u currentProcess=%u\n",
+                guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE memoryBudgetInput ownedAdapter=%u group=%u physicalAdapter=%u currentProcess=%u\n",
                     ownedAdapters.count(a.hAdapter)?1u:0u,static_cast<unsigned>(a.MemorySegmentGroup),a.PhysicalAdapterIndex,
                     !a.hProcess || a.hProcess==reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(-1))?1u:0u);
                 if (!(caps.flags & VendorMemoryManagementCapability)) throw Error(ENOSYS);
@@ -818,13 +820,13 @@ public:
                     (result.result.ntstatus<0 && (info.budget || info.usage || info.reservation || info.available))) { transport.fail(); throw Error(EPROTO); }
                 checkNt(result.result.ntstatus);
                 a.Budget=info.budget; a.CurrentUsage=info.usage; a.CurrentReservation=info.reservation; a.AvailableForReservation=info.available;
-                std::fprintf(stderr,"LINUX_BRIDGE nativeMemoryBudget=true group=%u budget=%llu usage=%llu reservation=%llu available=%llu currentProcessOnly=true\n",
+                guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE nativeMemoryBudget=true group=%u budget=%llu usage=%llu reservation=%llu available=%llu currentProcessOnly=true\n",
                     desc.group,(unsigned long long)info.budget,(unsigned long long)info.usage,(unsigned long long)info.reservation,(unsigned long long)info.available);
                 return 0;
             }
             case 30: {
                 auto& a=args<D3DKMT_EVICT>(requestNumber,pointer);
-                std::fprintf(stderr,"LINUX_BRIDGE evictionInput count=%u flags=%u ownedDevice=%u hasAllocations=%u\n",
+                guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE evictionInput count=%u flags=%u ownedDevice=%u hasAllocations=%u\n",
                     a.NumAllocations,a.Flags.Value,deviceAdapters.count(a.hDevice)?1u:0u,a.AllocationList?1u:0u);
                 if (!(caps.flags & VendorMemoryManagementCapability)) throw Error(ENOSYS);
                 const EvictDesc desc{a.NumAllocations,a.Flags.Value};
@@ -835,7 +837,7 @@ public:
                     const auto found=vendorOwners.find(a.AllocationList[n]);
                     if (found==vendorOwners.end() || found->second!=a.hDevice) throw Error(EBADF);
                     if (std::find(a.AllocationList,a.AllocationList+n,a.AllocationList[n])!=a.AllocationList+n) throw Error(EINVAL);
-                    std::fprintf(stderr,"LINUX_BRIDGE evictionAllocation index=%u cpuLease=%u\n",n,cpuLocks.count(a.AllocationList[n])?1u:0u);
+                    guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE evictionAllocation index=%u cpuLease=%u\n",n,cpuLocks.count(a.AllocationList[n])?1u:0u);
                     ids.push_back(wireAllocation(a.AllocationList[n]));
                 }
                 auto packet=request(Op::EvictVendorAllocations,a.hDevice,desc);
@@ -843,7 +845,7 @@ public:
                 const auto result=call(packet,0,true);
                 if (result.header.handle!=a.hDevice || result.result.ntstatus>0 || (result.result.ntstatus<0 && result.result.value)) { transport.fail(); throw Error(EPROTO); }
                 a.NumBytesToTrim=result.result.value; checkNt(result.result.ntstatus);
-                std::fprintf(stderr,"LINUX_BRIDGE nativeVendorEviction=true count=%u flags=%u bytesToTrim=%llu\n",desc.count,desc.flags,(unsigned long long)a.NumBytesToTrim);
+                guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE nativeVendorEviction=true count=%u flags=%u bytesToTrim=%llu\n",desc.count,desc.flags,(unsigned long long)a.NumBytesToTrim);
                 return 0;
             }
             case 2: {
@@ -854,7 +856,7 @@ public:
                 if (!deviceAdapters.emplace(a.hDevice, a.hAdapter).second) { transport.fail(); throw Error(EPROTO); }
                 a.pCommandBuffer = nullptr; a.CommandBufferSize = 0; a.pAllocationList = nullptr;
                 a.AllocationListSize = 0; a.pPatchLocationList = nullptr; a.PatchLocationListSize = 0;
-                std::fprintf(stderr, "LINUX_BRIDGE deviceCreated=true\n"); return 0;
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE deviceCreated=true\n"); return 0;
             }
             case 25: {
                 auto& a = args<D3DKMT_DESTROYDEVICE>(requestNumber, pointer);
@@ -867,7 +869,7 @@ public:
             case 7: {
                 auto& a = args<D3DKMT_CREATEPAGINGQUEUE>(requestNumber, pointer);
                 if (!(caps.flags & GuestPagingCapability) || a.Priority != D3DDDI_PAGINGQUEUE_PRIORITY_NORMAL || a.PhysicalAdapterIndex) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=7 bytes=%zu\n", sizeof a);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=7 bytes=%zu\n", sizeof a);
                     throw Error(ENOSYS);
                 }
                 const auto result = call(request(Op::CreateGuestPagingQueue, a.hDevice), sizeof(PagingReply));
@@ -898,7 +900,7 @@ public:
             case 4: {
                 auto& a = args<D3DKMT_CREATECONTEXTVIRTUAL>(requestNumber, pointer);
                 const ContextDesc desc{a.NodeOrdinal, a.EngineAffinity, a.Flags.Value, static_cast<unsigned>(a.ClientHint), a.PrivateDriverDataSize, 0};
-                std::fprintf(stderr, "LINUX_BRIDGE contextInput node=%u engine=%u flags=%u clientHint=%u privateBytes=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE contextInput node=%u engine=%u flags=%u clientHint=%u privateBytes=%u\n",
                     desc.node, desc.engine, desc.flags, desc.clientHint, desc.privateBytes);
                 if (!validContext(desc) || (desc.privateBytes && !a.pPrivateDriverData)) throw Error(ENOSYS);
                 auto packet = request(Op::CreateContext, a.hDevice, desc);
@@ -910,7 +912,7 @@ public:
                 a.hContext = result.header.handle;
                 if (!contextOwners.emplace(a.hContext, Context{a.hDevice, desc.flags}).second) { transport.fail(); throw Error(EPROTO); }
                 if (desc.privateBytes) std::memcpy(a.pPrivateDriverData, result.data.data(), result.data.size());
-                ++contexts; std::fprintf(stderr, "LINUX_BRIDGE nativeContextCreated=true bytes=%u flags=%u\n", desc.privateBytes, desc.flags); return 0;
+                ++contexts; guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeContextCreated=true bytes=%u flags=%u\n", desc.privateBytes, desc.flags); return 0;
             }
             case 5: {
                 auto& a = args<D3DKMT_DESTROYCONTEXT>(requestNumber, pointer);
@@ -921,12 +923,12 @@ public:
                 auto& a = args<D3DKMT_CREATEALLOCATION>(requestNumber, pointer);
                 unsigned flags{}; static_assert(sizeof a.Flags == sizeof flags);
                 std::memcpy(&flags, &a.Flags, sizeof flags);
-                std::fprintf(stderr, "LINUX_BRIDGE allocationInput flags=%u count=%u runtimeBytes=%u privateBytes=%u resourceReuse=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE allocationInput flags=%u count=%u runtimeBytes=%u privateBytes=%u resourceReuse=%u\n",
                              flags, a.NumAllocations, a.PrivateRuntimeDataSize, a.PrivateDriverDataSize, a.hResource ? 1u : 0u);
                 if (a.NumAllocations <= 16 && a.pAllocationInfo2)
                     for (unsigned n = 0; n < a.NumAllocations; ++n) {
                         const auto& item = a.pAllocationInfo2[n];
-                        std::fprintf(stderr, "LINUX_BRIDGE allocationItem index=%u flags=%u privateBytes=%u hasSystemMemory=%u priority=%u source=%u\n",
+                        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE allocationItem index=%u flags=%u privateBytes=%u hasSystemMemory=%u priority=%u source=%u\n",
                                      n, item.Flags.Value, item.PrivateDriverDataSize, item.pSystemMem ? 1u : 0u, item.Priority, item.VidPnSourceId);
                     }
                 const bool sharedResource = flags == 71; // CreateResource | CreateShared | NonSecure | NtSecuritySharing
@@ -957,7 +959,7 @@ public:
                     (sharedResource && !(caps.flags & SharedVendorResourceCapability)) || a.hResource ||
                     (!sharedResource && a.PrivateRuntimeDataSize) ||
                     a.PrivateDriverDataSize || a.NumAllocations != 1 || !a.pAllocationInfo2) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=6 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=6 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                 }
                 auto& item = a.pAllocationInfo2[0];
                 const VendorAllocationDesc desc{item.Flags.Value, item.Priority, item.VidPnSourceId, item.PrivateDriverDataSize, 0, 0};
@@ -1015,7 +1017,7 @@ public:
                         checkNt(translated.result.ntstatus);
                     }
                     alias = static_cast<std::uint32_t>(translated.result.value);
-                    std::fprintf(stderr, "LINUX_BRIDGE allocationDriverAliasCreated=true typedWireIdentityRetained=true\n");
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE allocationDriverAliasCreated=true typedWireIdentityRetained=true\n");
                 }
                 if (!vendorOwners.emplace(alias, a.hDevice).second || !vendorWireIds.emplace(alias, result.header.handle).second) {
                     transport.fail(); throw Error(EPROTO);
@@ -1024,20 +1026,20 @@ public:
                 item.hAllocation = alias; item.GpuVirtualAddress = result.result.value;
                 a.hResource = resource.resource; a.hGlobalShare = 0;
                 if (sharedResource) sharedResources.insert(resource.resource);
-                if (nativeGpuBuffer) std::fprintf(stderr, "LINUX_BRIDGE nativeGpuBufferDeclared=true bytes=%llu flags=%u guestRuntimePreserved=true\n",
+                if (nativeGpuBuffer) guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeGpuBufferDeclared=true bytes=%llu flags=%u guestRuntimePreserved=true\n",
                     static_cast<unsigned long long>(bufferProfile.bytes), bufferProfile.flags);
-                if (nativeTexture) std::fprintf(stderr, "LINUX_BRIDGE nativeTextureDeclared=true width=%u height=%u format=%u flags=%u guestRuntimePreserved=true\n",
+                if (nativeTexture) guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeTextureDeclared=true width=%u height=%u format=%u flags=%u guestRuntimePreserved=true\n",
                                                profile.width, profile.height, profile.format, profile.flags);
-                if(nativeInterop) std::fprintf(stderr,"LINUX_BRIDGE nativeInteropResource=true threadOwned=true width=%u height=%u format=%u\n",profile.width,profile.height,profile.format);
-                if (withResource) std::fprintf(stderr, "LINUX_BRIDGE nativeVendorResourceCreated=true allocationCount=1 shared=%s systemMemory=false\n", sharedResource ? "true" : "false");
+                if(nativeInterop) guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE nativeInteropResource=true threadOwned=true width=%u height=%u format=%u\n",profile.width,profile.height,profile.format);
+                if (withResource) guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeVendorResourceCreated=true allocationCount=1 shared=%s systemMemory=false\n", sharedResource ? "true" : "false");
                 if (desc.source == UninitializedDisplaySource)
-                    std::fprintf(stderr, "LINUX_BRIDGE standaloneSourceUninitializedAccepted=true primary=false privateDataPreserved=true\n");
-                std::fprintf(stderr, "LINUX_BRIDGE nativeVendorAllocationCreated=true privateBytes=%u\n", desc.privateBytes); return 0;
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE standaloneSourceUninitializedAccepted=true primary=false privateDataPreserved=true\n");
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeVendorAllocationCreated=true privateBytes=%u\n", desc.privateBytes); return 0;
             }
             case 19: {
                 auto& a = args<D3DKMT_DESTROYALLOCATION2>(requestNumber, pointer);
                 if (!(caps.flags & VendorAllocationCapability)) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=19 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=19 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                 }
                 if (a.Flags.Value & ~3u) throw Error(EINVAL);
                 unsigned ownedQueues = 0;
@@ -1056,8 +1058,8 @@ public:
                     checkNt(result.result.ntstatus);
                     sharedResources.erase(a.hResource); vendorResources.erase(resource); vendorOwners.erase(alias); vendorWireIds.erase(alias); vendorGpuRanges.erase(alias);
                     importedVendorAllocations.erase(alias);
-                    std::fprintf(stderr, "LINUX_BRIDGE nativeVendorResourceDestroyed=true allocationCount=1 hardwareQueuesAlive=%u\n", ownedQueues);
-                    std::fprintf(stderr, "LINUX_BRIDGE nativeVendorAllocationsDestroyed=true count=1 hardwareQueuesAlive=%u\n", ownedQueues); return 0;
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeVendorResourceDestroyed=true allocationCount=1 hardwareQueuesAlive=%u\n", ownedQueues);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeVendorAllocationsDestroyed=true count=1 hardwareQueuesAlive=%u\n", ownedQueues); return 0;
                 }
                 if (!a.AllocationCount || a.AllocationCount > MaxVendorAllocations || !a.phAllocationList) throw Error(EINVAL);
                 // Accept the public destruction hints, but always request
@@ -1088,14 +1090,14 @@ public:
                     vendorOwners.erase(a.phAllocationList[n]); vendorWireIds.erase(a.phAllocationList[n]); vendorGpuRanges.erase(a.phAllocationList[n]);
                     importedVendorAllocations.erase(a.phAllocationList[n]);
                 }
-                std::fprintf(stderr, "LINUX_BRIDGE nativeVendorAllocationsDestroyed=true count=%u hardwareQueuesAlive=%u\n", a.AllocationCount, ownedQueues); return 0;
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeVendorAllocationsDestroyed=true count=%u hardwareQueuesAlive=%u\n", a.AllocationCount, ownedQueues); return 0;
             }
             case 11: {
                 auto& a = args<D3DDDI_MAKERESIDENT>(requestNumber, pointer);
-                std::fprintf(stderr, "LINUX_BRIDGE residentInput count=%u flags=%u hasAllocations=%u hasPriorities=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE residentInput count=%u flags=%u hasAllocations=%u hasPriorities=%u\n",
                              a.NumAllocations, a.Flags.Value, a.AllocationList ? 1u : 0u, a.PriorityList ? 1u : 0u);
                 if (!(caps.flags & VendorResidencyCapability)) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=11 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=11 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                 }
                 const ResidentDesc desc{a.NumAllocations, a.Flags.Value, a.PriorityList ? 1u : 0u, 0};
                 if (!validResident(desc) || !a.AllocationList) throw Error(EINVAL);
@@ -1127,21 +1129,21 @@ public:
                 a.NumAllocations = output.count; a.PagingFenceValue = result.result.value; a.NumBytesToTrim = output.bytesToTrim;
                 checkNt(result.result.ntstatus);
                 pagingFences.verifyRetired(a.hPagingQueue, a.PagingFenceValue, "residency");
-                std::fprintf(stderr, "LINUX_BRIDGE nativeVendorResident=true count=%u status=%d fence=%llu bytesToTrim=%llu\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeVendorResident=true count=%u status=%d fence=%llu bytesToTrim=%llu\n",
                              a.NumAllocations, result.result.ntstatus, static_cast<unsigned long long>(a.PagingFenceValue),
                              static_cast<unsigned long long>(a.NumBytesToTrim));
                 return result.result.ntstatus;
             }
             case 8: {
                 auto& a = args<D3DDDI_RESERVEGPUVIRTUALADDRESS>(requestNumber, pointer);
-                std::fprintf(stderr, "LINUX_BRIDGE reserveGpuVaInput ownedAdapter=%u ownedPagingQueue=%u base=%llu minimum=%llu maximum=%llu bytes=%llu reserved0=%u reserved1=%llu reserved2=%llu\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE reserveGpuVaInput ownedAdapter=%u ownedPagingQueue=%u base=%llu minimum=%llu maximum=%llu bytes=%llu reserved0=%u reserved1=%llu reserved2=%llu\n",
                     ownedAdapters.count(a.hAdapter) ? 1u : 0u,
                     pagingOwners.count(a.hPagingQueue) ? 1u : 0u,
                     static_cast<unsigned long long>(a.BaseAddress), static_cast<unsigned long long>(a.MinimumAddress),
                     static_cast<unsigned long long>(a.MaximumAddress), static_cast<unsigned long long>(a.Size), a.Reserved0,
                     static_cast<unsigned long long>(a.Reserved1), static_cast<unsigned long long>(a.Reserved2));
                 if (!(caps.flags & GpuReservationCapability)) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=8 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=8 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                 }
                 const GpuReservationDesc desc{a.BaseAddress, a.MinimumAddress, a.MaximumAddress, a.Size};
                 if (a.Reserved0 || a.Reserved1 || a.Reserved2 || !validGpuReservation(desc)) throw Error(EINVAL);
@@ -1164,10 +1166,10 @@ public:
                 try { gpuReservations.emplace(result.header.handle, GpuReservation{a.hAdapter, result.result.value, desc.bytes}); }
                 catch (...) { transport.fail(); throw; } // Host retains ownership until its VM has exited.
                 gpuReservedBytes += desc.bytes; a.VirtualAddress = result.result.value;
-                std::fprintf(stderr, "LINUX_BRIDGE nativeGpuReserved=true bytes=%llu\n", static_cast<unsigned long long>(desc.bytes));
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeGpuReserved=true bytes=%llu\n", static_cast<unsigned long long>(desc.bytes));
                 const auto eofTest = std::getenv("WDDM_BRIDGE_RESERVATION_EOF_TEST");
                 if (eofTest && !std::strcmp(eofTest, "1")) {
-                    std::fprintf(stderr, "LINUX_BRIDGE reservationEofTest=true exitingWithGpuReservationOwned=true\n"); _exit(1);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE reservationEofTest=true exitingWithGpuReservationOwned=true\n"); _exit(1);
                 }
                 return 0;
             }
@@ -1193,26 +1195,26 @@ public:
                     if (gpuRangesOverlap(range->second.address, range->second.bytes, mapped->second.address, mapped->second.bytes)) mapped = vendorGpuRanges.erase(mapped);
                     else ++mapped;
                 gpuStates.release(range->first); gpuReservedBytes -= range->second.bytes; gpuReservations.erase(range);
-                std::fprintf(stderr, "LINUX_BRIDGE nativeGpuReservationFreed=true bytes=%llu\n", static_cast<unsigned long long>(a.Size));
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeGpuReservationFreed=true bytes=%llu\n", static_cast<unsigned long long>(a.Size));
                 return 0;
             }
             case 12: {
                 auto& a = args<D3DDDI_MAPGPUVIRTUALADDRESS>(requestNumber, pointer);
-                std::fprintf(stderr, "LINUX_BRIDGE gpuVaAllocationInput allocationIsNull=%u ownedAllocation=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE gpuVaAllocationInput allocationIsNull=%u ownedAllocation=%u\n",
                     a.hAllocation ? 0u : 1u, vendorOwners.count(a.hAllocation) ? 1u : 0u);
-                std::fprintf(stderr, "LINUX_BRIDGE gpuVaInput base=%llu minimum=%llu maximum=%llu offsetPages=%llu sizePages=%llu protection=%llu driverProtection=%llu reserved0=%u reserved1=%llu\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE gpuVaInput base=%llu minimum=%llu maximum=%llu offsetPages=%llu sizePages=%llu protection=%llu driverProtection=%llu reserved0=%u reserved1=%llu\n",
                     static_cast<unsigned long long>(a.BaseAddress), static_cast<unsigned long long>(a.MinimumAddress),
                     static_cast<unsigned long long>(a.MaximumAddress), static_cast<unsigned long long>(a.OffsetInPages),
                     static_cast<unsigned long long>(a.SizeInPages), static_cast<unsigned long long>(a.Protection.Value),
                     static_cast<unsigned long long>(a.DriverProtection), a.Reserved0, static_cast<unsigned long long>(a.Reserved1));
                 if (!(caps.flags & VendorGpuVaCapability)) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=12 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=12 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                 }
                 const GpuVaDesc desc{a.hPagingQueue, a.Reserved0, a.BaseAddress, a.MinimumAddress, a.MaximumAddress,
                                      a.OffsetInPages, a.SizeInPages, a.Protection.Value, a.DriverProtection};
                 if (a.Protection.Value & 12) {
                     if (!(caps.flags & GpuStateCapability)) {
-                        std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=12 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=12 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                     }
                     if (a.hAllocation || a.Reserved1 || !validGpuState(desc)) throw Error(EINVAL);
                     const auto queue = pagingOwners.find(a.hPagingQueue);
@@ -1237,12 +1239,12 @@ public:
                         if (gpuRangesOverlap(desc.base, desc.sizePages * 4096, mapped->second.address, mapped->second.bytes)) mapped = vendorGpuRanges.erase(mapped);
                         else ++mapped;
                     gpuStates.commit(plan); a.VirtualAddress = result.result.value; a.PagingFenceValue = fence.fence;
-                    std::fprintf(stderr, "LINUX_BRIDGE nativeGpuStateMapped=true pages=%llu protection=%llu status=%d fence=%llu allocationIsNull=true\n",
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeGpuStateMapped=true pages=%llu protection=%llu status=%d fence=%llu allocationIsNull=true\n",
                         static_cast<unsigned long long>(desc.sizePages), static_cast<unsigned long long>(desc.protection), result.result.ntstatus,
                         static_cast<unsigned long long>(fence.fence));
                     const auto eofTest = std::getenv("WDDM_BRIDGE_GPU_STATE_EOF_TEST");
                     if (eofTest && !std::strcmp(eofTest, "1")) {
-                        std::fprintf(stderr, "LINUX_BRIDGE gpuStateEofTest=true exitingWithGpuStateOwned=true\n"); _exit(1);
+                        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE gpuStateEofTest=true exitingWithGpuStateOwned=true\n"); _exit(1);
                     }
                     return result.result.ntstatus;
                 }
@@ -1266,20 +1268,20 @@ public:
                 gpuStates.commit(statePlan);
                 vendorGpuRanges.emplace(a.hAllocation, VendorGpuRange{result.result.value, desc.sizePages * 4096});
                 a.VirtualAddress = result.result.value; a.PagingFenceValue = fence.fence;
-                if (desc.driverProtection) std::fprintf(stderr, "LINUX_BRIDGE nativeVendorDriverProtectionMapped=true value=%llu resourceOwned=true\n",
+                if (desc.driverProtection) guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeVendorDriverProtectionMapped=true value=%llu resourceOwned=true\n",
                     static_cast<unsigned long long>(desc.driverProtection));
-                std::fprintf(stderr, "LINUX_BRIDGE nativeVendorGpuVaMapped=true pages=%llu status=%d fence=%llu\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeVendorGpuVaMapped=true pages=%llu status=%d fence=%llu\n",
                              static_cast<unsigned long long>(desc.sizePages), result.result.ntstatus, static_cast<unsigned long long>(fence.fence));
                 return result.result.ntstatus;
             }
             case 37: {
                 auto& a = args<D3DKMT_LOCK2>(requestNumber, pointer);
                 const auto allocation = vendorOwners.find(a.hAllocation);
-                std::fprintf(stderr, "LINUX_BRIDGE lock2Input flags=%u ownedAllocation=%u hasInputData=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE lock2Input flags=%u ownedAllocation=%u hasInputData=%u\n",
                              a.Flags.Value, allocation != vendorOwners.end() && allocation->second == a.hDevice ? 1u : 0u,
                              a.pData ? 1u : 0u);
                 if (!(caps.flags & VendorCpuCapability)) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=37 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=37 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                 }
                 if (a.Flags.Value) throw Error(EINVAL);
                 if (allocation == vendorOwners.end() || allocation->second != a.hDevice) throw Error(EBADF);
@@ -1308,16 +1310,16 @@ public:
                         dispatch(_IOWR('G', 55, D3DKMT_UNLOCK2), &release) || !allocationMemory.contains(a.hAllocation)) {
                         transport.fail(); throw Error(EPROTO);
                     }
-                    std::fprintf(stderr, "LINUX_BRIDGE allocationCpuReferenceTest=true sameGuestPointer=true intermediateUnlockRetained=true\n");
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE allocationCpuReferenceTest=true sameGuestPointer=true intermediateUnlockRetained=true\n");
                 }
-                std::fprintf(stderr, "LINUX_BRIDGE nativeVendorCpuLocked=true bytes=%u\n", output.bytes);
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeVendorCpuLocked=true bytes=%u\n", output.bytes);
                 const auto spanEofTest = std::getenv("WDDM_BRIDGE_CPU_SPAN_EOF_TEST");
                 if (spanEofTest && !std::strcmp(spanEofTest, "1") && output.bytes > VendorCpuSlotBytes) {
-                    std::fprintf(stderr, "LINUX_BRIDGE allocationCpuSpanEofTest=true exitingWithSpanOwned=true\n"); _exit(1);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE allocationCpuSpanEofTest=true exitingWithSpanOwned=true\n"); _exit(1);
                 }
                 const auto eofTest = std::getenv("WDDM_BRIDGE_CPU_EOF_TEST");
                 if (eofTest && !std::strcmp(eofTest, "1")) {
-                    std::fprintf(stderr, "LINUX_BRIDGE allocationCpuEofTest=true exitingWithLockOwned=true\n");
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE allocationCpuEofTest=true exitingWithLockOwned=true\n");
                     _exit(1); // Deliberately bypass C++/UMD teardown in this private diagnostic.
                 }
                 return 0;
@@ -1325,7 +1327,7 @@ public:
             case 55: {
                 auto& a = args<D3DKMT_UNLOCK2>(requestNumber, pointer);
                 if (!(caps.flags & VendorCpuCapability)) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=55 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=55 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                 }
                 const auto allocation = vendorOwners.find(a.hAllocation);
                 if (allocation == vendorOwners.end() || allocation->second != a.hDevice) throw Error(EBADF);
@@ -1333,13 +1335,13 @@ public:
             }
             case 13: {
                 auto& a = args<D3DKMT_ESCAPE>(requestNumber, pointer);
-                std::fprintf(stderr, "LINUX_BRIDGE escapeInput type=%u flags=%u privateBytes=%u hasContext=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE escapeInput type=%u flags=%u privateBytes=%u hasContext=%u\n",
                              static_cast<unsigned>(a.Type), a.Flags.Value, a.PrivateDriverDataSize, a.hContext ? 1u : 0u);
                 if (a.Type == D3DKMT_ESCAPE_DRIVERPRIVATE && a.Flags.Value == 64 && a.pPrivateDriverData &&
                     a.PrivateDriverDataSize == sizeof(D3DDDI_DRIVERESCAPE_TRANSLATEALLOCATIONEHANDLE)) {
                     D3DDDI_DRIVERESCAPE_TRANSLATEALLOCATIONEHANDLE known{}; std::memcpy(&known, a.pPrivateDriverData, sizeof known);
                     const auto allocation = vendorOwners.find(known.hAllocation);
-                    std::fprintf(stderr, "LINUX_BRIDGE knownEscapeInput type=%u ownedAllocation=%u\n",
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE knownEscapeInput type=%u ownedAllocation=%u\n",
                                  static_cast<unsigned>(known.EscapeType), allocation != vendorOwners.end() && allocation->second == a.hDevice ? 1u : 0u);
                     if ((caps.flags & VendorTranslationCapability) && known.EscapeType == D3DDDI_DRIVERESCAPETYPE_TRANSLATEALLOCATIONHANDLE) {
                         if (a.hContext) throw Error(EINVAL);
@@ -1349,15 +1351,15 @@ public:
                         // Allocation aliases already carry the documented driver
                         // token. This known escape is a validated identity operation,
                         // matching WSL's host/guest token contract. No private rewrite.
-                        std::fprintf(stderr, "LINUX_BRIDGE knownAllocationTranslation=true aliasAlreadyTranslated=true\n"); return 0;
+                        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE knownAllocationTranslation=true aliasAlreadyTranslated=true\n"); return 0;
                     }
                 }
-                std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=13 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=13 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
             }
             case 24: {
                 auto& a = args<D3DKMT_CREATEHWQUEUE>(requestNumber, pointer);
                 const HwQueueDesc desc{a.Flags.Value, a.PrivateDriverDataSize, 0, 0};
-                std::fprintf(stderr, "LINUX_BRIDGE hwQueueDescriptor flags=%u privateBytes=%u hasPrivateData=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE hwQueueDescriptor flags=%u privateBytes=%u hasPrivateData=%u\n",
                              desc.flags, desc.privateBytes, a.pPrivateDriverData ? 1u : 0u);
                 if (!validHwQueue(desc) || !a.pPrivateDriverData) throw Error(EINVAL);
                 unsigned allocationReferences = 0;
@@ -1367,10 +1369,10 @@ public:
                         if (vendorOwners.count(value)) ++allocationReferences;
                     }
                 }
-                std::fprintf(stderr, "LINUX_BRIDGE hwQueueInput flags=%u privateBytes=%u hasPrivateData=%u guestAllocationReferenceMatches=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE hwQueueInput flags=%u privateBytes=%u hasPrivateData=%u guestAllocationReferenceMatches=%u\n",
                              a.Flags.Value, a.PrivateDriverDataSize, a.pPrivateDriverData ? 1u : 0u, allocationReferences);
                 if (!(caps.flags & HwQueueCapability)) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=24 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=24 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                 }
                 if ((desc.flags & NoBroadcastSignalHwQueueFlag) && !(caps.flags & NoBroadcastSignalHwQueueCapability)) throw Error(ENOSYS);
                 if ((desc.flags & NoBroadcastWaitHwQueueFlag) && !(caps.flags & NoBroadcastWaitHwQueueCapability)) throw Error(ENOSYS);
@@ -1399,30 +1401,30 @@ public:
                 if (!borrowedFences.emplace(output.sync, BorrowedFence{result.header.handle, parent->second.device, true}).second) { transport.fail(); throw Error(EPROTO); }
                 a.hHwQueue = result.header.handle; a.hHwQueueProgressFence = output.sync;
                 a.HwQueueProgressFenceCPUVirtualAddress = fence; a.HwQueueProgressFenceGPUVirtualAddress = output.gpuAddress;
-                std::fprintf(stderr, "LINUX_BRIDGE nativeHwQueueCreated=true privateBytes=%u progressFenceDirect=true flags=%u\n", desc.privateBytes, desc.flags);
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeHwQueueCreated=true privateBytes=%u progressFenceDirect=true flags=%u\n", desc.privateBytes, desc.flags);
                 const auto eofTest = std::getenv("WDDM_BRIDGE_HWQUEUE_EOF_TEST");
                 if (eofTest && (std::strcmp(eofTest, "1") == 0 ||
                     (std::strcmp(eofTest, "2") == 0 && desc.flags == NoBroadcastSignalHwQueueFlag) ||
                     (std::strcmp(eofTest, "3") == 0 && desc.flags == InternalNoBroadcastHwQueueFlags))) {
-                    std::fprintf(stderr, "LINUX_BRIDGE hwQueueEofTest=true exitingWithQueueOwned=true flags=%u\n", desc.flags);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE hwQueueEofTest=true exitingWithQueueOwned=true flags=%u\n", desc.flags);
                     _exit(1);
                 }
                 return 0;
             }
             case 16: {
                 auto& a = args<D3DKMT_CREATESYNCHRONIZATIONOBJECT2>(requestNumber, pointer);
-                std::fprintf(stderr, "LINUX_BRIDGE synchronizationInput type=%u flags=%u ownedDevice=%u hasSharedInput=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE synchronizationInput type=%u flags=%u ownedDevice=%u hasSharedInput=%u\n",
                              static_cast<unsigned>(a.Info.Type), a.Info.Flags.Value, deviceAdapters.count(a.hDevice) ? 1u : 0u,
                              a.Info.SharedHandle ? 1u : 0u);
                 if (a.Info.Type == D3DDDI_MONITORED_FENCE)
-                    std::fprintf(stderr, "LINUX_BRIDGE monitoredFenceInput initial=%llu affinity=%u padding=%u hasCpuInput=%u hasGpuInput=%u\n",
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE monitoredFenceInput initial=%llu affinity=%u padding=%u hasCpuInput=%u hasGpuInput=%u\n",
                                  static_cast<unsigned long long>(a.Info.MonitoredFence.InitialFenceValue), a.Info.MonitoredFence.EngineAffinity,
                                  a.Info.MonitoredFence.Padding, a.Info.MonitoredFence.FenceValueCPUVirtualAddress ? 1u : 0u,
                                  a.Info.MonitoredFence.FenceValueGPUVirtualAddress ? 1u : 0u);
                 if (a.Info.Type == D3DDDI_CPU_NOTIFICATION)
-                    std::fprintf(stderr, "LINUX_BRIDGE cpuNotificationInput hasEvent=%u\n", a.Info.CPUNotification.Event ? 1u : 0u);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE cpuNotificationInput hasEvent=%u\n", a.Info.CPUNotification.Event ? 1u : 0u);
                 if (!(caps.flags & SyncCapability)) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=16 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=16 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                 }
                 SyncDesc desc{static_cast<unsigned>(a.Info.Type), a.Info.Flags.Value, 0, 0, 0};
                 if (desc.type == 1) desc.initial = static_cast<std::uint64_t>(a.Info.SynchronizationMutex.InitialState);
@@ -1458,15 +1460,15 @@ public:
                     a.Info.MonitoredFence.FenceValueCPUVirtualAddress = fence;
                     a.Info.MonitoredFence.FenceValueGPUVirtualAddress = output.gpuAddress;
                 }
-                std::fprintf(stderr, "LINUX_BRIDGE nativeSynchronizationCreated=true type=%u flags=%u gpuMapped=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeSynchronizationCreated=true type=%u flags=%u gpuMapped=%u\n",
                              desc.type, desc.flags, output.gpuAddress ? 1u : 0u);
                 const auto noMaxEofTest = std::getenv("WDDM_BRIDGE_SYNC_NO_MAX_EOF_TEST");
                 if (desc.flags == NoSignalMaxValueOnTdrSyncFlag && noMaxEofTest && std::strcmp(noMaxEofTest, "1") == 0) {
-                    std::fprintf(stderr, "LINUX_BRIDGE syncNoMaxEofTest=true exitingWithNoMaxFenceOwned=true\n"); _exit(1);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE syncNoMaxEofTest=true exitingWithNoMaxFenceOwned=true\n"); _exit(1);
                 }
                 const auto eofTest = std::getenv("WDDM_BRIDGE_SYNC_EOF_TEST");
                 if (desc.flags == NoGpuAccessSyncFlag && eofTest && std::strcmp(eofTest, "1") == 0) {
-                    std::fprintf(stderr, "LINUX_BRIDGE syncEofTest=true exitingWithNoGpuAccessFenceOwned=true\n");
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE syncEofTest=true exitingWithNoGpuAccessFenceOwned=true\n");
                     _exit(1);
                 }
                 return 0;
@@ -1474,7 +1476,7 @@ public:
             case 47: {
                 const auto& a = args<D3DKMT_SETCONTEXTINPROCESSSCHEDULINGPRIORITY>(requestNumber, pointer);
                 const auto owner = contextOwners.find(a.hContext);
-                std::fprintf(stderr, "LINUX_BRIDGE contextPriorityInput priority=%d ownedContext=%u inProcessOnly=true\n", a.Priority, owner != contextOwners.end() ? 1u : 0u);
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE contextPriorityInput priority=%d ownedContext=%u inProcessOnly=true\n", a.Priority, owner != contextOwners.end() ? 1u : 0u);
                 if (!(caps.flags & ContextCapability)) throw Error(ENOSYS);
                 if (!validContextPriority(a.Priority)) throw Error(EINVAL);
                 if (owner == contextOwners.end()) throw Error(EBADF);
@@ -1482,12 +1484,12 @@ public:
                 const auto result = call(request(Op::SetContextInProcessPriority, a.hContext, static_cast<std::int32_t>(a.Priority)), 0, true);
                 if (result.header.handle != a.hContext || result.result.value || result.result.ntstatus > 0) { transport.fail(); throw Error(EPROTO); }
                 checkNt(result.result.ntstatus);
-                std::fprintf(stderr, "LINUX_BRIDGE nativeContextPriorityChanged=true priority=%d inProcessOnly=true\n", a.Priority);
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeContextPriorityChanged=true priority=%d inProcessOnly=true\n", a.Priority);
                 return 0;
             }
             case 58: {
                 const auto& a = args<D3DKMT_WAITFORSYNCHRONIZATIONOBJECTFROMCPU>(requestNumber, pointer);
-                std::fprintf(stderr, "LINUX_BRIDGE cpuFenceWaitInput count=%u flags=%u asyncEvent=%u ownedDevice=%u hasObjects=%u hasValues=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE cpuFenceWaitInput count=%u flags=%u asyncEvent=%u ownedDevice=%u hasObjects=%u hasValues=%u\n",
                     a.ObjectCount, a.Flags.Value, a.hAsyncEvent ? 1u : 0u, deviceAdapters.count(a.hDevice) ? 1u : 0u,
                     a.ObjectHandleArray ? 1u : 0u, a.FenceValueArray ? 1u : 0u);
                 if (guest_async::Enabled && a.hAsyncEvent) {
@@ -1519,7 +1521,7 @@ public:
                         }
                         guest_async::submit(points, reinterpret_cast<std::uintptr_t>(a.hAsyncEvent), a.Flags.Value);
                     } catch (const std::system_error& error) { throw Error(error.code().value()); }
-                    std::fprintf(stderr, "LINUX_BRIDGE asyncCpuFenceWaitRegistered=true count=%u any=%u kernelEventfd=true\n",
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE asyncCpuFenceWaitRegistered=true count=%u any=%u kernelEventfd=true\n",
                         a.ObjectCount, a.Flags.Value ? 1u : 0u);
                     return 0;
                 }
@@ -1543,7 +1545,7 @@ public:
             }
             case 51: {
                 const auto& a = args<D3DKMT_SIGNALSYNCHRONIZATIONOBJECTFROMGPU2>(requestNumber, pointer);
-                std::fprintf(stderr, "LINUX_BRIDGE contextSignalInput objects=%u flags=%u contexts=%u hasObjects=%u hasContexts=%u hasValues=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE contextSignalInput objects=%u flags=%u contexts=%u hasObjects=%u hasContexts=%u hasValues=%u\n",
                     a.ObjectCount, a.Flags.Value, a.BroadcastContextCount, a.ObjectHandleArray ? 1u : 0u,
                     a.BroadcastContextArray ? 1u : 0u, a.MonitoredFenceValueArray ? 1u : 0u);
                 if (!(caps.flags & ContextSignalCapability) || a.ObjectCount != 1 || a.BroadcastContextCount != 1 || a.Flags.Value != 4)
@@ -1552,13 +1554,13 @@ public:
                     std::any_of(std::begin(a.Reserved) + 1, std::end(a.Reserved), [](auto value) { return value != 0; })) throw Error(EINVAL);
                 if (a.ObjectCount == 1 && a.ObjectHandleArray && a.MonitoredFenceValueArray) {
                     const auto sync = syncObjects.find(a.ObjectHandleArray[0]);
-                    std::fprintf(stderr, "LINUX_BRIDGE contextSignalObject owned=%u type=%u flags=%u value=%llu\n", sync != syncObjects.end() ? 1u : 0u,
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE contextSignalObject owned=%u type=%u flags=%u value=%llu\n", sync != syncObjects.end() ? 1u : 0u,
                         sync == syncObjects.end() ? 0u : sync->second.type, sync == syncObjects.end() ? 0u : sync->second.flags,
                         static_cast<unsigned long long>(a.MonitoredFenceValueArray[0]));
                 }
                 if (a.BroadcastContextCount == 1 && a.BroadcastContextArray) {
                     const auto context = contextOwners.find(a.BroadcastContextArray[0]);
-                    std::fprintf(stderr, "LINUX_BRIDGE contextSignalContext owned=%u flags=%u\n", context != contextOwners.end() ? 1u : 0u,
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE contextSignalContext owned=%u flags=%u\n", context != contextOwners.end() ? 1u : 0u,
                         context == contextOwners.end() ? 0u : context->second.flags);
                 }
                 const ContextSignalDesc desc{a.ObjectHandleArray[0],a.Flags.Value,a.MonitoredFenceValueArray[0]};
@@ -1575,7 +1577,7 @@ public:
                 checkNt(result.result.ntstatus);
                 if (!asynchronous) syncFences.verifyRetired(sync->first, desc.fence, "context-signal");
                 sync->second.lastSignal = desc.fence;
-                std::fprintf(stderr, "LINUX_BRIDGE nativeContextSignalSubmitted=true flags=%u target=%llu observed=%llu noGpuAccess=true asynchronous=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeContextSignalSubmitted=true flags=%u target=%llu observed=%llu noGpuAccess=true asynchronous=%u\n",
                     desc.flags,static_cast<unsigned long long>(desc.fence),static_cast<unsigned long long>(result.result.value), asynchronous ? 1u : 0u);
                 return 0;
             }
@@ -1599,7 +1601,7 @@ public:
                 const auto queue = hwQueueContexts.find(owner);
                 const auto context = contextOwners.find(contextStream ? owner : queue == hwQueueContexts.end() ? 0 : queue->second);
                 const auto firstBorrowed=borrowedFences.find(objects[0]);
-                if(coordinatedProfileNegotiated) std::fprintf(stderr,"LINUX_BRIDGE gpuWaitOwnership contextStream=%u owner=%u count=%u knownContext=%u knownQueue=%u firstSync=%u firstSyncKnown=%u firstSyncBorrowed=%u borrowedHardware=%u sourceDevice=%u targetDevice=%u contextFlags=%u\n",
+                if(coordinatedProfileNegotiated) guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE gpuWaitOwnership contextStream=%u owner=%u count=%u knownContext=%u knownQueue=%u firstSync=%u firstSyncKnown=%u firstSyncBorrowed=%u borrowedHardware=%u sourceDevice=%u targetDevice=%u contextFlags=%u\n",
                     contextStream ? 1u : 0u,owner,count,context!=contextOwners.end() ? 1u : 0u,queue!=hwQueueContexts.end() ? 1u : 0u,objects[0],syncObjects.count(objects[0]) ? 1u : 0u,firstBorrowed!=borrowedFences.end() ? 1u : 0u,
                     firstBorrowed!=borrowedFences.end() && firstBorrowed->second.hardware ? 1u : 0u,firstBorrowed==borrowedFences.end() ? 0u : firstBorrowed->second.device,context==contextOwners.end() ? 0u : context->second.device,context==contextOwners.end() ? UINT32_MAX : context->second.flags);
                 if (context == contextOwners.end() || !contextCanWait(context->second.flags,coordinatedProfileNegotiated)) throw Error(EBADF);
@@ -1622,14 +1624,14 @@ public:
                 const auto result = call(packet, 0, true);
                 if (result.header.handle != owner || result.result.ntstatus > 0 || result.result.value) { transport.fail(); throw Error(EPROTO); }
                 checkNt(result.result.ntstatus);
-                std::fprintf(stderr, "LINUX_BRIDGE nativeGpuQueueWaitQueued=true objects=%u firstTarget=%llu contextStream=%u cpuWait=false\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeGpuQueueWaitQueued=true objects=%u firstTarget=%llu contextStream=%u cpuWait=false\n",
                     count, static_cast<unsigned long long>(items[0].fence), contextStream ? 1u : 0u);
                 return 0;
             }
             case 29: {
                 auto& a = args<D3DKMT_DESTROYSYNCHRONIZATIONOBJECT>(requestNumber, pointer);
                 if (!(caps.flags & SyncCapability)) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=29 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=29 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                 }
                 const auto owned = syncObjects.find(a.hSyncObject);
                 // Paging and queue progress synchronization handles are borrowed.
@@ -1639,12 +1641,12 @@ public:
                 const auto result = call(request(Op::DestroySync, a.hSyncObject), 0, true);
                 if (result.header.handle != a.hSyncObject || result.result.value || result.result.ntstatus > 0) { transport.fail(); throw Error(EPROTO); }
                 checkNt(result.result.ntstatus);
-                std::fprintf(stderr, "LINUX_BRIDGE nativeSynchronizationDestroyed=true type=%u\n", owned->second.type);
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeSynchronizationDestroyed=true type=%u\n", owned->second.type);
                 importedShareableSyncs.erase(a.hSyncObject); syncObjects.erase(owned); return 0;
             }
             case 53: {
                 const auto& a=args<D3DKMT_SUBMITSIGNALSYNCOBJECTSTOHWQUEUE>(requestNumber,pointer);
-                std::fprintf(stderr,"LINUX_BRIDGE hwQueueSignalInput objects=%u flags=%u queues=%u hasObjects=%u hasQueues=%u hasValues=%u\n",
+                guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE hwQueueSignalInput objects=%u flags=%u queues=%u hasObjects=%u hasQueues=%u hasValues=%u\n",
                     a.ObjectCount,a.Flags.Value,a.BroadcastHwQueueCount,a.ObjectHandleArray?1u:0u,
                     a.BroadcastHwQueueArray?1u:0u,a.FenceValueArray?1u:0u);
                 if (!(caps.flags & HwQueueSignalCapability)) throw Error(ENOSYS);
@@ -1670,7 +1672,7 @@ public:
                     transport.fail(); throw Error(EPROTO);
                 }
                 checkNt(result.result.ntstatus); sync->second.lastSignal=desc.fence; lastHwSignalSync=sync->first;
-                std::fprintf(stderr,"LINUX_BRIDGE nativeHwQueueSignalQueued=true flags=%u queues=%u target=%llu observedAtReturn=%llu noGpuAccess=true\n",
+                guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE nativeHwQueueSignalQueued=true flags=%u queues=%u target=%llu observedAtReturn=%llu noGpuAccess=true\n",
                     desc.flags,desc.count,static_cast<unsigned long long>(desc.fence),static_cast<unsigned long long>(result.result.value));
                 return 0;
             }
@@ -1689,15 +1691,15 @@ public:
                         if (cpuLocks.count(range.first)) ++commandCpuLocked;
                     }
                 }
-                std::fprintf(stderr, "LINUX_BRIDGE submitInput ownedQueue=%u commandBytes=%u privateBytes=%u primaries=%u hasCommand=%u hasPrivateData=%u hasPrimariesPointer=%u fence=%llu\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE submitInput ownedQueue=%u commandBytes=%u privateBytes=%u primaries=%u hasCommand=%u hasPrivateData=%u hasPrimariesPointer=%u fence=%llu\n",
                              hwQueueContexts.count(a.hHwQueue) ? 1u : 0u, a.CommandLength, a.PrivateDriverDataSize, a.NumPrimaries,
                              a.CommandBuffer ? 1u : 0u, a.pPrivateDriverData ? 1u : 0u, a.WrittenPrimaries ? 1u : 0u,
                              static_cast<unsigned long long>(a.HwQueueProgressFenceId));
-                std::fprintf(stderr, "LINUX_BRIDGE submitOwnership commandOwners=%u commandCpuLocked=%u commandOffset=%llu mappedBytes=%llu addressAlignment=%llu lengthAlignment=%u\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE submitOwnership commandOwners=%u commandCpuLocked=%u commandOffset=%llu mappedBytes=%llu addressAlignment=%llu lengthAlignment=%u\n",
                              commandOwners, commandCpuLocked, static_cast<unsigned long long>(commandOffset), static_cast<unsigned long long>(mappedBytes),
                              static_cast<unsigned long long>(a.CommandBuffer % 4096), a.CommandLength % 4096);
                 if (!(caps.flags & HwSubmitCapability)) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=52 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=52 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                 }
                 const HwSubmitDesc desc{a.CommandBuffer, a.HwQueueProgressFenceId, a.CommandLength, a.PrivateDriverDataSize, a.NumPrimaries, 0};
                 // With zero primaries the pointer is ignored, as in dxgkrnl;
@@ -1716,19 +1718,19 @@ public:
                 }
                 checkNt(result.result.ntstatus);
                 if (caps.flags & AsyncHwSubmitCapability) {
-                    std::fprintf(stderr, "LINUX_BRIDGE nativeCommandQueued=true bytes=%u privateBytes=%u target=%llu observedAtReturn=%llu\n",
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeCommandQueued=true bytes=%u privateBytes=%u target=%llu observedAtReturn=%llu\n",
                                  desc.bytes, desc.privateBytes, static_cast<unsigned long long>(desc.fence), static_cast<unsigned long long>(result.result.value));
                     return 0;
                 }
                 hwQueueFences.verifyRetired(a.hHwQueue, desc.fence, "command");
-                std::fprintf(stderr, "LINUX_BRIDGE nativeCommandSubmitted=true bytes=%u privateBytes=%u target=%llu observed=%llu\n",
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeCommandSubmitted=true bytes=%u privateBytes=%u target=%llu observed=%llu\n",
                              desc.bytes, desc.privateBytes, static_cast<unsigned long long>(desc.fence), static_cast<unsigned long long>(result.result.value));
                 return 0;
             }
             case 27: {
                 auto& a = args<D3DKMT_DESTROYHWQUEUE>(requestNumber, pointer);
                 if (!(caps.flags & HwQueueCapability)) {
-                    std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=27 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
+                    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=27 bytes=%zu\n", sizeof a); throw Error(ENOSYS);
                 }
                 if (!hwQueueContexts.count(a.hHwQueue)) throw Error(EBADF);
                 if (hwQueueFences.contains(a.hHwQueue)) hwQueueFences.unmap(a.hHwQueue);
@@ -1738,10 +1740,10 @@ public:
                 for (auto fence = borrowedFences.begin(); fence != borrowedFences.end();) {
                     if (fence->second.hardware && fence->second.owner == a.hHwQueue) fence = borrowedFences.erase(fence); else ++fence;
                 }
-                std::fprintf(stderr, "LINUX_BRIDGE nativeHwQueueDestroyed=true\n"); return 0;
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeHwQueueDestroyed=true\n"); return 0;
             }
             default:
-                std::fprintf(stderr, "LINUX_BRIDGE unsupported nr=%u bytes=%u\n", nr, static_cast<unsigned>(_IOC_SIZE(requestNumber)));
+                guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE unsupported nr=%u bytes=%u\n", nr, static_cast<unsigned>(_IOC_SIZE(requestNumber)));
                 throw Error(ENOSYS);
         }
     }
@@ -1766,7 +1768,7 @@ public:
         std::memcpy(&profile,packet.data()+sizeof header,sizeof profile);
         if(!validNativeInteropCaps(profile)) { transport.fail(); throw Error(EPROTO); }
         nativeInteropQueried=nativeInteropSupported=true;
-        std::fprintf(stderr,"LINUX_BRIDGE nativeInteropCaps=true formats=7 maxWidth=4096 maxHeight=4096 maxLogicalBytes=67108864 implicitOpaque=true\n");
+        guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE nativeInteropCaps=true formats=7 maxWidth=4096 maxHeight=4096 maxLogicalBytes=67108864 implicitOpaque=true\n");
         return true;
     }
     void prepareNativeResource(NativeTextureDesc profile) {
@@ -1794,7 +1796,7 @@ public:
         std::memcpy(&profile, packet.data() + sizeof header, sizeof profile);
         if (!validNativeGpuBufferCaps(profile)) { transport.fail(); throw Error(EPROTO); }
         nativeGpuBufferQueried = nativeGpuBufferSupported = true;
-        std::fprintf(stderr, "LINUX_BRIDGE nativeGpuBufferCaps=true version=1 maxBytes=67108864 allowedFlags=4\n");
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeGpuBufferCaps=true version=1 maxBytes=67108864 allowedFlags=4\n");
         return true;
     }
     void checkNativeGpuBufferAdmission(NativeGpuBufferDesc profile) {
@@ -1805,12 +1807,12 @@ public:
         catch (...) { transport.fail(); throw Error(EPROTO); }
         if (!response.supported) {
             nativeGpuBufferAdmissionUnsupported = true;
-            std::fprintf(stderr, "LINUX_BRIDGE nativeGpuBufferAdmissionUnsupported=true legacyProfileRetained=true\n");
+            guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeGpuBufferAdmissionUnsupported=true legacyProfileRetained=true\n");
             return;
         }
         if (response.transportStatus) throw Error(-response.transportStatus);
         checkNt(response.nativeStatus);
-        std::fprintf(stderr, "LINUX_BRIDGE nativeGpuBufferAdmissionAccepted=true bytes=%llu advisoryOnly=true\n",
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE nativeGpuBufferAdmissionAccepted=true bytes=%llu advisoryOnly=true\n",
             static_cast<unsigned long long>(profile.bytes));
     }
     void prepareNativeGpuBuffer(NativeGpuBufferDesc profile) {
@@ -1836,7 +1838,7 @@ public:
         if (header.type != static_cast<unsigned>(Op::BeginStreaming) || header.handle || header.status || header.padding ||
             !validStreamProfile(profile)) { transport.fail(); throw Error(EPROTO); }
         streamingNegotiated = true;
-        std::fprintf(stderr, "LINUX_BRIDGE guestStreamNegotiated=true frames=64 pendingCommands=16 pendingSignals=16\n");
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE guestStreamNegotiated=true frames=64 pendingCommands=16 pendingSignals=16\n");
     }
     void beginOpenGl(std::uint32_t version = 1) {
         if(coordinatedProfileNegotiated) { if(version==coordinatedProfileVersion) return;throw Error(EINVAL); }
@@ -1857,7 +1859,7 @@ public:
             if (capacity.flags!=(WDDM_APERTURE_DESKTOP_CPU_ENABLED | (version>=8 ? WDDM_APERTURE_SPARSE_ENABLED : 0u) | (version==14 ? WDDM_APERTURE_MULTIAPP_CPU_ENABLED : 0u)) ||
                 (version==7 ? !validOpenGlDesktop4kCapacity(contract) : version==8 ? !validOpenGlDesktopSparseCapacity(contract) : version==9 ? !validOpenGlDesktopLargeMapCapacity(large) : version==14 ? (coordinatedApplicationMemory ? !validApplicationMemoryCapacity(presentation) : !validOpenGlMultiappCapacity(presentation)) : version==13 ? !validOpenGlDesktopReferenceCapacity(presentation) : version==12 ? !validOpenGlDesktopSlotCapacity(presentation) : version==11 ? !validOpenGlDesktopFenceCapacity(presentation) : version!=10 || !validOpenGlDesktopPresentationCapacity(presentation))) throw Error(ENOSYS);
             begin=version>=10 ? request(Op::BeginOpenGl,0,presentation) : version==9 ? request(Op::BeginOpenGl,0,large) : request(Op::BeginOpenGl,0,contract);
-            std::fprintf(stderr,"LINUX_BRIDGE kernelCpuCapacityVerified=true profile=%u cpuByteLimit=%llu cpuSlots=%u fenceSlots=%u\n",version,
+            guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE kernelCpuCapacityVerified=true profile=%u cpuByteLimit=%llu cpuSlots=%u fenceSlots=%u\n",version,
                 static_cast<unsigned long long>(contract.cpuByteLimit),contract.cpuSlots,contract.fenceSlots);
         }
         const auto packet=transport.exchange(begin);
@@ -1877,7 +1879,7 @@ public:
         openglCompositorNegotiated = version >= 3;
         openglRenderNegotiated = version >= 4;
         openglDesktopNegotiated = version >= 5;
-        std::fprintf(stderr, "LINUX_BRIDGE openGlProfileNegotiated=true version=%u frames=%u commandLimit=%u reservationLimit=%u reservedByteLimit=17179869184 syncObjectLimit=%zu\n", version, profile.frames, profile.commandLimit, profile.reservationLimit, syncObjectLimit());
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE openGlProfileNegotiated=true version=%u frames=%u commandLimit=%u reservationLimit=%u reservedByteLimit=17179869184 syncObjectLimit=%zu\n", version, profile.frames, profile.commandLimit, profile.reservationLimit, syncObjectLimit());
     }
     std::uint64_t captureCompositorBuffer(int bufferFd, int syncFileFd, std::uint32_t width, std::uint32_t height,
                                         std::uint32_t format, std::uint32_t stride) {
@@ -1898,7 +1900,7 @@ public:
             transport.fail(); throw Error(EPROTO);
         }
         checkNt(result.result.ntstatus);
-        std::fprintf(stderr,"LINUX_BRIDGE compositorHostCapture=true width=%u height=%u format=%u fence=%llu windowsPresentation=false\n",
+        guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE compositorHostCapture=true width=%u height=%u format=%u fence=%llu windowsPresentation=false\n",
             width,height,format,static_cast<unsigned long long>(target));
         return result.result.value;
     }
@@ -1925,7 +1927,7 @@ public:
         checkNt(result.result.ntstatus);
         ++queuedCompositorFrames;
         if(flags&CompositorFrameFinal) compositorQueueEnded=true;
-        std::fprintf(stderr,"LINUX_BRIDGE compositorQueued=true frame=%llu sourceCopyRetired=true cpuUpload=false\n",
+        guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE compositorQueued=true frame=%llu sourceCopyRetired=true cpuUpload=false\n",
             static_cast<unsigned long long>(queuedCompositorFrames));
         return queuedCompositorFrames;
     }
@@ -2006,7 +2008,7 @@ int deviceOpen(const char* path, int flags) {
     try { return bridge().openDevice(flags); }
     catch (const Error& error) { errno = error.number; }
     catch (...) { errno = EIO; }
-    std::fprintf(stderr, "LINUX_BRIDGE openFailed errno=%d\n", errno); return -1;
+    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE openFailed errno=%d\n", errno); return -1;
 }
 bool modeArgument(int flags) { return (flags & O_CREAT) || (flags & O_TMPFILE) == O_TMPFILE; }
 }
@@ -2348,7 +2350,7 @@ extern "C" int ioctl(int fd, unsigned long requestNumber, ...) noexcept {
     // A full, closed or broken diagnostic sink must not replace the GPU error
     // that libdxg translates back to NTSTATUS for the caller.
     const int failure = errno;
-    std::fprintf(stderr, "LINUX_BRIDGE ioctlFailed nr=%u errno=%d\n", static_cast<unsigned>(_IOC_NR(requestNumber)), failure);
+    guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE ioctlFailed nr=%u errno=%d\n", static_cast<unsigned>(_IOC_NR(requestNumber)), failure);
     errno = failure;
     return -1;
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Diagnostic process-local views of owned native NVIDIA CPU allocation locks.
 #pragma once
+#include "guest_bridge_log.h"
 #include "driver_wire.h"
 #include "guest_kernel_aperture.h"
 #include "guest_direct_read_probe.h"
@@ -60,7 +61,7 @@ class Memory {
         if (kernel.enabled()) {
             slotCount = kernel.info().allocation_slots;
             if (!driver_bridge::validVendorCpuSlots(slotCount,sparseAperture,desktopSlots)) throw std::runtime_error("Unnegotiated allocation layout");
-            std::fprintf(stderr, "LINUX_BRIDGE allocationCpuLayout=true slots=%zu stride=%llu kernel=true\n", slotCount,
+            guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE allocationCpuLayout=true slots=%zu stride=%llu kernel=true\n", slotCount,
                          static_cast<unsigned long long>(driver_bridge::VendorCpuSlotBytes));
             return;
         }
@@ -90,7 +91,7 @@ class Memory {
         if (enable.fd < 0 || write(enable.fd, "1", 1) != 1) throw std::runtime_error("Cannot enable allocation hub");
         resource.open(found + "/resource0", O_RDWR | O_CLOEXEC | O_SYNC);
         if (resource.fd < 0) throw std::runtime_error("Allocation BAR unavailable");
-        std::fprintf(stderr, "LINUX_BRIDGE allocationCpuLayout=true slots=%zu stride=%llu\n", slotCount,
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE allocationCpuLayout=true slots=%zu stride=%llu\n", slotCount,
                      static_cast<unsigned long long>(driver_bridge::VendorCpuSlotBytes));
     }
 public:
@@ -134,7 +135,7 @@ public:
             throw;
         }
         loads += guest_direct_read::ProbeLoads; ++created;
-        std::fprintf(stderr, "LINUX_BRIDGE allocationCpuMapped=true direct=true loads=%u bytes=%u offset=%llu generation=%llu\n",
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE allocationCpuMapped=true direct=true loads=%u bytes=%u offset=%llu generation=%llu\n",
                      guest_direct_read::ProbeLoads, reply.bytes, static_cast<unsigned long long>(offset), static_cast<unsigned long long>(reply.generation));
         return data;
     }
@@ -152,14 +153,14 @@ public:
             std::atomic_thread_fence(std::memory_order_seq_cst);
             if (*first != driver_bridge::CpuStoreFirstMarker || *last != driver_bridge::CpuStoreLastMarker)
                 throw std::runtime_error("Allocation diagnostic stores did not read back");
-            std::fprintf(stderr, "LINUX_BRIDGE allocationCpuStoreTest=true firstLastReadback=true bytes=%u\n", entry->second.bytes);
+            guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE allocationCpuStoreTest=true firstLastReadback=true bytes=%u\n", entry->second.bytes);
         }
         if (word(0x4c) || word(0x50)) throw std::runtime_error("Allocation CPU access used MMIO emulation");
         if (kernel.enabled()) kernel.unmap(entry->second.data, entry->second.bytes);
         else if (munmap(entry->second.data, entry->second.bytes)) throw std::runtime_error("Allocation CPU unmap failed");
         const auto bytes = entry->second.bytes;
         mappings.erase(entry); ++unmapped;
-        std::fprintf(stderr, "LINUX_BRIDGE allocationCpuUnmapped=true direct=true mmioReads=0 mmioWrites=0 bytes=%u\n", bytes);
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE allocationCpuUnmapped=true direct=true mmioReads=0 mmioWrites=0 bytes=%u\n", bytes);
         return true;
     }
     unsigned total() const { return created; }

@@ -31,40 +31,170 @@ def generate(gpu, output):
     if(chmod(port,0600)) { perror("native port permissions");return 125; }
     printf("NAMED_NATIVE_GRAPHICS_PORT path=%s name=org.7wdev.wddm characterIdentityVerified=true\\n",port);'''
     include = '#include "guest_session_process.h"'
-    expanded = include+'\n#include "guest_graphics_port.h"'
+    expanded = include+'\n#include "guest_graphics_port.h"\n#include "guest_progress_snapshot.h"'
+    admission = '"-o","short-monotonic","--grep","WDDM_APERTURE_ADMISSION_REJECTED"'
+    sync_admission = '"-o","short-monotonic","--grep","WDDM_APERTURE_ADMISSION_REJECTED|WDDM_SYNC_(ADMISSION_REJECTED|RECLAIM_WAIT|RECLAIM_BATCH)"'
+    live_tail = '"--no-pager","-f","-n","100",(char*)NULL);_exit(127);'
+    filtered_tail = ('"--no-pager","-f","-n","100","--grep",'
+        '"^(OMARCHY_|HYPRLAND_|LINUX_BRIDGE (vendor=|nvidiaUmdPresentDuringPrivateQuery=|openGlProfileNegotiated=))|'
+        'OpenGL VENDOR|Created QRhi|Running on D3D12|Using OpenGL 3.3 renderer|'
+        '[Ee][Rr][Rr][Oo][Rr]|[Ff][Aa][Ii][Ll]|[Cc][Rr][Aa][Ss][Hh]|[Ww][Aa][Rr][Nn]|GL_OUT_OF_MEMORY|EGL_BAD_",'
+        '(char*)NULL);_exit(127);')
     cleanup = 'cleanup:\n    if(uwsm && compositor_pid>0) {'
     outcome = '''cleanup:
+    if(shell_trace>0) {
+        kill(shell_trace,SIGTERM);waitpid(shell_trace,NULL,0);shell_trace=-1;
+    }
     if(uwsm) {
-        puts("NAMED_GRAPHICS_SESSION_OUTCOME_BEGIN normalOmarchySession=false");
-        uwsm_inspect(uid,gid,0);
-        const pid_t journal=fork();
-        if(!journal) {
-            execl("/usr/bin/journalctl","journalctl","-b","--no-pager","-n","160","-o","short-monotonic",
-                "_SYSTEMD_USER_UNIT=wayland-wm@wddmprobe.desktop.service",(char*)NULL);_exit(127);
+        unsigned char progress[WDDM_PROGRESS_SNAPSHOT_MAX];size_t progress_bytes=0;
+        const int progress_result=wddm_progress_snapshot("/tmp/omarchy-active-terminal-pulse.json",(uid_t)uid,progress,&progress_bytes);
+        const int progress_error=progress_result ? errno : 0;
+        printf("NAMED_GRAPHICS_PRODUCER_PROGRESS result=%d errno=%d bytes=%zu processIdentityAttested=false gpuTimestamp=false hex=",progress_result,progress_error,progress_bytes);
+        for(size_t index=0;index<progress_bytes;++index) printf("%02x",(unsigned)progress[index]);
+        putchar('\\n');
+        char journal_pid[40];
+        const int journal_pid_bytes=snprintf(journal_pid,sizeof journal_pid,"_PID=%ld",(long)compositor_pid);
+        const int journal_pid_valid=compositor_pid>0 && journal_pid_bytes>0 && (size_t)journal_pid_bytes<sizeof journal_pid;
+        {
+            puts("NAMED_GRAPHICS_SESSION_OUTCOME_BEGIN normalOmarchySession=false");
+            uwsm_inspect(uid,gid,0);
+            fflush(stdout);
+            const pid_t journal=journal_pid_valid ? fork() : -1;
+            if(!journal) {
+                if(setenv("SYSTEMD_COLORS","0",1) || setenv("SYSTEMD_URLIFY","0",1)) _exit(127);
+                execl("/usr/bin/journalctl","journalctl","-b","--no-pager","--all","-n","160","-o","json","--output-fields=_PID,_UID,_SYSTEMD_USER_UNIT,_SYSTEMD_UNIT,_BOOT_ID,SYSLOG_IDENTIFIER,_TRANSPORT,MESSAGE","--grep","HYPRLAND_(STARTUP|HOST_QUEUE_(END|FAILURE)|FAILURE_OUTPUT_DRAIN|ACTIVE_WORKLOAD|SCENE_FAILURE|CONTROL_FAILURE)|OMARCHY_NATIVE_INPUT_[A-Z0-9_]+([ \\\\n]|$)",journal_pid,"_UID=1000","_SYSTEMD_USER_UNIT=wayland-wm@wddmprobe.desktop.service",(char*)NULL);_exit(127);
+            }
+            int status=0,joined=0;
+            if(journal>0) {
+                alarm(5);joined=waitpid(journal,&status,0)==journal;
+                if(!joined) { kill(journal,SIGKILL);waitpid(journal,&status,0); }
+                alarm(0);
+            }
+            printf("NAMED_GRAPHICS_JOURNAL_CAPTURE joined=%s exited=%s code=%d orderEstablished=false\\n",
+                joined?"true":"false",journal>0 && WIFEXITED(status)?"true":"false",journal>0 && WIFEXITED(status)?WEXITSTATUS(status):-1);
+            puts("NAMED_GRAPHICS_SESSION_OUTCOME_END exitStatusAloneIsNotGraphicsAcceptance=true");
         }
-        if(journal>0) {
-            alarm(5);int status=0;
-            if(waitpid(journal,&status,0)!=journal) { kill(journal,SIGKILL);waitpid(journal,NULL,0); }
-            alarm(0);
+        {
+            puts("NAMED_GRAPHICS_APPLICATION_OUTCOME_BEGIN normalOmarchySession=false");
+            fflush(stdout);
+            const pid_t journal=journal_pid_valid ? fork() : -1;
+            if(!journal) {
+                if(setenv("SYSTEMD_COLORS","0",1) || setenv("SYSTEMD_URLIFY","0",1)) _exit(127);
+                execl("/usr/bin/journalctl","journalctl","-b","--no-pager","--all","-n","160","-o","json","--output-fields=_PID,_UID,_SYSTEMD_USER_UNIT,_SYSTEMD_UNIT,_BOOT_ID,SYSLOG_IDENTIFIER,_TRANSPORT,MESSAGE","--grep","OMARCHY_(BROWSER_(CDP_RECEIPT_HEX|[1-4]_(BROWSER|TERMINAL)_ACTIVE_HEX|INTERACTION_(PROOF_HEX|ACK)|RESIZE_(ACTIVE_HEX|PROOF_HEX|ACK)|LAYOUT_(ACTIVE_HEX|READY)|READY_CLIENTS_HEX|WINDOW_READY|CHECKPOINT(_CLIENTS_HEX)?|CLOSED_CLIENTS_HEX|GPU_RETIRED|FAILURE|COMPLETED_FAILURE_HEX|FINAL_DIAGNOSTICS_HEX|INPUT_ARMED)|GTK_(RENDERER_PROOF_HEX|READY_ACTIVE_HEX|APPLICATION_(READY|RETIRED)|CHECKPOINT(_CLIENTS_HEX)?|CLOSED_CLIENTS_HEX|FAILURE)|GPU_(APPLICATION_(READY_CLIENTS_HEX|CLIENTS_HEX|CLOSED|CONTENT_READY|WAIT)|LIVE_(WARMUP_CLIENTS_HEX|WARMUP_READY|RETIREMENT_OBSERVED)|RESIZE(_[1-3]_(BEFORE|AFTER)_ACTIVE_HEX)?)|DESKTOP_(LAYERS_HEX|COORDINATOR_WAIT|PROBE_CAPTURE)|RELAUNCH_(BEGIN|RETIRED|READY)|MULTIWINDOW_[A-Z0-9_]+|FAILURE_APPLICATION_CLEANUP)([ \\\\n]|$)",journal_pid,"_UID=1000","_SYSTEMD_USER_UNIT=wayland-wm@wddmprobe.desktop.service",(char*)NULL);_exit(127);
+            }
+            int status=0,joined=0;
+            if(journal>0) {
+                alarm(5);joined=waitpid(journal,&status,0)==journal;
+                if(!joined) { kill(journal,SIGKILL);waitpid(journal,&status,0); }
+                alarm(0);
+            }
+            printf("NAMED_GRAPHICS_APPLICATION_JOURNAL_CAPTURE joined=%s exited=%s code=%d orderEstablished=false\\n",
+                joined?"true":"false",journal>0 && WIFEXITED(status)?"true":"false",journal>0 && WIFEXITED(status)?WEXITSTATUS(status):-1);
+            puts("NAMED_GRAPHICS_APPLICATION_OUTCOME_END exitStatusAloneIsNotGraphicsAcceptance=true");
         }
-        puts("NAMED_GRAPHICS_SESSION_OUTCOME_END exitStatusAloneIsNotGraphicsAcceptance=true");
+        {
+            puts("NAMED_GRAPHICS_BROWSER_OUTCOME_BEGIN normalOmarchySession=false");
+            fflush(stdout);
+            const pid_t journal=fork();
+            if(!journal) {
+                if(setenv("SYSTEMD_COLORS","0",1) || setenv("SYSTEMD_URLIFY","0",1)) _exit(127);
+                execl("/usr/bin/journalctl","journalctl","-b","--no-pager","--all","-n","96","-o","json","--output-fields=_PID,_UID,_SYSTEMD_USER_UNIT,_SYSTEMD_UNIT,_BOOT_ID,SYSLOG_IDENTIFIER,_TRANSPORT,MESSAGE","--grep","OMARCHY_BROWSER_(VERSION|PROCESSES|GPU_INFO|GPU_THREADS_SANDBOXED|WEBGL|SHADER_IMAGE_PNG|COMPOSITING_STATUS|PAGE|PAGE_OBSERVED|DOCUMENT_OBSERVED|KEYRING_READY|INTERACTION_READY|VIEWPORT_READY|RESIZE_GPU_READY|SESSION_RETIRED|LAUNCH|COMPLETED_FAILURE)([ \\\\n]|$)","_UID=1000","SYSLOG_IDENTIFIER=omarchy-gpu-companion",(char*)NULL);_exit(127);
+            }
+            int status=0,joined=0;
+            if(journal>0) {
+                alarm(5);joined=waitpid(journal,&status,0)==journal;
+                if(!joined) { kill(journal,SIGKILL);waitpid(journal,&status,0); }
+                alarm(0);
+            }
+            printf("NAMED_GRAPHICS_BROWSER_JOURNAL_CAPTURE joined=%s exited=%s code=%d orderEstablished=false\\n",
+                joined?"true":"false",journal>0 && WIFEXITED(status)?"true":"false",journal>0 && WIFEXITED(status)?WEXITSTATUS(status):-1);
+            puts("NAMED_GRAPHICS_BROWSER_OUTCOME_END exitStatusAloneIsNotGraphicsAcceptance=true");
+        }
+        {
+            puts("NAMED_GRAPHICS_JOURNAL_LOSS_OUTCOME_BEGIN normalOmarchySession=false");
+            fflush(stdout);
+            const pid_t journal=fork();
+            if(!journal) {
+                if(setenv("SYSTEMD_COLORS","0",1) || setenv("SYSTEMD_URLIFY","0",1)) _exit(127);
+                execl("/usr/bin/journalctl","journalctl","-b","--no-pager","--all","-n","16","-o","json","--output-fields=_PID,_UID,_SYSTEMD_USER_UNIT,_SYSTEMD_UNIT,_BOOT_ID,SYSLOG_IDENTIFIER,_TRANSPORT,MESSAGE","--grep","(?i)(suppressed|missed|dropped) [0-9]+ messages|rate.?limit","SYSLOG_IDENTIFIER=systemd-journald",(char*)NULL);_exit(127);
+            }
+            int status=0,joined=0;
+            if(journal>0) {
+                alarm(5);joined=waitpid(journal,&status,0)==journal;
+                if(!joined) { kill(journal,SIGKILL);waitpid(journal,&status,0); }
+                alarm(0);
+            }
+            printf("NAMED_GRAPHICS_JOURNAL_LOSS_CAPTURE joined=%s exited=%s code=%d orderEstablished=false\\n",
+                joined?"true":"false",journal>0 && WIFEXITED(status)?"true":"false",journal>0 && WIFEXITED(status)?WEXITSTATUS(status):-1);
+            puts("NAMED_GRAPHICS_JOURNAL_LOSS_OUTCOME_END exitStatusAloneIsNotGraphicsAcceptance=true");
+        }
+        {
+            puts("NAMED_GRAPHICS_QUEUE_TIMING_OUTCOME_BEGIN lastSamplesOnly=true gpuTimestamps=false");
+            fflush(stdout);
+            const pid_t journal=journal_pid_valid ? fork() : -1;
+            if(!journal) {
+                if(setenv("SYSTEMD_COLORS","0",1) || setenv("SYSTEMD_URLIFY","0",1)) _exit(127);
+                execl("/usr/bin/journalctl","journalctl","-b","--no-pager","--all","-n","64","-o","json","--output-fields=_PID,_UID,_SYSTEMD_USER_UNIT,_SYSTEMD_UNIT,_BOOT_ID,SYSLOG_IDENTIFIER,_TRANSPORT,MESSAGE","--grep","^HYPRLAND_ACTIVE_QUEUE_TIMING ",journal_pid,"_UID=1000","_SYSTEMD_USER_UNIT=wayland-wm@wddmprobe.desktop.service",(char*)NULL);_exit(127);
+            }
+            int status=0,joined=0;
+            if(journal>0) {
+                alarm(5);joined=waitpid(journal,&status,0)==journal;
+                if(!joined) { kill(journal,SIGKILL);waitpid(journal,&status,0); }
+                alarm(0);
+            }
+            printf("NAMED_GRAPHICS_QUEUE_TIMING_CAPTURE joined=%s exited=%s code=%d orderEstablished=false\\n",
+                joined?"true":"false",journal>0 && WIFEXITED(status)?"true":"false",journal>0 && WIFEXITED(status)?WEXITSTATUS(status):-1);
+            puts("NAMED_GRAPHICS_QUEUE_TIMING_OUTCOME_END fullStreamTimingCoverage=false");
+        }
     }
     if(uwsm && compositor_pid>0) {'''
-    for old in (before, wait, include, cleanup):
+    for old in (before, wait, include, cleanup, admission, live_tail):
         if original.count(old) != 1:
             raise ValueError('Guest graphics discovery boundary changed')
-    text = original.replace(before, after, 1).replace(wait, discover, 1).replace(include, expanded, 1).replace(cleanup, outcome, 1)
-    if text.replace(after, before, 1).replace(discover, wait, 1).replace(expanded, include, 1).replace(outcome, cleanup, 1) != original:
+    text = original.replace(before, after, 1).replace(wait, discover, 1).replace(include, expanded, 1).replace(cleanup, outcome, 1).replace(admission, sync_admission, 1).replace(live_tail, filtered_tail, 1)
+    if text.replace(after, before, 1).replace(discover, wait, 1).replace(expanded, include, 1).replace(outcome, cleanup, 1).replace(sync_admission, admission, 1).replace(filtered_tail, live_tail, 1) != original:
         raise ValueError('Unexpected guest graphics discovery change')
     target.write_text(text, encoding='utf-8', newline='\n')
     header = output/'guest_graphics_port.h'
     header.write_bytes((gpu/header.name).read_bytes())
+    progress_header = output/'guest_progress_snapshot.h'
+    progress_header.write_bytes((gpu/progress_header.name).read_bytes())
     receipt = dict(schema=1, parentLogging=parent,
         generatorSha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         generatedSourceSha256=hashlib.sha256(target.read_bytes()).hexdigest(),
         graphicsPortHeaderSha256=hashlib.sha256(header.read_bytes()).hexdigest(),
         discovery='unique sysfs name and matching character-device identity',
         terminalCompositorJournalLines=160, terminalStatusCapturedBeforeUserStop=True,
+        terminalCompositorJournalFormat='json',
+        terminalJournalColorDisabled=True, terminalJournalHyperlinksDisabled=True,
+        terminalJournalCompleteValuesRequested=True,
+        terminalJournalGroups=['session','applications','browser','journal-loss','queue-timing'],
+        terminalJournalGroupLineLimits=[160,160,96,16,64],
+        terminalQueueTimingLastSamplesOnly=True,
+        terminalQueueTimingAdditionalProducerLogs=False,
+        producerProgressByteCap=512,
+        producerProgressHeaderSha256=hashlib.sha256(progress_header.read_bytes()).hexdigest(),
+        producerProgressReadOnly=True,
+        producerProgressProcessIdentityAttested=False,
+        producerLifetimeChanged=False,
+        terminalCompositorPidAndUidFilter=True,
+        terminalBrowserSyslogAndUidFilter=True,
+        terminalBrowserRowsRequireOwnedPidCorrelation=True,
+        terminalJournalLossReportsCaptured=True,
+        journalLossAbsenceEstablishesCompleteness=False,
+        terminalJournalOutputByteCapImplemented=False,
+        terminalJournalPerQueryDeadlineSeconds=5,
+        guestBuildVerified=False, hardwareRunVerified=False,
+
+        terminalJournalPreservesPidUidBootAndUnit=True,
+        terminalJournalMatchesMultilineMessages=True,
+        liveJournalStoppedBeforeTerminalCapture=True,
+        terminalJournalExcludesNoisyGpuTeardown=True,
+        kernelSyncAdmissionDiagnostics=True,
+        liveSerialJournalFiltersVerboseIoctlDiagnostics=True,
+        liveWorkloadInputRendererAndFailureMarkersRetained=True,
+        guestJournalStorageChanged=False,
+        fullPerIoctlGuestTraceRetainedOnHost=False,
         fixedPortOrdinal=False, opensOtherDevicePorts=False,
         inputImplementationChanged=False, gpuProtocolChanged=False,
         probeSessionStillBounded=True, normalAccountBootstrapImplemented=False,

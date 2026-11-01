@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Kernel-authenticated, typed session tickets for native NT object references.
 #pragma once
+#include "guest_bridge_log.h"
 #include "guest-kernel/wddm_aperture.h"
 #include "guest_broker_client.h"
 #include <sys/syscall.h>
@@ -51,14 +52,14 @@ public:
             try {
                 auto reply=guest_broker::client().createObject(ticket,kind);
                 const auto ref=guest_broker::decode<guest_broker::ObjectRef>(reply.payload);
-                std::fprintf(stderr,"LINUX_BRIDGE kernelObjectExported=true kind=%s ticket=%u cookie=%llu\n",kind==WDDM_OBJECT_SYNC ? "sync" : "resource",ticket,static_cast<unsigned long long>(ref.cookie));
+                guest_bridge_log::diagnostic(stderr,"LINUX_BRIDGE kernelObjectExported=true kind=%s ticket=%u cookie=%llu\n",kind==WDDM_OBJECT_SYNC ? "sync" : "resource",ticket,static_cast<unsigned long long>(ref.cookie));
                 return reply.fds[0].release();
             } catch (const std::system_error& error) { errno=error.code().value(); return -1; }
         }
         wddm_object_create arg{}; arg.version = WDDM_APERTURE_VERSION; arg.kind = kind; arg.ticket = ticket;
         if (syscall(SYS_ioctl, control, WDDM_OBJECT_CREATE, &arg)) return -1;
         if (arg.fd < 0 || !arg.cookie || arg.ticket != ticket) { errno = EPROTO; return -1; }
-        std::fprintf(stderr, "LINUX_BRIDGE kernelObjectExported=true kind=%s ticket=%u cookie=%llu\n", kind == WDDM_OBJECT_SYNC ? "sync" : "resource", ticket, static_cast<unsigned long long>(arg.cookie));
+        guest_bridge_log::diagnostic(stderr, "LINUX_BRIDGE kernelObjectExported=true kind=%s ticket=%u cookie=%llu\n", kind == WDDM_OBJECT_SYNC ? "sync" : "resource", ticket, static_cast<unsigned long long>(arg.cookie));
         return arg.fd;
     }
     bool resolve(int fd, std::uint32_t& ticket, std::uint32_t kind = WDDM_OBJECT_SYNC) {

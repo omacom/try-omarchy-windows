@@ -1,5 +1,12 @@
 # Guest graphics startup through the original launcher profile
 
+**November 1 follow-up:** run 25 completes 1,800 ordered handoffs with
+authenticated completion, exact first/final 4K source/SDL pixels and clean
+teardown. A previous 90-second deadline miss stays rejected; normal sessions,
+full application correlation and daily use remain open. See the
+[current diagnostic-retention evidence and limits](GPU-DIAGNOSTIC-RETENTION.md).
+The October 31 startup investigation below remains historical evidence.
+
 **October 31, 2026:** the original Go argument profile now boots a private
 RAM-overlay guest, authenticates its PAM/UWSM compositor and produces an actual
 **3840×2160 NVIDIA frame through QEMU SDL**. The complete source/backbuffer
