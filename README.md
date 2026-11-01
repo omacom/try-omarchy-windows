@@ -14,6 +14,13 @@ Normal launcher integration and a stable interactive desktop remain in developme
 
 ![Three GPU apps complete 1800 handoffs; backend 4/8; desktop product 0/4](https://raw.githubusercontent.com/7Wdev/try-omarchy-windows/windows-nvgpu-lab/docs/images/gpu-backend-progress-three-apps-2026-10-27.svg)
 
+**Host session transport — November 1, 2026:** an explicit launcher-owned mode
+permits idle connections while retaining absolute message deadlines and cleanup.
+Both strict builds, real socket cancellation/backpressure controls and the full
+1,800-handoff 4K three-app regression pass. The guest still has diagnostic limits;
+normal persistent sessions and daily use remain open. Counts stay **4/8, 0/4, 3/3**.
+[Implementation, hardware evidence and exact limits](docs/LAUNCHER-HOST-SESSION.md).
+
 **Original launcher profile — November 1, 2026:** the bounded three-app workload
 now passes **1,800 GPU handoffs in 58.18 seconds**, exact first/final **3840×2160**
 source/SDL pixels, authenticated native work for both Chromium GPU processes and

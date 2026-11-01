@@ -36,6 +36,10 @@ cl /nologo /std:c++17 /EHsc /W4 /WX /O2 "$PSScriptRoot\atomic_line_log_test.cpp"
 if not "%errorlevel%"=="0" exit /b %errorlevel%
 atomic-line-log-test.exe
 if not "%errorlevel%"=="0" exit /b %errorlevel%
+cl /nologo /std:c++17 /EHsc /W4 /WX /O2 "$PSScriptRoot\launcher_session_stream_test.cpp" /Fe:launcher-session-stream-test.exe /link ws2_32.lib
+if not "%errorlevel%"=="0" exit /b %errorlevel%
+launcher-session-stream-test.exe
+if not "%errorlevel%"=="0" exit /b %errorlevel%
 cl /nologo /std:c++17 /EHsc /W4 /WX /O2 "$PSScriptRoot\driver_wire_test.cpp" /Fe:driver-wire-test.exe
 if not "%errorlevel%"=="0" exit /b %errorlevel%
 driver-wire-test.exe

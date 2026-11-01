@@ -8,6 +8,13 @@ graphics runtime.
 
 ## What is verified now?
 
+**Host session transport — November 1, 2026:** an explicit launcher-owned mode
+permits idle connections while retaining absolute message deadlines and cleanup.
+Both strict builds, real socket cancellation/backpressure controls and the full
+1,800-handoff 4K three-app regression pass. The guest still has diagnostic limits;
+normal persistent sessions and daily use remain open. Counts stay **4/8, 0/4, 3/3**.
+[Implementation, hardware evidence and exact limits](LAUNCHER-HOST-SESSION.md).
+
 **Original launcher profile — November 1, 2026:** run 30 completes the bounded
 1,800-frame workload in 58.177667 seconds, with exact first/final 4K source/SDL
 pixels and live cleanup. Both sandboxed Chromium GPU lifetimes and Nautilus now

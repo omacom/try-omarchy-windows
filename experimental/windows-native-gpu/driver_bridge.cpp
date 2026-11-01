@@ -29,6 +29,7 @@
 #include "native_buffer_metadata.h"
 #include "qemu_runtime_host.h"
 #include "launcher_lifetime.h"
+#include "launcher_session_stream.h"
 #include "shared_texture_worker.h"
 #include "compositor_readback.h"
 #include "compositor_presenter.h"
@@ -2841,6 +2842,7 @@ class Stream {
     SOCKET socket;
 public:
     explicit Stream(SOCKET s = INVALID_SOCKET) : socket(s) {}
+    SOCKET transport() const { return socket; }
     bool read(void* buffer, std::size_t length, bool cleanEof = false) {
         auto p = static_cast<char*>(buffer); std::size_t done = 0;
         while (done != length) {
@@ -2883,7 +2885,8 @@ public:
     }
 };
 static void serve(Stream& stream, const std::string& sectionName = {}, std::uint32_t sectionBytes = 0,
-                  bool contexts = false, bool queries = false, driver_qemu::Runtime* runtime = nullptr, bool allocations = false, bool gpuVa = false, bool residency = false, bool cpu = false, bool cpuStoreTest = false, bool translation = false, bool hwQueues = false, bool sync = false, bool submit = false, bool retirement = false, bool reservation = false, bool gpuState = false, bool asyncSubmit = false, bool sharedResources = false, bool consumeShared = false, bool presentShared = false, bool nativeMetadata = false, bool consumeProcess = false, bool coordinated = false, unsigned sdlFailureTest = 0, bool deferredResidency = false, std::uint32_t actorSlots = 4, std::uint32_t resourceReferences = 16, bool mappedAdmission = false, bool applicationMemory = false, bool applicationObjects = false) {
+                  bool contexts = false, bool queries = false, driver_qemu::Runtime* runtime = nullptr, bool allocations = false, bool gpuVa = false, bool residency = false, bool cpu = false, bool cpuStoreTest = false, bool translation = false, bool hwQueues = false, bool sync = false, bool submit = false, bool retirement = false, bool reservation = false, bool gpuState = false, bool asyncSubmit = false, bool sharedResources = false, bool consumeShared = false, bool presentShared = false, bool nativeMetadata = false, bool consumeProcess = false, bool coordinated = false, unsigned sdlFailureTest = 0, bool deferredResidency = false, std::uint32_t actorSlots = 4, std::uint32_t resourceReferences = 16, bool mappedAdmission = false, bool applicationMemory = false, bool applicationObjects = false, driver_launcher::Lifetime* persistentLauncher = nullptr) {
+    if(persistentLauncher && (!runtime || !coordinated)) throw std::runtime_error("Persistent session requires the owned coordinator");
     KmtDriver driver(sectionName, sectionBytes, contexts, queries, runtime, allocations, gpuVa, residency, cpu, cpuStoreTest, translation, hwQueues, sync, submit, retirement, reservation, gpuState, asyncSubmit, sharedResources, consumeShared, presentShared, nativeMetadata,consumeProcess);
     driver.configureDeferredResidency(deferredResidency);
     driver.configureMappedResidencyAdmission(mappedAdmission);
@@ -2904,13 +2907,27 @@ static void serve(Stream& stream, const std::string& sectionName = {}, std::uint
             std::uint64_t count=0;std::size_t peakObjects=0,peakActors=0;
             try {
                 const unsigned seconds=runtime && runtime->fenceSlotLimit()==512 ? 240u : 120u;
-                std::cerr<<"{\"nativeCoordinatorStartupBudget\":true,\"seconds\":"<<seconds<<",\"performanceAccepted\":false}\n";
+                if(!persistentLauncher) std::cerr<<"{\"nativeCoordinatorStartupBudget\":true,\"seconds\":"<<seconds<<",\"performanceAccepted\":false}\n";
                 const auto deadline=GetTickCount64()+seconds*1000ull;
+                std::unique_ptr<driver_launcher::SessionStream> sessionReader;
+                if(persistentLauncher) {
+                    static_assert(coordinator::MaxPacket<=UINT32_MAX,"Session packet length representation");
+                    sessionReader=std::make_unique<driver_launcher::SessionStream>(stream.transport(),static_cast<std::uint32_t>(sizeof(coordinator::Frame)),static_cast<std::uint32_t>(coordinator::MaxPacket),
+                        [runtime,persistentLauncher] {
+                            if(persistentLauncher->cancelled() || runtime->guestExited()) return false;
+                            persistentLauncher->requireLive();return true;
+                        });
+                    std::cerr<<"{\"nativeCoordinatorLauncherSession\":true,\"idleDeadlineSeconds\":0,\"packetDeadlineMilliseconds\":10000,\"heldLauncherRequired\":true,\"guestSessionVerified\":false}\n";
+                }
                 for(;;) {
-                    if(GetTickCount64()>=deadline) throw std::runtime_error("Coordinated owned runtime diagnostic deadline exceeded");
-                    std::uint32_t size=0;if(!stream.read(&size,sizeof size,true)) break;
-                    if(size<sizeof(coordinator::Frame) || size>coordinator::MaxPacket) throw std::runtime_error("Invalid coordinated stream frame length");
-                    std::vector<std::uint8_t> packet(size);stream.read(packet.data(),packet.size());
+                    std::vector<std::uint8_t> packet;
+                    if(sessionReader) { if(!sessionReader->packet(packet)) break; }
+                    else {
+                        if(GetTickCount64()>=deadline) throw std::runtime_error("Coordinated owned runtime diagnostic deadline exceeded");
+                        std::uint32_t size=0;if(!stream.read(&size,sizeof size,true)) break;
+                        if(size<sizeof(coordinator::Frame) || size>coordinator::MaxPacket) throw std::runtime_error("Invalid coordinated stream frame length");
+                        packet.resize(size);stream.read(packet.data(),packet.size());
+                    }
                     const auto reply=owner.dispatch(packet);
                     peakObjects=(std::max)(peakObjects,owner.objectCount());peakActors=(std::max)(peakActors,owner.actorCount());++count;
                     if(owner.failed() || reply.empty()) throw std::runtime_error("Coordinated controller protocol failure");
@@ -2920,7 +2937,8 @@ static void serve(Stream& stream, const std::string& sectionName = {}, std::uint
                             {"gpuDeviceRemoved",false},{"beforeGuestReply",true}}.dump()<<'\n';
                         throw std::runtime_error("Injected SDL coordinator failure after frame 64; diagnostic only");
                     }
-                    stream.writeFrame(reply);
+                    if(sessionReader) { if(!sessionReader->reply(reply)) break; }
+                    else stream.writeFrame(reply);
                 }
             } catch(const std::exception& error) {
                 failure=std::current_exception();
@@ -3005,7 +3023,7 @@ int main(int argc, char** argv) {
         bool hwQueueNoBroadcastWaitEofTest = false;
         bool asyncSubmit = false, sharedResources = false, consumeShared = false, presentShared = false, nativeMetadata = false, consumeProcess = false, coordinated = false, windowInput = false, inputSelfTest = false, sdlRelay = false;
         unsigned sdlFailureTest=0;
-        bool virtioTrace=false,deferredResidency=false,userNetwork=false,mappedAdmission=false,applicationMemory=false,applicationObjects=false;
+        bool virtioTrace=false,deferredResidency=false,userNetwork=false,mappedAdmission=false,applicationMemory=false,applicationObjects=false,launcherSession=false;
         const char* readonlyRoot = nullptr;
         const char* launcherProfileJson = nullptr;
         std::optional<driver_launcher::Profile> launcherProfile;
@@ -3071,6 +3089,7 @@ int main(int argc, char** argv) {
             else if (option == "--driver-present-shared" && !presentShared) presentShared = true;
             else if (option == "--driver-native-metadata" && !nativeMetadata) nativeMetadata = true;
             else if (option == "--driver-coordinator" && !coordinated) coordinated = true;
+            else if (option == "--driver-launcher-session" && !launcherSession) launcherSession = true;
             else if (option == "--driver-window-input" && !windowInput) windowInput = true;
             else if (option == "--driver-input-self-test" && !inputSelfTest) inputSelfTest = true;
             else if (option == "--driver-sdl-relay" && !sdlRelay) sdlRelay = true;
@@ -3095,6 +3114,8 @@ int main(int argc, char** argv) {
             throw std::runtime_error("Launcher lifetime requires the owned QEMU runtime");
         if (launcherCancellation && (!contexts || !queries))
             throw std::runtime_error("Launcher lifetime requires explicit query/context opt-ins");
+        if(launcherSession && (!launcherProfileJson || !launcherCancellation || !coordinated || !sdlRelay))
+            throw std::runtime_error("Launcher session requires an original profile, inherited lifetime control and SDL coordinator");
         if (launcherProfileJson) {
             if (!launcherCancellation) throw std::runtime_error("Launcher profile requires inherited lifetime control");
             launcherProfile=driver_launcher::Profile::parse(launcherProfileJson);
@@ -3285,7 +3306,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("Cannot configure low-latency GPU RPC socket");
         std::cerr<<"{\"nativeGpuTransportConfigured\":true,\"tcpNoDelay\":true,\"tcpNoDelayOptionBytes\":"<<optionBytes
             <<",\"framedReplyScatterGather\":true,\"inputPathChanged\":false}\n";
-        Stream stream(client.value); serve(stream, sectionName, sectionBytes, contexts, queries, runtime.get(), allocations, gpuVa, residency, cpu, cpuStoreTest, translation, hwQueues, sync, submit, retirement, reservation, gpuState, asyncSubmit, sharedResources, consumeShared, presentShared, nativeMetadata,consumeProcess,coordinated,sdlFailureTest,deferredResidency,actorSlots,resourceReferences,mappedAdmission,applicationMemory,applicationObjects);
+        Stream stream(client.value); serve(stream, sectionName, sectionBytes, contexts, queries, runtime.get(), allocations, gpuVa, residency, cpu, cpuStoreTest, translation, hwQueues, sync, submit, retirement, reservation, gpuState, asyncSubmit, sharedResources, consumeShared, presentShared, nativeMetadata,consumeProcess,coordinated,sdlFailureTest,deferredResidency,actorSlots,resourceReferences,mappedAdmission,applicationMemory,applicationObjects,launcherSession ? launcherLifetime.get() : nullptr);
         if (runtime) {
             runtime->report();
             if (!runtime->cleanExit()) throw std::runtime_error("Owned QEMU runtime did not exit cleanly");

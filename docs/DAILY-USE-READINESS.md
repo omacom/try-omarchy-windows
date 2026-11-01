@@ -1,5 +1,10 @@
 # Daily-use readiness
 
+**Host-session follow-up, November 1:** an opt-in launcher-owned host transport
+passes real idle/backpressure controls and the complete bounded 4K application
+regression. Guest lifetime limits, normal startup, physical input and daily-use
+acceptance remain open. [Exact scope and remaining integration](LAUNCHER-HOST-SESSION.md).
+
 **Latest November 1 follow-up:** bounded run 30 passes 1,800 handoffs in
 58.177667 seconds, exact first/final 4K pixels, authenticated native work for
 both Chromium GPU lifetimes and Nautilus, and live cleanup. Tab retirement,

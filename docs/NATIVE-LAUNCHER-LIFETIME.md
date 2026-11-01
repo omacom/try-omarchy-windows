@@ -1,5 +1,10 @@
 # Native launcher lifetime control
 
+**Host-session follow-up, November 1:** an opt-in launcher-owned host transport
+passes real idle/backpressure controls and the complete bounded 4K application
+regression. Guest lifetime limits, normal startup, physical input and daily-use
+acceptance remain open. [Exact scope and remaining integration](LAUNCHER-HOST-SESSION.md).
+
 The native bridge now accepts a private inherited cancellation handle and
 publishes the actual owned QEMU identity. Hidden QEMU/WHPX tests verify normal
 GPU completion, cancellation and creator exit. **The Go launcher does not yet

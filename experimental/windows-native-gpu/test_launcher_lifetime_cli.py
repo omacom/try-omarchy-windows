@@ -16,6 +16,10 @@ cases += [(['--stdio', flag, ''], 'Missing launcher cancellation handle'),
     (['--listen', '0', flag, '1'], 'Launcher lifetime requires the owned QEMU runtime'),
     (['--stdio', flag, '1', flag, '2'], 'Launcher cancellation handle must be specified once'),
     (['--run-qemu', 'missing-qemu', 'firmware', 'kernel', 'initrd', 'fresh-log', flag, '1'], 'requires explicit query/context opt-ins')]
+cases += [(['--stdio','--driver-launcher-session'], 'Launcher session requires an original profile'),
+    (['--listen','0','--driver-launcher-session'], 'Launcher session requires an original profile'),
+    (['--run-qemu','missing-qemu','firmware','kernel','image','log','--driver-launcher-session'], 'Launcher session requires an original profile'),
+    (['--stdio','--driver-launcher-session','--driver-launcher-session'], 'Launcher session requires an original profile')]
 for command, reason in cases:
     result = subprocess.run([str(args.bridge.resolve()), *command], capture_output=True, text=True, timeout=5,
         creationflags=subprocess.CREATE_NO_WINDOW)

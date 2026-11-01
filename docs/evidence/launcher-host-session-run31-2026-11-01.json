@@ -1,0 +1,293 @@
+{
+  "schema": 1,
+  "date": "2026-11-01",
+  "scope": "Opt-in launcher-owned host transport; guest remains a bounded diagnostic session",
+  "run": 31,
+  "nativeBuild": 129,
+  "nativeBinarySha256": "57bd5e448b4ce24d6c78b82a570651799f73e444083e8de5c281e0c894d78383",
+  "defaultNativeBinarySha256": "e7e7f2fcfd446459c2404ff66a48d177efabe8ab90929605f1963e1a1db20ea7",
+  "sourceSha256": {
+    "driver_bridge.cpp": "1b2022c694e692c5d525abb3054a286132fd150ae245928ea5cf9fb73c36ff6c",
+    "launcher_session_stream.h": "38ffb0fd1fdc762e1d4c6adf741993d9d9872e10de1956e23a1aa20a002b3d78",
+    "launcher_session_stream_test.cpp": "1b75756e1f563e0b4e749fcabaa620d2cd651640b712e424d60ec41d67f10dd2",
+    "build.ps1": "fed2e3f3ccaed1f8e7ea5ec146360c519e16fc1dd3f5277c440de2004dbbb059",
+    "test_launcher_lifetime_cli.py": "18163c84807303d10cc61be357d068f074f1f167121eb7c3e9ae79aeaf97b5c8"
+  },
+  "receiptSha256": {
+    "nativeBuild": "f39a1b2ef689eca33046d266f4c9f9fc0d88e7d411a88344124ed20140eddddc",
+    "source": "597a06a2e749796222712a4565f106363addcee16bd3712c373911f4ddb9cf28",
+    "isolation": "4d497a8be9bb5bbc705249a5911a103cc884b40dc5f47c43757d6595b0dd6bd2",
+    "pixels": "df146e7d796db54845637bb80b0c9a90e49462a245eb9303068a0f70f1538e7e",
+    "core": "9a36e639803ba687fe50e154ae5498cdf0eb8178358269dba4ced76452d35b32",
+    "applications": "500b8dee5870524858e4b0d5a1bad8729f9471088af7999e34c2a9530ae7ddec",
+    "producerAndQueue": "e6e51dd4fed48413f7a1f5f6842d9be3f8cd763d3091c4fb8635d122c2750b3b",
+    "longIdleCpu": "cea20ba38c274d236f795a4ab7e6e1fdff22df1bdb60970a739ab196d034ca92"
+  },
+  "hostPolicy": {
+    "flag": "--driver-launcher-session",
+    "defaultEnabled": false,
+    "originalProfileRequired": true,
+    "inheritedCancellationAndHeldCreatorRequired": true,
+    "fullSdlCoordinatorRequired": true,
+    "hostIdleDeadlineSeconds": null,
+    "hostDiagnosticLifetimeRemovedOnlyWhenOptedIn": true,
+    "pollTimeoutMaximumMilliseconds": 100,
+    "absoluteReadPacketDeadlineMilliseconds": 10000,
+    "absoluteReplyDeadlineMilliseconds": 10000,
+    "readDeadlineSharedAcrossHeaderAndPayload": true,
+    "deadlineResetsForEachPartialIo": false,
+    "nonblockingVectoredReplies": true,
+    "wireAndGpuApisChanged": false
+  },
+  "hardwareCore": {
+    "schema": 1,
+    "run": 31,
+    "scope": "1800 ordered native GPU handoffs, authenticated guest END/ACK, previously verified full4K pixels and cleanup only",
+    "sourceReceiptSha256": "597a06a2e749796222712a4565f106363addcee16bd3712c373911f4ddb9cf28",
+    "serialSha256": "209766833a88def0dfffe26fe5a1e8d8e89088c217dfa45b00045a266e1c35d7",
+    "nativeRecordsSha256": "78829d8a043af6f7008f3f9b8714fb3d8fae66633f1d747c341dcb5a3198b226",
+    "sourceGuardsPassed": true,
+    "privateDesktopIsolationPassed": true,
+    "native1800HandoffsVerified": true,
+    "guestCompletionReceiptsVerified": true,
+    "nativeSubmissions": 4339,
+    "nativeSubmissionFailures": 0,
+    "healthQueries": 4767,
+    "healthFailures": 0,
+    "peakAllocationRecords": 1063,
+    "allocationRecordLimit": 2048,
+    "peakReportedGpuUsageBytes": 1474105344,
+    "reportedUsageLimitBytes": 4294967296,
+    "naturalVmExit": true,
+    "allTrackedNativeResourcesReclaimedBeforeExit": true,
+    "frames": [
+      {
+        "frame": 1,
+        "auditOrdinal": 1,
+        "pixelProof": {
+          "sourceExact": true,
+          "windowWidth": 3840,
+          "windowHeight": 2160,
+          "maximumChannelError": 0,
+          "sourceSha256": "2341f989b6ffa16994117c373ea90138650a63ccd01d4c4ac89b8f31eca06603",
+          "windowSha256": "c3d30456ce3debcd852100e537e58a5b4c19e13099576b717ee2fe5b139e88da"
+        },
+        "nativeBgraSha256": "3ffbdeeeddc1e7fec2d1ec412788bf698f21ab7097579f2a08c2a2ea1df93e52",
+        "pngSha256": "be0d007c788310412b64a275515ab205e53cbb2859a625ef24106a0278f1d582"
+      },
+      {
+        "frame": 1800,
+        "auditOrdinal": 2,
+        "pixelProof": {
+          "sourceExact": true,
+          "windowWidth": 3840,
+          "windowHeight": 2160,
+          "maximumChannelError": 0,
+          "sourceSha256": "e285c0e7906d5e251d2af4793efc86b54c8aae021fb57979408a87e10ea6f38e",
+          "windowSha256": "df853622de2ec34ec33dc0ad9f860b480f97ab08f140de83300d04225d6708f0"
+        },
+        "nativeBgraSha256": "afddf97660cea5c80c8b32c3b1e3dbff99ec2dca0397c420abbaf4b037341bd5",
+        "pngSha256": "e245325e9873efbad6e1eaff09a68804bbff58a2666c25ed33c5b877708faf18"
+      }
+    ],
+    "pixelReceiptSha256": "df146e7d796db54845637bb80b0c9a90e49462a245eb9303068a0f70f1538e7e",
+    "launcherHostSessionModeObserved": true,
+    "guestSessionRemainsDiagnostic": true,
+    "physicalInputAccepted": false,
+    "physicalScanoutAccepted": false,
+    "completeBrowserLifecycleAudited": false,
+    "fullWorkloadAccepted": false,
+    "normalAccountStartup": false,
+    "nearNativePerformanceAccepted": false,
+    "dailyUseAccepted": false,
+    "auditorSha256": "78863442da7cbbd85e526da9a8d5b63f9059b329a8aa32a43f544ec75b8ca64e"
+  },
+  "applications": {
+    "schema": 1,
+    "run": 31,
+    "scope": "bounded original-profile three-app GPU workload only; no normal session/daily-use/native93% claim",
+    "sourceReceiptSha256": "597a06a2e749796222712a4565f106363addcee16bd3712c373911f4ddb9cf28",
+    "serialSha256": "209766833a88def0dfffe26fe5a1e8d8e89088c217dfa45b00045a266e1c35d7",
+    "nativeLogSha256": "78829d8a043af6f7008f3f9b8714fb3d8fae66633f1d747c341dcb5a3198b226",
+    "nativeCoreReceiptSha256": "9a36e639803ba687fe50e154ae5498cdf0eb8178358269dba4ced76452d35b32",
+    "nativeBuildReceiptSha256": "f39a1b2ef689eca33046d266f4c9f9fc0d88e7d411a88344124ed20140eddddc",
+    "browserLifetimes": [
+      {
+        "pid": 2318,
+        "actor": 9,
+        "acceptedNativeCommands": 82,
+        "acceptedNativeCommandBytes": 2199552,
+        "asynchronousNativeCommands": 82,
+        "countsExact": true,
+        "queueAcceptanceOnly": true,
+        "liveRetirementQuiescenceVerified": true,
+        "browserPid": 2156,
+        "renderer": "ANGLE (Microsoft Corporation, D3D12 (NVIDIA GeForce RTX 5090 Laptop GPU), OpenGL ES 3.1)",
+        "shaderPixel": [
+          128,
+          128,
+          64,
+          255
+        ],
+        "allObservedGpuThreadsSandboxed": true,
+        "httpsPageLoaded": true,
+        "ownedKeyringStopped": true,
+        "observerJoined": true
+      },
+      {
+        "pid": 2928,
+        "actor": 12,
+        "acceptedNativeCommands": 77,
+        "acceptedNativeCommandBytes": 2007040,
+        "asynchronousNativeCommands": 77,
+        "countsExact": true,
+        "queueAcceptanceOnly": true,
+        "liveRetirementQuiescenceVerified": true,
+        "browserPid": 2869,
+        "renderer": "ANGLE (Microsoft Corporation, D3D12 (NVIDIA GeForce RTX 5090 Laptop GPU), OpenGL ES 3.1)",
+        "shaderPixel": [
+          128,
+          128,
+          64,
+          255
+        ],
+        "allObservedGpuThreadsSandboxed": true,
+        "httpsPageLoaded": true,
+        "ownedKeyringStopped": true,
+        "observerJoined": true
+      }
+    ],
+    "gtkNativeWork": {
+      "pid": 2640,
+      "actor": 10,
+      "acceptedNativeCommands": 9,
+      "acceptedNativeCommandBytes": 180224,
+      "asynchronousNativeCommands": 9,
+      "countsExact": true,
+      "queueAcceptanceOnly": true,
+      "liveRetirementQuiescenceVerified": true
+    },
+    "gtkRenderer": "GskGLRenderer",
+    "threeMappedAppsAtFourCheckpoints": true,
+    "browserInteractionProofs": 2,
+    "browserGpuResizes": 4,
+    "terminalResizes": 3,
+    "guestOnlyInputCommands": 33,
+    "boundedApplicationWorkloadAccepted": true,
+    "normalAccountStartup": false,
+    "physicalWindowsInputAccepted": false,
+    "sustainedDailyUseAccepted": false,
+    "matchedNativePerformanceMeasured": false,
+    "dailyUseAccepted": false,
+    "auditorSha256": "9504c830203bab76865579f21462d2b23ff9332166c299c7aa7ad9f8e14b5741"
+  },
+  "workloadElapsedSeconds": 61.278317,
+  "longIdleCpu": {
+    "schema": 1,
+    "scope": "Real Windows loopback idle beyond production timeout; no guest/GPU claim",
+    "headerSha256": "38ffb0fd1fdc762e1d4c6adf741993d9d9872e10de1956e23a1aa20a002b3d78",
+    "originalTestSha256": "1b75756e1f563e0b4e749fcabaa620d2cd651640b712e424d60ec41d67f10dd2",
+    "derivedTestSha256": "3bbeaf03d80a69447768ce99556b92279882e8f8a52149d675cd7b4dc87e02ed",
+    "testOnlyChanges": [
+      [
+        "reader(sockets.receiver,4,64,[&] { ++liveChecks;return true; },200);",
+        "reader(sockets.receiver,4,64,[&] { ++liveChecks;return true; },10000);"
+      ],
+      [
+        "Worker sender([&] { Sleep(350);sendPacket",
+        "Worker sender([&] { Sleep(11000);sendPacket"
+      ],
+      [
+        "GetTickCount64()-start>=600",
+        "GetTickCount64()-start>=11000"
+      ]
+    ],
+    "idleMilliseconds": 11000,
+    "packetTimeoutMilliseconds": 10000,
+    "elapsedAssertionLowerBoundMilliseconds": 11000,
+    "originalAssertionsPreserved": true,
+    "logSha256": "e7646b0f2be490555fde4fbacdd06e62ce11b564d1ee7e214415750c15ae7c8a",
+    "controls": [
+      {
+        "realBackpressureObserved": true,
+        "filledBytes": 81920,
+        "cancellationControl": false
+      },
+      {
+        "realBackpressureObserved": true,
+        "filledBytes": 81920,
+        "cancellationControl": true
+      },
+      {
+        "launcherSessionStreamControls": true,
+        "realWindowsLoopback": true,
+        "idleBeyondPacketDeadline": true,
+        "trickleDeadlines": true,
+        "partialFrameCancellation": true,
+        "boundedReplyBackpressure": true,
+        "gpu": false,
+        "qemu": false,
+        "hostInput": false
+      }
+    ],
+    "vm": false,
+    "gpu": false,
+    "normalSessionVerified": false,
+    "dailyUseAccepted": false
+  },
+  "cliControlsPerProfile": {
+    "lifetimeAndSession": 17,
+    "coordinator": 33
+  },
+  "strictProfiles": [
+    "default",
+    "4K"
+  ],
+  "retainedDevelopmentFailures": [
+    {
+      "build": 127,
+      "scope": "strict compilation",
+      "reason": "size_t to uint32_t conversion warning treated as error; fixed by explicit checked representation",
+      "logSha256": "8c70cdd470e5b360734e943fb6a9793b610b94903caa9714d5ef7310e7d3826f"
+    },
+    {
+      "build": 128,
+      "scope": "strict compilation",
+      "reason": "Test identifier collides with Windows SDK small macro; renamed",
+      "logSha256": "fe80bc2e6c3316da80340e371aa4b4c8db8cbc456a7df76eb21420bf8d81947e"
+    },
+    {
+      "controls": [
+        3,
+        4,
+        5
+      ],
+      "scope": "write-backpressure fixture",
+      "reason": "1MiB send was accepted; corrected fixture requires observed WSAEWOULDBLOCK before asserting timeout/cancellation"
+    },
+    {
+      "applicationAuditor": 7,
+      "scope": "audit run-ID pin",
+      "reason": "Copied run==30 pin rejects run31; fresh auditor8 changes only pin and output name, application predicates unchanged"
+    }
+  ],
+  "guestImageChanged": false,
+  "guestStillDiagnostic": true,
+  "guestGlobalTimeoutSeconds": 240,
+  "guestBrokerLifetimeConnectionLimit": 64,
+  "releasedLauncherSelectsMode": false,
+  "normalAccountStartupVerified": false,
+  "physicalWindowsInputAccepted": false,
+  "activeGpuCrashRecoveryVerified": false,
+  "sustainedDailyUseAccepted": false,
+  "matchedNativePerformanceMeasured": false,
+  "fullApiAndNvidiaFeaturesAccepted": false,
+  "dailyUseAccepted": false,
+  "backendStagesDemonstrated": 4,
+  "backendStageCount": 8,
+  "desktopGatesCompleted": 0,
+  "desktopGateCount": 4,
+  "sceneChecksCompleted": 3,
+  "sceneCheckCount": 3,
+  "privateRawArtifactsPublished": false
+}
