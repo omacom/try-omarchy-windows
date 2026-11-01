@@ -1,0 +1,296 @@
+{
+  "schema": 1,
+  "date": "2026-11-01",
+  "component": "persistent-compositor-source",
+  "parentCommit": "4c646bb1c858d7cc185ec623ca5047603f159eca",
+  "status": "CPU controls and complete isolated build; persistent hardware session not verified",
+  "acceptance": {
+    "backendStages": 4,
+    "backendTotal": 8,
+    "desktopGates": 0,
+    "desktopTotal": 4,
+    "diagnosticSceneGates": 3,
+    "diagnosticSceneTotal": 3,
+    "dailyUseAccepted": false
+  },
+  "sourceSha256": {
+    "hyprland_session.c": "a1ce4c3153147254a13d90e7db01361977b4a1bf38aa5f0000466aafae1a1788",
+    "hyprland_session_fixture.c": "be5c7fdd11615386556fd7bd832b9423391822c6f63ad59e817f176dd31751d4",
+    "test_hyprland_session.py": "5109380bf208e4c849c5847e42fee2e79ff2dd4e19a8ff77c032d537cedf9261",
+    "apply_aquamarine_session.py": "fa09e5afc422773a92f53a72a5e76eed68828c45a0763630f6e42581b0042166",
+    "test_aquamarine_session.py": "5d16f607e230238ae858608495b30985fb98c87cd072d212f21c3c0fec1b7071"
+  },
+  "cpu": {
+    "controlsPassed": 32,
+    "gpuAndEglMocked": true,
+    "realMemfdEventfd": true,
+    "rollingFramesPerSize": 10000,
+    "sizes": [
+      "1920x1080",
+      "3840x2160"
+    ],
+    "fileDescriptorsBalanced": true,
+    "absoluteRetryTimeoutChecked": true,
+    "reentrantCallbackRejected": true,
+    "originalArgumentsAndHealthyMainExitPreserved": true,
+    "rootRejectedWithExit": 125,
+    "additionalUnprivilegedUid": 65534,
+    "additionalUidMockFrames": 10000,
+    "receiptSha256": "11ad6c6fd326723beb9d4ff1e29640e6e9c79bd624c0ee8fc079fa8892129bd8",
+    "accountLogSha256": {
+      "other-uid.log": "ada04a9979360d2cfca26ab8f65c123e9030209d5b74092c69c3d70fe8c1960e",
+      "root-rejected.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "summary.log": "576c9ef440ecdc2181969ccc867208b94afd04d932ea11b4706066be0d723467"
+    },
+    "controls": [
+      {
+        "name": "default",
+        "exit": 23,
+        "gpuMock": true
+      },
+      {
+        "name": "production-path-is-exact",
+        "exit": 23,
+        "gpuMock": true
+      },
+      {
+        "name": "invalid-option-",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "invalid-option-0",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "invalid-option-true",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "invalid-option-01",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "missing-native-sync",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "reject-cpu-capture",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "unsupported-size",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "rolling-1920x1080",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "rolling-3840x2160",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "retry",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "fd_zero",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "reentrant",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "main_failure",
+        "exit": 37,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong_bytes",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "no_display",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "create_failure",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "duplicate_failure",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "destroy_failure",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "no_egl_entry",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "queue_failure",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong_sequence",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "invalid_fd",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong_size",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong_stride",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong_format",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "deadline",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "begin_failure",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "full-stderr-pipe-roundtrip",
+        "exit": 0,
+        "gpuMock": true,
+        "actualPipeBackpressureBytes": 65536,
+        "parentDiagnosticFlagsUnchanged": true
+      },
+      {
+        "name": "full-stderr-pipe-queue_failure",
+        "exit": 125,
+        "gpuMock": true,
+        "actualPipeBackpressureBytes": 65536,
+        "parentDiagnosticFlagsUnchanged": true
+      },
+      {
+        "name": "existing-regular-log-preserved",
+        "exit": 0,
+        "gpuMock": true,
+        "parentDiagnosticFlagsUnchanged": true,
+        "existingLogPrefixPreserved": true
+      }
+    ],
+    "fullDiagnosticPipeControlsPassed": true,
+    "inheritedDiagnosticFlagsUnchanged": true,
+    "existingDiagnosticPrefixPreserved": true
+  },
+  "aquamarine": {
+    "upstreamCommit": "f31c47a1b9d300847d8fc3108ad959448103dfc1",
+    "version": "0.15.1",
+    "sourceFiles": 79,
+    "changedFiles": [
+      "src/backend/Headless.cpp"
+    ],
+    "other78FilesUnchanged": true,
+    "completeInverseExact": true,
+    "reapplicationExact": true,
+    "negativeControlsPassed": 8,
+    "headlessOriginalSha256": "2e078a4923d9ffd076a52b50cce67f4bda2c2ff458d6ec55fc3d2ec85a373625",
+    "headlessSelectedSha256": "ef35875ad513ac4b77166d2dfc4149d45fb25387989627f57ae439d17a665e36",
+    "receiptSha256": "c4e82992549a9e198b0bccecc4ed3732e4041933b6d71ca9ba6fd63c5c504d82",
+    "linkedAuthoredSourceFilesByteIdenticalToCurrentControls": true,
+    "completeLibraryBuildPassed": true,
+    "librarySha256": "9858a11c4c20834ac94414794705c017a12ba69cb55031ee8926a76a2239b183",
+    "configureLogSha256": "24206cb0db208321aa6fb572c98c59b62fca59c972adc8ef908937f6bbacf687",
+    "compileLogSha256": "4dd0d53890bd191c9c090154cbb602227bc7b6983fc429ed516e4b400b198aff",
+    "generatedProtocolSourceSha256": {
+      "protocols/linux-dmabuf-v1.cpp": "0e04a319770f0a24070e54a61a39fdb85ec8e7fbbe39abbb5b91a660f521a081",
+      "protocols/linux-dmabuf-v1.hpp": "941c28d922bd5f7222a6ac151cfd04ece522a1a720d7bafb91c665111b3562ce",
+      "protocols/wayland.cpp": "85f7917f4a50d677790aa1857af9525d005eca85adabbb0a63d5a4a6f9253b1e",
+      "protocols/wayland.hpp": "26b0a243f345d69a57bca1d696e0519783fefbe5efdcbeeb26dafa597188c46d",
+      "protocols/xdg-shell.cpp": "c1057f689598fb276f292b328e7d813392b76def50a4ce8f71d195c5b90073d0",
+      "protocols/xdg-shell.hpp": "45e413621da41425a88bb1b78389548d2524a017079fb669c7193565593ad1db"
+    }
+  },
+  "hook": {
+    "productionLibrarySha256": "548b9043ccf08a02259a96a2902ce08058d85a60cd94d1648edb0e97e6e088eb",
+    "strictC11Build": true,
+    "canonicalExecutable": "/usr/bin/Hyprland",
+    "explicitSelection": "WDDM_BRIDGE_COMPOSITOR_SESSION=1",
+    "profile": 14,
+    "ordinaryFrameFlags": 0,
+    "frameCounterBits": 64,
+    "finiteFrameLimit": false,
+    "repaintThread": false,
+    "globalLifetimeTimer": false,
+    "sourceCpuMappingAdded": false,
+    "auditReadbackAdded": false,
+    "windowsInputImplementationChanged": false,
+    "aquamarineInputFilesChanged": false,
+    "bestEffortNonblockingDiagnostics": true,
+    "diagnosticFlagsSharedWithParent": false
+  },
+  "retainedFailure": {
+    "attempt": "isolated-aquamarine-v1",
+    "stage": "link",
+    "reason": "Local libhyprutils search directory omitted",
+    "logSha256": "d9e9f6a928d330f0f74ff1f63b4b03660f89b6c29d403543e40989708e819759",
+    "correction": "Fresh public-source v2 build supplies the local link search directory",
+    "earlierLogKept": true
+  },
+  "limits": {
+    "realGpuUsedForThisChange": false,
+    "persistentHardwareSessionVerified": false,
+    "normalOwnerProvisioningIntegrated": false,
+    "normalSddmUwsmIntegrated": false,
+    "releasedLauncherActivated": false,
+    "dynamicOutputModes": false,
+    "multipleNativeOutputs": false,
+    "physicalInputTested": false,
+    "sustainedBrowsingTested": false,
+    "gpuInterruptionRecoveryTested": false,
+    "matchedNativePerformanceVerified": false,
+    "cudaVerified": false,
+    "generalVulkanWindowsVerified": false,
+    "videoAccelerationVerified": false,
+    "dlssVerified": false,
+    "hardwareRayTracingVerified": false
+  },
+  "userComputer": {
+    "vmLaunched": false,
+    "visibleWindowOpened": false,
+    "hostInputSent": false,
+    "desktopControlled": false,
+    "desktopSwitched": false
+  }
+}

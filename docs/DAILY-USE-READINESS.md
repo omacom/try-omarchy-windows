@@ -1,5 +1,11 @@
 # Daily-use readiness
 
+**Persistent compositor source, November 1:** the timed fixture now has a separate
+persistent output implementation with passing CPU controls and a full Aquamarine
+build. It is not yet connected to the normal provisioned-owner session and has
+no persistent hardware result. Desktop acceptance remains **0/4**.
+[Exact scope and remaining work](PERSISTENT-COMPOSITOR-SESSION.md).
+
 **Broker follow-up, November 1:** the matched root-supervised broker and host pass
 the bounded 4K workload. Normal sessions remain incomplete, and the latest
 85.1-second workload leaves timing stability open. [Evidence and limits](ROOT-BROKER-SESSION.md).

@@ -8,6 +8,12 @@ graphics runtime.
 
 ## What is verified now?
 
+**Persistent compositor source — November 1, 2026:** a separate opt-in hook
+preserves normal Hyprland arguments and submits damage-driven frames without
+a finite workload. CPU controls and a complete pinned Aquamarine build pass;
+normal-session GPU integration remains unverified. Counts stay **4/8, 0/4, 3/3**.
+[Implementation, CPU/build evidence and remaining integration](PERSISTENT-COMPOSITOR-SESSION.md).
+
 **Guest broker lifetime — November 1, 2026:** a root-supervised mode permits
 rolling connections while preserving four/eight active-worker bounds. Real IPC
 controls and the matched 1,800-handoff 4K three-app regression pass. The guest

@@ -14,6 +14,12 @@ Normal launcher integration and a stable interactive desktop remain in developme
 
 ![Three GPU apps complete 1800 handoffs; backend 4/8; desktop product 0/4](https://raw.githubusercontent.com/7Wdev/try-omarchy-windows/windows-nvgpu-lab/docs/images/gpu-backend-progress-three-apps-2026-10-27.svg)
 
+**Persistent compositor source — November 1, 2026:** a separate opt-in hook
+preserves normal Hyprland arguments and submits damage-driven frames without
+a finite workload. CPU controls and a complete pinned Aquamarine build pass;
+normal-session GPU integration remains unverified. Counts stay **4/8, 0/4, 3/3**.
+[Implementation, CPU/build evidence and remaining integration](docs/PERSISTENT-COMPOSITOR-SESSION.md).
+
 **Guest broker lifetime — November 1, 2026:** a root-supervised mode permits
 rolling connections while preserving four/eight active-worker bounds. Real IPC
 controls and the matched 1,800-handoff 4K three-app regression pass. The guest
