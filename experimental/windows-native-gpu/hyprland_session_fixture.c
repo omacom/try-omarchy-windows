@@ -78,16 +78,50 @@ static unsigned fd_count(void) {
 }
 int main(int argc,char** argv,char** environment) {
     (void)environment;
-    assert(argc==5 && !strcmp(argv[1],"--config") && !strcmp(argv[2],"/home/test/My settings.lua") &&
-        !strcmp(argv[3],"--socket") && !strcmp(argv[4],"test socket"));
+    if(getenv("SESSION_TEST_EXPECT_GROUPS")) {
+        gid_t groups[2];
+        assert(getgroups(2,groups)==2 &&
+            ((groups[0]==65532 && groups[1]==65533) || (groups[1]==65532 && groups[0]==65533)));
+    }
+    const char* expected_home=getenv("SESSION_EXPECT_HOME");
+    if(expected_home) assert(getenv("HOME") && !strcmp(getenv("HOME"),expected_home));
+    if(getenv("SESSION_TEST_CLEAN_ENV"))
+        assert(!getenv("EGL_PLATFORM") && !getenv("WDDM_BRIDGE_PORT") && !getenv("WDDM_BRIDGE_WINDOWS_WORKER"));
+    const char* expected=getenv("SESSION_TEST_ARGUMENTS");
+    if(expected) {
+        for(int index=1;index<argc;++index) {
+            const char* end=strchr(expected,'\n');
+            assert(end && (size_t)(end-expected)==strlen(argv[index]) && !memcmp(expected,argv[index],(size_t)(end-expected)));
+            expected=end+1;
+        }
+        assert(!*expected);
+    } else {
+        assert(argc==5 && !strcmp(argv[1],"--config") && !strcmp(argv[2],"/home/test/My settings.lua") &&
+            !strcmp(argv[3],"--socket") && !strcmp(argv[4],"test socket"));
+    }
     assert(getenv("SESSION_UNCHANGED") && !strcmp(getenv("SESSION_UNCHANGED"),"literal value with spaces"));
     int (*mode)(uint32_t*,uint32_t*)=(int (*)(uint32_t*,uint32_t*))dlsym(RTLD_DEFAULT,"wddm_bridge_compositor_session_mode");
     int (*commit)(int,uint32_t,uint32_t,uint32_t,uint32_t,uint64_t)=
         (int (*)(int,uint32_t,uint32_t,uint32_t,uint32_t,uint64_t))dlsym(RTLD_DEFAULT,"wddm_bridge_compositor_commit");
     assert(mode && commit);
     uint32_t width=0,height=0;
+    if(getenv("SESSION_TEST_QUERY")) {
+        assert(!begins && !mode(&width,&height));
+        puts("SESSION_QUERY_CONTROL nativeBegins=0 argvPreserved=true gpuMock=true");return 17;
+    }
+    const char* watchdog=getenv("SESSION_TEST_WATCHDOG_FD");
+    if(watchdog) {
+        const int fd=atoi(watchdog);
+        assert(fd>=0 && fcntl(fd,F_GETFD)>=0 && write(fd,"W",1)==1);
+    }
     if(!begins) { assert(!mode(&width,&height));puts("SESSION_CPU_CONTROL inactive argvPreserved=true gpuMock=true");return 23; }
     assert(begins==1 && mode(&width,&height)==1);
+    const char* pause=getenv("SESSION_TEST_PAUSE_FD");
+    if(pause) {
+        const int fd=atoi(pause);char gate=0;
+        printf("SESSION_EXEC_IDENTITY pid=%ld gpuMock=true\n",(long)getpid());fflush(stdout);
+        assert(fd>=0 && read(fd,&gate,1)==1 && gate=='G');
+    }
     unsigned before=fd_count();
     const int buffer=memfd_create("cpu-only-compositor-buffer",MFD_CLOEXEC);assert(buffer>=0);
     assert(!ftruncate(buffer,(off_t)width*height*4));

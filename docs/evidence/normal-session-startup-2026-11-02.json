@@ -1,0 +1,570 @@
+{
+  "schema": 1,
+  "date": "2026-11-02",
+  "parentCommit": "e9a7023d379835661f2c6759225225795595c1d2",
+  "component": "normal-session startup client and entry staging",
+  "status": "CPU/IPC and staging controls pass; production root activation service and normal GPU login incomplete",
+  "acceptance": {
+    "backendStages": 4,
+    "backendTotal": 8,
+    "desktopGates": 0,
+    "desktopTotal": 4,
+    "diagnosticSceneGates": 3,
+    "diagnosticSceneTotal": 3,
+    "dailyUseAccepted": false
+  },
+  "sourceSha256": {
+    "guest_session_activation.h": "2d212d4bf13a2e25492c0c0885ffc742c7eb4e5e7490d25d1fb39e7dd4475bd7",
+    "guest_session_activation_test.c": "bdaa4365b92007fbf9d45060b8d6e44893ad9922cb06de52346b983456b70c75",
+    "hyprland_session.c": "3f5fbc7c3b3120d6af97cf37642c4ded48ee6583a32453dd2e9677ef60f29678",
+    "hyprland_session_exec.c": "740786303d9afdb14ce88e9414ffb6a9f3033b1062920938dd9da366ffe726df",
+    "hyprland_session_fixture.c": "f5e295a43d7a626f50cbafcaacbd9d62224eee9fe84e5a3b17b66ab68fe51bfe",
+    "hyprland_session_invocation.h": "a91b114acf975aa3e8ac8f00a8cbffc0d9b76c4d882be22ecef5b06892634182",
+    "prepare_hyprland_session_entry.py": "d1720088e49e512bfd8ee5021cc4d3cfe8636413bc07c2b6eaf5fc7abcdd6f77",
+    "test_hyprland_session.py": "a7bb8679d68512210c717f690711bff5e215907264996eef5dc7cfe067c92ee3",
+    "test_hyprland_session_entry.py": "a61368e2de1a70d16e70451cb90e071ec701fbc69938be0ee99e5b84d3becfe3",
+    "test_session_exec.py": "5411071d99b98ac6ad3efe949510be751aa63013ea8c834f2600e21ee9983706"
+  },
+  "inspectedSource": {
+    "hyprlandCommit": "1bd31aaa579a40680ce876e1547e371b60c45522",
+    "sourceSha256": {
+      "start/src/helpers/Nix.cpp": "090c0efab56fa2cb8fb7b9f3281ddef068907d4abe4c0dea3899269a92ebdcff",
+      "start/src/core/Instance.cpp": "b720d73562d80939a4a3bd5eb8b8b4bc138654198d344a2461ba1a934ba98102",
+      "src/main.cpp": "c9de308e94cce6d4c36d3b05e51085dfeaed530b49eb4006cf8550ba96b170a9"
+    },
+    "installedDesktopSha256": "a9ba6904364ef65ca0f8b80ba042272f191f90c035f5b78456f56e56651a1b37",
+    "readOnlyGuestInspection": true
+  },
+  "baseline": {
+    "commit": "e9a7023d379835661f2c6759225225795595c1d2",
+    "query": "--version-json",
+    "gpuInitializerExplicitlyMockedToFail": true,
+    "expectedOriginalMainStatus": 17,
+    "observedStatus": 125,
+    "regressionReproduced": true,
+    "failedSddmBootClaimed": false,
+    "queryLogSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "preload": {
+    "controlsPassed": 49,
+    "gpuMock": true,
+    "receiptSha256": "c36b645db8325440219a1851a709288fa4bf97c9be00e27c1b11b28143730fed",
+    "productionLibrarySha256": "79d8e0c3ed3a37341cf1dcae349f3baedfb2a495a075578a1ec77acfe38fd835",
+    "controls": [
+      {
+        "name": "query-or-syntax-0",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "query-or-syntax-1",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "query-or-syntax-2",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "query-or-syntax-3",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "query-or-syntax-4",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "query-or-syntax-5",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "query-or-syntax-6",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "query-or-syntax-7",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "query-or-syntax-8",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "query-or-syntax-9",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "query-or-syntax-10",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "query-without-gpu-environment",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "literal-value-config",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "literal-value-c",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "literal-value-socket",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "literal-value-locked-cmd",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "watchdog-descriptor-and-flags",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "default",
+        "exit": 23,
+        "gpuMock": true
+      },
+      {
+        "name": "production-path-is-exact",
+        "exit": 23,
+        "gpuMock": true
+      },
+      {
+        "name": "invalid-option-",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "invalid-option-0",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "invalid-option-true",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "invalid-option-01",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "missing-native-sync",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "reject-cpu-capture",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "unsupported-size",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "rolling-1920x1080",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "rolling-3840x2160",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "retry",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "fd_zero",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "reentrant",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "main_failure",
+        "exit": 37,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong_bytes",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "no_display",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "create_failure",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "duplicate_failure",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "destroy_failure",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "no_egl_entry",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "queue_failure",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong_sequence",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "invalid_fd",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong_size",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong_stride",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong_format",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "deadline",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "begin_failure",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "full-stderr-pipe-roundtrip",
+        "exit": 0,
+        "gpuMock": true,
+        "actualPipeBackpressureBytes": 65536,
+        "parentDiagnosticFlagsUnchanged": true
+      },
+      {
+        "name": "full-stderr-pipe-queue_failure",
+        "exit": 125,
+        "gpuMock": true,
+        "actualPipeBackpressureBytes": 65536,
+        "parentDiagnosticFlagsUnchanged": true
+      },
+      {
+        "name": "existing-regular-log-preserved",
+        "exit": 0,
+        "gpuMock": true,
+        "parentDiagnosticFlagsUnchanged": true,
+        "existingLogPrefixPreserved": true
+      }
+    ]
+  },
+  "activation": {
+    "controlsPassed": 39,
+    "rootServiceAndGpuMocked": true,
+    "actualCredentialsPidfdsAndDescriptors": true,
+    "sameProcessPinnedThroughExec": true,
+    "watchdogDescriptorPreserved": true,
+    "normalHomePreserved": true,
+    "supplementaryGroupsPreserved": true,
+    "malformedMetadataRejectedBeforeConnection": true,
+    "ancillaryFdsClosedBeforeClientExit": true,
+    "rootPeerDeathRejected": true,
+    "productionTenSecondDeadlineExercised": true,
+    "receiptSha256": "e2f0844f41ebb5120c1454f874a5cf31318a98cce6c8d33110ea5a17f8b8c5de",
+    "productionWrapperSha256": "55f6a1bf2c091e16c3e66558e66dad78daae2448db1d860b2a9f26aa933aa5b3",
+    "controls": [
+      {
+        "name": "query-unprivileged",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "query-root",
+        "exit": 17,
+        "gpuMock": true
+      },
+      {
+        "name": "normal-exec-same-pid-and-watchdog",
+        "exit": 0,
+        "gpuMock": true,
+        "sameKernelProcessThroughExec": true,
+        "rootHeldPeerPidfd": true,
+        "watchdogDescriptorPreserved": true,
+        "normalHomePreserved": true,
+        "supplementaryGroupsPreserved": true
+      },
+      {
+        "name": "wrong-owner-uid",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong-owner-gid",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "missing-owner",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "duplicate-version",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "duplicate-variable",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "reject-home-override",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "reject-unknown-variable",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "missing-newline",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "embedded-null",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong-native-sync",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong-session-selection",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "wrong-version",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "control-character",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "empty-file",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "oversize-file",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "group-writable-file",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "untrusted-owner-file",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "symlink-file",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "hardlinked-file",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "root-render-rejected",
+        "exit": 125,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-valid",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-magic",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-version",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-size",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-status",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-reserved",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-nonce",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-short",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-long",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-rights",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-truncated-rights",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-eof",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-deadline",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "wrapper-production-deadline",
+        "exit": 125,
+        "gpuMock": true,
+        "elapsedSeconds": 10.003927126
+      },
+      {
+        "name": "activation-root-death",
+        "exit": 0,
+        "gpuMock": true
+      },
+      {
+        "name": "activation-nonroot-peer",
+        "exit": 0,
+        "gpuMock": true
+      }
+    ],
+    "absoluteDeadlineSharedAcrossConnectAndExchange": true,
+    "allOwnedTestProcessesReaped": true
+  },
+  "entry": {
+    "controlsPassed": 3,
+    "sourceSha256": "a9ba6904364ef65ca0f8b80ba042272f191f90c035f5b78456f56e56651a1b37",
+    "selectedSha256": "e482b48bea8f06ef3d1fe1d6650c07099c7fbb4dbfe81600faff8ac4b5d80695",
+    "changedFields": [
+      "Exec"
+    ],
+    "sameDesktopId": "hyprland.desktop",
+    "watchdogRetained": true,
+    "outerOmarchyDesktopChanged": false,
+    "uwsmServiceChanged": false,
+    "inputCodeChanged": false,
+    "installed": false,
+    "rootActivationServiceImplemented": false,
+    "dailyUseAccepted": false
+  },
+  "integration": {
+    "productionRootServiceImplemented": false,
+    "normalSddmUwsmGpuSessionVerified": false,
+    "rootConfigurationInstalled": false,
+    "normalOwnerCreationOverridden": false,
+    "windowsInputImplementationChanged": false,
+    "bootConsoleVisibilityImplemented": false
+  },
+  "limits": {
+    "persistentGpuFrameVerified": false,
+    "officialPhysicalInputTested": false,
+    "sustainedBrowsingTested": false,
+    "activeGpuRecoveryTested": false,
+    "matchedNativePerformanceVerified": false,
+    "cudaVerified": false,
+    "generalVulkanWindowsVerified": false,
+    "videoAccelerationVerified": false,
+    "dlssVerified": false,
+    "hardwareRayTracingVerified": false
+  },
+  "userComputer": {
+    "vmLaunched": false,
+    "visibleWindowOpened": false,
+    "hostInputSent": false,
+    "desktopControlled": false,
+    "desktopSwitched": false
+  }
+}

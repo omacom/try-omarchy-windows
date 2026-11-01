@@ -1,5 +1,10 @@
 # Persistent compositor session source
 
+**November 2 follow-up:** watchdog queries now bypass GPU initialization, and a
+normal compositor exec target plus desktop-entry stage pass CPU/IPC controls.
+The root activation service and actual normal GPU login remain open.
+[Startup contract and scoped results](NORMAL-SESSION-STARTUP.md).
+
 **November 1, 2026:** a separate opt-in Hyprland entry point and Aquamarine
 adapter now build without a finite scene, frame-count exit, repaint thread or
 replacement compositor arguments. CPU controls pass; the full pinned Aquamarine

@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import socket
 
 GPU = Path(__file__).resolve().parent
 ARGS = ['--config', '/home/test/My settings.lua', '--socket', 'test socket']
@@ -18,7 +19,7 @@ def run(output, compiler='cc'):
     output.mkdir(parents=True, exist_ok=False)
     frozen = output / 'source'
     frozen.mkdir()
-    for name in ('hyprland_session.c','hyprland_session_fixture.c','test_hyprland_session.py'):
+    for name in ('hyprland_session.c','hyprland_session_invocation.h','hyprland_session_fixture.c','test_hyprland_session.py'):
         (frozen/name).write_bytes((GPU/name).read_bytes())
     executable = output / 'Hyprland'
     library = output / 'hyprland-session.so'
@@ -39,17 +40,42 @@ def run(output, compiler='cc'):
         base.pop(name, None)
     base.update(LD_PRELOAD=str(test_library), SESSION_UNCHANGED='literal value with spaces')
     results = []
-    def control(name, changes, expected, marker=None, timeout=15):
+    def control(name, changes, expected, marker=None, timeout=15, arguments=None, pass_fds=()):
         environment = base.copy()
         environment.update(changes)
         for key in [key for key,value in environment.items() if value is None]:
             del environment[key]
-        result = subprocess.run([str(executable), *ARGS], env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
+        if arguments is not None:
+            environment['SESSION_TEST_ARGUMENTS']=''.join(arg+'\n' for arg in arguments)
+        result = subprocess.run([str(executable), *(ARGS if arguments is None else arguments)], env=environment,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout,pass_fds=pass_fds)
         (output/(name+'.log')).write_text(result.stdout)
         if result.returncode != expected or (marker and marker not in result.stdout):
             raise AssertionError(f'{name}: expected {expected}, got {result.returncode}: {result.stdout}')
         results.append(dict(name=name, exit=result.returncode, gpuMock=True))
     selected = dict(WDDM_BRIDGE_COMPOSITOR_SESSION='1', D3D12_EXPERIMENTAL_NATIVE_SYNC='1')
+    # The installed start-hyprland watchdog probes --version-json before the
+    # real compositor. Queries and rejected syntax must not claim its GPU role.
+    query_sets=[['--version-json'],['--version'],['-v'],['--help'],['-h'],['--systeminfo'],['--verify-config'],
+                ['--socket','--version-json','--help'],['--config'],['--unknown-option'],['--version-json','--config','ignored']]
+    for index,arguments in enumerate(query_sets):
+        control('query-or-syntax-'+str(index),dict(selected,SESSION_TEST_QUERY='1',SESSION_TEST_CASE='begin_failure'),
+                17,'nativeBegins=0 argvPreserved=true',arguments=arguments)
+    control('query-without-gpu-environment',dict(WDDM_BRIDGE_COMPOSITOR_SESSION='1',SESSION_TEST_QUERY='1'),
+            17,'nativeBegins=0',arguments=['--version-json'])
+    # An option-like config/socket/command value cannot bypass native startup.
+    for option in ('--config','-c','--socket','--locked-cmd'):
+        control('literal-value-'+option.lstrip('-'),dict(selected,SESSION_TEST_CASE='roundtrip'),0,
+                'frames=10000',arguments=[option,'--version-json'])
+    watchdog_parent,watchdog_child=socket.socketpair()
+    try:
+        watchdog_parent.settimeout(2)
+        fd=watchdog_child.fileno()
+        control('watchdog-descriptor-and-flags',dict(selected,SESSION_TEST_CASE='roundtrip',SESSION_TEST_WATCHDOG_FD=str(fd)),
+                0,'frames=10000',arguments=['--watchdog-fd',str(fd),'--safe-mode','--locked',*ARGS],pass_fds=(fd,))
+        assert watchdog_parent.recv(1)==b'W'
+    finally:
+        watchdog_child.close();watchdog_parent.close()
     control('default', {}, 23, 'inactive argvPreserved=true')
     control('production-path-is-exact', dict(selected, LD_PRELOAD=str(library)), 23, 'inactive argvPreserved=true')
     for bad in ('', '0', 'true', '01'):
@@ -103,7 +129,7 @@ def run(output, compiler='cc'):
                             parentDiagnosticFlagsUnchanged=True,existingLogPrefixPreserved=True))
     receipt = dict(cpuControlsPassed=len(results), gpuMock=True, vmLaunched=False, inputSent=False,
                    persistentHardwareSessionVerified=False, dailyUseAccepted=False, controls=results,
-                   sourceSha256={name:hashlib.sha256((frozen/name).read_bytes()).hexdigest() for name in ('hyprland_session.c','hyprland_session_fixture.c','test_hyprland_session.py')},
+                   sourceSha256={name:hashlib.sha256((frozen/name).read_bytes()).hexdigest() for name in ('hyprland_session.c','hyprland_session_invocation.h','hyprland_session_fixture.c','test_hyprland_session.py')},
                    compileCommands=commands,
                    productionLibrarySha256=hashlib.sha256(library.read_bytes()).hexdigest())
     (output/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')

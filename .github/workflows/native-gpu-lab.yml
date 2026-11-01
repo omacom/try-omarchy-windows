@@ -125,6 +125,7 @@ jobs:
           python3 experimental/windows-native-gpu/test_guest_progress_snapshot.py
           python3 experimental/windows-native-gpu/test_launcher_guest_broker_session.py
           python3 experimental/windows-native-gpu/test_hyprland_session.py --output "$RUNNER_TEMP/hyprland-session-controls"
+          python3 experimental/windows-native-gpu/test_hyprland_session_entry.py
           python3 experimental/windows-native-gpu/test_browser_target_retirement.py
           python3 experimental/windows-native-gpu/test_sustained_terminal_pulse.py
       - name: Check bounded SDL relay host command grammar
@@ -227,6 +228,7 @@ jobs:
           c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/guest_broker_session_test.cpp -o /tmp/guest-broker-session-test
           sudo install -o root -g root -m 0755 /tmp/guest-broker-session-test /tmp/guest-broker-session-owned-test
           sudo /tmp/guest-broker-session-owned-test
+          sudo python3 experimental/windows-native-gpu/test_session_exec.py --output "$RUNNER_TEMP/native-session-exec-controls"
           cc -std=c11 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/uwsm_environment_test.c -o /tmp/uwsm-environment-test
           /tmp/uwsm-environment-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/guest_graphics_broker.cpp -o /tmp/guest-graphics-broker

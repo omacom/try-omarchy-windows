@@ -14,6 +14,12 @@ Normal launcher integration and a stable interactive desktop remain in developme
 
 ![Three GPU apps complete 1800 handoffs; backend 4/8; desktop product 0/4](https://raw.githubusercontent.com/7Wdev/try-omarchy-windows/windows-nvgpu-lab/docs/images/gpu-backend-progress-three-apps-2026-10-27.svg)
 
+**Normal-session startup boundary — November 2, 2026:** the persistent hook
+now leaves watchdog information queries alone. A compositor exec wrapper
+passes real credential/pidfd controls, and the staged desktop entry retains
+the normal watchdog. Root activation and actual normal GPU login remain open.
+[Exact startup contract, controls and remaining work](docs/NORMAL-SESSION-STARTUP.md).
+
 **Persistent compositor source — November 1, 2026:** a separate opt-in hook
 preserves normal Hyprland arguments and submits damage-driven frames without
 a finite workload. CPU controls and a complete pinned Aquamarine build pass;

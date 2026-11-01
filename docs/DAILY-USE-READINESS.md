@@ -1,5 +1,10 @@
 # Daily-use readiness
 
+**Normal-session startup, November 2:** the watchdog query regression is fixed;
+a root-authenticated exec client and native desktop-entry stage pass CPU controls.
+The production root service and normal GPU session remain incomplete. Desktop
+acceptance remains **0/4**. [Exact evidence and next work](NORMAL-SESSION-STARTUP.md).
+
 **Persistent compositor source, November 1:** the timed fixture now has a separate
 persistent output implementation with passing CPU controls and a full Aquamarine
 build. It is not yet connected to the normal provisioned-owner session and has

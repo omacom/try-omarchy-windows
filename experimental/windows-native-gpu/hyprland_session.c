@@ -11,6 +11,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include "hyprland_session_invocation.h"
 
 #ifndef WDDM_SESSION_COMPOSITOR_PATH
 #define WDDM_SESSION_COMPOSITOR_PATH "/usr/bin/Hyprland"
@@ -131,6 +132,7 @@ static int session_main(int argc,char** argv,char** environment) {
     executable[length]=0;
     if(strcmp(executable,WDDM_SESSION_COMPOSITOR_PATH))
         return original_main(argc,argv,environment);
+    if(!wddm_hyprland_renders(argc,argv)) return original_main(argc,argv,environment);
     if(strcmp(selected,"1") || !getuid() || getuid()!=geteuid()) return 125;
     const char* size=getenv("WDDM_BRIDGE_SESSION_SIZE");
     if(size && strcmp(size,"1920x1080")) {
