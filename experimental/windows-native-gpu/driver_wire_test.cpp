@@ -534,6 +534,16 @@ static void applicationResourceReferences() {
     std::cout<<"APPLICATION_RESOURCE_REFERENCES perActor32=true thirtyThirdRefusedBeforeNative=true group64=true sixtyFifthRefused=true lastCloseReusesSlot=true donorPreserved=true mock=true gpu=false\n";
 }
 int main() {
+    {
+        SubmissionActivity countOverflow{UINT64_MAX,0,0,true};
+        countOverflow.record(true,4096);
+        require(!countOverflow.exact && countOverflow.acceptedCommands==UINT64_MAX && !countOverflow.asynchronousCommands);
+        SubmissionActivity byteOverflow{1,1,UINT64_MAX-4095,true};
+        byteOverflow.record(false,4096);
+        require(!byteOverflow.exact && byteOverflow.acceptedCommands==1 && byteOverflow.acceptedCommandBytes==UINT64_MAX-4095);
+        byteOverflow.record(true,1);
+        require(byteOverflow.acceptedCommands==1 && byteOverflow.asynchronousCommands==1);
+    }
     applicationResourceReferences();
     {
         static_assert(static_cast<unsigned>(Op::QueryNativeGpuBufferAdmission) == 0x20d0);
@@ -881,6 +891,8 @@ int main() {
         const auto before=f.calls;
         auto replay=request(Op::QueueHwCommand,queue,HwSubmitDesc{65536,500,4096,4,0,0}); replay.insert(replay.end(),{37,38,39,40});
         require(header(s.dispatch(replay)).status==-22 && f.calls==before);
+        const auto activity=s.acceptedSubmissionActivity();
+        require(activity.exact && activity.acceptedCommands==500 && activity.asynchronousCommands==500 && activity.acceptedCommandBytes==500*4096);
         require(MaxHwSubmissions==16 && MaxHwQueueSignals==16 && MaxVendorCpuSlots==256);
         std::cout<<"OPENGL_DESKTOP_PROFILE rollingCommands=500 rollingHwSignals=500 rollingContextSignals=500 replayRejected=true byteBudgetsUnchanged=true gpu=false\n";
     }
@@ -2594,12 +2606,16 @@ int main() {
             submission.badSubmitReply = malformedSubmit;
             require(header(s.dispatch(queuedPacket(submitQueue, validSubmit))).status == -5);
         }
+        require(s.acceptedSubmissionActivity().exact && !s.acceptedSubmissionActivity().acceptedCommands &&
+                !s.acceptedSubmissionActivity().acceptedCommandBytes);
         submission.badSubmitReply = 3;
         // Advertising async does not change the legacy opcode's contract.
         require(header(s.dispatch(submitPacket(submitQueue, validSubmit))).status == -5);
         submitOut = s.dispatch(queuedPacket(submitQueue, validSubmit));
         std::memcpy(&submitNt, submitOut.data() + sizeof(Header), sizeof submitNt);
         require(!header(submitOut).status && submitNt.ntstatus == 0 && submitNt.value == validSubmit.fence - 1);
+        require(s.acceptedSubmissionActivity().acceptedCommands==1 && s.acceptedSubmissionActivity().asynchronousCommands==1 &&
+                s.acceptedSubmissionActivity().acceptedCommandBytes==validSubmit.bytes);
         submitBefore = submission.calls;
         require(header(s.dispatch(submitPacket(submitQueue, validSubmit))).status == -22 && submission.calls == submitBefore);
         auto synchronousNext = validSubmit; ++synchronousNext.fence;
@@ -2611,6 +2627,13 @@ int main() {
         submitOut = s.dispatch(submitPacket(submitQueue, synchronousNext));
         std::memcpy(&submitNt, submitOut.data() + sizeof(Header), sizeof submitNt);
         require(!header(submitOut).status && submitNt.ntstatus == 0 && submitNt.value == synchronousNext.fence);
+        require(s.acceptedSubmissionActivity().exact && s.acceptedSubmissionActivity().acceptedCommands==2 &&
+                s.acceptedSubmissionActivity().asynchronousCommands==1 && s.acceptedSubmissionActivity().acceptedCommandBytes==8192);
+        {
+            Session other(submission);
+            require(other.acceptedSubmissionActivity().exact && !other.acceptedSubmissionActivity().acceptedCommands);
+            require(s.acceptedSubmissionActivity().acceptedCommands==2);
+        }
         submitBefore = submission.calls;
         require(header(s.dispatch(submitPacket(submitQueue, validSubmit))).status == -22 && submission.calls == submitBefore);
         auto submitNext = synchronousNext;

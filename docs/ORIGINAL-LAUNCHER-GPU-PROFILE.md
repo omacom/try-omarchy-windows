@@ -1,5 +1,14 @@
 # Original launcher argument profile
 
+**Latest November 1 follow-up:** bounded run 30 passes 1,800 handoffs in
+58.177667 seconds, exact first/final 4K pixels, authenticated native work for
+both Chromium GPU lifetimes and Nautilus, and live cleanup. Tab retirement,
+producer lifetime and coherent diagnostic-output fixes retain earlier failures.
+Normal sessions, launcher activation, physical input, long sessions and daily
+use remain open; counts stay **4/8, 0/4, 3/3**.
+[Current desktop/shader captures and precise proof](ORIGINAL-PROFILE-APPLICATIONS.md).
+The older observations below retain their original scope.
+
 The native owner now has an explicit profile that consumes the original Go
 launcher command. It replaces the graphics device through the existing composer
 and adds private graphics/QMP transport while preserving the original boot,

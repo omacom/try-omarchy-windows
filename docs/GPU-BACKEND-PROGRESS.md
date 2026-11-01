@@ -8,15 +8,14 @@ graphics runtime.
 
 ## What is verified now?
 
-**Original launcher profile — November 1, 2026:** run 25 completes the private
-RAM-overlay probe's unchanged 1,800-frame workload in 59.064 seconds through the
-original Go arguments. Authenticated guest END/ACK and complete first/final 4K
-source/SDL pixels pass, with 4,406 native submissions and clean teardown. Bounded
-collector snapshots now retain both browser sessions' GPU records. Run 24's
-90-second deadline miss stays rejected; performance variability and full
-per-application native-work correlation remain open. Normal account/session,
-activation and physical input remain unverified. Counts stay **4/8, 0/4, 3/3**.
-[Actual frame, diagnostic fixes, retained failures and limits](GPU-DIAGNOSTIC-RETENTION.md).
+**Original launcher profile — November 1, 2026:** run 30 completes the bounded
+1,800-frame workload in 58.177667 seconds, with exact first/final 4K source/SDL
+pixels and live cleanup. Both sandboxed Chromium GPU lifetimes and Nautilus now
+have authenticated native-work correlation. Earlier tab, producer-cap and
+fragmented-diagnostic failures remain recorded; targeted fixture/collector fixes
+pass strict controls. Normal account/session, launcher activation, physical input,
+sustained daily use and matched-native performance remain open. Counts stay
+**4/8, 0/4, 3/3**. [Actual desktop/shader images, evidence and exact limits](ORIGINAL-PROFILE-APPLICATIONS.md).
 [Argument/runtime contract](ORIGINAL-LAUNCHER-GPU-PROFILE.md).
 
 **Go supervisor boundary — October 29, 2026:** the normal supervisor's internal

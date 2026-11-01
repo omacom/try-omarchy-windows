@@ -497,6 +497,19 @@ inline bool validHwSubmitReply(Result result, std::uint64_t target, std::uint32_
            (result.ntstatus < 0 ? result.value == 0 : result.value != UINT64_MAX &&
             ((capabilities & AsyncHwSubmitCapability) || result.value >= target));
 }
+// Host-local diagnostics, never serialized as a guest capability or wire reply.
+// Queue acceptance is distinct from a completed GPU fence.
+struct SubmissionActivity {
+    std::uint64_t acceptedCommands=0,asynchronousCommands=0,acceptedCommandBytes=0;
+    bool exact=true;
+    void record(bool asynchronous,std::uint32_t bytes) noexcept {
+        if(!exact) return;
+        if(acceptedCommands==UINT64_MAX || bytes>UINT64_MAX-acceptedCommandBytes) { exact=false;return; }
+        ++acceptedCommands;
+        if(asynchronous) ++asynchronousCommands;
+        acceptedCommandBytes+=bytes;
+    }
+};
 struct GpuVaResult { Result map; std::uint64_t fence; };
 struct ResidentResult { Result residency; ResidentReply output; };
 struct VendorCpuResult { Result lock; VendorCpuReply output; };
@@ -790,6 +803,7 @@ class Session {
     std::uint32_t vendorMappedPages = 0;
     std::uint32_t vendorCpuBytes = 0;
     std::uint64_t submissionAttempts = 0;
+    SubmissionActivity submissionActivity;
     std::uint64_t contextSignalAttempts = 0;
     std::uint64_t hwQueueSignalAttempts = 0;
     std::uint64_t gpuReservedBytes = 0;
@@ -837,6 +851,7 @@ class Session {
     }
 public:
     explicit Session(Driver& d) : driver(d) {}
+    SubmissionActivity acceptedSubmissionActivity() const noexcept { return submissionActivity; }
     Session(Driver& d,const CoordinatedProfiles& group,bool presentationOwner=false) : driver(d),coordinated(&group),mayPresent(presentationOwner) {
         if(group.owner!=&d) throw std::runtime_error("Coordinated profile belongs to another native Driver");
     }
@@ -1328,7 +1343,10 @@ public:
             const auto native = asynchronous ? driver.queueHwCommand(queue->second.nativeHandle, desc, data) :
                                               driver.submitHwQueue(queue->second.nativeHandle, desc, data);
             if (!validHwSubmitReply(native, desc.fence, asynchronous ? AsyncHwSubmitCapability : 0)) return reply(h, -5);
-            if (native.ntstatus == 0) queue->second.submittedFence = desc.fence;
+            if (native.ntstatus == 0) {
+                queue->second.submittedFence = desc.fence;
+                submissionActivity.record(asynchronous,desc.bytes);
+            }
             return reply(h, 0, h.handle, &native);
         }
         if (op == Op::BeginSyncSharing) {

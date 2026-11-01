@@ -1,5 +1,14 @@
 # Daily-use readiness
 
+**Latest November 1 follow-up:** bounded run 30 passes 1,800 handoffs in
+58.177667 seconds, exact first/final 4K pixels, authenticated native work for
+both Chromium GPU lifetimes and Nautilus, and live cleanup. Tab retirement,
+producer lifetime and coherent diagnostic-output fixes retain earlier failures.
+Normal sessions, launcher activation, physical input, long sessions and daily
+use remain open; counts stay **4/8, 0/4, 3/3**.
+[Current desktop/shader captures and precise proof](ORIGINAL-PROFILE-APPLICATIONS.md).
+The older observations below retain their original scope.
+
 **October 31 launcher follow-up:** the original argument profile now boots a
 private guest and reaches an actual 4K NVIDIA desktop frame, with exact complete
 source/SDL pixels. It completes only three handoffs, leaving the existing

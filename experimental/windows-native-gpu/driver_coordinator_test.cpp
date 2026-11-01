@@ -2,6 +2,7 @@
 #include "driver_coordinator.h"
 #include <iostream>
 #include <set>
+#include <sstream>
 #include <string>
 using namespace driver_bridge;
 namespace cg=driver_bridge::coordinator;
@@ -495,7 +496,34 @@ static void applicationObjectControls() {
     }
     std::cout<<"APPLICATION_OBJECT_CONTROL ownerAndControllerRequired=true legacy1024Preserved=true expanded2048=true byteBudgetsUnchanged=true malformedRejectedBeforeNative=true mock=true gpu=false\n";
 }
+static void submissionSummaryControls() {
+    NativeMock driver;cg::Runtime owner(driver);Control c{owner};
+    std::ostringstream output;
+    struct Restore {
+        std::streambuf* original;
+        ~Restore() { std::cerr.rdbuf(original); }
+    } restore{std::cerr.rdbuf(output.rdbuf())};
+    CHECK(!at<cg::Frame>(c.control(cg::Operation::Initialize,encoded(cg::Initialization{GuestOpenGlDesktopPresentationCapacity,{}}))).status);
+    const auto actor=c.reg();c.call(actor,hello());c.call(actor,inner(Op::OpenAdapter));
+    CHECK(at<cg::Frame>(c.control(cg::Operation::Release,encoded(actor))).status==-16);
+    CHECK(output.str().find("nativeActorSubmissionSummary")==std::string::npos);
+    CHECK(!at<Header>(c.call(actor,inner(Op::CloseAdapter,1)),40).status);
+    CHECK(!at<cg::Frame>(c.control(cg::Operation::Disconnect,encoded(actor))).status);
+    CHECK(!at<cg::Frame>(c.control(cg::Operation::Release,encoded(actor))).status);
+    const auto once=output.str();
+    CHECK(once.find("\"nativeActorSubmissionSummary\":true,\"actor\":1,")!=std::string::npos);
+    CHECK(once.find("\"acceptedCommands\":0,\"asynchronousCommands\":0,\"acceptedCommandBytes\":0,")!=std::string::npos);
+    CHECK(once.find("\"countsExact\":true,\"validatedNativeRepliesOnly\":true,\"queueAcceptanceOnly\":true,\"wireObjectsRemaining\":0,\"beforeGlobalTeardown\":true")!=std::string::npos);
+    CHECK(at<cg::Frame>(c.control(cg::Operation::Release,encoded(actor))).status==-9 && output.str()==once);
+    const auto next=c.reg();CHECK(next!=actor);
+    CHECK(!at<cg::Frame>(c.control(cg::Operation::Disconnect,encoded(next))).status);
+    CHECK(!at<cg::Frame>(c.control(cg::Operation::Release,encoded(next))).status);
+    const auto all=output.str();const auto position=all.find("nativeActorSubmissionSummary");
+    const auto second=all.find("nativeActorSubmissionSummary",position+1);
+    CHECK(second!=std::string::npos && all.find("nativeActorSubmissionSummary",second+1)==std::string::npos);
+}
 int main() {
+    submissionSummaryControls();
     applicationObjectControls();
     applicationMemoryControls();
     applicationReferenceControls();

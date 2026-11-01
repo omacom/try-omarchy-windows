@@ -46,12 +46,7 @@ def generate(gpu, output):
         kill(shell_trace,SIGTERM);waitpid(shell_trace,NULL,0);shell_trace=-1;
     }
     if(uwsm) {
-        unsigned char progress[WDDM_PROGRESS_SNAPSHOT_MAX];size_t progress_bytes=0;
-        const int progress_result=wddm_progress_snapshot("/tmp/omarchy-active-terminal-pulse.json",(uid_t)uid,progress,&progress_bytes);
-        const int progress_error=progress_result ? errno : 0;
-        printf("NAMED_GRAPHICS_PRODUCER_PROGRESS result=%d errno=%d bytes=%zu processIdentityAttested=false gpuTimestamp=false hex=",progress_result,progress_error,progress_bytes);
-        for(size_t index=0;index<progress_bytes;++index) printf("%02x",(unsigned)progress[index]);
-        putchar('\\n');
+        if(wddm_progress_snapshot_report(STDOUT_FILENO,"/tmp/omarchy-active-terminal-pulse.json",(uid_t)uid)) perror("producer progress output");
         char journal_pid[40];
         const int journal_pid_bytes=snprintf(journal_pid,sizeof journal_pid,"_PID=%ld",(long)compositor_pid);
         const int journal_pid_valid=compositor_pid>0 && journal_pid_bytes>0 && (size_t)journal_pid_bytes<sizeof journal_pid;
@@ -175,6 +170,8 @@ def generate(gpu, output):
         producerProgressByteCap=512,
         producerProgressHeaderSha256=hashlib.sha256(progress_header.read_bytes()).hexdigest(),
         producerProgressReadOnly=True,
+        producerProgressSingleWriteRecord=True,
+        producerProgressMaximumRecordBytes=1216,
         producerProgressProcessIdentityAttested=False,
         producerLifetimeChanged=False,
         terminalCompositorPidAndUidFilter=True,

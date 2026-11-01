@@ -1,0 +1,334 @@
+{
+  "schema": 1,
+  "date": "2026-11-01",
+  "scope": "Bounded original-launcher-profile three-application regression; not normal session or daily-use acceptance",
+  "run": 30,
+  "backendStagesDemonstrated": 4,
+  "backendStageCount": 8,
+  "desktopGatesCompleted": 0,
+  "desktopGateCount": 4,
+  "sceneChecksCompleted": 3,
+  "sceneCheckCount": 3,
+  "nativeBuild": 126,
+  "adapter": "NVIDIA GeForce RTX 5090 Laptop GPU",
+  "adapterLuid": "5220010000000000",
+  "driverVersion": "32.0.16.2101",
+  "driverMarketingVersion": "621.01",
+  "originalVcpus": 4,
+  "originalRamMiB": 6144,
+  "requiredFrames": 1800,
+  "unchangedWorkloadDeadlineSeconds": 90,
+  "workloadElapsedSeconds": 58.177667,
+  "native": {
+    "schema": 1,
+    "run": 30,
+    "scope": "1800 ordered native GPU handoffs, authenticated guest END/ACK, previously verified full4K pixels and cleanup only",
+    "sourceReceiptSha256": "3b9b837d421081e7e0459c4a43532055201f197aaa017fe7b7086bbf12e31e9a",
+    "serialSha256": "c3fcb68a1c6e9f04be25cb6c0ded4be684d8fa9c82a6cc97e9642327e6f96b64",
+    "nativeRecordsSha256": "78356a0a308f91ac86895c3d7a9264817bfb4a995087f76a0aebf6071f4e45b0",
+    "sourceGuardsPassed": true,
+    "privateDesktopIsolationPassed": true,
+    "native1800HandoffsVerified": true,
+    "guestCompletionReceiptsVerified": true,
+    "nativeSubmissions": 4398,
+    "nativeSubmissionFailures": 0,
+    "healthQueries": 4827,
+    "healthFailures": 0,
+    "peakAllocationRecords": 1068,
+    "allocationRecordLimit": 2048,
+    "peakReportedGpuUsageBytes": 1363136512,
+    "reportedUsageLimitBytes": 4294967296,
+    "naturalVmExit": true,
+    "allTrackedNativeResourcesReclaimedBeforeExit": true,
+    "frames": [
+      {
+        "frame": 1,
+        "auditOrdinal": 1,
+        "pixelProof": {
+          "sourceExact": true,
+          "windowWidth": 3840,
+          "windowHeight": 2160,
+          "maximumChannelError": 0,
+          "sourceSha256": "57ad8610413fa8cefb09f6445b0e0825e045307244abce57a99f426859fd2199",
+          "windowSha256": "ba8dced7e194158bc4c5b470f9819c007be222bc795dac3f3a0f3b3f2180b445"
+        },
+        "nativeBgraSha256": "5f2821bb6edec6b9f143c260bd6399eab83b5c9d322846e81245a678012e2040",
+        "pngSha256": "743baae8b35cb10428b3fb1f815a26d531fb75e8bc10cde3327413e341ae9a63"
+      },
+      {
+        "frame": 1800,
+        "auditOrdinal": 2,
+        "pixelProof": {
+          "sourceExact": true,
+          "windowWidth": 3840,
+          "windowHeight": 2160,
+          "maximumChannelError": 0,
+          "sourceSha256": "ecddf11947fe8b42e007d888c9d53497de8cb3545961ef59f5f841e5336ac453",
+          "windowSha256": "69fb716b23d78eef515a8bffa40a69d607c098d556fec2c0c56ba2159aa3ffcc"
+        },
+        "nativeBgraSha256": "4572d4c8868607c439a502e4d6cc97981d0a8d9b5cf39f96686e76522dcf2bf8",
+        "pngSha256": "24b80bde58f713901a70d0b1a3ccc379331d9eee23ac536a8a700ef5968e13a5"
+      }
+    ],
+    "pixelReceiptSha256": "a1376683c05b8c7575e316f43678d2554e2356bfefcd553946870aac29a0b980",
+    "physicalInputAccepted": false,
+    "physicalScanoutAccepted": false,
+    "completeBrowserLifecycleAudited": false,
+    "fullWorkloadAccepted": false,
+    "normalAccountStartup": false,
+    "nearNativePerformanceAccepted": false,
+    "dailyUseAccepted": false,
+    "auditorSha256": "717d083229a354eecb3229c39488cecd52639c450ed852c0c19cd6477524c83c"
+  },
+  "applications": {
+    "schema": 1,
+    "run": 30,
+    "scope": "bounded original-profile three-app GPU workload only; no normal session/daily-use/native93% claim",
+    "sourceReceiptSha256": "3b9b837d421081e7e0459c4a43532055201f197aaa017fe7b7086bbf12e31e9a",
+    "serialSha256": "c3fcb68a1c6e9f04be25cb6c0ded4be684d8fa9c82a6cc97e9642327e6f96b64",
+    "nativeLogSha256": "78356a0a308f91ac86895c3d7a9264817bfb4a995087f76a0aebf6071f4e45b0",
+    "nativeCoreReceiptSha256": "b4abe6646e6aa79a1c8bf3ea4e4a5dded3523d2695ac7226238c2a22e663d1b0",
+    "nativeBuildReceiptSha256": "0897b685da1ec7b735bd10c50659df883df904a7ba9ab636630223a9256920ac",
+    "browserLifetimes": [
+      {
+        "pid": 2299,
+        "actor": 9,
+        "acceptedNativeCommands": 90,
+        "acceptedNativeCommandBytes": 2490368,
+        "asynchronousNativeCommands": 90,
+        "countsExact": true,
+        "queueAcceptanceOnly": true,
+        "liveRetirementQuiescenceVerified": true,
+        "browserPid": 2146,
+        "renderer": "ANGLE (Microsoft Corporation, D3D12 (NVIDIA GeForce RTX 5090 Laptop GPU), OpenGL ES 3.1)",
+        "shaderPixel": [
+          128,
+          128,
+          64,
+          255
+        ],
+        "allObservedGpuThreadsSandboxed": true,
+        "httpsPageLoaded": true,
+        "ownedKeyringStopped": true,
+        "observerJoined": true
+      },
+      {
+        "pid": 2892,
+        "actor": 12,
+        "acceptedNativeCommands": 71,
+        "acceptedNativeCommandBytes": 1839104,
+        "asynchronousNativeCommands": 71,
+        "countsExact": true,
+        "queueAcceptanceOnly": true,
+        "liveRetirementQuiescenceVerified": true,
+        "browserPid": 2832,
+        "renderer": "ANGLE (Microsoft Corporation, D3D12 (NVIDIA GeForce RTX 5090 Laptop GPU), OpenGL ES 3.1)",
+        "shaderPixel": [
+          128,
+          128,
+          64,
+          255
+        ],
+        "allObservedGpuThreadsSandboxed": true,
+        "httpsPageLoaded": true,
+        "ownedKeyringStopped": true,
+        "observerJoined": true
+      }
+    ],
+    "gtkNativeWork": {
+      "pid": 2601,
+      "actor": 10,
+      "acceptedNativeCommands": 9,
+      "acceptedNativeCommandBytes": 180224,
+      "asynchronousNativeCommands": 9,
+      "countsExact": true,
+      "queueAcceptanceOnly": true,
+      "liveRetirementQuiescenceVerified": true
+    },
+    "gtkRenderer": "GskGLRenderer",
+    "threeMappedAppsAtFourCheckpoints": true,
+    "browserInteractionProofs": 2,
+    "browserGpuResizes": 4,
+    "terminalResizes": 3,
+    "guestOnlyInputCommands": 33,
+    "boundedApplicationWorkloadAccepted": true,
+    "normalAccountStartup": false,
+    "physicalWindowsInputAccepted": false,
+    "sustainedDailyUseAccepted": false,
+    "matchedNativePerformanceMeasured": false,
+    "dailyUseAccepted": false,
+    "auditorSha256": "4e6e524b0073d609608c435a1563693dd484ea56a307e38e06f7979664e81e32"
+  },
+  "producerAndTailTiming": {
+    "schema": 1,
+    "scope": "last CPU queue timing samples and user-owned producer progress, not graphics acceptance",
+    "run": 30,
+    "serialSha256": "c3fcb68a1c6e9f04be25cb6c0ded4be684d8fa9c82a6cc97e9642327e6f96b64",
+    "sourceReceiptSha256": "3b9b837d421081e7e0459c4a43532055201f197aaa017fe7b7086bbf12e31e9a",
+    "compositorPid": 550,
+    "workloadFrames": 1800,
+    "workloadFailed": false,
+    "workloadElapsedSeconds": 58.177667,
+    "sampleFirstFrame": 1737,
+    "sampleLastFrame": 1800,
+    "sampleFramesContiguous": true,
+    "metrics": {
+      "fenceSetupNs": {
+        "count": 64,
+        "minimumMs": 0.2146,
+        "medianMs": 0.3016,
+        "p95Ms": 1.4154,
+        "maximumMs": 3.9379
+      },
+      "queueRoundTripNs": {
+        "count": 64,
+        "minimumMs": 0.6089,
+        "medianMs": 0.7706,
+        "p95Ms": 4.7389,
+        "maximumMs": 343.328
+      },
+      "totalNs": {
+        "count": 64,
+        "minimumMs": 0.8756,
+        "medianMs": 1.13285,
+        "p95Ms": 5.0059,
+        "maximumMs": 343.7754
+      },
+      "consecutiveFrameIntervalsNs": {
+        "count": 63,
+        "minimumMs": 9.2617,
+        "medianMs": 16.9651,
+        "p95Ms": 30.6315,
+        "maximumMs": 384.2928
+      }
+    },
+    "queueAttemptsMaximum": 1,
+    "producer": {
+      "pid": 2091,
+      "parentPid": 2076,
+      "uid": 1000,
+      "updates": 3552,
+      "targetHz": 60,
+      "startedNs": 104055347500,
+      "lastNs": 163588753200,
+      "skippedSlots": 21,
+      "maximumLateNs": 84866860,
+      "gpuTimestamp": false
+    },
+    "producerParentMatchesControllerPrimary": true,
+    "producerRecordedDurationSeconds": 59.5334057,
+    "producerLastUpdateMinusWorkloadDeadlineSeconds": 2.1939392,
+    "producerReached7200UpdateCap": false,
+    "producerProcessIdentityIndependentlyAttested": false,
+    "fullStreamTimings": false,
+    "gpuTimestamps": false,
+    "physicalScanoutCadenceMeasured": false,
+    "fullWorkloadAccepted": false,
+    "dailyUseAccepted": false,
+    "auditorSha256": "01114e7fc9b82e88092e313b89d7ce663e60f08c34a42a4339a649a2130e20e9"
+  },
+  "repeatEvidence": [
+    {
+      "run": 28,
+      "nativeCoreReceiptSha256": "5a95450530395b3c576d549c2c682c96c71624c4f24c3656ef93f2c049011fdd",
+      "applicationReceiptSha256": "b44ece1747e5e4468fe52eeb7097e22f9690f80b6156fb3623727ab5385cf33b",
+      "corePassed": true,
+      "boundedApplicationsPassed": true,
+      "producerProgressAccepted": true,
+      "note": "Full bounded producer/queue inspection also passed"
+    },
+    {
+      "run": 29,
+      "nativeCoreReceiptSha256": "3fecb15cafdf30a088d1aa770abea732eea9a17accb54aa556e786ef16ef22bf",
+      "applicationReceiptSha256": "b8b78c5e8843438f371208344878d5f68c97ab8422b9fd64777b1830735c35a0",
+      "corePassed": true,
+      "boundedApplicationsPassed": true,
+      "producerProgressAccepted": false,
+      "note": "Collector record fragmented; producer diagnostic rejected separately"
+    }
+  ],
+  "receiptSha256": {
+    "nativeBuild": "0897b685da1ec7b735bd10c50659df883df904a7ba9ab636630223a9256920ac",
+    "nativeCpuControls": "984836f715fda201c450dbf9c7ea9d55b04bdba75dafae97ee4da0e992dce512",
+    "publicCollectorCompile": "caca7846d7ef8285afa57fde9b004c27ad50fb2a05015f84dc618f4e814da9f4",
+    "sustainedProducerBuild": "c9e78b9e8db19572fdb7113899182981be60f0492625f08ccc3630dc5a871396",
+    "source": "3b9b837d421081e7e0459c4a43532055201f197aaa017fe7b7086bbf12e31e9a",
+    "isolation": "f7697fee377fe1b4979e30a2ed18af33c8ee7d3d419080dc9dee57e40e5c088f",
+    "nativeCore": "b4abe6646e6aa79a1c8bf3ea4e4a5dded3523d2695ac7226238c2a22e663d1b0",
+    "pixels": "a1376683c05b8c7575e316f43678d2554e2356bfefcd553946870aac29a0b980",
+    "applications": "7acd60b3c1f5011ea4fd3a909d5c7d1fec329966d43df6baf7752c8b06fc7f3d",
+    "queueProgress": "4f401f021e730e6951ef162109fda7e7f3a598bf022cd0831e97544f9e26c4c0",
+    "journalMetadata": "8e02cab79af567467e5ec5fba58c78addabe0221ebabdccee5fa583de14366cf"
+  },
+  "publicSourceSha256": {
+    "driver_wire.h": "6e256f631348949ba49f8c2f3757cde416f8456f8bdf3029f2082afde6db0f98",
+    "driver_wire_test.cpp": "631aa7434bcb79e9fbad67e0db46627acee649e456c5d2b88a67896048f9239b",
+    "driver_coordinator.h": "bf81e04ae626153f92301980ea2ef137d4bed458044e43db4f51c39f2b6a6486",
+    "driver_coordinator_test.cpp": "5f8406c14bdfc5db2a3a939a164ed5ff2dc3467571d0713590acd6cd509416e6",
+    "browser_target_retirement.py": "05670b3322bbabb5ec0012c9437b22591fe7854d8376770f5cfa6c8e8bf29706",
+    "test_browser_target_retirement.py": "560ff71e42e07adc87ce31e97bde8ac1065642f20a09ae47b2afc7b6ae550d83",
+    "active-frame-probe/generate_sustained_pulse.py": "3d9a0e6e93ff9ddbe6e9e31ff30c1a9dbaff387a7c2862a6fe0221a24f6eadeb",
+    "test_sustained_terminal_pulse.py": "7f1831c2af0383b2e7e302afdfe2495ee813ed5abf88af74f6fc1c0f8dc508d6",
+    "guest_progress_snapshot.h": "ebdb78d7a0098c0bc22855acfb2530e27ae24ee67940824ad92805dfde1a14a8",
+    "test_guest_progress_snapshot.py": "095fa42e7d323de8f6002417e9f3d38753048bcab7b7264367e1077c30a81b0c",
+    "launcher-guest-bootstrap/generate.py": "d95480cf9bda1c4a2841453f51108e4e2aba3ae56153bef4979a98162677b5d3"
+  },
+  "nativeBinarySha256": "29542129a3dfb0a686dd63184de93fa133f513083417585b68977f5bdb37abf0",
+  "guestInitramfsSha256": "72967a255e4e3ed0200da7eb9cc463faefc5a683f9d2960338945b9927821d8e",
+  "finalPng": {
+    "path": "docs/images/launcher-profile-apps-source-4k-run30-2026-11-01.png",
+    "sha256": "24b80bde58f713901a70d0b1a3ccc379331d9eee23ac536a8a700ef5968e13a5",
+    "width": 3840,
+    "height": 2160,
+    "pixelsEdited": false
+  },
+  "browserShaderPng": {
+    "path": "docs/images/launcher-profile-browser-shader-run30-2026-11-01.png",
+    "sha256": "f515001e21509c2e6dd40624a5c0ef92e341ddbea2fa9a09f9472f227104a680",
+    "width": 512,
+    "height": 256,
+    "originalDataUrlDecodedLosslessly": true,
+    "pixelsEdited": false,
+    "standaloneDesktopPresentationVerified": false
+  },
+  "fixtureCorrections": {
+    "tabRetirementMaximumSeconds": 2.0,
+    "singleMonotonicDeadline": true,
+    "exactOriginalPageSetRequired": true,
+    "producerUpdateCap": 7200,
+    "producerScheduledClockCapSeconds": 120,
+    "producerHardBlockedIoDeadlineImplemented": false,
+    "producerFixtureLifetimeChanged": true,
+    "renderingOptimizationClaimed": false,
+    "producerDiagnosticSingleWrite": true,
+    "producerDataMaximumBytes": 512,
+    "producerOutputMaximumBytes": 1216
+  },
+  "retainedFailures": [
+    {
+      "run": 26,
+      "fullWorkloadRejected": true,
+      "reason": "Temporary tab not fully retired by immediate exact-target-set check; differing IDs not retained, asynchronous root cause unproven"
+    },
+    {
+      "run": 27,
+      "fullWorkloadRejected": true,
+      "frames": 1434,
+      "reason": "Producer reaches old 3600-update bound; last update precedes workload end by 27.686 seconds"
+    },
+    {
+      "run": 29,
+      "producerDiagnosticRejected": true,
+      "coreAndApplicationChecksPassed": true,
+      "reason": "Per-byte unbuffered printf progress record fragmented; raw record not repaired"
+    }
+  ],
+  "normalAccountStartup": false,
+  "launcherActivation": false,
+  "physicalWindowsInputAccepted": false,
+  "sustainedDailyUseAccepted": false,
+  "matchedNativePerformanceMeasured": false,
+  "completeApiAndNvidiaFeaturesAccepted": false,
+  "dailyUseAccepted": false,
+  "privateRawArtifactsPublished": false
+}

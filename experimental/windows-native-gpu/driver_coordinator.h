@@ -317,6 +317,14 @@ public:
         }
         if(!router.detachEmpty(id)) return response(h,-16);
         if(retired.erase(id)) ++retiredActors;
+        const auto activity=actor->second->acceptedSubmissionActivity();
+        std::cerr<<"{\"nativeActorSubmissionSummary\":true,\"actor\":"<<id
+                 <<",\"acceptedCommands\":"<<activity.acceptedCommands
+                 <<",\"asynchronousCommands\":"<<activity.asynchronousCommands
+                 <<",\"acceptedCommandBytes\":"<<activity.acceptedCommandBytes
+                 <<",\"countsExact\":"<<(activity.exact ? "true" : "false")
+                 <<",\"validatedNativeRepliesOnly\":true,\"queueAcceptanceOnly\":true"
+                 <<",\"wireObjectsRemaining\":0,\"beforeGlobalTeardown\":true}\n";
         sessions.erase(actor);return response(h,0);
     }
 };

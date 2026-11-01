@@ -1,5 +1,14 @@
 # Original-profile GPU regression and diagnostic retention
 
+**Latest November 1 follow-up:** bounded run 30 passes 1,800 handoffs in
+58.177667 seconds, exact first/final 4K pixels, authenticated native work for
+both Chromium GPU lifetimes and Nautilus, and live cleanup. Tab retirement,
+producer lifetime and coherent diagnostic-output fixes retain earlier failures.
+Normal sessions, launcher activation, physical input, long sessions and daily
+use remain open; counts stay **4/8, 0/4, 3/3**.
+[Current desktop/shader captures and precise proof](ORIGINAL-PROFILE-APPLICATIONS.md).
+The older observations below retain their original scope.
+
 **November 1, 2026:** private run **25** completes the unchanged **1,800-frame,
 90-second** workload through the original launcher argument profile in
 **59.064 seconds**. Authenticated compositor END and drained-output ACK both

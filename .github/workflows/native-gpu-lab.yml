@@ -123,6 +123,8 @@ jobs:
         run: |
           python3 experimental/windows-native-gpu/test_guest_bridge_log.py
           python3 experimental/windows-native-gpu/test_guest_progress_snapshot.py
+          python3 experimental/windows-native-gpu/test_browser_target_retirement.py
+          python3 experimental/windows-native-gpu/test_sustained_terminal_pulse.py
       - name: Check bounded SDL relay host command grammar
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror experimental/qemu/sdl_command_test.c -o /tmp/sdl-command-test

@@ -61,4 +61,52 @@ int main(int argc,char** argv) {
             self.assertIn('descriptorLeak=false gpu=false',result.stdout)
 
 
+    def test_report_is_one_complete_bounded_record_and_partial_writes_fail(self):
+        compiler=shutil.which('cc')
+        if compiler is None or os.name!='posix':self.skipTest('POSIX C compiler required')
+        import re
+        with tempfile.TemporaryDirectory(prefix='omarchy-progress-record-') as temporary:
+            folder=Path(temporary);payload=folder/'payload';payload.write_bytes(bytes(range(256))*2)
+            source=folder/'report.c'
+            source.write_text(r"""
+#define _POSIX_C_SOURCE 200809L
+#include <sys/types.h>
+#include <stddef.h>
+ssize_t instrumented_write(int,const void*,size_t);
+#define write instrumented_write
+#include "guest_progress_snapshot.h"
+#undef write
+#include <stdlib.h>
+#include <string.h>
+static char record[1216];static size_t recorded;static unsigned calls;static const char* mode;
+ssize_t instrumented_write(int fd,const void* bytes,size_t size) {
+    if(fd!=1 || size>sizeof record) abort();
+    ++calls;
+    if(!strcmp(mode,"eintr") && calls==1) { errno=EINTR;return -1; }
+    recorded=!strcmp(mode,"partial") ? size-1 : size;
+    memcpy(record,bytes,recorded);return (ssize_t)recorded;
+}
+int main(int argc,char** argv) {
+    if(argc!=3) return 2;
+    mode=argv[2];const int result=wddm_progress_snapshot_report(1,argv[1],getuid());
+    const int error=errno;
+    if(!strcmp(mode,"partial")) { if(result!=-1 || error!=EIO || calls!=1) return 3; }
+    else if(result || calls!=(!strcmp(mode,"eintr") ? 2u : 1u)) return 4;
+    printf("REPORT_CONTROL result=%d calls=%u partialRejected=%s gpu=false\n",result,calls,result?"true":"false");
+    if(fwrite(record,1,recorded,stdout)!=recorded) return 5;
+    return 0;
+}
+""",encoding='utf-8')
+            binary=folder/'report'
+            subprocess.run([compiler,'-std=c11','-O2','-Wall','-Wextra','-Werror','-I'+str(Path(__file__).resolve().parent),str(source),'-o',str(binary)],check=True,capture_output=True,text=True,timeout=30)
+            for mode in ('normal','eintr','partial'):
+                with self.subTest(mode=mode):
+                    result=subprocess.run([str(binary),str(payload),mode],check=True,capture_output=True,text=True,timeout=5)
+                    if mode=='partial':self.assertIn('partialRejected=true',result.stdout);continue
+                    records=re.findall(r'^NAMED_GRAPHICS_PRODUCER_PROGRESS result=0 errno=0 bytes=512 processIdentityAttested=false gpuTimestamp=false hex=([0-9a-f]+)$',result.stdout,re.M)
+                    self.assertEqual(len(records),1);self.assertEqual(bytes.fromhex(records[0]),payload.read_bytes())
+            result=subprocess.run([str(binary),str(folder/'missing'),'normal'],check=True,capture_output=True,text=True,timeout=5)
+            self.assertRegex(result.stdout,r'PRODUCER_PROGRESS result=-1 errno=[1-9][0-9]* bytes=0 .* hex=\n')
+
+
 if __name__=='__main__':unittest.main(verbosity=2)
