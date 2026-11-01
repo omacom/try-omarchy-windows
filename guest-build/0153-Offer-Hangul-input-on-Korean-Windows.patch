@@ -1,0 +1,541 @@
+From 620801e54117f36bd9e3c21f243b9ada7c68bf13 Mon Sep 17 00:00:00 2001
+From: Dico <248385067+AI-Dico@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 23:50:15 +0900
+Subject: [PATCH] Offer Hangul input on Korean Windows
+
+The launcher passes tryomarchy.locale=ko_KR on Korean Windows, but the
+guest only ships Chewing, so switching input methods gave Zhuyin and no
+way to type Hangul. Ship fcitx5-hangul and, on Korean Windows, switch
+fcitx5 profiles that are still the image default (as shipped, or as
+fcitx5 5.1 saves it) to the US keyboard and Hangul before the display
+manager starts. Edited, missing and linked profiles and other languages
+are unchanged. Runtime 4.0.4-11 brings the package to existing disks with
+the next Update > Omarchy, and revision 65 delivers the boot helper.
+---
+ .../local/lib/try-omarchy/apply-host-locale   | 98 +++++++++++++++++++
+ guest/packages.txt                            |  1 +
+ guest/scripts/finalize-rootfs.sh              |  3 +-
+ guest/spec.json                               |  3 +-
+ .../fixtures/fcitx5/profile-saved-by-fcitx5   | 23 +++++
+ guest/tests/test_aquamarine_contract.py       |  2 +-
+ guest/tests/test_battery_details.py           |  2 +-
+ guest/tests/test_clipboard_pull.py            |  2 +-
+ guest/tests/test_compositor_health.py         |  2 +-
+ guest/tests/test_guest_qol.py                 |  3 +-
+ guest/tests/test_live_update.py               |  2 +-
+ guest/tests/test_native_nightlight.py         |  2 +-
+ guest/tests/test_notification_privacy.py      |  4 +-
+ guest/tests/test_overlay_scripts.py           | 96 +++++++++++++++++-
+ guest/tests/test_qt612_palette.py             |  4 +-
+ guest/tests/test_snapper_guest.py             |  4 +-
+ guest/tests/test_url_schemes.py               |  2 +-
+ guest/tests/test_windows_volume_sync.py       |  2 +-
+ guest/tests/verify.py                         |  2 +-
+ 19 files changed, 238 insertions(+), 19 deletions(-)
+ create mode 100644 guest/tests/fixtures/fcitx5/profile-saved-by-fcitx5
+
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/apply-host-locale b/guest/factory-overlay/usr/local/lib/try-omarchy/apply-host-locale
+index 8717164..e21fde4 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/apply-host-locale
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/apply-host-locale
+@@ -6,6 +6,7 @@
+ # changes. Omarchy's Hyprland input config reads XKBLAYOUT and XKBVARIANT
+ # from /etc/vconsole.conf, so writing that file is enough for the desktop.
+ # The current time-zone helper preserves manual guest changes across host changes.
++# On Korean Windows, untouched fcitx5 profiles offer Hangul instead of Chewing.
+ set -euo pipefail
+ 
+ cmdline_file=${TRY_OMARCHY_CMDLINE:-/proc/cmdline}
+@@ -17,6 +18,10 @@ locale_gen=${TRY_OMARCHY_LOCALE_GEN:-/etc/locale.gen}
+ locale_conf=${TRY_OMARCHY_LOCALE_CONF:-/etc/locale.conf}
+ locale_sources=${TRY_OMARCHY_LOCALE_SOURCES:-/usr/share/i18n/locales}
+ locale_gen_cmd=${TRY_OMARCHY_LOCALE_GEN_CMD:-locale-gen}
++homes=${TRY_OMARCHY_HOMES:-/home}
++skel=${TRY_OMARCHY_SKEL:-/etc/skel}
++fcitx5_inputmethods=${TRY_OMARCHY_FCITX5_INPUTMETHODS:-/usr/share/fcitx5/inputmethod}
++fcitx5_default=${TRY_OMARCHY_FCITX5_DEFAULT:-/usr/share/try-omarchy/guest-qol/fcitx5-profile}
+ 
+ zone=""
+ keyboard=""
+@@ -103,7 +108,100 @@ apply_locale() {
+   echo "language set to $full from Windows"
+ }
+ 
++# The image seeds fcitx5 with the US keyboard and Chewing. On Korean Windows a
++# profile that is still that default switches its second input method to
++# Hangul. Two forms count as the default: the file the image ships, and the
++# same file after fcitx5 5.1 saved it on logout, which adds comments and
++# resolves DefaultIM. Edited, missing and linked profiles are left alone, and
++# other languages never change a home directory. This runs every boot before
++# the display manager, so no fcitx5 is holding a profile it would write back on
++# exit, and a disk that receives fcitx5-hangul later switches on its next boot.
++chewing_profiles=(
++  06a789f19c36b51585104fae04b3759d3abf06c6d0d63bb33a8955fb04a3615c
++  48cb57e228952a320c11d343abc766431c3b42a965b1d5e90726082f2070ebc4
++)
++hangul_profile='[Groups/0]
++Name=Default
++Default Layout=us
++DefaultIM=hangul
++
++[Groups/0/Items/0]
++Name=keyboard-us
++Layout=
++
++[Groups/0/Items/1]
++Name=hangul
++Layout=
++
++[GroupOrder]
++0=Default
++'
++
++profile_digest() {
++  sha256sum | cut -d' ' -f1
++}
++
++# replace_profile writes stdin over FILE, keeping its owner and mode. It writes
++# as the owner of FILE and its directory, so a link planted there gains nothing.
++replace_profile() {
++  local file=$1 owner
++  owner=$(stat -c %u:%g "$file") || return 1
++  [[ $(stat -c %u "${file%/*}") == "${owner%:*}" ]] || return 1
++  setpriv --reuid="${owner%:*}" --regid="${owner#*:}" --clear-groups -- bash -c '
++    tmp=$(mktemp "${1%/*}/.profile.XXXXXX") || exit 1
++    cat >"$tmp" && chmod --reference="$1" "$tmp" && mv -f "$tmp" "$1" && exit 0
++    rm -f "$tmp"
++    exit 1' replace-profile "$file"
++}
++
++# plain_profile succeeds when BASE has a regular profile and no link on the way.
++plain_profile() {
++  local base=$1 file=$1/.config/fcitx5/profile
++  # Dotfiles checkouts and redirected config directories are user choices.
++  [[ ! -L $base && ! -L $base/.config && ! -L $base/.config/fcitx5 && ! -L $file && -f $file ]]
++}
++
++# untouched_profile succeeds when BASE has a plain copy of the image default.
++untouched_profile() {
++  local digest
++  plain_profile "$1" || return 1
++  digest=$(profile_digest <"$1/.config/fcitx5/profile")
++  [[ $digest == "${chewing_profiles[0]}" || $digest == "${chewing_profiles[1]}" ]]
++}
++
++apply_input_method() {
++  local name=$1 home skel_profile=$skel/.config/fcitx5/profile
++  [[ $name =~ ^[a-z]{2,3}_[A-Z]{2}$ ]] || return 0
++  if [[ $name != ko_KR ]]; then
++    # Accounts created after Windows leaves Korean start from the image default again.
++    if plain_profile "$skel" && [[ -f $fcitx5_default ]] &&
++      [[ $(profile_digest <"$skel_profile") == "$(printf '%s' "$hangul_profile" | profile_digest)" ]] &&
++      [[ $(profile_digest <"$fcitx5_default") == "${chewing_profiles[0]}" ]]; then
++      replace_profile "$skel_profile" <"$fcitx5_default" || echo "could not restore the default input methods for new accounts" >&2
++    fi
++    return 0
++  fi
++  if [[ ! -f $fcitx5_inputmethods/hangul.conf ]]; then
++    echo "fcitx5-hangul is not installed; keeping the input methods" >&2
++    return 0
++  fi
++  # New accounts copy the skeleton, so the first Korean session already has Hangul.
++  if untouched_profile "$skel"; then
++    printf '%s' "$hangul_profile" | replace_profile "$skel_profile" || echo "could not offer Hangul to new accounts" >&2
++  fi
++  for home in "$homes"/*; do
++    [[ -d $home ]] || continue
++    untouched_profile "$home" || continue
++    if printf '%s' "$hangul_profile" | replace_profile "$home/.config/fcitx5/profile"; then
++      echo "input methods set to US keyboard and Hangul for $home"
++    else
++      echo "could not offer Hangul in $home" >&2
++    fi
++  done
++}
++
+ [[ -z $zone ]] || apply_zone "$zone"
+ [[ -z $keyboard ]] || apply_keyboard "$keyboard"
+ [[ -z $locale ]] || apply_locale "$locale"
++[[ -z $locale ]] || apply_input_method "$locale"
+ exit 0
+diff --git a/guest/packages.txt b/guest/packages.txt
+index 2424088..2ed0731 100644
+--- a/guest/packages.txt
++++ b/guest/packages.txt
+@@ -17,6 +17,7 @@ fastfetch
+ fcitx5
+ fcitx5-chewing
+ fcitx5-gtk
++fcitx5-hangul
+ fcitx5-qt
+ fd
+ fontconfig
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index cb02fb1..6f01d2f 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -252,7 +252,8 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 62 opens links from Windows for approved URL schemes.
+ # Revision 63 reports a slow compositor as busy during package updates.
+ # Revision 64 offers alpha dmabuf formats to clients on the QEMU display.
+-compat_revision=64
++# Revision 65 offers Hangul in untouched fcitx5 profiles on Korean Windows.
++compat_revision=65
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/spec.json b/guest/spec.json
+index 5e6be7c..f74999a 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -30,11 +30,12 @@
+     "versionFile": "4.0.0.alpha",
+     "channel": "quattro",
+     "license": "MIT",
+-    "packageRelease": 10,
++    "packageRelease": 11,
+     "integrationDepends": [
+       "fcitx5",
+       "fcitx5-chewing",
+       "fcitx5-gtk",
++      "fcitx5-hangul",
+       "fcitx5-qt",
+       "gtk3",
+       "gtk4",
+diff --git a/guest/tests/fixtures/fcitx5/profile-saved-by-fcitx5 b/guest/tests/fixtures/fcitx5/profile-saved-by-fcitx5
+new file mode 100644
+index 0000000..0c9ab2e
+--- /dev/null
++++ b/guest/tests/fixtures/fcitx5/profile-saved-by-fcitx5
+@@ -0,0 +1,23 @@
++[Groups/0]
++# Group Name
++Name=Default
++# Layout
++Default Layout=us
++# Default Input Method
++DefaultIM=chewing
++
++[Groups/0/Items/0]
++# Name
++Name=keyboard-us
++# Layout
++# Layout=
++
++[Groups/0/Items/1]
++# Name
++Name=chewing
++# Layout
++# Layout=
++
++[GroupOrder]
++0=Default
++
+diff --git a/guest/tests/test_aquamarine_contract.py b/guest/tests/test_aquamarine_contract.py
+index ca3d576..7a23f76 100644
+--- a/guest/tests/test_aquamarine_contract.py
++++ b/guest/tests/test_aquamarine_contract.py
+@@ -76,7 +76,7 @@ class AquamarineContractTests(unittest.TestCase):
+         runtime = (GUEST / 'scripts/register-omarchy-runtime.sh').read_text()
+         self.assertIn('depend = aquamarine>={version}', runtime)
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=64', finalizer)
++        self.assertIn('compat_revision=65', finalizer)
+         self.assertIn('cp /usr/share/try-omarchy/repo/*.pkg.tar.zst', finalizer)
+         self.assertIn('usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua', finalizer)
+         repo = (GUEST / 'scripts/register-local-repository.sh').read_text()
+diff --git a/guest/tests/test_battery_details.py b/guest/tests/test_battery_details.py
+index 280845c..67f161f 100644
+--- a/guest/tests/test_battery_details.py
++++ b/guest/tests/test_battery_details.py
+@@ -204,7 +204,7 @@ class BatteryDetailsFlowTests(unittest.TestCase):
+     def test_compatibility_delivery_and_dkms_version(self):
+         overlay = GUEST / "factory-overlay"
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=64", finalize)
++        self.assertIn("compat_revision=65", finalize)
+         self.assertIn("usr/src/try-omarchy-battery-1.1.0", finalize)
+         self.assertIn("usr/local/lib/try-omarchy/update-battery-dkms", finalize)
+         self.assertIn('PACKAGE_VERSION="1.1.0"', (MODULE_SOURCE.parent / "dkms.conf").read_text())
+diff --git a/guest/tests/test_clipboard_pull.py b/guest/tests/test_clipboard_pull.py
+index 8049e52..da7cba6 100644
+--- a/guest/tests/test_clipboard_pull.py
++++ b/guest/tests/test_clipboard_pull.py
+@@ -71,4 +71,4 @@ class ClipboardPullTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn('usr/local/bin/clipboard-bridge', paths)
+-        self.assertIn('compat_revision=64', finalizer)
++        self.assertIn('compat_revision=65', finalizer)
+diff --git a/guest/tests/test_compositor_health.py b/guest/tests/test_compositor_health.py
+index ea4e248..7be07fa 100644
+--- a/guest/tests/test_compositor_health.py
++++ b/guest/tests/test_compositor_health.py
+@@ -55,7 +55,7 @@ class CompositorHealthTests(unittest.TestCase):
+ 
+     def test_existing_disks_receive_health_files(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=64', finalizer)
++        self.assertIn('compat_revision=65', finalizer)
+         for name in ['agent', 'compositor-health']:
+             self.assertIn('  usr/local/lib/try-omarchy/' + name, finalizer)
+         self.assertTrue(HELPER.stat().st_mode & 0o111)
+diff --git a/guest/tests/test_guest_qol.py b/guest/tests/test_guest_qol.py
+index ab11fec..b105329 100644
+--- a/guest/tests/test_guest_qol.py
++++ b/guest/tests/test_guest_qol.py
+@@ -179,6 +179,7 @@ class GuestQolTests(unittest.TestCase):
+             self.assertTrue(match.find("edit").findtext("string").endswith("CJK TC"))
+         build_spec = json.loads((GUEST / "spec.json").read_text())
+         self.assertIn("fcitx5-chewing", build_spec["upstream"]["integrationDepends"])
++        self.assertIn("fcitx5-hangul", build_spec["upstream"]["integrationDepends"])
+         self.assertIn("man-db", build_spec["upstream"]["integrationDepends"])
+ 
+     def test_screensaver_text_fits_live_terminal(self):
+@@ -221,7 +222,7 @@ class GuestQolTests(unittest.TestCase):
+     def test_compatibility_delivers_guarded_payload_once_per_revision(self):
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalize.split("compat_paths=(", 1)[1].split(")", 1)[0]
+-        self.assertIn("compat_revision=64", finalize)
++        self.assertIn("compat_revision=65", finalize)
+         for path in ("usr/local/bin/omarchy-native-screensaver-text", "usr/local/lib/try-omarchy/install-guest-qol", "usr/share/try-omarchy/guest-qol", "usr/local/bin/omarchy-windows-audio-bridge"):
+             self.assertIn(path, paths)
+         self.assertNotIn("etc/fonts/conf.d/30-try-omarchy.conf", paths)
+diff --git a/guest/tests/test_live_update.py b/guest/tests/test_live_update.py
+index 6d5cc9a..48e20ec 100644
+--- a/guest/tests/test_live_update.py
++++ b/guest/tests/test_live_update.py
+@@ -176,7 +176,7 @@ class LiveUpdateTests(unittest.TestCase):
+ 
+     def test_delivery_and_best_effort_hook(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=64', finalizer)
++        self.assertIn('compat_revision=65', finalizer)
+         for path in ['usr/local/lib/try-omarchy/live-update', 'etc/pacman.d/hooks/00-try-omarchy-live-update.hook', 'etc/pacman.d/hooks/zz-try-omarchy-live-update.hook']:
+             self.assertIn(path, finalizer)
+         pre = (GUEST / 'factory-overlay/etc/pacman.d/hooks/00-try-omarchy-live-update.hook').read_text()
+diff --git a/guest/tests/test_native_nightlight.py b/guest/tests/test_native_nightlight.py
+index 94ea4f0..a7062b3 100644
+--- a/guest/tests/test_native_nightlight.py
++++ b/guest/tests/test_native_nightlight.py
+@@ -214,5 +214,5 @@ class PersistentNightlightTests(unittest.TestCase):
+         catch_up = (self.overlay / 'usr/local/lib/try-omarchy/catch-up').read_text()
+         for path in ['usr/local/bin/omarchy-native-nightlight', 'usr/local/share/try-omarchy/nightlight.frag', 'usr/local/lib/try-omarchy/install-nightlight', 'usr/share/try-omarchy/nightlight']:
+             self.assertIn(path, finalizer)
+-        self.assertIn('compat_revision=64', finalizer)
++        self.assertIn('compat_revision=65', finalizer)
+         self.assertIn('previous_revision < 55', catch_up)
+diff --git a/guest/tests/test_notification_privacy.py b/guest/tests/test_notification_privacy.py
+index b4e0b12..ec73334 100644
+--- a/guest/tests/test_notification_privacy.py
++++ b/guest/tests/test_notification_privacy.py
+@@ -116,8 +116,8 @@ for (const state of [null, {screensaverStateKnown:false}, {screensaverStateKnown
+     def test_compatibility_overlay_and_catch_up_revision(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         catch_up = (GUEST / 'factory-overlay/usr/local/lib/try-omarchy/catch-up').read_text()
+-        self.assertIn('compat_revision=64', finalizer)
++        self.assertIn('compat_revision=65', finalizer)
+         self.assertIn('usr/share/try-omarchy/notifications', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-notifications', finalizer)
+         self.assertIn('previous_revision < 52', catch_up)
+-        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 10)
++        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 11)
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index 2bbe4ef..774bfa9 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -32,6 +32,8 @@ PINCH_FRAGMENT = OVERLAY / "usr/share/try-omarchy/skel-fragments/hypr-input-pinc
+ PINCH_READY = OVERLAY / "usr/local/lib/try-omarchy/pinch-ready"
+ QUICK_START_SSHD = OVERLAY / "usr/share/try-omarchy/quick-start-sshd.conf"
+ EXPORT = OVERLAY / "usr/local/bin/try-omarchy-export"
++FCITX5_PROFILE = Path(__file__).resolve().parents[1] / "fragments/fcitx5-profile.ini"
++FCITX5_SAVED_PROFILE = Path(__file__).resolve().parent / "fixtures/fcitx5/profile-saved-by-fcitx5"
+ 
+ def generated_key(directory: Path) -> str:
+     """A real key: the guest validates the blob with ssh-keygen, so a made-up
+@@ -313,6 +315,22 @@ class HostLocaleTests(OverlayCase):
+         self.localtime.symlink_to(self.zoneinfo / "UTC")
+         self.vconsole = self.root / "vconsole.conf"
+         self.vconsole.write_text("KEYMAP=us\n")
++        self.homes = self.root / "homes"
++        self.skel = self.root / "skel"
++        self.inputmethods = self.root / "inputmethod"
++        self.inputmethods.mkdir()
++        (self.inputmethods / "chewing.conf").write_text("[InputMethod]\nName=Chewing\n")
++        (self.inputmethods / "hangul.conf").write_text("[InputMethod]\nName=Hangul\n")
++        self.seed_profile(self.skel, FCITX5_PROFILE.read_bytes(), 0o644)
++        # Unprivileged tests already run as the owner setpriv would switch to.
++        self.fake("setpriv", 'while [[ $1 != -- ]]; do echo "setpriv $1" >>"$SETPRIV_CALLS"; shift; done; shift; exec "$@"')
++
++    def seed_profile(self, base: Path, data: bytes, mode: int = 0o600) -> Path:
++        profile = base / ".config/fcitx5/profile"
++        profile.parent.mkdir(parents=True, exist_ok=True)
++        profile.write_bytes(data)
++        profile.chmod(mode)
++        return profile
+ 
+     def apply(self, cmdline: str) -> subprocess.CompletedProcess:
+         self.locale_gen = self.root / "locale.gen"
+@@ -330,7 +348,10 @@ class HostLocaleTests(OverlayCase):
+                                TRY_OMARCHY_ZONEINFO=str(self.zoneinfo), TRY_OMARCHY_LOCALTIME=str(self.localtime),
+                                TRY_OMARCHY_VCONSOLE=str(self.vconsole), TRY_OMARCHY_LOCALE_GEN=str(self.locale_gen),
+                                TRY_OMARCHY_LOCALE_CONF=str(self.locale_conf), TRY_OMARCHY_LOCALE_SOURCES=str(sources),
+-                               CALLS=str(self.log))
++                               TRY_OMARCHY_HOMES=str(self.homes), TRY_OMARCHY_SKEL=str(self.skel),
++                               TRY_OMARCHY_FCITX5_INPUTMETHODS=str(self.inputmethods),
++                               TRY_OMARCHY_FCITX5_DEFAULT=str(FCITX5_PROFILE), CALLS=str(self.log),
++                               SETPRIV_CALLS=str(self.root / "setpriv.log"))
+ 
+     def test_applies_zone_and_keyboard_from_the_command_line(self) -> None:
+         result = self.apply("root=/dev/vda tryomarchy.tz=America/New_York tryomarchy.kb=de:nodeadkeys quiet")
+@@ -387,6 +408,79 @@ class HostLocaleTests(OverlayCase):
+         self.assertEqual(self.vconsole.read_text(), "KEYMAP=us\n")
+         self.assertFalse((self.state / "host-timezone").exists())
+ 
++    def test_korean_windows_offers_hangul_in_untouched_profiles(self) -> None:
++        shipped = self.seed_profile(self.homes / "fresh", FCITX5_PROFILE.read_bytes(), 0o644)
++        saved = self.seed_profile(self.homes / "used", FCITX5_SAVED_PROFILE.read_bytes())
++        result = self.apply("tryomarchy.locale=ko_KR tryomarchy.kb=kr")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        for profile, mode in [(shipped, 0o644), (saved, 0o600), (self.skel / ".config/fcitx5/profile", 0o644)]:
++            text = profile.read_text()
++            self.assertIn("[Groups/0/Items/0]\nName=keyboard-us\n", text, profile)
++            self.assertIn("[Groups/0/Items/1]\nName=hangul\n", text, profile)
++            self.assertNotIn("chewing", text, profile)
++            self.assertEqual(profile.stat().st_mode & 0o777, mode, profile)
++        self.assertEqual(list(shipped.parent.iterdir()), [shipped])
++        self.assertIn(f"setpriv --reuid={os.getuid()}\n", (self.root / "setpriv.log").read_text())
++        # Seeded profiles no longer match the default, so later boots leave them alone.
++        inode = saved.stat().st_ino
++        self.apply("tryomarchy.locale=ko_KR tryomarchy.kb=kr")
++        self.assertEqual(saved.stat().st_ino, inode)
++
++    def test_korean_windows_keeps_changed_missing_and_linked_profiles(self) -> None:
++        edited = self.seed_profile(self.homes / "edited", FCITX5_PROFILE.read_bytes().replace(b"chewing", b"mozc"))
++        (self.homes / "missing/.config").mkdir(parents=True)
++        outside = self.seed_profile(self.root / "dotfiles", FCITX5_PROFILE.read_bytes())
++        (self.homes / "linked/.config").mkdir(parents=True)
++        (self.homes / "linked/.config/fcitx5").symlink_to(outside.parent, target_is_directory=True)
++        before = edited.read_bytes()
++        result = self.apply("tryomarchy.locale=ko_KR")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(edited.read_bytes(), before)
++        self.assertFalse((self.homes / "missing/.config/fcitx5").exists())
++        self.assertEqual(outside.read_bytes(), FCITX5_PROFILE.read_bytes())
++
++    def test_hangul_waits_until_its_input_method_is_installed(self) -> None:
++        profile = self.seed_profile(self.homes / "user", FCITX5_SAVED_PROFILE.read_bytes())
++        (self.inputmethods / "hangul.conf").unlink()
++        result = self.apply("tryomarchy.locale=ko_KR")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertIn("fcitx5-hangul is not installed", result.stderr)
++        self.assertEqual(profile.read_bytes(), FCITX5_SAVED_PROFILE.read_bytes())
++        (self.inputmethods / "hangul.conf").write_text("[InputMethod]\nName=Hangul\n")
++        self.apply("tryomarchy.locale=ko_KR")
++        self.assertIn("Name=hangul", profile.read_text())
++
++    def test_other_languages_leave_input_methods_unchanged(self) -> None:
++        shipped = self.seed_profile(self.homes / "fresh", FCITX5_PROFILE.read_bytes(), 0o644)
++        saved = self.seed_profile(self.homes / "used", FCITX5_SAVED_PROFILE.read_bytes())
++        for cmdline in ["tryomarchy.locale=zh_TW", "tryomarchy.locale=ja_JP tryomarchy.kb=jp",
++                        "tryomarchy.locale=de_DE", "tryomarchy.kb=kr", "tryomarchy.locale=ko_kr"]:
++            result = self.apply(cmdline)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            self.assertEqual(shipped.read_bytes(), FCITX5_PROFILE.read_bytes(), cmdline)
++            self.assertEqual(saved.read_bytes(), FCITX5_SAVED_PROFILE.read_bytes(), cmdline)
++            self.assertEqual((self.skel / ".config/fcitx5/profile").read_bytes(), FCITX5_PROFILE.read_bytes(), cmdline)
++
++    def test_new_accounts_return_to_the_default_when_windows_leaves_korean(self) -> None:
++        user = self.seed_profile(self.homes / "user", FCITX5_PROFILE.read_bytes())
++        self.apply("tryomarchy.locale=ko_KR")
++        skel_profile = self.skel / ".config/fcitx5/profile"
++        self.assertIn("Name=hangul", skel_profile.read_text())
++        self.apply("tryomarchy.locale=en_US")
++        self.assertEqual(skel_profile.read_bytes(), FCITX5_PROFILE.read_bytes())
++        self.assertEqual(skel_profile.stat().st_mode & 0o777, 0o644)
++        # A home directory keeps the user's Hangul profile after Windows changes language.
++        self.assertIn("Name=hangul", user.read_text())
++
++    def test_new_account_default_is_not_restored_through_a_linked_directory(self) -> None:
++        self.apply("tryomarchy.locale=ko_KR")
++        user = self.seed_profile(self.homes / "user", (self.skel / ".config/fcitx5/profile").read_bytes())
++        shutil.rmtree(self.skel / ".config/fcitx5")
++        (self.skel / ".config/fcitx5").symlink_to(user.parent, target_is_directory=True)
++        result = self.apply("tryomarchy.locale=en_US")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertIn("Name=hangul", user.read_text())
++
+ 
+ class AgentTests(OverlayCase):
+     def test_approved_windows_apps_sync_and_revoke(self) -> None:
+diff --git a/guest/tests/test_qt612_palette.py b/guest/tests/test_qt612_palette.py
+index 5804c55..9a88e2b 100644
+--- a/guest/tests/test_qt612_palette.py
++++ b/guest/tests/test_qt612_palette.py
+@@ -166,10 +166,10 @@ class Qt612PaletteTests(unittest.TestCase):
+     def test_compatibility_delivery_runs_after_older_repairs_and_before_login(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+-        self.assertIn('compat_revision=64', finalizer)
++        self.assertIn('compat_revision=65', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-qt612-palette', paths)
+         self.assertIn('usr/share/try-omarchy/qt612-palette', paths)
+-        self.assertEqual(self.build_spec['upstream']['packageRelease'], 10)
++        self.assertEqual(self.build_spec['upstream']['packageRelease'], 11)
+         service = (OVERLAY / 'etc/systemd/system/try-omarchy-catch-up.service').read_text()
+         self.assertIn('Before=display-manager.service', service)
+         catch_up = OVERLAY / 'usr/local/lib/try-omarchy/catch-up'
+diff --git a/guest/tests/test_snapper_guest.py b/guest/tests/test_snapper_guest.py
+index 5216421..c354d04 100644
+--- a/guest/tests/test_snapper_guest.py
++++ b/guest/tests/test_snapper_guest.py
+@@ -44,5 +44,5 @@ class GuestSnapperTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn(TARGET, paths)
+-        self.assertIn('compat_revision=64', finalizer)
+-        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 10)
++        self.assertIn('compat_revision=65', finalizer)
++        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 11)
+diff --git a/guest/tests/test_url_schemes.py b/guest/tests/test_url_schemes.py
+index 6daf200..157c8c7 100644
+--- a/guest/tests/test_url_schemes.py
++++ b/guest/tests/test_url_schemes.py
+@@ -398,7 +398,7 @@ class DeliveryTests(unittest.TestCase):
+     def test_revision_62_delivers_the_link_helper(self) -> None:
+         finalizer = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalizer.split("compat_paths=(", 1)[1].split(")", 1)[0].split()
+-        self.assertIn("compat_revision=64", finalizer)
++        self.assertIn("compat_revision=65", finalizer)
+         self.assertIn("# Revision 62 opens links from Windows for approved URL schemes.", finalizer)
+         for path in ("usr/local/lib/try-omarchy/url-schemes", "usr/local/lib/try-omarchy/agent"):
+             self.assertIn(path, paths)
+diff --git a/guest/tests/test_windows_volume_sync.py b/guest/tests/test_windows_volume_sync.py
+index 7811c2a..f24fe78 100644
+--- a/guest/tests/test_windows_volume_sync.py
++++ b/guest/tests/test_windows_volume_sync.py
+@@ -285,7 +285,7 @@ class VolumeSyncTests(unittest.TestCase):
+ 
+     def test_revision_delivers_bridge_to_existing_disks(self):
+         finalize = (Path(__file__).resolve().parents[1] / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=64", finalize)
++        self.assertIn("compat_revision=65", finalize)
+         self.assertIn("usr/local/bin/omarchy-windows-audio-bridge", finalize)
+ 
+ 
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index d7c60fa..8fc67ec 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -324,7 +324,7 @@ def main() -> None:
+         "system services run without watchdogs, which fire after Windows sleeps",
+     )
+     check(
+-        "compat_revision=64" in finalize_rootfs
++        "compat_revision=65" in finalize_rootfs
+         and "usr/local/bin/mpv" in compat_paths
+         and "usr/share/dkms/modules_to_force_install/try-omarchy" in compat_paths
+         and "usr/local/lib/try-omarchy/try-omarchy-import.pyz" in compat_paths
+-- 
+2.56.0
+

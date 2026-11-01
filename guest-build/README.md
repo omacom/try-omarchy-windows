@@ -10,6 +10,30 @@ scripts/release/build-guest.sh --contract-only
 scripts/release/build-guest.sh --output /path/to/artifacts
 ```
 
+Patch 0153 offers Hangul instead of Chewing on Korean Windows. The guest ships
+fcitx5-hangul, and when the launcher passes `tryomarchy.locale=ko_KR`,
+`apply-host-locale` switches fcitx5 profiles that are still the image default
+to the US keyboard and Hangul. It runs at every boot before the display manager,
+so no running fcitx5 writes the old profile back on exit. Two forms count as the
+default: the profile from patch 0121, and the same file after fcitx5 5.1.23 saved
+it on logout. Edited, missing and linked profiles stay as they are. `/etc/skel`
+gets the Hangul profile too, so the first Korean session already has it, and
+returns to the default when Windows changes to another language. Home
+directories are never switched back, and other languages change nothing. The
+trigger key is unchanged. Runtime `4.0.4-11` brings fcitx5-hangul to existing
+disks with their next **Update > Omarchy**; until it is installed the profile
+is left alone, and the next boot afterwards switches it. Compatibility revision
+65 delivers the helper before login. Patch 0154 locks fcitx5-hangul and libhangul
+and refreshes the resolved package transaction, which brings in Hyprland 0.57.0.
+
+Patch 0152 turns off `quirks:skip_non_kms_dmabuf_formats` in the QEMU
+profile. Hyprland 0.57 turned it on by default, so clients were offered only
+the formats the display can scan out. Virtio GPU scans out only XRGB8888, so
+Mesa dropped alpha and full-screen transparent layers, such as notifications,
+covered the desktop in black on GPU rendering (#358). Hyprland 0.56 and CPU
+rendering were not affected. Compatibility revision 64 delivers the profile to
+existing disks whose `monitors.lua` is still the default.
+
 Patch 0147 opens links clicked in Windows inside Omarchy, only for URL schemes
 the user approved in Try Omarchy Settings. Agent version 6 starts every
 connection with links disabled. Each `url-approved` snapshot from the launcher

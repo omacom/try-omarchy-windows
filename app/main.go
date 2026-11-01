@@ -766,9 +766,11 @@ func main() {
 	}
 
 	// Machine setup the old bootstrap.ps1 handled: hypervisor on (may walk the
-	// user through one restart and exit), then a QEMU to run. Existing setups
-	// win - C:\WINQ-EMU, then a previously downloaded runtime, then stock QEMU
-	// from the bootstrap; a bare machine downloads the portable WINQ-EMU tree.
+	// user through one restart and exit), then a QEMU to run: C:\WINQ-EMU if
+	// present, otherwise the bundled runtime, downloaded when missing. Stock QEMU
+	// from the old bootstrap is only a fallback when the runtime cannot be set
+	// up, CPU rendering included: stock WHPX misses QMP at startup and wedges
+	// instead of exiting after a guest poweroff (docs/FINDINGS.md).
 	ensureWHP(cfg)
 	if finishSetupCancellation(cfg, checkSetupCancelled()) {
 		return
@@ -791,7 +793,7 @@ func main() {
 			gpuRoot = cfg.winqEmu
 		}
 	}
-	if gpuRoot == "" && !(cfg.noGpu && haveStock && cfg.share == "") {
+	if gpuRoot == "" {
 		if payloadsRolledBack {
 			root := filepath.Join(cfg.dir, "runtime")
 			info, err := os.Stat(filepath.Join(root, "bin", qemuExe))

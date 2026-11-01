@@ -1,0 +1,275 @@
+From d51276ca18226e5bd25ab29b68ac4f2543967e74 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 31 Oct 2026 10:43:50 -0400
+Subject: [PATCH] Offer alpha dmabuf formats on the QEMU display
+
+Hyprland 0.57 turned on quirks:skip_non_kms_dmabuf_formats by default. Virtio GPU scans out only XRGB8888, so clients were offered nothing else, Mesa dropped alpha, and full-screen transparent layers such as notifications covered the desktop in black on GPU rendering. The QEMU profile turns the quirk off, as Hyprland 0.56 had it. Revision 64 delivers the profile to existing disks.
+---
+ .../skel-fragments/hypr-monitors-qemu.append.lua  |  5 +++++
+ guest/fragments/hypr-monitors-qemu.append.lua     |  5 +++++
+ guest/scripts/finalize-rootfs.sh                  |  3 ++-
+ guest/tests/test_aquamarine_contract.py           |  2 +-
+ guest/tests/test_battery_details.py               |  2 +-
+ guest/tests/test_clipboard_pull.py                |  2 +-
+ guest/tests/test_compositor_health.py             |  2 +-
+ guest/tests/test_guest_qol.py                     |  2 +-
+ guest/tests/test_live_update.py                   |  2 +-
+ guest/tests/test_native_nightlight.py             |  2 +-
+ guest/tests/test_notification_privacy.py          |  2 +-
+ guest/tests/test_overlay_scripts.py               | 15 +++++++++++++++
+ guest/tests/test_qt612_palette.py                 |  2 +-
+ guest/tests/test_snapper_guest.py                 |  2 +-
+ guest/tests/test_url_schemes.py                   |  2 +-
+ guest/tests/test_windows_volume_sync.py           |  2 +-
+ guest/tests/verify.py                             |  7 ++++++-
+ 17 files changed, 45 insertions(+), 14 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua b/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
+index 329129e..2ad8475 100644
+--- a/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
++++ b/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
+@@ -92,6 +92,11 @@ end
+ if omarchy_kernel_option_enabled("omarchy.qemu=1") then
+   -- Virgl cursor GPU buffers arrive inverted; use a small CPU cursor buffer.
+   hl.config({ cursor = { invisible = false, use_cpu_buffer = 1 } })
++  -- Virtio GPU scans out only XRGB8888. Hyprland 0.57 offers clients only
++  -- scanout formats by default, so Mesa drops alpha and transparent layers
++  -- such as notifications cover the desktop in black. Offer every format the
++  -- renderer can import, as Hyprland 0.56 did.
++  hl.config({ quirks = { skip_non_kms_dmabuf_formats = false } })
+   local synced_mode, synced_scale = omarchy_synced_display_mode()
+   if synced_mode then
+     -- A number the user set in this file is explicit intent and outranks
+diff --git a/guest/fragments/hypr-monitors-qemu.append.lua b/guest/fragments/hypr-monitors-qemu.append.lua
+index 329129e..2ad8475 100644
+--- a/guest/fragments/hypr-monitors-qemu.append.lua
++++ b/guest/fragments/hypr-monitors-qemu.append.lua
+@@ -92,6 +92,11 @@ end
+ if omarchy_kernel_option_enabled("omarchy.qemu=1") then
+   -- Virgl cursor GPU buffers arrive inverted; use a small CPU cursor buffer.
+   hl.config({ cursor = { invisible = false, use_cpu_buffer = 1 } })
++  -- Virtio GPU scans out only XRGB8888. Hyprland 0.57 offers clients only
++  -- scanout formats by default, so Mesa drops alpha and transparent layers
++  -- such as notifications cover the desktop in black. Offer every format the
++  -- renderer can import, as Hyprland 0.56 did.
++  hl.config({ quirks = { skip_non_kms_dmabuf_formats = false } })
+   local synced_mode, synced_scale = omarchy_synced_display_mode()
+   if synced_mode then
+     -- A number the user set in this file is explicit intent and outranks
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 372a935..cb02fb1 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -251,7 +251,8 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 61 delivers the QEMU CPU cursor profile and patched package offer.
+ # Revision 62 opens links from Windows for approved URL schemes.
+ # Revision 63 reports a slow compositor as busy during package updates.
+-compat_revision=63
++# Revision 64 offers alpha dmabuf formats to clients on the QEMU display.
++compat_revision=64
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_aquamarine_contract.py b/guest/tests/test_aquamarine_contract.py
+index 92cd926..ca3d576 100644
+--- a/guest/tests/test_aquamarine_contract.py
++++ b/guest/tests/test_aquamarine_contract.py
+@@ -76,7 +76,7 @@ class AquamarineContractTests(unittest.TestCase):
+         runtime = (GUEST / 'scripts/register-omarchy-runtime.sh').read_text()
+         self.assertIn('depend = aquamarine>={version}', runtime)
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=63', finalizer)
++        self.assertIn('compat_revision=64', finalizer)
+         self.assertIn('cp /usr/share/try-omarchy/repo/*.pkg.tar.zst', finalizer)
+         self.assertIn('usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua', finalizer)
+         repo = (GUEST / 'scripts/register-local-repository.sh').read_text()
+diff --git a/guest/tests/test_battery_details.py b/guest/tests/test_battery_details.py
+index 5c14816..280845c 100644
+--- a/guest/tests/test_battery_details.py
++++ b/guest/tests/test_battery_details.py
+@@ -204,7 +204,7 @@ class BatteryDetailsFlowTests(unittest.TestCase):
+     def test_compatibility_delivery_and_dkms_version(self):
+         overlay = GUEST / "factory-overlay"
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=63", finalize)
++        self.assertIn("compat_revision=64", finalize)
+         self.assertIn("usr/src/try-omarchy-battery-1.1.0", finalize)
+         self.assertIn("usr/local/lib/try-omarchy/update-battery-dkms", finalize)
+         self.assertIn('PACKAGE_VERSION="1.1.0"', (MODULE_SOURCE.parent / "dkms.conf").read_text())
+diff --git a/guest/tests/test_clipboard_pull.py b/guest/tests/test_clipboard_pull.py
+index 72865bc..8049e52 100644
+--- a/guest/tests/test_clipboard_pull.py
++++ b/guest/tests/test_clipboard_pull.py
+@@ -71,4 +71,4 @@ class ClipboardPullTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn('usr/local/bin/clipboard-bridge', paths)
+-        self.assertIn('compat_revision=63', finalizer)
++        self.assertIn('compat_revision=64', finalizer)
+diff --git a/guest/tests/test_compositor_health.py b/guest/tests/test_compositor_health.py
+index 82d5bf4..ea4e248 100644
+--- a/guest/tests/test_compositor_health.py
++++ b/guest/tests/test_compositor_health.py
+@@ -55,7 +55,7 @@ class CompositorHealthTests(unittest.TestCase):
+ 
+     def test_existing_disks_receive_health_files(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=63', finalizer)
++        self.assertIn('compat_revision=64', finalizer)
+         for name in ['agent', 'compositor-health']:
+             self.assertIn('  usr/local/lib/try-omarchy/' + name, finalizer)
+         self.assertTrue(HELPER.stat().st_mode & 0o111)
+diff --git a/guest/tests/test_guest_qol.py b/guest/tests/test_guest_qol.py
+index 355d868..ab11fec 100644
+--- a/guest/tests/test_guest_qol.py
++++ b/guest/tests/test_guest_qol.py
+@@ -221,7 +221,7 @@ class GuestQolTests(unittest.TestCase):
+     def test_compatibility_delivers_guarded_payload_once_per_revision(self):
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalize.split("compat_paths=(", 1)[1].split(")", 1)[0]
+-        self.assertIn("compat_revision=63", finalize)
++        self.assertIn("compat_revision=64", finalize)
+         for path in ("usr/local/bin/omarchy-native-screensaver-text", "usr/local/lib/try-omarchy/install-guest-qol", "usr/share/try-omarchy/guest-qol", "usr/local/bin/omarchy-windows-audio-bridge"):
+             self.assertIn(path, paths)
+         self.assertNotIn("etc/fonts/conf.d/30-try-omarchy.conf", paths)
+diff --git a/guest/tests/test_live_update.py b/guest/tests/test_live_update.py
+index 76ef7e4..6d5cc9a 100644
+--- a/guest/tests/test_live_update.py
++++ b/guest/tests/test_live_update.py
+@@ -176,7 +176,7 @@ class LiveUpdateTests(unittest.TestCase):
+ 
+     def test_delivery_and_best_effort_hook(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=63', finalizer)
++        self.assertIn('compat_revision=64', finalizer)
+         for path in ['usr/local/lib/try-omarchy/live-update', 'etc/pacman.d/hooks/00-try-omarchy-live-update.hook', 'etc/pacman.d/hooks/zz-try-omarchy-live-update.hook']:
+             self.assertIn(path, finalizer)
+         pre = (GUEST / 'factory-overlay/etc/pacman.d/hooks/00-try-omarchy-live-update.hook').read_text()
+diff --git a/guest/tests/test_native_nightlight.py b/guest/tests/test_native_nightlight.py
+index 26f5650..94ea4f0 100644
+--- a/guest/tests/test_native_nightlight.py
++++ b/guest/tests/test_native_nightlight.py
+@@ -214,5 +214,5 @@ class PersistentNightlightTests(unittest.TestCase):
+         catch_up = (self.overlay / 'usr/local/lib/try-omarchy/catch-up').read_text()
+         for path in ['usr/local/bin/omarchy-native-nightlight', 'usr/local/share/try-omarchy/nightlight.frag', 'usr/local/lib/try-omarchy/install-nightlight', 'usr/share/try-omarchy/nightlight']:
+             self.assertIn(path, finalizer)
+-        self.assertIn('compat_revision=63', finalizer)
++        self.assertIn('compat_revision=64', finalizer)
+         self.assertIn('previous_revision < 55', catch_up)
+diff --git a/guest/tests/test_notification_privacy.py b/guest/tests/test_notification_privacy.py
+index 6764722..b4e0b12 100644
+--- a/guest/tests/test_notification_privacy.py
++++ b/guest/tests/test_notification_privacy.py
+@@ -116,7 +116,7 @@ for (const state of [null, {screensaverStateKnown:false}, {screensaverStateKnown
+     def test_compatibility_overlay_and_catch_up_revision(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         catch_up = (GUEST / 'factory-overlay/usr/local/lib/try-omarchy/catch-up').read_text()
+-        self.assertIn('compat_revision=63', finalizer)
++        self.assertIn('compat_revision=64', finalizer)
+         self.assertIn('usr/share/try-omarchy/notifications', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-notifications', finalizer)
+         self.assertIn('previous_revision < 52', catch_up)
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index 61e32f7..2bbe4ef 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -612,6 +612,21 @@ class CatchUpTests(OverlayCase):
+         self.assertEqual((self.state / "catch-up-revision").read_text(), "62\n")
+         self.assertEqual(monitors.read_text(), "-- user cursor config\n")
+ 
++    def test_revision_64_offers_alpha_dmabuf_formats_and_preserves_user_config(self) -> None:
++        monitors = self.user / ".config/hypr/monitors.lua"
++        monitors.write_text(self.default.read_text() + self.old_fragment)
++        self.state.mkdir()
++        (self.state / "catch-up-revision").write_text("63\n")
++        self.version.write_text("64:7.2.3-arch1\n")
++        self.assertEqual(self.run_catch_up().returncode, 0)
++        self.assertIn("skip_non_kms_dmabuf_formats = false", monitors.read_text())
++        self.assertEqual((self.state / "catch-up-revision").read_text(), "64\n")
++        custom = "hl.monitor({ output = \"DP-1\", scale = 2 })\n" + self.old_fragment
++        monitors.write_text(custom)
++        (self.state / "catch-up-revision").write_text("63\n")
++        self.assertEqual(self.run_catch_up().returncode, 0)
++        self.assertEqual(monitors.read_text(), custom)
++
+     def test_quick_start_disk_gets_key_only_ssh_once(self) -> None:
+         dropin = self.root / "sshd_config.d/90-try-omarchy-quick-start.conf"
+         self.state.mkdir(parents=True)
+diff --git a/guest/tests/test_qt612_palette.py b/guest/tests/test_qt612_palette.py
+index bc3db65..5804c55 100644
+--- a/guest/tests/test_qt612_palette.py
++++ b/guest/tests/test_qt612_palette.py
+@@ -166,7 +166,7 @@ class Qt612PaletteTests(unittest.TestCase):
+     def test_compatibility_delivery_runs_after_older_repairs_and_before_login(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+-        self.assertIn('compat_revision=63', finalizer)
++        self.assertIn('compat_revision=64', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-qt612-palette', paths)
+         self.assertIn('usr/share/try-omarchy/qt612-palette', paths)
+         self.assertEqual(self.build_spec['upstream']['packageRelease'], 10)
+diff --git a/guest/tests/test_snapper_guest.py b/guest/tests/test_snapper_guest.py
+index e181fe8..5216421 100644
+--- a/guest/tests/test_snapper_guest.py
++++ b/guest/tests/test_snapper_guest.py
+@@ -44,5 +44,5 @@ class GuestSnapperTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn(TARGET, paths)
+-        self.assertIn('compat_revision=63', finalizer)
++        self.assertIn('compat_revision=64', finalizer)
+         self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 10)
+diff --git a/guest/tests/test_url_schemes.py b/guest/tests/test_url_schemes.py
+index c46c28d..6daf200 100644
+--- a/guest/tests/test_url_schemes.py
++++ b/guest/tests/test_url_schemes.py
+@@ -398,7 +398,7 @@ class DeliveryTests(unittest.TestCase):
+     def test_revision_62_delivers_the_link_helper(self) -> None:
+         finalizer = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalizer.split("compat_paths=(", 1)[1].split(")", 1)[0].split()
+-        self.assertIn("compat_revision=63", finalizer)
++        self.assertIn("compat_revision=64", finalizer)
+         self.assertIn("# Revision 62 opens links from Windows for approved URL schemes.", finalizer)
+         for path in ("usr/local/lib/try-omarchy/url-schemes", "usr/local/lib/try-omarchy/agent"):
+             self.assertIn(path, paths)
+diff --git a/guest/tests/test_windows_volume_sync.py b/guest/tests/test_windows_volume_sync.py
+index ae53511..7811c2a 100644
+--- a/guest/tests/test_windows_volume_sync.py
++++ b/guest/tests/test_windows_volume_sync.py
+@@ -285,7 +285,7 @@ class VolumeSyncTests(unittest.TestCase):
+ 
+     def test_revision_delivers_bridge_to_existing_disks(self):
+         finalize = (Path(__file__).resolve().parents[1] / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=63", finalize)
++        self.assertIn("compat_revision=64", finalize)
+         self.assertIn("usr/local/bin/omarchy-windows-audio-bridge", finalize)
+ 
+ 
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 1637379..d7c60fa 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -324,7 +324,7 @@ def main() -> None:
+         "system services run without watchdogs, which fire after Windows sleeps",
+     )
+     check(
+-        "compat_revision=63" in finalize_rootfs
++        "compat_revision=64" in finalize_rootfs
+         and "usr/local/bin/mpv" in compat_paths
+         and "usr/share/dkms/modules_to_force_install/try-omarchy" in compat_paths
+         and "usr/local/lib/try-omarchy/try-omarchy-import.pyz" in compat_paths
+@@ -508,6 +508,11 @@ def main() -> None:
+         and 'hl.config({ cursor = { invisible = false, use_cpu_buffer = 1 } })' in monitor_fragment,
+         "only the QEMU profile enables the upright CPU cursor buffer",
+     )
++    check(
++        'hl.config({ quirks = { skip_non_kms_dmabuf_formats = false } })' in monitor_fragment
++        and monitor_fragment.index("skip_non_kms_dmabuf_formats") > monitor_fragment.index('if omarchy_kernel_option_enabled("omarchy.qemu=1") then'),
++        "the QEMU profile offers alpha dmabuf formats beyond the XRGB8888 scanout",
++    )
+     check(
+         'runtime_dir .. "/try-omarchy/display-mode"' in monitor_fragment
+         and 'hl.monitor({ output = "", mode = synced_mode, scale = synced_scale })' in monitor_fragment
+-- 
+2.56.0
+

@@ -1,0 +1,286 @@
+From 4298e06b9f3e994c3c7e4e36728620211c15eb72 Mon Sep 17 00:00:00 2001
+From: Dico <248385067+AI-Dico@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 13:34:44 -0400
+Subject: [PATCH] Lock Hangul and refresh the guest package transaction
+
+aom 3.15.2-1 -> 3.15.3-1
+chromium 156.0.8078.47-1 -> 156.0.8078.79-1
+cmake 4.4.4-1 -> 4.4.5-1
+device-mapper 2.03.43-2 -> 2.03.44-1
+fribidi 1.0.17-1 -> 1.0.18-1
+glycin 2.2.4-1 -> 2.2.5-1
+glycin-gtk4 2.2.4-1 -> 2.2.5-1
+gnupg 2.4.9-3 -> 2.4.9-4
+gperftools 2.19.1-1 -> 2.19.2-1
+gpu-screen-recorder 6.1.5-1 -> 6.1.6-1
+harfbuzz 14.6.0-1 -> 15.0.0-1
+hyprland 0.56.2-4 -> 0.57.0-1
+kmod 34.2-1 -> 34.3-1
+libheif 1.23.6-1 -> 1.23.7-1
+libjpeg-turbo 3.2.0-2 -> 3.2.1-1
+luajit 2.1.1792588164+a4c0645-1 -> 2.1.1793383622+ea9eb7e-1
+mesa 1:26.2.5-1 -> 1:26.2.6-1
+perl-error 0.17030-3 -> 0.17031-1
+poppler 26.10.0-1 -> 26.10.0-2
+poppler-glib 26.10.0-1 -> 26.10.0-2
+python 3.14.8-1 -> 3.14.9-1
+qt6-declarative 6.12.0-2 -> 6.12.0-3
+tesseract 5.5.3-1 -> 5.5.4-1
+vulkan-mesa-implicit-layers 1:26.2.5-1 -> 1:26.2.6-1
+vulkan-swrast 1:26.2.5-1 -> 1:26.2.6-1
+vulkan-virtio 1:26.2.5-1 -> 1:26.2.6-1
+wayland-protocols 1.49-1 -> 1.50-1
+xdg-terminal-exec 0.14.3-2 -> 0.14.4-1
+fcitx5-hangul 5.1.11-1 (new)
+libcanberra 1:0.30+r2+gc0620e4-6 (new)
+libhangul 0.2.0-1 (new)
+sound-theme-freedesktop 0.8-6 (new)
+tdb 1.4.15-2 (new)
+---
+ guest/packages.lock.json | 63 ++++++++++++++++++++++------------------
+ 1 file changed, 34 insertions(+), 29 deletions(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index cdbc7f4..3b0f107 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -11,7 +11,7 @@
+     "alsa-lib": "1.2.16.1-1",
+     "alsa-topology-conf": "1.2.5.1-4",
+     "alsa-ucm-conf": "1.2.16.1-1",
+-    "aom": "3.15.2-1",
++    "aom": "3.15.3-1",
+     "aquamarine": "0.15.1-1",
+     "archlinux-keyring": "20260909-1",
+     "at-spi2-core": "2.62.1-1",
+@@ -37,10 +37,10 @@
+     "ca-certificates-mozilla": "3.132-1",
+     "ca-certificates-utils": "20240618-1",
+     "cairo": "1.18.6-1",
+-    "chromium": "156.0.8078.47-1",
++    "chromium": "156.0.8078.79-1",
+     "clang": "23.1.4-1",
+     "clang-libs": "23.1.4-1",
+-    "cmake": "4.4.4-1",
++    "cmake": "4.4.5-1",
+     "compiler-rt": "23.1.4-1",
+     "coreutils": "9.12-2",
+     "cpio": "2.15-3",
+@@ -58,7 +58,7 @@
+     "debugedit": "5.3-2",
+     "default-cursors": "3-1",
+     "desktop-file-utils": "0.28-1",
+-    "device-mapper": "2.03.43-2",
++    "device-mapper": "2.03.44-1",
+     "diffutils": "3.12-2",
+     "dkms": "3.4.4-1",
+     "double-conversion": "3.4.0-1",
+@@ -77,6 +77,7 @@
+     "fcitx5": "5.1.23-1",
+     "fcitx5-chewing": "5.1.13-1",
+     "fcitx5-gtk": "5.1.7-1",
++    "fcitx5-hangul": "5.1.11-1",
+     "fcitx5-qt": "5.1.16-2",
+     "fd": "10.5.0-3",
+     "ffmpeg": "2:9.0.2-2",
+@@ -89,7 +90,7 @@
+     "fontconfig": "2:2.18.3-2",
+     "foot": "1.28.0-2",
+     "freetype2": "2.15.0-1",
+-    "fribidi": "1.0.17-1",
++    "fribidi": "1.0.18-1",
+     "fuse-common": "3.18.3-1",
+     "fuse3": "3.18.3-1",
+     "fzf": "0.74.5-1",
+@@ -115,22 +116,22 @@
+     "glibc": "2.44+r50+g1848099f063e-1",
+     "glslang": "1:1.4.363.0-1",
+     "glu": "9.0.3-3",
+-    "glycin": "2.2.4-1",
+-    "glycin-gtk4": "2.2.4-1",
++    "glycin": "2.2.5-1",
++    "glycin-gtk4": "2.2.5-1",
+     "gmp": "6.3.0-3",
+     "gnome-autoar": "0.5.2-1",
+     "gnome-desktop-4": "1:51.0-1",
+     "gnome-desktop-common": "1:51.0-1",
+     "gnome-keyring": "1:51.1-1",
+     "gnulib-l10n": "20241231-1",
+-    "gnupg": "2.4.9-3",
++    "gnupg": "2.4.9-4",
+     "gnutls": "3.8.13-3",
+     "gobject-introspection-runtime": "1.86.0-2",
+-    "gperftools": "2.19.1-1",
++    "gperftools": "2.19.2-1",
+     "gpgme": "2.2.0-1",
+     "gpgmepp": "2.2.0-1",
+     "gpm": "1.20.7.r38.ge82d1a6-7",
+-    "gpu-screen-recorder": "6.1.5-1",
++    "gpu-screen-recorder": "6.1.6-1",
+     "graphene": "1.10.8-2",
+     "graphicsmagick": "1.3.49-3",
+     "graphite": "1:1.3.15-1",
+@@ -159,7 +160,7 @@
+     "gupnp-igd": "1.6.0-2",
+     "gvfs": "1.62.0-3",
+     "gzip": "1.15-1",
+-    "harfbuzz": "14.6.0-1",
++    "harfbuzz": "15.0.0-1",
+     "herdr": "0.9.1-2",
+     "hicolor-icon-theme": "0.18-1",
+     "hidapi": "0.15.0-1",
+@@ -168,7 +169,7 @@
+     "hyprcursor": "0.1.13-7",
+     "hyprgraphics": "0.5.1-4",
+     "hypridle": "0.1.8-2",
+-    "hyprland": "0.56.2-4",
++    "hyprland": "0.57.0-1",
+     "hyprland-guiutils": "0.2.2-4",
+     "hyprland-preview-share-picker": "0.2.1-3",
+     "hyprlang": "0.6.8-5",
+@@ -200,7 +201,7 @@
+     "jsoncpp": "1.9.8-1",
+     "kbd": "2.10.0-1",
+     "keyutils": "1.6.3-4",
+-    "kmod": "34.2-1",
++    "kmod": "34.3-1",
+     "krb5": "1.22.2-1",
+     "l-smash": "2.14.5-4",
+     "lame": "4.0-1",
+@@ -233,6 +234,7 @@
+     "libbs2b": "3.1.0-11",
+     "libbsd": "0.12.2-2",
+     "libbytesize": "2.12-3",
++    "libcanberra": "1:0.30+r2+gc0620e4-6",
+     "libcap": "2.78-1",
+     "libcap-ng": "0.9.6-1",
+     "libcdio": "2.4.0-1",
+@@ -276,7 +278,8 @@
+     "libgsf": "1.14.60-1",
+     "libgudev": "238-4",
+     "libgxps": "0.3.2-5",
+-    "libheif": "1.23.6-1",
++    "libhangul": "0.2.0-1",
++    "libheif": "1.23.7-1",
+     "libhwasan": "16.2.1+r23+gd564253eb6c8-1",
+     "libice": "1.1.2-1",
+     "libidn": "1.44-1",
+@@ -288,7 +291,7 @@
+     "libinput": "1.32.0-1",
+     "libiptcdata": "1.0.5-5",
+     "libisl": "0.28-1",
+-    "libjpeg-turbo": "3.2.0-2",
++    "libjpeg-turbo": "3.2.1-1",
+     "libjxl": "0.12.0-1",
+     "libksba": "1.8.1-1",
+     "liblc3": "1.1.3-2",
+@@ -440,7 +443,7 @@
+     "lua": "5.5.1-1",
+     "lua51-lpeg": "1.1.0-5",
+     "lua54": "5.4.9-1",
+-    "luajit": "2.1.1792588164+a4c0645-1",
++    "luajit": "2.1.1793383622+ea9eb7e-1",
+     "lv2": "1.18.10-2",
+     "lz4": "1:1.10.0-2",
+     "lzo": "2.10-5",
+@@ -449,7 +452,7 @@
+     "man-db": "2.13.1-2",
+     "md4c": "0.6.0-2",
+     "mdadm": "4.6-2",
+-    "mesa": "1:26.2.5-1",
++    "mesa": "1:26.2.6-1",
+     "ministream": "0.99.1-1",
+     "minizip": "1:1.3.2-4",
+     "mkinitcpio": "42.2-1",
+@@ -509,7 +512,7 @@
+     "pcre2": "10.49-1",
+     "pcsclite": "2.5.3-1",
+     "perl": "5.44.0-1",
+-    "perl-error": "0.17030-3",
++    "perl-error": "0.17031-1",
+     "perl-mailtools": "2.22-3",
+     "perl-timedate": "2.35-1",
+     "pinentry": "1.3.3-1",
+@@ -522,15 +525,15 @@
+     "playerctl": "2.4.1-5",
+     "plocate": "1.1.25-1",
+     "polkit": "128-1",
+-    "poppler": "26.10.0-1",
++    "poppler": "26.10.0-2",
+     "poppler-data": "0.4.12-2",
+-    "poppler-glib": "26.10.0-1",
++    "poppler-glib": "26.10.0-2",
+     "popt": "1.19-2",
+     "portaudio": "1:19.7.0-4",
+     "procps-ng": "4.0.7-1",
+     "psmisc": "23.7-2",
+     "pugixml": "1.16-1",
+-    "python": "3.14.8-1",
++    "python": "3.14.9-1",
+     "python-dbus": "1.5.1-1",
+     "python-docopt": "0.6.2-16",
+     "python-gobject": "3.58.1-1",
+@@ -539,7 +542,7 @@
+     "qoi": "r350.4461cc3-1",
+     "qrencode": "4.1.1-4",
+     "qt6-base": "6.12.0-3",
+-    "qt6-declarative": "6.12.0-2",
++    "qt6-declarative": "6.12.0-3",
+     "qt6-multimedia": "6.12.0-1",
+     "qt6-multimedia-ffmpeg": "6.12.0-1",
+     "qt6-svg": "6.12.0-1",
+@@ -570,6 +573,7 @@
+     "sndio": "1.10.0-1",
+     "socat": "1.8.1.3-1",
+     "sord": "0.16.22-1",
++    "sound-theme-freedesktop": "0.8-6",
+     "source-highlight": "3.1.9-19",
+     "spandsp": "0.0.6-7",
+     "speex": "1.2.1-3",
+@@ -586,8 +590,9 @@
+     "systemd-resolvconf": "262.1-1",
+     "systemd-sysvcompat": "262.1-1",
+     "tar": "1.35-5",
++    "tdb": "1.4.15-2",
+     "tensaku": "0.29.0-2",
+-    "tesseract": "5.5.3-1",
++    "tesseract": "5.5.4-1",
+     "tesseract-data-eng": "2:4.1.0-5",
+     "tesseract-data-osd": "2:4.1.0-5",
+     "texinfo": "7.3-3",
+@@ -625,11 +630,11 @@
+     "vmaf": "3.2.1-1",
+     "volume_key": "0.3.12-12",
+     "vulkan-icd-loader": "1.4.363.0-1",
+-    "vulkan-mesa-implicit-layers": "1:26.2.5-1",
+-    "vulkan-swrast": "1:26.2.5-1",
+-    "vulkan-virtio": "1:26.2.5-1",
++    "vulkan-mesa-implicit-layers": "1:26.2.6-1",
++    "vulkan-swrast": "1:26.2.6-1",
++    "vulkan-virtio": "1:26.2.6-1",
+     "wayland": "1.26.0-1",
+-    "wayland-protocols": "1.49-1",
++    "wayland-protocols": "1.50-1",
+     "webrtc-audio-processing-1": "1.3-6",
+     "which": "2.25-1",
+     "wireplumber": "0.5.18-1",
+@@ -651,7 +656,7 @@
+     "xdg-desktop-portal": "1.22.1-2",
+     "xdg-desktop-portal-gtk": "1.15.3-2",
+     "xdg-desktop-portal-hyprland": "1.4.1-2",
+-    "xdg-terminal-exec": "0.14.3-2",
++    "xdg-terminal-exec": "0.14.4-1",
+     "xdg-user-dirs": "0.20-1",
+     "xdg-user-dirs-gtk": "0.16-1",
+     "xdg-utils": "1.2.1-2",
+@@ -682,6 +687,6 @@
+     "zram-generator": "1.2.1-1",
+     "zstd": "1.5.7-3"
+   },
+-  "requestedFileSha256": "1db3ae20694fffa1ccf73a493a60dfac62076f73fc3db1c3b8940632d527221c",
++  "requestedFileSha256": "5ff88f13602d723e05e87b917f54144c74c05eeeb79755bc20e6300e871ce647",
+   "schemaVersion": 1
+ }
+-- 
+2.56.0
+
