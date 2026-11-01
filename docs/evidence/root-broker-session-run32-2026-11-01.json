@@ -1,0 +1,254 @@
+{
+  "schema": 1,
+  "date": "2026-11-01",
+  "scope": "Matched launcher-owned host and root-supervisor-owned broker; guest account/compositor/root service still diagnostic",
+  "run": 32,
+  "nativeBuild": 129,
+  "supervisorBuild": 15,
+  "workloadFrames": 1800,
+  "unchangedDeadlineSeconds": 90,
+  "workloadElapsedSeconds": 85.064954,
+  "brokerConnections": 12,
+  "brokerPeakWorkers": 6,
+  "brokerActorLimit": 8,
+  "native": {
+    "schema": 1,
+    "run": 32,
+    "scope": "1800 ordered native GPU handoffs, authenticated guest END/ACK, previously verified full4K pixels and cleanup only",
+    "sourceReceiptSha256": "0fc356c0c1b663761347ad05724cd7486834e8b12e2451e9807eebb9a41eeb5b",
+    "serialSha256": "7c1cd272ef919d72ba786566f910cee18e1cf4b6352c1c0104bdb91499611777",
+    "nativeRecordsSha256": "f020e8e30d3dfa60e377c8ca7523b3ac506f06964c0daf330d836436ecb22633",
+    "sourceGuardsPassed": true,
+    "privateDesktopIsolationPassed": true,
+    "native1800HandoffsVerified": true,
+    "guestCompletionReceiptsVerified": true,
+    "nativeSubmissions": 4341,
+    "nativeSubmissionFailures": 0,
+    "healthQueries": 4807,
+    "healthFailures": 0,
+    "peakAllocationRecords": 1079,
+    "allocationRecordLimit": 2048,
+    "peakReportedGpuUsageBytes": 1360363520,
+    "reportedUsageLimitBytes": 4294967296,
+    "naturalVmExit": true,
+    "allTrackedNativeResourcesReclaimedBeforeExit": true,
+    "frames": [
+      {
+        "frame": 1,
+        "auditOrdinal": 1,
+        "pixelProof": {
+          "sourceExact": true,
+          "windowWidth": 3840,
+          "windowHeight": 2160,
+          "maximumChannelError": 0,
+          "sourceSha256": "28e672717ada2e1d27aa93fbeeeea298bbccb44d9b61f38215518d25db05d00a",
+          "windowSha256": "a80a9cf51df5d318549ec0a48eb2c09fbd834d8b61c43085c85c7ca47ccd996e"
+        },
+        "nativeBgraSha256": "31226b471cb33dbc4805125d973345346b0cf00adb4c59a79d56dc4a81cb6124",
+        "pngSha256": "746192e23a9e2a7c2b213ba106b07ae6330671a7b83daac80276e5887936a5c8"
+      },
+      {
+        "frame": 1800,
+        "auditOrdinal": 2,
+        "pixelProof": {
+          "sourceExact": true,
+          "windowWidth": 3840,
+          "windowHeight": 2160,
+          "maximumChannelError": 0,
+          "sourceSha256": "1dcbe039b63703a808fb3d73362dde22377524c3311bc55f62714892be290927",
+          "windowSha256": "26d62c03faa23f41e3ebf3e05e29eb4b4a9e6b6d3fa2abccaefbfd240d3aba72"
+        },
+        "nativeBgraSha256": "91d58e4db0f9298214975f082397390f1761a03b6803422759dd4b9749d3a092",
+        "pngSha256": "4f47b63672ea5fd97bb9cd8f5ff3043c73947faa7d80ea6b5688dfd8c0958cfa"
+      }
+    ],
+    "pixelReceiptSha256": "0faeac175f3be4998454daf5b7271bbd262aca022b1a7352dbaf3a558b118b3f",
+    "launcherHostSessionModeObserved": true,
+    "guestBrokerSessionModeObserved": true,
+    "guestSessionRemainsDiagnostic": true,
+    "physicalInputAccepted": false,
+    "physicalScanoutAccepted": false,
+    "completeBrowserLifecycleAudited": false,
+    "fullWorkloadAccepted": false,
+    "normalAccountStartup": false,
+    "nearNativePerformanceAccepted": false,
+    "dailyUseAccepted": false,
+    "auditorSha256": "8a4faa86a7898c0f618737204963896654b51c2df27457f9237dfc868a6b0ede"
+  },
+  "applications": {
+    "schema": 1,
+    "run": 32,
+    "scope": "bounded original-profile three-app GPU workload only; no normal session/daily-use/native93% claim",
+    "sourceReceiptSha256": "0fc356c0c1b663761347ad05724cd7486834e8b12e2451e9807eebb9a41eeb5b",
+    "serialSha256": "7c1cd272ef919d72ba786566f910cee18e1cf4b6352c1c0104bdb91499611777",
+    "nativeLogSha256": "f020e8e30d3dfa60e377c8ca7523b3ac506f06964c0daf330d836436ecb22633",
+    "nativeCoreReceiptSha256": "1a0bab0aa6db066b8d51175899a345394ebcbf192256689fc5f12d1790620c23",
+    "nativeBuildReceiptSha256": "f39a1b2ef689eca33046d266f4c9f9fc0d88e7d411a88344124ed20140eddddc",
+    "browserLifetimes": [
+      {
+        "pid": 2349,
+        "actor": 9,
+        "acceptedNativeCommands": 83,
+        "acceptedNativeCommandBytes": 2289664,
+        "asynchronousNativeCommands": 83,
+        "countsExact": true,
+        "queueAcceptanceOnly": true,
+        "liveRetirementQuiescenceVerified": true,
+        "browserPid": 2173,
+        "renderer": "ANGLE (Microsoft Corporation, D3D12 (NVIDIA GeForce RTX 5090 Laptop GPU), OpenGL ES 3.1)",
+        "shaderPixel": [
+          128,
+          128,
+          64,
+          255
+        ],
+        "allObservedGpuThreadsSandboxed": true,
+        "httpsPageLoaded": true,
+        "ownedKeyringStopped": true,
+        "observerJoined": true
+      },
+      {
+        "pid": 2961,
+        "actor": 12,
+        "acceptedNativeCommands": 65,
+        "acceptedNativeCommandBytes": 1699840,
+        "asynchronousNativeCommands": 65,
+        "countsExact": true,
+        "queueAcceptanceOnly": true,
+        "liveRetirementQuiescenceVerified": true,
+        "browserPid": 2898,
+        "renderer": "ANGLE (Microsoft Corporation, D3D12 (NVIDIA GeForce RTX 5090 Laptop GPU), OpenGL ES 3.1)",
+        "shaderPixel": [
+          128,
+          128,
+          64,
+          255
+        ],
+        "allObservedGpuThreadsSandboxed": true,
+        "httpsPageLoaded": true,
+        "ownedKeyringStopped": true,
+        "observerJoined": true
+      }
+    ],
+    "gtkNativeWork": {
+      "pid": 2666,
+      "actor": 10,
+      "acceptedNativeCommands": 9,
+      "acceptedNativeCommandBytes": 180224,
+      "asynchronousNativeCommands": 9,
+      "countsExact": true,
+      "queueAcceptanceOnly": true,
+      "liveRetirementQuiescenceVerified": true
+    },
+    "gtkRenderer": "GskGLRenderer",
+    "threeMappedAppsAtFourCheckpoints": true,
+    "browserInteractionProofs": 2,
+    "browserGpuResizes": 4,
+    "terminalResizes": 3,
+    "guestOnlyInputCommands": 33,
+    "boundedApplicationWorkloadAccepted": true,
+    "normalAccountStartup": false,
+    "physicalWindowsInputAccepted": false,
+    "sustainedDailyUseAccepted": false,
+    "matchedNativePerformanceMeasured": false,
+    "dailyUseAccepted": false,
+    "auditorSha256": "5b8a6c7af616295d8917e7df6d15d7934331d0f40637ba38f80a2a6432fa6704"
+  },
+  "realUnixControls": {
+    "schema": 1,
+    "scope": "Actual shared Unix peer loop, credentials and pidfds; GPU callback explicitly mocked",
+    "sourceSha256": {
+      "guest_broker_session.h": "4539f8936c4f6914ad20b80634341f3a474e1310379ea62ef1e5ae00743c0a86",
+      "guest_broker_session_test.cpp": "bd9e0f15a10c94b42f9947220377d0fb81840dd881399a2e0af6ef46d75514e7",
+      "guest_graphics_broker.cpp": "7ac96867fea2f9fdc65d4d87ea9ffef03927b38dc8cbc697d6c4305090471cfa"
+    },
+    "compileLogSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "controlsLogSha256": "028a4b133ca718c7231bc9905003ec0b85466cde537942765d3cec5091603150",
+    "legacyAccepted": 64,
+    "legacyDenied": 65,
+    "sessionAcceptedPerProfile": 145,
+    "activeWorkerLimits": [
+      4,
+      8
+    ],
+    "foreignPrimaryRejected": true,
+    "actualSupervisorDeathExitCode": 125,
+    "inheritedDiagnosticFlagsPreserved": true,
+    "virtualClockStartupAndDrainLimits": [
+      30,
+      10
+    ],
+    "gpu": false,
+    "vm": false,
+    "dailyUseAccepted": false
+  },
+  "publicCompileProfiles": [
+    "default",
+    "desktop",
+    "application",
+    "application-memory-objects"
+  ],
+  "legacyBrokerBaselineByteIdentical": true,
+  "legacyPendingLimitTracePreserved": true,
+  "legacyTraceInverseEqualsPublicHeader": true,
+  "sourceSha256": {
+    "guest_graphics_broker.cpp": "7ac96867fea2f9fdc65d4d87ea9ffef03927b38dc8cbc697d6c4305090471cfa",
+    "guest_broker_session.h": "4539f8936c4f6914ad20b80634341f3a474e1310379ea62ef1e5ae00743c0a86",
+    "guest_broker_session_test.cpp": "bd9e0f15a10c94b42f9947220377d0fb81840dd881399a2e0af6ef46d75514e7",
+    "launcher-guest-bootstrap/generate.py": "4faab894aacb4bae17a1abfbe084f46c369288e1f8dd6b1f79c77eb3f7786aed",
+    "test_launcher_guest_broker_session.py": "c3171f82831e1e6e0c641f31982f3b8b0a24fed7e62425d71bae85665e5f095e"
+  },
+  "receiptSha256": {
+    "source": "0fc356c0c1b663761347ad05724cd7486834e8b12e2451e9807eebb9a41eeb5b",
+    "pixels": "0faeac175f3be4998454daf5b7271bbd262aca022b1a7352dbaf3a558b118b3f",
+    "nativeCore": "1a0bab0aa6db066b8d51175899a345394ebcbf192256689fc5f12d1790620c23",
+    "applications": "65bade6e9b00e9315024c352f11750b0f311624a67006a07bf9ba7ee1e0d487c",
+    "queueAndProducer": "a00f441e4d03344d90cf50842db533c53644a1e824f328642877402007faaa5c",
+    "realUnixControls": "8947b0a7b9c2cb3afbfd20e08d650b63678b903e7f8a06df1778d1e6f6cf7ad0",
+    "publicBrokerCompile": "7b9b71b26ec82fbb4a7a5d5bd12edc726c169116314ac81f1abc0fb618974344",
+    "legacyBroker": "b16701095d15211cfb322318ae7f1e9f1e24a2c78e84bd364843d6e4be284692",
+    "legacySupervisor": "3e934d9d21e9ff5b5b51fcb8fcf2d4ec77a95811c26e2e23776686973ce5e5f1",
+    "publicSupervisorCompile": "090e042cfea84bc28c22333d9058d6a2b46a0e0166091af5d58c2a1a86c1962c"
+  },
+  "privateGuestImageSha256": "47eb37cd04744e4b03322d1d5425d72c1b95a5c6f115f45c9eb20973ff9e09b3",
+  "brokerBinarySha256": "02b5a219e4f34e6cd2d36e979c3f7b5820ba5798db4264ff5ab471ddfa15ee54",
+  "supervisorBinarySha256": "26db712f10cad0faee1694c9ccb20f9107df637caf31daf3ef1dca438d074c36",
+  "retainedAuditFailures": [
+    {
+      "auditor": 9,
+      "reason": "Root selection record follows an exact terminal capability response, so strict start-of-line marker check rejects it"
+    },
+    {
+      "auditor": 10,
+      "reason": "Redundant unicode_escape decode rejects already decoded literal prefix"
+    },
+    {
+      "auditor": 11,
+      "result": "One exact clean or observed-prefixed selection record required; changed prefixes/suffixes reject, raw logs unchanged"
+    }
+  ],
+  "allowedRootMarkerCarrierPrefixHex": "1b502b7136453631364436351b5c",
+  "timingComparison": {
+    "priorHostOnlyRun": 31,
+    "priorElapsedSeconds": 61.278317,
+    "currentElapsedSeconds": 85.064954,
+    "causeIsolated": false,
+    "performanceImprovementEstablished": false
+  },
+  "rootSupervisorRemainsBounded": true,
+  "compositorRemainsBounded": true,
+  "normalLauncherSessionVerified": false,
+  "physicalWindowsInputAccepted": false,
+  "activeGpuSupervisorLossContainmentVerified": false,
+  "sustainedDailyUseAccepted": false,
+  "matchedNative93PercentMeasured": false,
+  "fullCudaOpenGlVulkanVideoDlssRayTracingAccepted": false,
+  "dailyUseAccepted": false,
+  "backendStagesDemonstrated": 4,
+  "backendStageCount": 8,
+  "desktopGatesCompleted": 0,
+  "desktopGateCount": 4,
+  "sceneChecksCompleted": 3,
+  "sceneCheckCount": 3,
+  "privateRawArtifactsPublished": false
+}

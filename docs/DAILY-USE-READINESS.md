@@ -1,5 +1,9 @@
 # Daily-use readiness
 
+**Broker follow-up, November 1:** the matched root-supervised broker and host pass
+the bounded 4K workload. Normal sessions remain incomplete, and the latest
+85.1-second workload leaves timing stability open. [Evidence and limits](ROOT-BROKER-SESSION.md).
+
 **Host-session follow-up, November 1:** an opt-in launcher-owned host transport
 passes real idle/backpressure controls and the complete bounded 4K application
 regression. Guest lifetime limits, normal startup, physical input and daily-use

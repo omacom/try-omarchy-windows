@@ -84,8 +84,10 @@ retain their run-30 scope; this change does not replace those captures.
 
 ## Remaining integration
 
-The guest broker still has its **240-second alarm and 64 lifetime-connection cap**;
-the root service and compositor workload are also bounded. The prepared Go profile
+The guest broker retains its **240-second alarm and 64 lifetime-connection cap**
+by default. A matched root-supervised opt-in now passes scoped IPC and 4K GPU
+checks; [its evidence and remaining limits](ROOT-BROKER-SESSION.md) are separate.
+The root service and compositor workload are still bounded. The prepared Go profile
 does not yet select the new flag automatically. A normal persistent desktop needs
 coordinated guest/host lifetime, rolling application connections, official
 provisioning and SDDM → Omarchy desktop → UWSM integration. The current probe's

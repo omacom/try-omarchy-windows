@@ -2,12 +2,13 @@
 #include "guest_broker_server.h"
 #include "guest_coordinator.h"
 #include "guest_primary_identity.h"
+#include "guest_broker_session.h"
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <limits>
 #include <thread>
 
-static int coordinated(guest_broker::Fd& listener,const char* path,unsigned uid,unsigned gid,guest_broker::Fd notification,guest_broker::Fd primaryPipe) {
+static int coordinated(guest_broker::Fd& listener,const char* path,unsigned uid,unsigned gid,guest_broker::Fd notification,guest_broker::Fd primaryPipe,bool sessionMode) {
     using namespace guest_broker;
     CoordinatorPort controller(path);Kernel layout;
     const auto info=layout.info();const auto caps=layout.capacity();
@@ -31,68 +32,25 @@ static int coordinated(guest_broker::Fd& listener,const char* path,unsigned uid,
     if(wddm_primary_receive(primaryPipe.get(),30000,&primary,&descriptor))
         throw std::runtime_error("Coordinator trusted primary pidfd missing or invalid");
     Fd primaryProcess(descriptor);
+    if(sessionMode && !controller.liveRetirementEnabled()) throw std::runtime_error("Broker session requires live coordinated retirement");
+    SessionPolicy policy(sessionMode,primaryPipe.get());
     primaryPipe=Fd();
     receipt("BROKER_COORDINATOR_PRIMARY pid=%llu rootChannel=true pinnedPidfd=true gpuProof=false\n",static_cast<unsigned long long>(primary));
     ObjectRegistry<> objects;
     const auto actorLimit=controller.info().maxActors;
     if(!driver_bridge::actors::validActorLimit(actorLimit)) throw std::runtime_error("Invalid negotiated actor limit");
-    std::atomic<unsigned> active{0},failures{0};std::atomic<bool> primaryFinished{false};
-    struct Workers {
-        struct Task { std::thread thread;std::atomic<bool> done{false}; };
-        std::vector<std::unique_ptr<Task>> tasks;
-        explicit Workers(std::size_t limit) { tasks.reserve(limit); }
-        ~Workers() { for(auto& task:tasks) if(task->thread.joinable()) task->thread.join(); }
-    } workers(actorLimit);
-    // This diagnostic process is VM-owned. A stalled actor is a failed run;
-    // the Windows owner reaps QEMU before releasing retained native objects.
-    alarm(info.fence_slots==512 ? 240 : 120);
-    bool primaryAccepted=false;
-    unsigned connections=0;
-    while(!primaryFinished || active) {
-        for(auto i=workers.tasks.begin();i!=workers.tasks.end();) {
-            if((*i)->done) { (*i)->thread.join();i=workers.tasks.erase(i); } else ++i;
-        }
-        if(primaryFinished || workers.tasks.size()>=actorLimit) { poll(nullptr,0,10);continue; }
-        pollfd incoming{listener.get(),POLLIN,0};const auto readyCount=poll(&incoming,1,100);
-        if(readyCount<0 && errno==EINTR) continue;
-        if(readyCount<0 || (incoming.revents&(POLLERR|POLLNVAL))) throw std::runtime_error("Coordinator listener poll failed");
-        if(!readyCount) continue;
-        Fd channel(accept4(listener.get(),nullptr,nullptr,SOCK_CLOEXEC|SOCK_NONBLOCK));
-        if(channel.get()<0) { if(errno==EINTR || errno==EAGAIN) continue;throw std::runtime_error("Coordinator accept failed"); }
-        if(connections>=64) { receipt("BROKER_COORDINATOR_PEER denied=true lifetimeConnectionLimit=64\n");continue; }
-        std::unique_ptr<Peer> peer;
-        try { peer=std::make_unique<Peer>(std::move(channel),uid,gid); }
-        catch(const std::exception& error) { receipt("BROKER_COORDINATOR_PEER denied=true reason=%s\n",error.what());continue; }
-        const auto isPrimary=static_cast<std::uint64_t>(peer->pid())==primary &&
-            wddm_primary_live(primaryProcess.get()) && !peer->processExited();
-        if((!primaryAccepted && !isPrimary) || (isPrimary && primaryAccepted)) {
-            receipt("BROKER_COORDINATOR_PEER denied=true primaryPidMismatch=true\n");continue;
-        }
-        primaryAccepted|=isPrimary;++connections;
-        char path[64],exe[4096];snprintf(path,sizeof path,"/proc/%d/exe",peer->pid());
-        const auto bytes=readlink(path,exe,sizeof exe);
-        std::string hex;
-        if(bytes>0) { constexpr char digits[]="0123456789abcdef";for(ssize_t i=0;i<bytes;++i) { const auto c=static_cast<unsigned char>(exe[i]);hex+=digits[c>>4];hex+=digits[c&15]; } }
-        receipt("BROKER_COORDINATOR_PEER pid=%d primary=%s exePathHex=%s pidfdAuthenticated=true\n",peer->pid(),isPrimary ? "true" : "false",hex.c_str());
-        ++active;
-        auto task=std::make_unique<Workers::Task>();auto* completed=task.get();
-        task->thread=std::thread([&,peer=std::move(peer),isPrimary,completed]() mutable {
-            int result=1;
-            try { ActorPort native(controller,isPrimary,peer->pid());ActorObjects store(objects,native);Kernel kernel;
-                  result=serveWithObjects(*peer,native,kernel,store,store); }
-            catch(const std::exception& error) { std::fprintf(stderr,"BROKER_COORDINATOR_ACTOR failed=true pid=%d reason=%s\n",peer->pid(),error.what()); }
-            if(result) ++failures;
-            if(isPrimary) primaryFinished=true;
-            completed->done=true;
-            --active;
-        });
-        workers.tasks.push_back(std::move(task));
-    }
-    listener=Fd();
-    for(auto& task:workers.tasks) task->thread.join();
+    if(sessionMode) {
+        alarm(0);
+        receipt("BROKER_SESSION_LIFETIME rootSupervisorPidfd=true lifetimeConnectionLimit=none activeActorLimit=%u primaryConnectDeadlineSeconds=30 drainDeadlineSeconds=10 guestSessionVerified=false\n",actorLimit);
+    } else alarm(info.fence_slots==512 ? 240 : 120);
+    const auto outcome=runPeerGroup(listener,uid,gid,primary,primaryProcess.get(),actorLimit,policy,[&](Peer& peer,bool isPrimary) {
+        ActorPort native(controller,isPrimary,peer.pid());ActorObjects store(objects,native);Kernel kernel;
+        return serveWithObjects(peer,native,kernel,store,store);
+    });
+    const auto failures=outcome.failures;
     if(controller.liveRetirementEnabled() && !failures) {
         pollfd exited{primaryProcess.get(),POLLIN,0};
-        if(!primaryAccepted || !primaryFinished || active || poll(&exited,1,0)!=1 ||
+        if(!outcome.primaryAccepted || !outcome.primaryFinished || poll(&exited,1,0)!=1 ||
             !(exited.revents&POLLIN) || (exited.revents&(POLLERR|POLLNVAL)) || !objects.empty())
             throw std::runtime_error("Terminal group lacks complete process/capability retirement");
         receipt("BROKER_COORDINATOR_GROUP_STOPPED primaryPid=%llu workersJoined=true listenerClosed=true primaryPidfdExited=true registryEmpty=true\n",
@@ -100,7 +58,10 @@ static int coordinated(guest_broker::Fd& listener,const char* path,unsigned uid,
         controller.retireStoppedGroup();
     }
     alarm(0);
-    std::fprintf(stderr,"BROKER_COORDINATOR_EXIT connections=%u failed=%u primaryPidFromRoot=true gpuProof=false\n",connections,failures.load());
+    if(sessionMode) receipt("BROKER_SESSION_SUMMARY connections=%llu countsExact=%s peakWorkers=%u activeActorLimit=%u workersJoined=true gpuProof=false\n",
+        static_cast<unsigned long long>(outcome.connections),outcome.connectionCountExact ? "true" : "false",outcome.peakWorkers,actorLimit);
+    std::fprintf(stderr,"BROKER_COORDINATOR_EXIT connections=%llu failed=%llu primaryPidFromRoot=true gpuProof=false\n",
+        static_cast<unsigned long long>(outcome.connections),static_cast<unsigned long long>(failures));
     return failures ? 1 : 0;
 }
 
@@ -108,6 +69,8 @@ int main(int argc,char** argv) {
     using namespace guest_broker;
     try {
         const bool group=argc==8 && std::string(argv[6])=="--coordinator";
+        const bool sessionMode=SessionPolicy::requested(std::getenv("WDDM_BRIDGE_BROKER_SESSION"));
+        if(sessionMode && !group) throw std::runtime_error("Broker session requires the root coordinated runtime");
         if ((argc != 6 && !group) || getuid() || geteuid()) throw std::runtime_error("Broker requires root: SOCKET PORT UID GID READY_FD [--coordinator PRIMARY_IDENTITY_FD]");
         const auto number=[](const char* value) {
             if (!value || !*value || std::strspn(value,"0123456789") != std::strlen(value)) throw std::runtime_error("Invalid broker numeric argument");
@@ -130,7 +93,7 @@ int main(int argc,char** argv) {
             const auto descriptor=number(argv[7]);
             if(descriptor<3 || descriptor==ready || descriptor>INT32_MAX || wddm_primary_channel(static_cast<int>(descriptor)))
                 throw std::runtime_error("Coordinator requires a distinct inherited root seqpacket channel for the primary pidfd");
-            return coordinated(listener,argv[2],uid,gid,std::move(notification),Fd(static_cast<int>(descriptor)));
+            return coordinated(listener,argv[2],uid,gid,std::move(notification),Fd(static_cast<int>(descriptor)),sessionMode);
         }
         const char marker='R';
         if (write(notification.get(),&marker,1) != 1) throw std::runtime_error("Broker readiness signal failed");

@@ -8,7 +8,9 @@ import importlib.util
 import json
 
 
-def generate(gpu, output):
+def generate(gpu, output, *, broker_session=False):
+    if type(broker_session) is not bool:
+        raise ValueError("Broker session selection must be an explicit boolean")
     gpu, output = Path(gpu), Path(output)
     logging = gpu/'launcher-guest-logging/generate.py'
     spec = importlib.util.spec_from_file_location('launcher_guest_logging', logging)
@@ -149,6 +151,18 @@ def generate(gpu, output):
     text = original.replace(before, after, 1).replace(wait, discover, 1).replace(include, expanded, 1).replace(cleanup, outcome, 1).replace(admission, sync_admission, 1).replace(live_tail, filtered_tail, 1)
     if text.replace(after, before, 1).replace(discover, wait, 1).replace(expanded, include, 1).replace(outcome, cleanup, 1).replace(sync_admission, admission, 1).replace(filtered_tail, live_tail, 1) != original:
         raise ValueError('Unexpected guest graphics discovery change')
+    # This selects only the root broker's lifetime policy. The surrounding
+    # probe's account, compositor workload and root-service alarm stay bounded.
+    if broker_session:
+        boundary = '    puts("NORMAL_ROOT_GRAPHICS_BEGIN normalSystemdService=true normalUid=1000 diagnosticCompositor=true normalOmarchySession=false");'
+        selected = ('    if(setenv("WDDM_BRIDGE_BROKER_SESSION","1",1)) { perror("broker session environment");return 125; }\n'
+                    '    puts("NAMED_GRAPHICS_BROKER_SESSION requested=true rootSupervisorOwned=true normalOmarchySession=false");\n'+boundary)
+        if text.count(boundary) != 1:
+            raise ValueError('Root broker session selection boundary changed')
+        baseline = text
+        text = text.replace(boundary, selected, 1)
+        if text.replace(selected, boundary, 1) != baseline:
+            raise ValueError('Unexpected root broker session selection change')
     target.write_text(text, encoding='utf-8', newline='\n')
     header = output/'guest_graphics_port.h'
     header.write_bytes((gpu/header.name).read_bytes())
@@ -174,6 +188,9 @@ def generate(gpu, output):
         producerProgressMaximumRecordBytes=1216,
         producerProgressProcessIdentityAttested=False,
         producerLifetimeChanged=False,
+        guestBrokerSessionEnabled=broker_session,
+        guestBrokerLifetimeOwner='pinned-root-supervisor' if broker_session else 'diagnostic-alarm',
+        guestRootSupervisorLifetimeChanged=False,
         terminalCompositorPidAndUidFilter=True,
         terminalBrowserSyslogAndUidFilter=True,
         terminalBrowserRowsRequireOwnedPidCorrelation=True,
@@ -204,5 +221,6 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--broker-session', action='store_true', help='Select the matched root-owned broker lifetime; the guest session remains diagnostic')
     args = parser.parse_args()
-    print(json.dumps(generate(Path(__file__).resolve().parent.parent, args.output), indent=2))
+    print(json.dumps(generate(Path(__file__).resolve().parent.parent, args.output, broker_session=args.broker_session), indent=2))

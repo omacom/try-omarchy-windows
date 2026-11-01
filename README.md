@@ -14,6 +14,13 @@ Normal launcher integration and a stable interactive desktop remain in developme
 
 ![Three GPU apps complete 1800 handoffs; backend 4/8; desktop product 0/4](https://raw.githubusercontent.com/7Wdev/try-omarchy-windows/windows-nvgpu-lab/docs/images/gpu-backend-progress-three-apps-2026-10-27.svg)
 
+**Guest broker lifetime — November 1, 2026:** a root-supervised mode permits
+rolling connections while preserving four/eight active-worker bounds. Real IPC
+controls and the matched 1,800-handoff 4K three-app regression pass. The guest
+session remains diagnostic; timing rises to 85.1 seconds against the 90-second
+deadline, so performance stability remains open. Counts stay **4/8, 0/4, 3/3**.
+[Exact scope, evidence and remaining product work](docs/ROOT-BROKER-SESSION.md).
+
 **Host session transport — November 1, 2026:** an explicit launcher-owned mode
 permits idle connections while retaining absolute message deadlines and cleanup.
 Both strict builds, real socket cancellation/backpressure controls and the full
