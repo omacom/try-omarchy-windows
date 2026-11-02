@@ -54,6 +54,8 @@ plus both complete strict Windows builds. The matched private image passes all
 403 payload, 68 directory, 23 symlink, mode, ownership and gzip checks. The
 proprietary package remains private.
 
+[Later follow-up: normal witness policy, 432 GPU handoffs and retained shutdown failures](NORMAL-SESSION-RETIREMENT-WITNESSES.md).
+
 ## Retained cleanup failure and next work
 
 Run 7 observes multiple Quickshell actors with the same process ID. A later

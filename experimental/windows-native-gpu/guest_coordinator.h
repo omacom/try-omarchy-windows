@@ -38,6 +38,22 @@
 namespace guest_broker {
 namespace cg=driver_bridge::coordinator;
 namespace ar=driver_bridge::actors;
+inline void publishRetirementWitness(bool enabled,pid_t process,std::uint64_t actor,
+                                     const char* path="/run/wddm-retired") {
+    if(!enabled) return;
+    // Legacy finite diagnostics require this root-owned PID witness. Normal
+    // sessions may have rolling actors for one PID and must not depend on it.
+    char name[32];const auto count=snprintf(name,sizeof name,"%d",process);
+    if(count<=0 || static_cast<std::size_t>(count)>=sizeof name) throw std::runtime_error("Retirement marker PID");
+    Fd directory(open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW));
+    struct stat status{};
+    if(directory.get()<0 || fstat(directory.get(),&status) || status.st_uid || (status.st_mode&0022))
+        throw std::runtime_error("Retirement marker directory ownership");
+    Fd marker(openat(directory.get(),name,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC|O_NOFOLLOW,0444));
+    char value[64];const auto bytes=snprintf(value,sizeof value,"%llu\n",static_cast<unsigned long long>(actor));
+    if(marker.get()<0 || bytes<=0 || static_cast<std::size_t>(bytes)>=sizeof value || fchmod(marker.get(),0444) || write(marker.get(),value,bytes)!=bytes)
+        throw std::runtime_error("Retirement marker write");
+}
 inline int nativeAliasFailureErrno(std::int32_t status) {
     // ntstatus.h: STATUS_NO_MEMORY / STATUS_INSUFFICIENT_RESOURCES. An
     // unexpected native failure must not masquerade as recoverable pressure.
@@ -51,13 +67,14 @@ class CoordinatorPort {
     std::atomic<bool> failed{false};
     cg::Info agreement{};
     bool liveRetirement=false;
+    bool retirementWitnessFiles=true;
     template<class T> static T at(const std::vector<std::uint8_t>& packet,std::size_t offset=0) {
         if(offset>packet.size() || sizeof(T)>packet.size()-offset) throw std::runtime_error("Truncated coordinator response");
         T value{};std::memcpy(&value,packet.data()+offset,sizeof value);return value;
     }
     [[noreturn]] void reject(const char* message) { failed=true;throw std::runtime_error(message); }
 public:
-    explicit CoordinatorPort(std::string path):port(std::move(path),cg::MaxPacket) {}
+    explicit CoordinatorPort(std::string path,bool witnesses=true):port(std::move(path),cg::MaxPacket),retirementWitnessFiles(witnesses) {}
     std::vector<std::uint8_t> control(cg::Operation operation,const std::vector<std::uint8_t>& payload={}) {
         std::lock_guard<driver_bridge::FairRpcMutex> guard(lock);
         if(failed || sequence==UINT64_MAX) reject("Coordinator control unavailable");
@@ -172,6 +189,7 @@ public:
         receipt("BROKER_COORDINATOR_LIVE_RETIREMENT version=1 batch=16 phases=4 trustedControllerOnly=true\n");
     }
     bool liveRetirementEnabled() const { return liveRetirement; }
+    bool retirementWitnessesEnabled() const { return retirementWitnessFiles; }
     void retireStoppedGroup() {
         if(!liveRetirement) reject("Terminal group retirement not negotiated");
         const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(8);
@@ -314,18 +332,7 @@ public:
             receipt("BROKER_COORDINATOR_LIVE_RETIREMENT_TIMING actor=%llu elapsedMs=%lld steps=%u\n",
                 static_cast<unsigned long long>(id),static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count()),steps);
             if(!progress.remaining && owner.release(id)) {
-                // Diagnostic witness under a root-owned directory. The ordinary
-                // compositor can observe completion but cannot forge it.
-                char name[32];const auto count=snprintf(name,sizeof name,"%d",process);
-                if(count<=0 || static_cast<std::size_t>(count)>=sizeof name) throw std::runtime_error("Retirement marker PID");
-                Fd directory(open("/run/wddm-retired",O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW));
-                struct stat status{};
-                if(directory.get()<0 || fstat(directory.get(),&status) || status.st_uid || (status.st_mode&0022))
-                    throw std::runtime_error("Retirement marker directory ownership");
-                Fd marker(openat(directory.get(),name,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC|O_NOFOLLOW,0444));
-                char value[64];const auto bytes=snprintf(value,sizeof value,"%llu\n",static_cast<unsigned long long>(id));
-                if(marker.get()<0 || bytes<=0 || static_cast<std::size_t>(bytes)>=sizeof value || fchmod(marker.get(),0444) || write(marker.get(),value,bytes)!=bytes)
-                    throw std::runtime_error("Retirement marker write");
+                publishRetirementWitness(owner.retirementWitnessesEnabled(),process,id);
                 receipt("BROKER_COORDINATOR_LIVE_RETIRED actor=%llu pid=%d destroyedWireObjects=%u steps=%u processExited=true cpuViewsRevoked=true sharedFdsDrained=true\n",
                     static_cast<unsigned long long>(id),process,destroyed,steps);
                 receipt("BROKER_COORDINATOR_ACTOR_EXIT actor=%llu empty=true retainedUntilVmExit=false\n",static_cast<unsigned long long>(id));

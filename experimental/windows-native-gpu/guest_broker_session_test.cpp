@@ -129,6 +129,14 @@ static void rolling(bool session,unsigned actorLimit=4) {
 }
 static void policyControls() {
     CHECK(!SessionPolicy::requested(nullptr) && SessionPolicy::requested("1"));
+    for(const bool enabled:{false,true}) {
+        CHECK(SessionPolicy::retirementWitnesses(nullptr,enabled) && SessionPolicy::retirementWitnesses("1",enabled));
+        for(const char* value:{"","true","false","01","0\n"}) {
+            bool failed=false;try { (void)SessionPolicy::retirementWitnesses(value,enabled); } catch(const std::exception&) { failed=true; }CHECK(failed);
+        }
+    }
+    CHECK(!SessionPolicy::retirementWitnesses("0",true));
+    bool badWitness=false;try { (void)SessionPolicy::retirementWitnesses("0",false); } catch(const std::exception&) { badWitness=true; }CHECK(badWitness);
     for(const char* value:{"","0","true","01","1\n"}) { bool failed=false;try { SessionPolicy::requested(value); } catch(const std::exception&) { failed=true; }CHECK(failed); }
     SessionPolicy legacy(false,-1);CHECK(legacy.mayAccept(63) && !legacy.mayAccept(64));
     for(int fd:{-1,STDIN_FILENO}) { bool failed=false;try { SessionPolicy policy(true,fd); } catch(const std::exception&) { failed=true; }CHECK(failed); }

@@ -29,6 +29,12 @@ public:
         if(std::strcmp(value,"1")) throw std::runtime_error("Invalid root broker session opt-in");
         return true;
     }
+    static bool retirementWitnesses(const char* value,bool enabled) {
+        if(!value || !std::strcmp(value,"1")) return true;
+        if(std::strcmp(value,"0") || !enabled)
+            throw std::runtime_error("Disabling retirement witnesses requires the root broker session");
+        return false;
+    }
     SessionPolicy(bool enabled,int rootChannel,Clock::time_point now=Clock::now())
         :session(enabled),startupDeadline(now+std::chrono::seconds(30)) {
         if(!session) return;

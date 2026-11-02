@@ -17,6 +17,7 @@
 int main(int argc,char** argv) {
     assert(argc==8 && getuid()==0 && getgid()==0 && !strcmp(argv[6],"--coordinator"));
     assert(getenv("WDDM_BRIDGE_BROKER_SESSION") && !strcmp(getenv("WDDM_BRIDGE_BROKER_SESSION"),"1"));
+    assert(getenv("WDDM_BRIDGE_RETIREMENT_WITNESSES") && !strcmp(getenv("WDDM_BRIDGE_RETIREMENT_WITNESSES"),"0"));
     assert(getenv("WDDM_BRIDGE_COORDINATED_REFERENCES") && getenv("WDDM_BRIDGE_COORDINATED_RETIREMENT"));
 #ifdef CPU_BROKER_WITNESS
     const int witness=open(CPU_BROKER_WITNESS,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC|O_NOFOLLOW,0600);

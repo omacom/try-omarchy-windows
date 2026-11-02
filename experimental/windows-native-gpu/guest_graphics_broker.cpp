@@ -8,9 +8,9 @@
 #include <limits>
 #include <thread>
 
-static int coordinated(guest_broker::Fd& listener,const char* path,unsigned uid,unsigned gid,guest_broker::Fd notification,guest_broker::Fd primaryPipe,bool sessionMode) {
+static int coordinated(guest_broker::Fd& listener,const char* path,unsigned uid,unsigned gid,guest_broker::Fd notification,guest_broker::Fd primaryPipe,bool sessionMode,bool witnesses) {
     using namespace guest_broker;
-    CoordinatorPort controller(path);Kernel layout;
+    CoordinatorPort controller(path,witnesses);Kernel layout;
     const auto info=layout.info();const auto caps=layout.capacity();
     const auto references=std::getenv("WDDM_BRIDGE_COORDINATED_REFERENCES");
     if(references && std::strcmp(references,"1")) throw std::runtime_error("Invalid coordinated reference opt-in");
@@ -18,14 +18,17 @@ static int coordinated(guest_broker::Fd& listener,const char* path,unsigned uid,
         info.allocation_slots==1024 ? layout.desktopSlotCapacity() : wddm_aperture_desktop_slots{},references!=nullptr);layout.close();
     if(const auto retirement=std::getenv("WDDM_BRIDGE_COORDINATED_RETIREMENT")) {
         if(std::strcmp(retirement,"1") || !references) throw std::runtime_error("Invalid coordinated live retirement opt-in");
-        if(mkdir("/run/wddm-retired",0755) && errno!=EEXIST) throw std::runtime_error("Retirement witness directory");
-        struct stat status{};
-        if(lstat("/run/wddm-retired",&status) || !S_ISDIR(status.st_mode) || status.st_uid || (status.st_mode&0022))
-            throw std::runtime_error("Untrusted retirement witness directory");
-        Fd directory(open("/run/wddm-retired",O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW));
-        if(directory.get()<0 || fchmod(directory.get(),0755)) throw std::runtime_error("Retirement witness directory mode");
+        if(witnesses) {
+            if(mkdir("/run/wddm-retired",0755) && errno!=EEXIST) throw std::runtime_error("Retirement witness directory");
+            struct stat status{};
+            if(lstat("/run/wddm-retired",&status) || !S_ISDIR(status.st_mode) || status.st_uid || (status.st_mode&0022))
+                throw std::runtime_error("Untrusted retirement witness directory");
+            Fd directory(open("/run/wddm-retired",O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW));
+            if(directory.get()<0 || fchmod(directory.get(),0755)) throw std::runtime_error("Retirement witness directory mode");
+        }
         controller.beginLiveRetirement();
     }
+    receipt("BROKER_RETIREMENT_WITNESSES enabled=%s nativeRetirementRequired=true\n",witnesses ? "true" : "false");
     const char ready='R';if(write(notification.get(),&ready,1)!=1) throw std::runtime_error("Coordinator readiness failed");
     notification=Fd();
     std::uint64_t primary=0;int descriptor=-1;
@@ -72,6 +75,7 @@ int main(int argc,char** argv) {
         const bool sessionMode=SessionPolicy::requested(std::getenv("WDDM_BRIDGE_BROKER_SESSION"));
         if(sessionMode && !group) throw std::runtime_error("Broker session requires the root coordinated runtime");
         if ((argc != 6 && !group) || getuid() || geteuid()) throw std::runtime_error("Broker requires root: SOCKET PORT UID GID READY_FD [--coordinator PRIMARY_IDENTITY_FD]");
+        const bool witnesses=SessionPolicy::retirementWitnesses(std::getenv("WDDM_BRIDGE_RETIREMENT_WITNESSES"),sessionMode);
         const auto number=[](const char* value) {
             if (!value || !*value || std::strspn(value,"0123456789") != std::strlen(value)) throw std::runtime_error("Invalid broker numeric argument");
             const auto n=std::stoul(value); if (n >= std::numeric_limits<unsigned>::max()) throw std::runtime_error("Broker numeric argument overflow"); return static_cast<unsigned>(n);
@@ -93,7 +97,7 @@ int main(int argc,char** argv) {
             const auto descriptor=number(argv[7]);
             if(descriptor<3 || descriptor==ready || descriptor>INT32_MAX || wddm_primary_channel(static_cast<int>(descriptor)))
                 throw std::runtime_error("Coordinator requires a distinct inherited root seqpacket channel for the primary pidfd");
-            return coordinated(listener,argv[2],uid,gid,std::move(notification),Fd(static_cast<int>(descriptor)),sessionMode);
+            return coordinated(listener,argv[2],uid,gid,std::move(notification),Fd(static_cast<int>(descriptor)),sessionMode,witnesses);
         }
         const char marker='R';
         if (write(notification.get(),&marker,1) != 1) throw std::runtime_error("Broker readiness signal failed");

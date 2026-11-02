@@ -140,7 +140,7 @@ static int broker_start(struct wddm_root_runtime* runtime,struct wddm_session_pe
         if(fcntl(notification[1],F_SETFD,0) || fcntl(identity[0],F_SETFD,0) || clearenv()) _exit(127);
         if(setenv("LD_LIBRARY_PATH","/usr/lib/x86_64-linux-gnu",1) ||
            setenv("WDDM_BRIDGE_COORDINATED_REFERENCES","1",1) || setenv("WDDM_BRIDGE_COORDINATED_RETIREMENT","1",1) ||
-           setenv("WDDM_BRIDGE_BROKER_SESSION","1",1)) _exit(127);
+           setenv("WDDM_BRIDGE_BROKER_SESSION","1",1) || setenv("WDDM_BRIDGE_RETIREMENT_WITNESSES","0",1)) _exit(127);
         char uid[16],gid[16],ready[16],primary[16];
         snprintf(uid,sizeof uid,"%u",(unsigned)runtime->owner.uid);snprintf(gid,sizeof gid,"%u",(unsigned)runtime->owner.gid);
         snprintf(ready,sizeof ready,"%d",notification[1]);snprintf(primary,sizeof primary,"%d",identity[0]);

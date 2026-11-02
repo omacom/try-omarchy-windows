@@ -14,6 +14,13 @@ Normal launcher integration and a stable interactive desktop remain in developme
 
 ![Three GPU apps complete 1800 handoffs; backend 4/8; desktop product 0/4](https://raw.githubusercontent.com/7Wdev/try-omarchy-windows/windows-nvgpu-lab/docs/images/gpu-backend-progress-three-apps-2026-10-27.svg)
 
+**Normal-session retirement follow-up — November 2, 2026:** the diagnostic
+PID-file collision is removed from normal-session lifetime. Run 8 records
+**432 native 4K GPU handoffs** and same-process actor retirement, but socket
+resets and terminal draining still fail. No complete scene is captured and
+daily use remains unverified. Counts stay **4/8, 0/4, 3/3**.
+[Exact changes, CPU controls and retained failures](docs/NORMAL-SESSION-RETIREMENT-WITNESSES.md).
+
 **Normal-session frame transport — November 2, 2026:** the provisioned-account
 session completes 61 native 4K GPU handoffs through the boot-console transition.
 The actual capture contains only background/cursor, and shutdown fails. Full
