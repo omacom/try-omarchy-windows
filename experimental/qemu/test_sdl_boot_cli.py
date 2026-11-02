@@ -32,7 +32,8 @@ def verify(qemu, firmware):
         ('missing-display', relay(boot='absent'), "Device 'absent' not found"),
         ('non-display', ['-device', 'virtio-serial-pci,id=not-display'] + relay(boot='not-display'),
          'not bound to a QemuConsole'),
-        ('non-vga', relay('other') + relay(boot='other'), 'requires the primary standard VGA'),
+        ('non-vga', ['-device', 'secondary-vga,id=other'] + relay(boot='other'),
+         'requires the primary standard VGA'),
         ('multiple-consoles', ['-device', 'VGA,id=boot'] + relay('other') + relay(boot='boot'),
          'requires one graphic console'),
         ('second-owner', ['-device', 'VGA,id=boot'] + relay('first', 'boot') + relay('second', 'boot'),
@@ -62,11 +63,15 @@ def verify(qemu, firmware):
                     return value
 
                 initial = state()
-                target = 'boot' if borrowed else 'relay'
-
-                def pixels(label):
+                def pixels(label, default=False):
                     output = directory / f'{borrowed}-{label}.ppm'
-                    monitor.call('screendump', {'filename': str(output), 'device': target, 'head': 0})
+                    arguments = {'filename': str(output)}
+                    # The busless relay is not discoverable through the PCI/
+                    # sysbus device-name lookup. QMP's default is console 0,
+                    # whose identity is independently checked in relay-state.
+                    if borrowed and not default:
+                        arguments.update(device='boot', head=0)
+                    monitor.call('screendump', arguments)
                     data = output.read_bytes()
                     header = re.match(rb'P6\s+(\d+)\s+(\d+)\s+255\n', data)
                     if (not header or not int(header[1]) or not int(header[2]) or
@@ -80,11 +85,10 @@ def verify(qemu, firmware):
                     if not error.get('desc') or state() != initial or pixels(str(index)) != original:
                         raise RuntimeError('Rejected GPU operation changed the boot surface or console ownership')
                 if borrowed:
-                    # Borrowing creates no graphic console owned by the relay.
-                    error = monitor.call('screendump', {'filename': str(directory/'unexpected.ppm'),
-                                                      'device': 'relay', 'head': 0}, error=True)
-                    if 'not bound' not in error.get('desc', ''):
-                        raise RuntimeError('Relay unexpectedly owns a second graphic console')
+                    # The relay reports borrowed ownership at index 0; both
+                    # default and explicit VGA lookup must read that surface.
+                    if pixels('default', default=True) != original:
+                        raise RuntimeError('Relay and boot display do not share the primary console surface')
                 if monitor.call('query-status')['running']:
                     raise RuntimeError('CPU unexpectedly started')
                 monitor.call('quit')

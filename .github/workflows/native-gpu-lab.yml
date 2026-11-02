@@ -161,6 +161,7 @@ jobs:
           python3 experimental/windows-native-gpu/apply_aquamarine_native_input_patch.py .aquamarine-native-check
           python3 experimental/windows-native-gpu/test_aquamarine_input_patch.py .aquamarine-native-check "$RUNNER_TEMP/aquamarine-input-controls"
           python3 experimental/windows-native-gpu/test_aquamarine_session.py .aquamarine-native-check "$RUNNER_TEMP/aquamarine-session-controls"
+          python3 experimental/windows-native-gpu/test_aquamarine_session_selection.py "$RUNNER_TEMP/aquamarine-session-controls/source" "$RUNNER_TEMP/aquamarine-session-selection-controls"
           cc -std=c11 -O2 -Wall -Wextra -Werror -shared -fPIC experimental/windows-native-gpu/hyprland_startup_probe.c -ldl -pthread -o /tmp/hyprland-startup-probe.so
           cc -std=c11 -O2 -Wall -Wextra -Werror -DWDDM_BRIDGE_COMPOSITOR_HOST_CAPTURE=1 -shared -fPIC experimental/windows-native-gpu/hyprland_startup_probe.c -ldl -pthread -o /tmp/hyprland-capture-probe.so
           cc -std=c11 -O2 -Wall -Wextra -Werror -DWDDM_BRIDGE_COMPOSITOR_HOST_PRESENT=1 -shared -fPIC experimental/windows-native-gpu/hyprland_startup_probe.c -ldl -pthread -o /tmp/hyprland-present-probe.so

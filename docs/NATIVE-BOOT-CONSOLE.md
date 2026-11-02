@@ -2,8 +2,9 @@
 
 **November 2, 2026:** an explicit graphics-only boot-console mode is implemented.
 CPU ownership, queued-redraw and real-launcher argument controls pass, as do both
-strict Windows host builds. Rebuilt QEMU execution and the actual GPU transition
-still require validation. Counts remain **backend 4/8, desktop 0/4, scene 3/3**.
+strict Windows host builds. A rebuilt QEMU now passes seven stopped, windowless
+console controls locally. The actual GPU transition still requires validation.
+Counts remain **backend 4/8, desktop 0/4, scene 3/3**.
 
 ## Why this is needed
 
@@ -59,11 +60,21 @@ unexpected successor. Native-device hot unplug remains disabled.
   remain byte-identical. No VM, renderer window, GPU work or host input was used
   in these local checks.
 
-The workflow now builds the candidate and runs seven additional real-QEMU
-controls with stopped CPUs, no disk and `-display none`. They check realization,
-rejected commands, complete unchanged boot pixels and absence of a second relay
-console. These new controls are provided, **not locally reported as passed**.
-They still do not exercise a native GPU transition or normal guest startup.
+Seven additional real-QEMU controls now pass locally with stopped CPUs, no disk
+and `-display none`. They check realization, rejected commands and complete
+unchanged boot pixels. The relay reports borrowed ownership at console zero;
+explicit VGA and default-console screenshots read the same complete surface.
+The existing socket-reconnect controls also pass on this exact binary. No SDL
+window or GPU context is opened, so these tests do not establish a displayed
+GPU transition, normal guest startup or physical window behavior.
+
+The first CI test used unsupported name lookup for a busless relay. Its failures
+remain retained; the corrected test uses a PCI display for rejection and QMP's
+documented default-console selection for the original relay. The artifact's new
+helper header also differs from Git only by Windows checkout line endings. Its
+exact built bytes pass the CPU ownership controls, and a specific Git attribute
+now enforces LF for future builds. The original compiled-source hashes remain
+recorded rather than replaced by normalized hashes.
 
 Next integration must use the rebuilt QEMU and matched normal guest bundle,
 keep the boot-only VGA device out of the native compositor's renderer selection,
@@ -72,6 +83,8 @@ Application environment propagation, sustained interactive use, cleanup/recovery
 broader CUDA/OpenGL/Vulkan/video, DLSS, hardware ray tracing and the requested
 **at least 93% matched-native performance** remain unverified.
 
-[Structured local evidence](evidence/native-boot-console-2026-11-02.json) ·
+[Initial source evidence](evidence/native-boot-console-2026-11-02.json) ·
+[Compiled QEMU controls](evidence/native-boot-console-runtime-2026-11-02.json) ·
+[Native renderer isolation](NATIVE-SESSION-RENDERER-SELECTION.md) ·
 [Root activation service](ROOT-SESSION-SERVICE.md) ·
 [Daily-use acceptance](DAILY-USE-READINESS.md).

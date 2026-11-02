@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "date": "2026-11-02",
+  "milestone": "native-session-factory-isolation",
+  "aquamarineCommit": "f31c47a1b9d300847d8fc3108ad959448103dfc1",
+  "controls": {
+    "sourceVersion": "0.15.1",
+    "sourceFiles": 79,
+    "changedFiles": [
+      "src/backend/Backend.cpp"
+    ],
+    "otherSourceFilesUnchanged": 78,
+    "fullInverseExact": true,
+    "reapplicationExact": true,
+    "rejectedSourceControls": [
+      "altered-original",
+      "altered-selected",
+      "partial-selection",
+      "wrong-version",
+      "missing-session-adapter",
+      "symlink"
+    ],
+    "rejectedBoundaryControls": 2,
+    "backendOriginalSha256": "74d4cba8989336a259026d8c96694bf406d7d56aec820e35b9c95ce291ff9e80",
+    "backendSelectedSha256": "37fd76357fa283b5872488d6a03300f1fa48ccfab3c75f38085193c406213b0d",
+    "sourceSha256": {
+      "apply_aquamarine_session_selection.py": "f2946801d8e579f93d3c6754bb4a954b76a3d7671b1dcc65fb638ee38cba550b",
+      "test_aquamarine_session_selection.py": "82ccaaf15280826ac49ab1491ba6e03746fce9ae712e7b2fc420dd6ce0e1b454",
+      "aquamarine_selection_fixture.cpp.in": "123d4c560cb69327f5e9dfa7d859b7e8fffc1dce2679c4bf61cd4f6c903db2e1"
+    },
+    "factoryControls": [
+      {
+        "name": "selected",
+        "arguments": [],
+        "exit": 0,
+        "expectedExit": 0,
+        "output": "AQUAMARINE_FACTORY_PASS controls=17 deviceConstructorsMocked=true realTimers=true gpu=false"
+      },
+      {
+        "name": "original",
+        "arguments": [
+          "--default-only"
+        ],
+        "exit": 0,
+        "expectedExit": 0,
+        "output": "AQUAMARINE_FACTORY_PASS controls=6 deviceConstructorsMocked=true realTimers=true gpu=false"
+      },
+      {
+        "name": "original",
+        "arguments": [
+          "--native-only"
+        ],
+        "exit": 1,
+        "expectedExit": 1,
+        "output": "FACTORY_CONTROL_FAILURE native constructor isolation"
+      }
+    ]
+  },
+  "fullBuild": {
+    "fullAquamarineBuild": true,
+    "librarySha256": "0036b405427e125b4701639b7bd61b50a19c4b40b1074481cf804c38f3a094d2",
+    "libraryBytes": 1819304,
+    "authoredSourceFilesUnchangedSinceControls": 79,
+    "gpuUsed": false,
+    "desktopLaunched": false
+  },
+  "unchangedLauncherSourceCount": 434,
+  "limits": {
+    "deviceConstructorsMocked": true,
+    "realTimers": true,
+    "gpuUsed": false,
+    "normalGuestBootVerified": false,
+    "seatInputHardwareVerified": false,
+    "actualGpuTransitionVerified": false,
+    "dailyUseAccepted": false,
+    "matchedNativePerformanceVerified": false,
+    "broaderAPIsVerified": false
+  },
+  "acceptance": {
+    "backend": "4/8",
+    "desktop": "0/4",
+    "diagnosticScene": "3/3"
+  }
+}

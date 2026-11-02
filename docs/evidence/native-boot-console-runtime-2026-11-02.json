@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "date": "2026-11-02",
+  "milestone": "compiled-qemu-stopped-console-controls",
+  "artifact": {
+    "commit": "1748f218c7deba3811425b6346c4f82b4c26dff9",
+    "artifactId": 13132137102,
+    "archiveSha256": "c1e71e613e44b73f11848b3893116ca18a15d9a9e3c29760a7e18bed68b11de7",
+    "qemuSha256": "796e866c7c36497facbb55240683e118e812f4ff5572aaaeae07b56100065693",
+    "graphicsSources": {
+      "wddm-sdl-relay.c": {
+        "builtSha256": "33fedee991fc0fb5aa8538a2b032bc8a166f912cda535efae5b183de163dad7c",
+        "gitSourceSha256": "33fedee991fc0fb5aa8538a2b032bc8a166f912cda535efae5b183de163dad7c",
+        "onlyCRLFCheckoutDifference": false
+      },
+      "wddm-sdl-command.h": {
+        "builtSha256": "0cb5e9982f2a86597324c216c41180867e484124a4589b62286f5bd9575952ac",
+        "gitSourceSha256": "0cb5e9982f2a86597324c216c41180867e484124a4589b62286f5bd9575952ac",
+        "onlyCRLFCheckoutDifference": false
+      },
+      "wddm-sdl-boot.h": {
+        "builtSha256": "ed8809e00be838ec980d236e07ff455d742bdb71ce9b9798565dcd0f87c82432",
+        "gitSourceSha256": "49b21c6e0958cde9b2c36cd62c9b7de289f97a3a1cbfd2f0a6355475e3660566",
+        "onlyCRLFCheckoutDifference": true
+      }
+    },
+    "graphicsPatchExact": true,
+    "headerNewlineIssueFixedByGitAttribute": true
+  },
+  "consoleControls": {
+    "schema": 1,
+    "controls": [
+      "missing-display",
+      "non-display",
+      "non-vga",
+      "multiple-consoles",
+      "second-owner",
+      "original-stopped-surface",
+      "borrowed-stopped-surface"
+    ],
+    "qemuSha256": "796e866c7c36497facbb55240683e118e812f4ff5572aaaeae07b56100065693",
+    "cpuStopped": true,
+    "diskAttached": false,
+    "visibleWindowOpened": false,
+    "hostInputInjected": false,
+    "gpuTransitionVerified": false,
+    "normalGuestBootVerified": false
+  },
+  "socketReconnectControls": {
+    "schema": 1,
+    "display": "none",
+    "sourceDiskAttached": false,
+    "guestBooted": false,
+    "hostInputSent": false,
+    "privateLoopbackOnly": true,
+    "refusedConnectionMessageObserved": true,
+    "frontend": "qmp-monitor",
+    "greetingsObserved": 3,
+    "connectionCount": 3,
+    "observations": [
+      "refused connection survives with QMP responsive",
+      "late listener connects",
+      "peer disconnect reconnects",
+      "yank disconnect reconnects"
+    ],
+    "naturalQemuExit": 0,
+    "normalLauncherBootVerified": false,
+    "desktopRenderingVerified": false,
+    "dailyUseAccepted": false
+  },
+  "sourceSha256": {
+    "experimental/qemu/test_sdl_boot_cli.py": "b176ee44bfa25e3e7da4a5b100b7edb015d8cfe9fca59e151129541083ef2f9e",
+    "experimental/qemu/.gitattributes": "9df66135f51f7714359f5d011969a09db2dbad632e4ff1721ef7db5cf288f9b7"
+  },
+  "officialInputSha256": {
+    "hw/input/virtio-input-hid.c": "31b9150dc410ad5e2ce48a58f3d0e923dec4e012e62c7be05749786445f1aa2f",
+    "include/ui/sdl2.h": "a2c75d65b71bba559706520583aa125ccc0777229ec82e760146d0b1669286d4",
+    "ui/input.c": "1b450d44f6825b0d982ba616ff53da8c32481020689aee7659167140bb13dee1",
+    "ui/sdl2.c": "1214c6ec9b028fb721bead9f93888807da8c260603b5149a7662a90bacf31ea6"
+  },
+  "exactBuiltHeaderCpuControls": {
+    "passed": true,
+    "suppressedUpdates": 10000,
+    "headerSha256": "ed8809e00be838ec980d236e07ff455d742bdb71ce9b9798565dcd0f87c82432",
+    "fixtureSha256": "61c7a411c58f33eb7ac1225177e0e27082803360d578cfcb95a89b7b41d09c1f"
+  },
+  "retainedFailures": [
+    "CI job125206093401 rejects a busless relay lookup in the wrong-display fixture.",
+    "First local corrected run rejects named screenshot lookup for the busless original relay.",
+    "Artifact source verification rejects raw new-header CRLF checkout difference; exact built bytes subsequently CPU-tested and explicit LF Git attribute added."
+  ],
+  "limits": {
+    "qemuCompiled": true,
+    "cpusStopped": true,
+    "guestBooted": false,
+    "diskAttached": false,
+    "visibleWindowsOpened": 0,
+    "hostInputInjected": false,
+    "gpuWorkExecuted": false,
+    "actualGpuTransitionVerified": false,
+    "physicalWindowBehaviorVerified": false,
+    "normalGuestBootVerified": false,
+    "dailyUseAccepted": false
+  },
+  "acceptance": {
+    "backend": "4/8",
+    "desktop": "0/4",
+    "diagnosticScene": "3/3"
+  }
+}

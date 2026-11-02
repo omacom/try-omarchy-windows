@@ -14,10 +14,15 @@ Normal launcher integration and a stable interactive desktop remain in developme
 
 ![Three GPU apps complete 1800 handoffs; backend 4/8; desktop product 0/4](https://raw.githubusercontent.com/7Wdev/try-omarchy-windows/windows-nvgpu-lab/docs/images/gpu-backend-progress-three-apps-2026-10-27.svg)
 
-**Native boot-console source — November 2, 2026:** a separate graphics mode
-keeps setup and native output on one console. CPU ownership/redraw controls,
-actual launcher argument checks and both strict host builds pass. Rebuilt QEMU
-execution, normal GPU boot and the real display transition remain unverified.
+**Native renderer selection — November 2, 2026:** the normal session's factory
+adapter excludes boot VGA from desktop rendering. The complete library builds
+and 17 factory controls pass; guest/GPU integration remains unverified. Counts
+stay **4/8, 0/4, 3/3**. [Exact source and controls](docs/NATIVE-SESSION-RENDERER-SELECTION.md).
+
+**Native boot console — November 2, 2026:** a rebuilt QEMU passes seven stopped,
+windowless console controls. CPU ownership/redraw controls, actual launcher
+argument checks and both strict host builds pass. Normal GPU boot and the real
+display transition remain unverified.
 Desktop acceptance remains **0/4**. [Implementation and tested limits](docs/NATIVE-BOOT-CONSOLE.md).
 
 **Root session service — November 2, 2026:** owner-aware admission, broker
