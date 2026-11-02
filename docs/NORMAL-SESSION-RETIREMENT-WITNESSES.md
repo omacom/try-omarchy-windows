@@ -53,8 +53,9 @@ A proposed live correction is refused by the held-process guard after VM exit;
 no guest correction command executes. No complete wallpaper/application screenshot
 or responsive desktop claim is made.
 
-Next work is real-socket disconnect handling with pidfd lifetime controls, safe
-terminal draining of deferred actors, and a corrected Foot scene fixture. Normal
+The [receive-reset follow-up](BROKER-RECEIVE-RESET.md) now passes real-socket
+and pidfd CPU controls; GPU integration is pending. Next work is safe terminal
+draining of deferred actors and a corrected Foot scene fixture. Normal
 launcher activation, physical input latency, browsing, multiple windows, sustained
 sessions, bounded resources and recovery remain open. CUDA/OpenGL/Vulkan/video,
 DLSS, hardware ray tracing and at least 93% matched-native performance still need

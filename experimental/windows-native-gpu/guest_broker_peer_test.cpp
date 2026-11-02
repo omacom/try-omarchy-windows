@@ -54,7 +54,7 @@ static void exited(Peer& peer) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
-enum class Mode { Good, Finalizer, Descendant, Leader, Magic, Version, Reserved, Length,
+enum class Mode { Good, Reset, Finalizer, Descendant, Leader, Magic, Version, Reserved, Length,
                   FdCount, Sequence, Operation, Oversize, ExcessFds, Empty, Replay, Status };
 static void sendFrame(int socket, int backing, Mode mode) {
     Frame f; f.operation = Operation::DriverCall; f.bytes = 4; f.fds = 1;
@@ -131,6 +131,11 @@ public:
                     int status; CHECK(waitpid(descendant,&status,0)==descendant && WIFEXITED(status) && WEXITSTATUS(status)==0);
                 } else sendFrame(connection,memory,mode);
                 if (mode==Mode::Replay) sendFrame(connection,memory,Mode::Good);
+                if (mode==Mode::Reset) {
+                    CHECK(readByte(go[0])=='R');
+                    // Closing with an unread reply produces a real Unix reset.
+                    CHECK(!::close(connection)); byte(notes[1],'C');
+                }
                 if (mode==Mode::Finalizer) {
                     void* library=dlopen(finalizer,RTLD_NOW|RTLD_LOCAL); CHECK(library);
                     auto init=reinterpret_cast<int(*)(int,int,int,int)>(dlsym(library,"broker_finalizer_probe_init"));
@@ -164,6 +169,31 @@ static void valid(const Received& message) {
 int main(int argc, char** argv) {
     try {
         CHECK(argc==2);
+        for (const bool rawControl : {true,false}) {
+            const auto before=fdCount();
+            {
+                Child child(Mode::Reset,argv[1]);
+                Fd raw(rawControl ? fcntl(child.accepted.get(),F_DUPFD_CLOEXEC,3) : -1);
+                CHECK(!rawControl || raw.get()>=0);
+                Peer peer(std::move(child.accepted),child.uid,child.gid);
+                child.command('S'); auto message=receive(peer);valid(message);
+                peer.send(Operation::DriverCall,1,{1,2,3,4});
+                child.command('R');CHECK(child.notice()=='C');
+                if (rawControl) {
+                    char value=0;errno=0;
+                    CHECK(recv(raw.get(),&value,1,MSG_DONTWAIT)==-1 && errno==ECONNRESET);
+                } else {
+                    CHECK(receive(peer).state==ReceiveState::Disconnected);
+                    CHECK(!peer.connected() && receive(peer).state==ReceiveState::Disconnected);
+                }
+                // Reset is not exit: the child is still waiting for permission
+                // to finish, and its received memory remains valid.
+                CHECK(!peer.processExited());valid(message);
+                child.command('E');exited(peer);child.join();
+            }
+            CHECK(fdCount()==before);
+            std::cout<<"BROKER_PEER_RESET rawErrnoControl="<<rawControl<<" processAliveAfterReset=true exitViaPidfd=true fdBalanced=true gpu=false\n";
+        }
         {
             Child child(Mode::Finalizer,argv[1]); Peer peer(std::move(child.accepted),child.uid,child.gid);
             CHECK(peer.pid()==child.pid && !peer.processExited()); child.command('S'); auto message=receive(peer); valid(message);

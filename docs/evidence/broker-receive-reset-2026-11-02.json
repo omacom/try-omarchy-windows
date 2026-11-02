@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "date": "2026-11-02",
+  "milestone": "broker-receive-reset-lifetime",
+  "sourceSha256": {
+    "guest_broker_peer_test.cpp": "1f2164b1e2e0657f87ead4190a9f66a56655439c3e7ad99e64042a44aa9416b2",
+    "guest_broker_peer.h": "f184dfcc82541893e5d1d2f9b8ef2c61c0676eb8d4c8a6646cd8cda35a963948",
+    "guest_broker_finalizer_probe.cpp": "f7edb1814ac4d6660f3f3e837ee800b3734b937b0db8768aaf4fb34aa9da7c7f",
+    "guest_broker_routing_test.cpp": "0eb73868422a1b90e876945a96f27026fdc58137a478f29f7d5bbf36dadaffe9",
+    "guest_broker_server.h": "5a2784cb2ae05f1c4cacda5d5f9b77e64266e5b0947fff786bf3a99321761bad",
+    "guest_broker_views.h": "be288d68d0e9fb23b57f2f0f5ea85cdb884cba97613642ef681b4e2e0d4ef39d",
+    "driver_wire.h": "6e256f631348949ba49f8c2f3757cde416f8456f8bdf3029f2082afde6db0f98",
+    "actor_retirement.h": "06f8d5fc3610c0c29ae567b957a4ae48af6ed8654fdfc15ddd4fd2c42491920a",
+    "stream_profile.h": "b8fd35b87741283347b325cec773ca96b6383f8475fca7f354f7f1a35e6bd0a6",
+    "opengl_profile.h": "e70c5ce000921ee87c1af254d9faa40dce07113c5798cfdc52102750a39f5fa9",
+    "application_memory_profile.h": "b8c186ede089bb4fb339c3278b005fd6ccf34e5ed398facd3fa1d725afcd48b3",
+    "aggregate_gpu_budget.h": "c52f49e0f6bcc8de81856eb3fa345ac14c2a7614d3da9c683755a161cdf29c19",
+    "wire.h": "c53f29d0138d717edbb47d06338bcf053427b18273a38fb0464603aac91df72c",
+    "diagnostic_profile.h": "8fb6f1dfa80702fb1c6a3c2b0e47b3a9168e844275345972e540502b799631d1",
+    "gpu_state_ranges.h": "ad7926c7524984065ac5d7ef875ecc748c42ce18fe4638b6351ea00f3005c665",
+    "gpu_mapping_accounting.h": "a70a2fd22376ffd53ebbc60fbdb8a70235754c795f68adee2eb1dbef62948394",
+    "compositor_capture_wire.h": "7c7dcc72f056aa15c1d0a220b9ae6f3c0b8ceb33559b044849b4c89c7d17442c",
+    "driver_coordinator.h": "bf81e04ae626153f92301980ea2ef137d4bed458044e43db4f51c39f2b6a6486",
+    "driver_actor_router.h": "40a14c6cb85006131f229796740c64d8f91a74b1aa24fe83d47c7262be2a5249",
+    "guest_broker_client.h": "2c0d06998de6248ebe3e3ee2fa9eb4cc6f1ff6f339375f910623c9e7d48c69f9",
+    "guest-kernel/wddm_aperture.h": "00af5456ef9a1bfb17da45de1cb88cadb1a474c5d676ece6bf3d85851733fc7a",
+    "guest_broker_objects.h": "23215a5451af1d1e0f05064e1c61847cb4c951440ebf3c3199f2e5b89b8bffba",
+    "guest_graphics_broker.cpp": "64b4deb18218b44a3d528d61869ebbd8f6de8cfda8d5e32942b8126acdb01f9c",
+    "guest_coordinator.h": "da7c5589b65d6c5a95c02552268b8ce247504f91bd37e6c75d6e5dfd2c0a44b0",
+    "guest_broker_receipts.h": "b67406386d14544a2bc47ef291961cb1b6eabc7a158cc0ba1e6e9140b8afb4fe",
+    "broker_residency_observation.h": "0a0d0d6c3950de49abd6a0eb011a567980ddd9226315491fd9f2fb9a9cf882f7",
+    "fair_rpc_mutex.h": "92f26002c4a3286eef1f64d8c87495bb94c60d7bdd140d6b0265b18d434df7ce",
+    "diagnostic_alias_refusal.h": "594dddecf8fc1391819f21362694b1147dcf42d148cc79c529d7382f5865ce5d",
+    "guest_primary_identity.h": "6256db18a20738fc5168d8ecc1136d7707cc37870adaac82fd23ec4301d8d55b",
+    "guest_broker_session.h": "931c8aaaa0d82bcb177ac983b6edcb875a1f9655dd0e48fd5641ed0a40827757",
+    "guest_broker_session_test.cpp": "b08acbaf4c38b8dac78a9f2ba35a432e0991fea7eaa8416a83a0697f69ecd860"
+  },
+  "sourceEncoding": "LF bytes frozen before compilation; matched to repository Git blobs",
+  "baseline": {
+    "receiptSha256": "da1c56dd4ecd4078245540c533b8ca906469924aeb773361bcc1ada5e9e9e759",
+    "peerHeaderSha256": "325aacd59287908661655e97b79fa21c011063cfca9d10956e627774be2916de",
+    "tests": [
+      {
+        "name": "guest_broker_peer_test",
+        "exitCode": 1,
+        "binarySha256": "b3811e944fa7c61185c1f254481870da504b554a7d9c4b735509473a18bfb5fa",
+        "logSha256": "a92e64a0743dab1f568ecb92dcbb526cbc575a3bf61f7ecb0d2189fb236b9bb8"
+      }
+    ],
+    "expectedFailure": "Broker receive failed: Connection reset by peer",
+    "rawUnixErrnoObserved": "ECONNRESET"
+  },
+  "fixed": {
+    "receiptSha256": "a3212b6ea90726167d932c62a92a3ded98abd8a84e6966c0fa2660082839b489",
+    "tests": [
+      {
+        "name": "guest_broker_peer_test",
+        "exitCode": 0,
+        "binarySha256": "4ef062baa3bd592b4484c71c5cf9e8b51e22b586b463a50df49b58f8fb16431d",
+        "logSha256": "f43ef2d1753dc3da24f0cddbde755513ac254c1dbe0ef077b4204d94abd0810c"
+      },
+      {
+        "name": "guest_broker_routing_test",
+        "exitCode": 0,
+        "binarySha256": "1e82c82e3f67eda425fabaeea81a4c46d953875787758cdf6a583ee5f9009d31",
+        "logSha256": "d5df10e0aea67709e4d594ede82abd1ba39bf41064b5c75a1008e5bf2488d729"
+      },
+      {
+        "name": "guest_broker_session_test",
+        "exitCode": 0,
+        "binarySha256": "3ff04a23e1646abd1d66d5156a1f6bdca0b43356177f250b39d0c553c22b2d2a",
+        "logSha256": "d7f22b75c9a80da6108a1ac753f68a0612c03ea81db397656a49e7b5a9aeb576"
+      }
+    ],
+    "productionBuildFlags": [
+      "-std=c++17",
+      "-O2",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-pthread",
+      "-DWDDM_BRIDGE_4K_LAB=1",
+      "-DWDDM_BRIDGE_MANAGED_GPUVA=1",
+      "-DWDDM_BRIDGE_WIDE_KERNEL_LEASES=1",
+      "-DWDDM_BRIDGE_FOUR_ACTOR_OBJECTS=1",
+      "-DWDDM_BRIDGE_MULTIAPP_CPU=1",
+      "-DWDDM_BRIDGE_APPLICATION_ACTORS=1",
+      "-DWDDM_BRIDGE_APPLICATION_REFERENCES=1",
+      "-DWDDM_BRIDGE_APPLICATION_MEMORY=1",
+      "-DWDDM_BRIDGE_APPLICATION_OBJECTS=1"
+    ],
+    "productionBrokerSha256": "86f624d7098e97f35e124498c46e028036602e2c450c74755d18ac9339d9c4fb",
+    "actualUnixSockets": true,
+    "peerAliveAfterReset": true,
+    "exitViaPinnedPidfd": true,
+    "receivedMemoryValidBeforeExit": true,
+    "descriptorsBalanced": true,
+    "protocolRejectionsPreserved": true
+  },
+  "vmLaunched": false,
+  "hostInputSent": false,
+  "gpuIntegrationVerified": false,
+  "cleanupAccepted": false,
+  "completeOmarchySceneVerified": false,
+  "dailyUseAccepted": false,
+  "counts": {
+    "backend": "4/8",
+    "desktop": "0/4",
+    "diagnosticScene": "3/3"
+  }
+}

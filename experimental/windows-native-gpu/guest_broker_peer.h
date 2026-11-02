@@ -171,6 +171,11 @@ public:
         const auto bytes = recvmsg(channel.get(), &input, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
         if (bytes < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return {ReceiveState::Idle, {}};
+            // A peer can close with an unread reply while its process remains
+            // alive. No packet was received: close only the channel and retain
+            // the pinned pidfd, just as for EOF. Resource release still waits
+            // for process exit in the server, followed by native retirement.
+            if (errno == ECONNRESET) { disconnect(); return {ReceiveState::Disconnected, {}}; }
             reject(errno, "Broker receive failed");
         }
         bool credentialsFound = false, malformed = false;
