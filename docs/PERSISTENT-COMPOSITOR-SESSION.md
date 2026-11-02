@@ -1,5 +1,10 @@
 # Persistent compositor session source
 
+**Root-service follow-up:** owner-aware admission and broker orchestration now
+pass CPU controls. Fatal frame errors also request one ordinary SIGTERM after
+fence cleanup. Real normal GPU startup and fault retirement remain unverified.
+[Current service and precise scope](ROOT-SESSION-SERVICE.md).
+
 **November 2 follow-up:** watchdog queries now bypass GPU initialization, and a
 normal compositor exec target plus desktop-entry stage pass CPU/IPC controls.
 The root activation service and actual normal GPU login remain open.
@@ -33,8 +38,9 @@ retry budget and one-millisecond waits. The underlying bridge transaction retain
 its separate transport deadline; five seconds is not a total bound on a blocking
 native call. The existing bridge checks source-copy retirement before returning
 success. Sequence, native-buffer, EGL or transport failures latch and reject later
-commits; a failing session overrides the eventual main return with status 125.
-Recovery during actual GPU rendering still needs tests.
+commits and request one SIGTERM after fence cleanup. If main returns, the failing
+session overrides that return with status 125. Hyprland owns its normal shutdown
+handler; actual GPU fault status and retirement still need tests.
 
 Startup, failure and return diagnostics use a separate nonblocking file description
 and one best-effort write. Full pipes cannot block rendering, inherited flags

@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/eventfd.h>
@@ -18,6 +19,12 @@
 static unsigned begins,created,destroyed,flushed,queued,attempts;
 static int held_fence=-1,duplicate_fd=-1;
 static const char* scenario;
+static volatile sig_atomic_t shutdown_requests;
+static void mock_shutdown(int signal_number) {
+    assert(signal_number==SIGTERM && held_fence<0 && created==destroyed);
+    ++shutdown_requests;
+}
+
 static int is_case(const char* name) { return scenario && !strcmp(scenario,name); }
 int wddm_bridge_begin_opengl_multiapp_render(void) {
     scenario=getenv("SESSION_TEST_CASE");++begins;
@@ -127,6 +134,10 @@ int main(int argc,char** argv,char** environment) {
     assert(!ftruncate(buffer,(off_t)width*height*4));
     if(is_case("fd_zero")) { assert(!close(0));--before; }
     const int expect_failure=!(is_case("roundtrip") || is_case("retry") || is_case("main_failure") || is_case("fd_zero") || is_case("reentrant"));
+    if(expect_failure) {
+        struct sigaction action={0};action.sa_handler=mock_shutdown;sigemptyset(&action.sa_mask);
+        assert(!sigaction(SIGTERM,&action,NULL));
+    }
     const unsigned frames=is_case("roundtrip")?10000:1;
     for(unsigned n=0;n<frames;++n) {
         int fd=buffer;
@@ -147,8 +158,10 @@ int main(int argc,char** argv,char** environment) {
         const unsigned calls=attempts;
         assert(commit(buffer,width,height,0x34325241u,width*4,0)==-1 && attempts==calls);
         assert(mode(&width,&height)==-1);
+        assert(shutdown_requests==1);
     } else {
         assert(queued==frames && created==frames && flushed==frames);
+        assert(!shutdown_requests);
     }
     assert(!close(buffer) && fd_count()==before);
     printf("SESSION_CPU_CONTROL frames=%u attempts=%u fdBalanced=true argvPreserved=true gpuMock=true\n",queued,attempts);

@@ -1,5 +1,10 @@
 # Normal-session startup boundary
 
+**Root-service follow-up:** the server-side implementation now compiles and passes
+CPU admission/lifecycle controls. Normal GPU boot and the actual systemd session
+remain unverified. The historical client results below retain their scope.
+[Root service and remaining packaging work](ROOT-SESSION-SERVICE.md).
+
 **November 2, 2026:** the persistent hook now leaves Hyprland information queries
 alone, and an unprivileged compositor exec wrapper builds and passes real Unix
 credential/pidfd controls. A staged inner desktop entry retains the normal

@@ -4,6 +4,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -50,6 +51,9 @@ static int fail_session(int error) {
         char line[256];
         const int bytes=snprintf(line,sizeof line,"HYPRLAND_SESSION_FAILURE errno=%d softwareFallback=false\n",error);
         session_diagnostic(line,bytes);
+        // Hyprland owns its SIGTERM event source. Request ordinary shutdown
+        // only after our duplicated fence and EGL sync have been released.
+        const int requested=kill(getpid(),SIGTERM);(void)requested;
     }
     errno=error;return -1;
 }

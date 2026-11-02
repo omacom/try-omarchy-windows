@@ -229,6 +229,7 @@ jobs:
           sudo install -o root -g root -m 0755 /tmp/guest-broker-session-test /tmp/guest-broker-session-owned-test
           sudo /tmp/guest-broker-session-owned-test
           sudo python3 experimental/windows-native-gpu/test_session_exec.py --output "$RUNNER_TEMP/native-session-exec-controls"
+          sudo python3 experimental/windows-native-gpu/test_root_session_service.py --output "$RUNNER_TEMP/root-session-service-controls"
           cc -std=c11 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/uwsm_environment_test.c -o /tmp/uwsm-environment-test
           /tmp/uwsm-environment-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/guest_graphics_broker.cpp -o /tmp/guest-graphics-broker

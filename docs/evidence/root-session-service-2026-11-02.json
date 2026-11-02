@@ -1,0 +1,283 @@
+{
+  "schema": 1,
+  "date": "2026-11-02",
+  "parentCommit": "bc7f2709c61f8956d94e8d1a67cc963e300cfb90",
+  "component": "root session activation service",
+  "status": "Implemented and compiled; CPU/IPC execution only, no normal GPU login",
+  "acceptance": {
+    "backendStages": 4,
+    "backendTotal": 8,
+    "desktopGates": 0,
+    "desktopTotal": 4,
+    "diagnosticSceneGates": 3,
+    "diagnosticSceneTotal": 3,
+    "dailyUseAccepted": false
+  },
+  "sourceSha256": {
+    "normal_session_service.c": "1a03344a0342ef3ff68ca5c2d439b0dad107d0e06c87d836e8291afceeb953aa",
+    "guest_session_admission.h": "3b12863547bb635da69ff0dc8fc574fc3125579e065b9f9ed1830ba99ae07166",
+    "guest_session_activation.h": "2d212d4bf13a2e25492c0c0885ffc742c7eb4e5e7490d25d1fb39e7dd4475bd7",
+    "guest_session_process.h": "7559df8860bea65f5044751b5f7e0a0df2c317939396b61eeddc530ac3ee58c3",
+    "guest_primary_identity.h": "6256db18a20738fc5168d8ecc1136d7707cc37870adaac82fd23ec4301d8d55b",
+    "guest_session_owner.h": "83f35e5094cc8cc6f838b109ce409212bca5950040abac6201be0470ac595e9f",
+    "guest_session_devices.h": "9fd6a792d00f8418d01b0e30da2f781b1b700f76b5bffbe0cfb8f07d053a98eb",
+    "guest_graphics_port.h": "11d872180a7412ade646cf20af6bf4b18d283d7f96d9c86f7d5c3999ad60fd1a",
+    "guest-kernel/wddm_aperture.h": "00af5456ef9a1bfb17da45de1cb88cadb1a474c5d676ece6bf3d85851733fc7a",
+    "guest-kernel/wddm_render.h": "11407ab00b1a79416eaf08435faec8cc4f38606743f8f692956e0c1654b63b12",
+    "normal_session_devices.c": "7b80a75df7b8e661e4e302bf6219843e1199921c329eedeab64e619a15d47769",
+    "normal_session_service_test.c": "b9ccd97a2df2fd6226fc1a66abce7ba11fdc956b73e4b6e2ae256131f54c58e6",
+    "normal_session_peer_test.c": "2ff91733ed4490f64491a367a501af1377b30ff4114bae6d77b18e462baea74c",
+    "hyprland_session_exec.c": "740786303d9afdb14ce88e9414ffb6a9f3033b1062920938dd9da366ffe726df",
+    "hyprland_session_invocation.h": "a91b114acf975aa3e8ac8f00a8cbffc0d9b76c4d882be22ecef5b06892634182",
+    "normal_session_broker_test.c": "64618d2b1bab1fcc2379bafb58381946a0e7cd26654363163dec73198ed4fab5",
+    "hyprland_session.c": "3a602caa1729d3d61d27460dcfcda9d84614770f1e4e102e190c6a3a62867bc4",
+    "hyprland_session_fixture.c": "dde30a1df9675f4d4b1300060b150a72334a14846c3bc1d075dec7583107eae3",
+    "guest_session_activation_test.c": "bdaa4365b92007fbf9d45060b8d6e44893ad9922cb06de52346b983456b70c75",
+    "test_root_session_service.py": "c0014011904068ad31e8cab656757e41774861305a173b788fb04b5c5767cd71",
+    "test_hyprland_session.py": "a7bb8679d68512210c717f690711bff5e215907264996eef5dc7cfe067c92ee3",
+    "omarchy-nvgpu-session.service": "6f0f58c14720a8df0fbee237cd64ce98a5abbc429fdc916c01f31eaa01679a4a"
+  },
+  "service": {
+    "implemented": true,
+    "strictC11Build": true,
+    "controlsPassed": 34,
+    "serviceControls": 33,
+    "harnessCleanupControls": 1,
+    "devicesAndGpuBrokerMocked": true,
+    "actualUnixCredentialsPidfdsExecSignalsAndFiles": true,
+    "actualUWSMUnitTested": false,
+    "testCgroup": "/init.scope",
+    "idleSeconds": 31.035819159,
+    "brokerNotStartedDuringIdle": true,
+    "serverDescriptorsBounded": true,
+    "unexpectedDescriptorsClosed": true,
+    "exactCompositorPidfdRegistered": true,
+    "sameProcessExec": true,
+    "noOrphanedBrokerChildren": true,
+    "privateUnitUmaskExercised": true,
+    "inheritedBrokerDescriptorsRestricted": true,
+    "brokerStopSignalsUnblocked": true,
+    "controls": [
+      {
+        "name": "idle-over-primary-registration-budget",
+        "seconds": 31.035819159,
+        "brokerStarted": false,
+        "fdBounded": true
+      },
+      {
+        "name": "real-service-and-wrapper-handoff",
+        "samePidThroughExec": true,
+        "brokerStarts": 1,
+        "mockFrames": 10000
+      },
+      {
+        "name": "reject-magic",
+        "brokerStarted": false,
+        "serverFdsBalanced": true
+      },
+      {
+        "name": "reject-version",
+        "brokerStarted": false,
+        "serverFdsBalanced": true
+      },
+      {
+        "name": "reject-size",
+        "brokerStarted": false,
+        "serverFdsBalanced": true
+      },
+      {
+        "name": "reject-status",
+        "brokerStarted": false,
+        "serverFdsBalanced": true
+      },
+      {
+        "name": "reject-reserved",
+        "brokerStarted": false,
+        "serverFdsBalanced": true
+      },
+      {
+        "name": "reject-nonce",
+        "brokerStarted": false,
+        "serverFdsBalanced": true
+      },
+      {
+        "name": "reject-short",
+        "brokerStarted": false,
+        "serverFdsBalanced": true
+      },
+      {
+        "name": "reject-long",
+        "brokerStarted": false,
+        "serverFdsBalanced": true
+      },
+      {
+        "name": "reject-rights",
+        "brokerStarted": false,
+        "serverFdsBalanced": true
+      },
+      {
+        "name": "reject-truncated-rights",
+        "brokerStarted": false,
+        "serverFdsBalanced": true
+      },
+      {
+        "name": "reject-idle",
+        "brokerStarted": false,
+        "serverFdsBalanced": true
+      },
+      {
+        "name": "wrong-image",
+        "brokerStarted": false
+      },
+      {
+        "name": "wrong-uid",
+        "brokerStarted": false
+      },
+      {
+        "name": "wrong-cgroup",
+        "brokerStarted": false,
+        "actualMembershipChecked": true
+      },
+      {
+        "name": "request-cancellation",
+        "brokerStarted": false
+      },
+      {
+        "name": "backend-failure-1",
+        "rootExit": 125,
+        "ownedBrokerReaped": true
+      },
+      {
+        "name": "backend-failure-2",
+        "rootExit": 125,
+        "ownedBrokerReaped": true
+      },
+      {
+        "name": "backend-failure-3",
+        "rootExit": 125,
+        "ownedBrokerReaped": true
+      },
+      {
+        "name": "backend-failure-4",
+        "rootExit": 125,
+        "ownedBrokerReaped": true
+      },
+      {
+        "name": "broker-drain-expiry",
+        "rootExit": 125,
+        "ownedBrokerKilledAndReaped": true
+      },
+      {
+        "name": "active-cancellation",
+        "primaryPinned": true,
+        "ownedBrokerReaped": true,
+        "gpuMock": true
+      },
+      {
+        "name": "owner-missing-user",
+        "runtimeCreated": false
+      },
+      {
+        "name": "owner-root-user",
+        "runtimeCreated": false
+      },
+      {
+        "name": "owner-wrong-session",
+        "runtimeCreated": false
+      },
+      {
+        "name": "owner-duplicate-user",
+        "runtimeCreated": false
+      },
+      {
+        "name": "owner-duplicate-section",
+        "runtimeCreated": false
+      },
+      {
+        "name": "owner-unknown-user",
+        "runtimeCreated": false
+      },
+      {
+        "name": "owner-nul",
+        "runtimeCreated": false
+      },
+      {
+        "name": "owner-writable",
+        "runtimeCreated": false
+      },
+      {
+        "name": "owner-untrusted",
+        "runtimeCreated": false
+      },
+      {
+        "name": "owner-symlink",
+        "runtimeCreated": false
+      },
+      {
+        "name": "harness-orphaned-pipe-timeout",
+        "returnedPromptly": true,
+        "ownedDescendantReaped": true
+      }
+    ],
+    "receiptSha256": "68f1fb680fae947786201112886eef27b70edeb54fcc2c5b8d997de0900d38e9",
+    "productionBinarySha256": "12bf58c6c520d726da75586519eab720b57bf912d5d507c52ae90307fb22652a",
+    "mockDevicePathsExcludedFromProductionBinary": true,
+    "productionCgroupFormatPresent": true
+  },
+  "devices": {
+    "preparationImplemented": true,
+    "compiledOnly": true,
+    "moduleLoadingExecuted": false,
+    "namedGuestPortRequiredBeforeModuleSyscalls": true,
+    "existingGpuWorkerBoundsUnchanged": true,
+    "kernelCpuAndNativeBudgetsUnchanged": true,
+    "productionBinarySha256": "9d4dff65fe6f11b425cecdafb0749cbb74bc3d62c0ee4e41e90cd2706889915b"
+  },
+  "rendererFault": {
+    "controlsPassed": 49,
+    "gpuMock": true,
+    "ownedFenceCleanupBeforeOneShutdownRequest": true,
+    "signalHandlerInstalledByHook": false,
+    "usesExistingHyprlandSigtermPath": true,
+    "receiptSha256": "fd98c09b95f3d7d09cc93c5ebb09c16664ef2b2401073c566e9e2c0665d567eb",
+    "productionHookSha256": "1e64ed1992ae20827847d04cd3b27b104aa541e37bea23f38809f5eb50e7c6b9",
+    "actualGpuFaultShutdownVerified": false
+  },
+  "unit": {
+    "sourceArtifactOnly": true,
+    "installed": false,
+    "systemdBootTested": false,
+    "optIn": "tryomarchy.nvgpu=1",
+    "afterOfficialProvisioning": true,
+    "beforeDisplayManager": true,
+    "notifyReadiness": true,
+    "lifetimeTimer": false,
+    "guestFailureAction": "poweroff.target",
+    "actualGpuFailureContainmentVerified": false
+  },
+  "limits": {
+    "normalGpuLoginVerified": false,
+    "normalGuestBundlePrepared": false,
+    "bootConsoleVisibilityImplemented": false,
+    "normalApplicationEnvironmentIntegrationVerified": false,
+    "sessionRestartIntegrationVerified": false,
+    "sustainedBrowsingTested": false,
+    "physicalWindowsInputTested": false,
+    "activeGpuRecoveryTested": false,
+    "matchedNativePerformanceVerified": false,
+    "cudaVerified": false,
+    "generalVulkanWindowsVerified": false,
+    "videoAccelerationVerified": false,
+    "dlssVerified": false,
+    "hardwareRayTracingVerified": false
+  },
+  "userComputer": {
+    "vmLaunched": false,
+    "modulesLoaded": false,
+    "visibleWindowOpened": false,
+    "hostInputSent": false,
+    "desktopControlled": false,
+    "desktopSwitched": false,
+    "accountCreated": false
+  }
+}

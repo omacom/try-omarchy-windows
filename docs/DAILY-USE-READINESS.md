@@ -1,5 +1,10 @@
 # Daily-use readiness
 
+**Root activation, November 2:** the service now authenticates and registers the
+configured compositor and passes CPU lifecycle controls. Guest bundling, normal
+GPU boot, sustained use and recovery remain unverified; acceptance stays **0/4**.
+[Exact implementation and tested limits](ROOT-SESSION-SERVICE.md).
+
 **Normal-session startup, November 2:** the watchdog query regression is fixed;
 a root-authenticated exec client and native desktop-entry stage pass CPU controls.
 The production root service and normal GPU session remain incomplete. Desktop

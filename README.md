@@ -14,6 +14,12 @@ Normal launcher integration and a stable interactive desktop remain in developme
 
 ![Three GPU apps complete 1800 handoffs; backend 4/8; desktop product 0/4](https://raw.githubusercontent.com/7Wdev/try-omarchy-windows/windows-nvgpu-lab/docs/images/gpu-backend-progress-three-apps-2026-10-27.svg)
 
+**Root session service — November 2, 2026:** owner-aware admission, broker
+activation and cleanup now pass real CPU/IPC controls. Native service tools
+compile and a unit is provided; normal GPU boot and recovery remain unverified.
+Desktop acceptance remains **0/4**.
+[Implemented service, exact controls and remaining work](docs/ROOT-SESSION-SERVICE.md).
+
 **Normal-session startup boundary — November 2, 2026:** the persistent hook
 now leaves watchdog information queries alone. A compositor exec wrapper
 passes real credential/pidfd controls, and the staged desktop entry retains
