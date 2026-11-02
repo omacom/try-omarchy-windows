@@ -13,6 +13,7 @@
 #include <epoxy/gl.h>
 #include <glib/gstdio.h>
 #include "wddm-sdl-command.h"
+#include "wddm-sdl-boot.h"
 
 #define TYPE_WDDM_SDL_RELAY "wddm-sdl-relay"
 OBJECT_DECLARE_SIMPLE_TYPE(WddmSdlRelay, WDDM_SDL_RELAY)
@@ -21,7 +22,8 @@ struct WddmSdlRelay {
     DeviceState parent_obj;
     QemuConsole *con;
     QEMUGLContext import_context;
-    char *session, *expected_luid, *audit_directory, *source_format;
+    char *session, *expected_luid, *audit_directory, *source_format, *boot_display;
+    WddmSdlBoot boot;
     char vendor[128], renderer[256], version[128], luid[17];
     char *audit_error;
     QDict *audit_window_state;
@@ -220,18 +222,25 @@ static bool relay_attach(WddmSdlRelay *s, Error **errp)
         }
         goto fail;
     }
-    dpy_gl_scanout_texture(s->con, s->scanout_texture, false, s->width, s->height,
-                          0, 0, s->width, s->height, NULL);
+    /* Host attachment can precede guest provisioning by minutes. Keep the
+     * existing VGA surface until a native frame is actually presented.
+     */
+    if (!s->boot.console) {
+        dpy_gl_scanout_texture(s->con, s->scanout_texture, false, s->width, s->height,
+                              0, 0, s->width, s->height, NULL);
+    }
     glWaitSync(initialized, 0, GL_TIMEOUT_IGNORED);
     glDeleteSync(initialized);
     initialized = NULL;
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT | GL_TEXTURE_UPDATE_BARRIER_BIT);
     if (!relay_adapter(s, errp) || !relay_gl_ok(errp, "SDL root texture binding")) {
-        dpy_gl_scanout_disable(s->con);
+        if (!s->boot.console) {
+            dpy_gl_scanout_disable(s->con);
+        }
         goto fail;
     }
     s->attached = s->ever_attached = true;
-    s->root_verified = true;
+    s->root_verified = !s->boot.console;
     return true;
 fail:
     if (s->import_context) {
@@ -426,6 +435,14 @@ static bool relay_present(WddmSdlRelay *s, uint64_t frame, bool audit, Error **e
         error_setg(errp, "SDL GPU relay frame is stale, unowned, poisoned or lacks a bounded audit directory");
         return false;
     }
+    if (s->boot.console && !s->boot.native) {
+        if (!wddm_sdl_boot_enter(&s->boot)) {
+            error_setg(errp, "SDL GPU relay no longer owns its boot console");
+            s->poisoned = true;
+            return false;
+        }
+        qemu_console_resize(s->con, s->width, s->height);
+    }
     /*
      * Make the root current and fence ALL its previous work, including spontaneous
      * SDL redraws. Main-loop serialization prevents another redraw during this
@@ -433,6 +450,13 @@ static bool relay_present(WddmSdlRelay *s, uint64_t frame, bool audit, Error **e
      */
     dpy_gl_scanout_texture(s->con, s->scanout_texture, false, s->width, s->height,
                           0, 0, s->width, s->height, NULL);
+    if (!s->root_verified) {
+        if (!relay_adapter(s, errp)) {
+            s->poisoned = true;
+            return false;
+        }
+        s->root_verified = true;
+    }
     root_retired = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     glFlush();
     if (!root_retired || !relay_gl_ok(errp, "root retirement fence")) {
@@ -517,8 +541,14 @@ static bool relay_detach(WddmSdlRelay *s, Error **errp)
         error_setg(errp, "SDL GPU relay is not attached");
         return false;
     }
-    dpy_gl_scanout_texture(s->con, s->scanout_texture, false, s->width, s->height,
-                          0, 0, s->width, s->height, NULL);
+    if (!s->boot.console || s->boot.native) {
+        dpy_gl_scanout_texture(s->con, s->scanout_texture, false, s->width, s->height,
+                              0, 0, s->width, s->height, NULL);
+    } else if (dpy_gl_ctx_make_current(s->con, s->import_context)) {
+        error_setg(errp, "Cannot activate the unused SDL import context for teardown");
+        s->poisoned = true;
+        return false;
+    }
     retired = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     if (!retired) {
         error_setg(errp, "Cannot create the SDL teardown retirement fence");
@@ -534,7 +564,9 @@ static bool relay_detach(WddmSdlRelay *s, Error **errp)
         s->poisoned = true;
         return false;
     }
-    dpy_gl_scanout_disable(s->con);
+    if (!s->boot.console || s->boot.native) {
+        dpy_gl_scanout_disable(s->con);
+    }
     relay_delete_objects(s);
     if (!relay_gl_ok(errp, "shared GPU reference release")) {
         s->poisoned = true;
@@ -543,6 +575,11 @@ static bool relay_detach(WddmSdlRelay *s, Error **errp)
     dpy_gl_ctx_destroy(s->con, s->import_context);
     s->import_context = NULL;
     s->attached = false;
+    if (s->boot.console && !wddm_sdl_boot_leave(&s->boot)) {
+        error_setg(errp, "SDL GPU relay cannot return its retired boot console");
+        s->poisoned = true;
+        return false;
+    }
     return true;
 }
 
@@ -575,6 +612,9 @@ static char *relay_state(Object *object, Error **errp)
     qdict_put_bool(value, "poisoned", s->poisoned);
     qdict_put_bool(value, "everAttached", s->ever_attached);
     qdict_put_bool(value, "rootAdapterVerified", s->root_verified);
+    qdict_put_bool(value, "bootConsoleBorrowed", s->boot.console != NULL);
+    qdict_put_bool(value, "nativeConsoleActive", s->boot.console ? s->boot.native : s->attached);
+    qdict_put_int(value, "consoleIndex", s->con ? qemu_console_get_index(s->con) : -1);
     qdict_put_bool(value, "importContextLive", s->import_context != NULL);
     qdict_put_bool(value, "localScanoutLive", s->scanout_texture != 0);
     qdict_put_bool(value, "channelProgramLive", s->channel_program != 0);
@@ -609,9 +649,24 @@ static char *relay_state(Object *object, Error **errp)
 }
 
 static int relay_flags(void *opaque) { return GRAPHIC_FLAGS_GL; }
+static void relay_boot_update(void *opaque)
+{
+    wddm_sdl_boot_update(&WDDM_SDL_RELAY(opaque)->boot);
+}
+static void relay_boot_invalidate(void *opaque)
+{
+    wddm_sdl_boot_invalidate(&WDDM_SDL_RELAY(opaque)->boot);
+}
+static void relay_boot_text(void *opaque, console_ch_t *text)
+{
+    wddm_sdl_boot_text(&WDDM_SDL_RELAY(opaque)->boot, text);
+}
 static const GraphicHwOps relay_hw_ops = {
     .gl_scanout_audit_requested = relay_scanout_audit_requested,
     .get_flags = relay_flags,
+    .gfx_update = relay_boot_update,
+    .invalidate = relay_boot_invalidate,
+    .text_update = relay_boot_text,
     .gl_scanout_audit = relay_scanout_audit,
 };
 
@@ -633,8 +688,35 @@ static void relay_realize(DeviceState *device, Error **errp)
     if (migrate_add_blocker(&s->migration_blocker, errp)) {
         return;
     }
-    s->con = graphic_console_init(device, 0, &relay_hw_ops, s);
-    qemu_console_resize(s->con, s->width, s->height);
+    if (s->boot_display) {
+        Object *owner;
+        s->con = qemu_console_lookup_by_device_name(s->boot_display, 0, errp);
+        if (!s->con) {
+            return;
+        }
+        owner = object_property_get_link(OBJECT(s->con), "device", &error_abort);
+        if (!owner || !object_dynamic_cast(owner, "VGA") ||
+            qemu_console_get_index(s->con) != 0) {
+            error_setg(errp, "SDL GPU relay boot-display requires the primary standard VGA console");
+            s->con = NULL;
+            return;
+        }
+        for (unsigned i = 1; qemu_console_lookup_by_index(i); ++i) {
+            if (qemu_console_is_graphic(qemu_console_lookup_by_index(i))) {
+                error_setg(errp, "SDL GPU relay boot-display requires one graphic console");
+                s->con = NULL;
+                return;
+            }
+        }
+        if (!wddm_sdl_boot_bind(&s->boot, s->con, &relay_hw_ops, s)) {
+            error_setg(errp, "SDL GPU relay boot-display is asynchronous, GL-backed or already owned");
+            s->con = NULL;
+            return;
+        }
+    } else {
+        s->con = graphic_console_init(device, 0, &relay_hw_ops, s);
+        qemu_console_resize(s->con, s->width, s->height);
+    }
 }
 
 static void relay_unrealize(DeviceState *device)
@@ -644,9 +726,22 @@ static void relay_unrealize(DeviceState *device)
     if (s->attached && !relay_detach(s, &error)) {
         error_report_err(error);
     }
-    if (s->con) {
+    if (s->boot.console) {
+        /* Even a failed GL retirement must not leave callbacks into a freed
+         * relay. Imported objects are retained on failure until process exit.
+         */
+        if (s->boot.native) {
+            dpy_gl_scanout_disable(s->con);
+        }
+        if (!wddm_sdl_boot_restore(&s->boot)) {
+            error_report("SDL GPU relay lost boot-console ownership during unrealize");
+        } else {
+            graphic_hw_invalidate(s->con);
+        }
+    } else if (s->con) {
         graphic_console_close(s->con);
     }
+    s->con = NULL;
 }
 
 static void relay_finalize(Object *object)
@@ -663,6 +758,7 @@ static const Property relay_properties[] = {
     DEFINE_PROP_STRING("adapter-luid", WddmSdlRelay, expected_luid),
     DEFINE_PROP_STRING("audit-directory", WddmSdlRelay, audit_directory),
     DEFINE_PROP_STRING("source-format", WddmSdlRelay, source_format),
+    DEFINE_PROP_STRING("boot-display", WddmSdlRelay, boot_display),
     DEFINE_PROP_UINT32("width", WddmSdlRelay, width, 3840),
     DEFINE_PROP_UINT32("height", WddmSdlRelay, height, 2160),
     DEFINE_PROP_UINT64("generation", WddmSdlRelay, generation, 1),

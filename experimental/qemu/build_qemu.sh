@@ -47,7 +47,7 @@ if [[ "$sdl_candidate" == 1 ]]; then
         python "$root/runtime-build/test-sdl-input.py" "$output/source/ui/sdl2.c"
         python "$root/runtime-build/test-sdl-cursor.py" "$output/source"
         python "$root/runtime-build/test-sdl-keyboard-hook.py" "$output/source"
-        python "$root/runtime-build/test-sdl-scanout.py" "$output/source/ui/sdl2-gl.c"
+        python "$root/runtime-build/test-sdl-scanout.py" "$output/source/ui/sdl2-gl.c" --native-relay
     } | tee "$output/sdl-input-controls.log"
     gl_option=--enable-opengl
 fi

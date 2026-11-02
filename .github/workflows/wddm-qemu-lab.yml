@@ -79,6 +79,10 @@ jobs:
         if: matrix.variant == 'sdl-opengl'
         shell: pwsh
         run: python experimental/qemu/test_user_network_cli.py --qemu qemu-lab/bin/qemu-system-x86_64.exe --firmware qemu-lab/share/qemu --report qemu-lab/user-network-capability.json
+      - name: Verify boot console ownership and rejected GPU commands without a window
+        if: matrix.variant == 'sdl-opengl'
+        shell: pwsh
+        run: python experimental/qemu/test_sdl_boot_cli.py --qemu qemu-lab/bin/qemu-system-x86_64.exe --firmware qemu-lab/share/qemu --report qemu-lab/boot-console-capability.json
       - name: Verify refused and repeated socket reconnects
         shell: pwsh
         run: python experimental/qemu/test_socket_reconnect.py --qemu qemu-lab/bin/qemu-system-x86_64.exe --firmware qemu-lab/share/qemu --report qemu-lab/socket-reconnect-capability.json
@@ -98,4 +102,5 @@ jobs:
             qemu-lab/sdl-input-controls.log
             qemu-lab/ccache-stats.txt
             qemu-lab/user-network-capability.json
+            qemu-lab/boot-console-capability.json
             qemu-lab/socket-reconnect-capability.json

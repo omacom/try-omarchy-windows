@@ -1,0 +1,146 @@
+{
+  "schema": 1,
+  "date": "2026-11-02",
+  "milestone": "opt-in-boot-console-source-and-local-controls",
+  "sourceSha256": {
+    "experimental/qemu/wddm-sdl-relay.c": "33fedee991fc0fb5aa8538a2b032bc8a166f912cda535efae5b183de163dad7c",
+    "experimental/qemu/wddm-sdl-boot.h": "49b21c6e0958cde9b2c36cd62c9b7de289f97a3a1cbfd2f0a6355475e3660566",
+    "experimental/qemu/sdl_boot_test.c": "61c7a411c58f33eb7ac1225177e0e27082803360d578cfcb95a89b7b41d09c1f",
+    "experimental/qemu/sdl-gpu-relay.patch": "244abc0c6d9851406d9fa1992d142f570fcacbbb74a44e277de6a5a5318e8d42",
+    "experimental/qemu/prepare_sdl_candidate.py": "5901ed441979356640a6c263efc673bd3a5cadd3051e428fa1c42756bdc85b0d",
+    "experimental/qemu/test_sdl_boot_cli.py": "93f97fe9820ee35293bab14d2d63e3d16b135416d301ad917be1532f67061a4d",
+    "experimental/qemu/test_sdl_relay_cli.py": "c03385378f2f74e681b7de201af23a47e5214143e0842823001d1379f28bf093",
+    "experimental/qemu/build_qemu.sh": "420d186e43f6ebaf834873773c9d136c53479bf778cb767fab0e7f297fd58f7a",
+    "experimental/windows-native-gpu/qemu_graphics_arguments.h": "83b5f6885b3ea0a27b87c17a6910ba0bfda24d7554dadba1b69dd99ca9d0d020",
+    "experimental/windows-native-gpu/qemu_graphics_arguments_test.cpp": "b7b7d23aede634836fdc2268eb2cdc23d51d3afca45c4952bb19cd6cf12def06",
+    "experimental/windows-native-gpu/qemu_launcher_arguments_test.cpp": "fa37a5669afdbab0a85957567bc232f8f3a1bd851457be67c7b2daec49767cda",
+    "runtime-build/test-sdl-scanout.py": "b1050188e3def778477cc27e5364540fc837582e0a1697b95df505599bab31e9",
+    ".github/workflows/native-gpu-lab.yml": "4814f64452e2d682555bc8abf91874d8b10d56720c89302f24d014724e79ac35",
+    ".github/workflows/wddm-qemu-lab.yml": "6b26cad335c9d46cab1e98c36aa13dae4ee4c4fe2ad6689bfedc02ddcdcb3677"
+  },
+  "qemuBaseCommit": "2ce303cfbbc8b0e4a7a3c66e27a094a980426d73",
+  "officialQemuInputSha256": {
+    "hw/input/virtio-input-hid.c": "31b9150dc410ad5e2ce48a58f3d0e923dec4e012e62c7be05749786445f1aa2f",
+    "include/ui/sdl2.h": "a2c75d65b71bba559706520583aa125ccc0777229ec82e760146d0b1669286d4",
+    "ui/input.c": "1b450d44f6825b0d982ba616ff53da8c32481020689aee7659167140bb13dee1",
+    "ui/sdl2.c": "1214c6ec9b028fb721bead9f93888807da8c260603b5149a7662a90bacf31ea6"
+  },
+  "local": {
+    "strictCAndCxx": true,
+    "bootHelperLog": "SDL_BOOT_OWNERSHIP_PASS bootCallbacks=true nativeSuppression=10000 successorPreserved=true gpu=false",
+    "graphicsArgumentsLog": "QEMU_GRAPHICS_ARGUMENTS_PASS checks=53 originalInputPreserved=true processHandoffVerified=false gpu=false",
+    "sdlControls": [
+      {
+        "case": "input",
+        "script": "test-sdl-input.py",
+        "sha256": "980e7c217c7be54cb4ea4f0b26dc2053b7aa554cbd8c60d1b56d596c9c68c051",
+        "exit": 0,
+        "expectedPass": true
+      },
+      {
+        "case": "cursor",
+        "script": "test-sdl-cursor.py",
+        "sha256": "48b8f9964a2ae458cff7518c6800823d00b9f3c321462217fac8716519e1a9cf",
+        "exit": 0,
+        "expectedPass": true
+      },
+      {
+        "case": "keyboard",
+        "script": "test-sdl-keyboard-hook.py",
+        "sha256": "9583f76f7beab7491495d475b79214b49eb634cd4a77fab5f36e19513c12788e",
+        "exit": 0,
+        "expectedPass": true
+      },
+      {
+        "case": "scanout",
+        "script": "test-sdl-scanout.py",
+        "sha256": "b1050188e3def778477cc27e5364540fc837582e0a1697b95df505599bab31e9",
+        "exit": 0,
+        "expectedPass": true
+      },
+      {
+        "case": "native-redraw",
+        "script": "test-sdl-scanout.py",
+        "sha256": "b1050188e3def778477cc27e5364540fc837582e0a1697b95df505599bab31e9",
+        "exit": 0,
+        "expectedPass": true
+      },
+      {
+        "case": "original-default",
+        "script": "test-sdl-scanout.py",
+        "sha256": "b1050188e3def778477cc27e5364540fc837582e0a1697b95df505599bab31e9",
+        "exit": 0,
+        "expectedPass": true
+      },
+      {
+        "case": "original-redraw-rejected",
+        "script": "test-sdl-scanout.py",
+        "sha256": "b1050188e3def778477cc27e5364540fc837582e0a1697b95df505599bab31e9",
+        "exit": 1,
+        "expectedPass": false
+      }
+    ],
+    "realGoLauncherProfiles": {
+      "compatibleProfiles": 2,
+      "dailyUseAccepted": false,
+      "inputInjected": false,
+      "launcherProfilesVerified": 5,
+      "officialArgumentsPreserved": true,
+      "processHandoffVerified": false,
+      "qemuLaunched": false,
+      "unsupportedProfilesRejected": 3
+    },
+    "launcherSourcesUnchanged": 434,
+    "launcherReceiptSha256": "9a8d54c211b776dfde6257a8b616a284a4b7e683dbfd960261b6b34d697f45ee",
+    "hostBuildFreezeSha256": "b6cdcb0dc71a70fe50b1f52507d88e3887c8816491b82e07525843d191e8fd34",
+    "windowsBuilds": {
+      "default": {
+        "exit": 0,
+        "driverBridgeSha256": "4d0e3e9cb2d1203344a31ccdc51c9be12d06b34b2b7951e124552f55612f471e",
+        "buildLogSha256": "c6fe343e1ffd92ba641bd10de6e5b33091c163ffa8d46c98c70f5fa15b459522"
+      },
+      "4k": {
+        "exit": 0,
+        "driverBridgeSha256": "e471808b94332d71cd20c86840dde9f574371b350ea4358f5e8d40672895302c",
+        "buildLogSha256": "90967395bff945f570c76570cd4cb4137463c9d2e51adcf2db822d3831f19055"
+      }
+    }
+  },
+  "retainedAttempts": [
+    "Windows GCC unavailable; fixtures executed with Linux GCC.",
+    "Initial isolated wrapper substitution syntax error retained.",
+    "Original scanout fixture lacks redraw field; extended compatibly and with explicit lab assertions.",
+    "Redundant partial-clone hydration stopped; complete corresponding source used.",
+    "Stale source-count assumption 430 rejected; actual unchanged current source count is 434."
+  ],
+  "realQemuBootControls": {
+    "provided": true,
+    "groups": 7,
+    "locallyExecuted": false,
+    "ciRequired": true
+  },
+  "limits": {
+    "optIn": true,
+    "defaultLauncherActivated": false,
+    "primaryStandardVgaOnly": true,
+    "singleGraphicConsole": true,
+    "updatedQemuCompiled": false,
+    "gpuTransitionVerified": false,
+    "normalGuestBootVerified": false,
+    "visibleWindowsOpened": 0,
+    "hostInputInjected": false,
+    "gpuWorkloadExecuted": false,
+    "dailyUseAccepted": false,
+    "matchedNativePerformanceVerified": false,
+    "cudaOpenGLVulkanVideoComplete": false,
+    "dlssAndHardwareRayTracingVerified": false
+  },
+  "acceptance": {
+    "backendDemonstrated": 4,
+    "backendTotal": 8,
+    "desktopComplete": 0,
+    "desktopTotal": 4,
+    "diagnosticSceneComplete": 3,
+    "diagnosticSceneTotal": 3
+  }
+}

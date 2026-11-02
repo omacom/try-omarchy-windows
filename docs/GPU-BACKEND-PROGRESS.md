@@ -8,6 +8,12 @@ graphics runtime.
 
 ## What is verified now?
 
+**Native boot-console source — November 2, 2026:** a separate graphics mode
+keeps setup and native output on one console. CPU ownership/redraw controls,
+actual launcher argument checks and both strict host builds pass. Rebuilt QEMU
+execution, normal GPU boot and the real display transition remain unverified.
+Desktop acceptance remains **0/4**. [Implementation and tested limits](NATIVE-BOOT-CONSOLE.md).
+
 **Root session service — November 2, 2026:** owner-aware admission, broker
 activation and cleanup now pass real CPU/IPC controls. Native service tools
 compile and a unit is provided; normal GPU boot and recovery remain unverified.

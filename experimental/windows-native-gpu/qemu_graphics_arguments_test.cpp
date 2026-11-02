@@ -41,13 +41,22 @@ int main() {
     require(original[6] == L"-device" && original[7].find(L"virtio-vga-gl") == 0);
     auto cursor = original; cursor[9] = L"sdl,gl=on,show-cursor=on,window-close=off";
     require(replaceLauncherGraphics(cursor,t,session,luid,L"C:\\Audit")[9] == cursor[9]);
+    for (const auto& profile : {original,cursor}) {
+        auto bootExpected = profile;
+        bootExpected[6] = L"-device"; bootExpected[7] = L"VGA,id=wddm-boot-display";
+        const auto boot = replaceLauncherGraphics(profile,t,session,luid,L"C:\\Audit",BootDisplay::StandardVga);
+        require(boot.size() == composed.size() && std::equal(bootExpected.begin(),bootExpected.end(),boot.begin()));
+        require(boot.back() == composed.back() + L",boot-display=wddm-boot-display");
+    }
+    rejected([&]{replaceLauncherGraphics(original,t,session,luid,L"C:\\Audit",static_cast<BootDisplay>(2));});
     for (const auto& suffix : std::vector<std::vector<std::wstring>>{{L"-device",L"virtio-keyboard-pci"},
         {L"-display",original[9]}, {L"-device",L"wddm-fence-hub"}, {L"-device",L"virtio-gpu-pci"},
         {L"-device",L"VGA"}, {L"-device",L"qxl-vga"}, {L"-device",L"{\"driver\":\"VGA\"}"},
         {L"-device",L"virtio-serial-pci,id=bridge-serial"}, {L"-chardev",L"socket,id=wddm,port=1"},
-        {L"-vga",L"std"}, {L"-device"}}) {
+        {L"-device",L"virtio-serial-pci,id=wddm-boot-display"}, {L"-vga",L"std"}, {L"-device"}}) {
         auto bad = original; append(bad,suffix);
         rejected([&]{replaceLauncherGraphics(bad,t,session,luid,L"C:\\Audit");});
+        rejected([&]{replaceLauncherGraphics(bad,t,session,luid,L"C:\\Audit",BootDisplay::StandardVga);});
     }
     for (const auto& display : {L"none",L"sdl,gl=off",L"sdl,gl=on,show-cursor=off,window-close=on"}) {
         auto bad = original; bad[9] = display;

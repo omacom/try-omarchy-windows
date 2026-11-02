@@ -34,6 +34,15 @@ int main(int argc, char** argv) {
                 supported = true;
             } catch (const std::invalid_argument&) {}
             require(args == before && supported == row.at("supported").get<bool>(), "Unexpected mutation or compatibility decision");
+            bool bootSupported = false;
+            std::vector<std::wstring> bootResult;
+            try {
+                bootResult = driver_qemu_args::replaceLauncherGraphics(args,{123456,23456,512,1024},
+                    std::wstring(32,L'a'),std::wstring(16,L'b'),L"C:\\Native GPU Fixture\\audit",
+                    driver_qemu_args::BootDisplay::StandardVga);
+                bootSupported = true;
+            } catch (const std::invalid_argument&) {}
+            require(args == before && bootSupported == supported, "Boot display changed input or compatibility decisions");
             if (!supported) { ++rejected; continue; }
             ++accepted;
             auto expected = args;
@@ -45,6 +54,15 @@ int main(int argc, char** argv) {
             }
             require(replacements == 1 && result.size() == expected.size() + 12 &&
                 std::equal(expected.begin(),expected.end(),result.begin()), "Changed non-graphics launcher arguments");
+            for (std::size_t i = 0; i + 1 < expected.size(); ++i) {
+                if (expected[i] == L"-vga" && expected[i + 1] == L"none") {
+                    expected[i] = L"-device"; expected[i + 1] = L"VGA,id=wddm-boot-display";
+                }
+            }
+            require(bootResult.size() == result.size() &&
+                std::equal(expected.begin(),expected.end(),bootResult.begin()) &&
+                bootResult.back() == result.back() + L",boot-display=wddm-boot-display",
+                "Boot console changed non-graphics launcher arguments or created an independent relay display");
         }
         require(accepted == 2 && rejected == 3, "Missing positive or unsupported profile control");
         std::cout << Json{{"launcherProfilesVerified",5},{"compatibleProfiles",accepted},{"unsupportedProfilesRejected",rejected},

@@ -11,6 +11,7 @@ struct Transport {
     std::uintptr_t sourceProcess;
     unsigned port, fenceSlots, allocationSlots;
 };
+enum class BootDisplay { None, StandardVga };
 inline void validate(const Transport& t) {
     const bool fences = t.fenceSlots == 64 || t.fenceSlots == 128 || t.fenceSlots == 256 || t.fenceSlots == 512;
     const bool allocations = t.allocationSlots == 16 || t.allocationSlots == 32 || t.allocationSlots == 64 ||
@@ -57,9 +58,13 @@ inline void append(std::vector<std::wstring>& args, const std::vector<std::wstri
 // the matching guest runtime must be established by the process owner first.
 // It deliberately supports only the existing single-display SDL GPU route.
 inline std::vector<std::wstring> replaceLauncherGraphics(const std::vector<std::wstring>& original,
-        const Transport& transport, const std::wstring& session, const std::wstring& luid, const std::wstring& auditDirectory) {
+        const Transport& transport, const std::wstring& session, const std::wstring& luid, const std::wstring& auditDirectory,
+        BootDisplay bootDisplay = BootDisplay::None) {
     validate(transport);
-    const auto relay = relayDevice(session, luid, auditDirectory);
+    if (bootDisplay != BootDisplay::None && bootDisplay != BootDisplay::StandardVga)
+        throw std::invalid_argument("Unsupported native graphics boot display");
+    const auto relay = relayDevice(session, luid, auditDirectory) +
+        (bootDisplay == BootDisplay::StandardVga ? L",boot-display=wddm-boot-display" : L"");
     unsigned displays = 0, graphics = 0, keyboard = 0, pointer = 0;
     std::vector<std::wstring> result;
     for (std::size_t i = 0; i < original.size(); ++i) {
@@ -84,14 +89,18 @@ inline std::vector<std::wstring> replaceLauncherGraphics(const std::vector<std::
                     if (value.find(L",venus=") != std::wstring::npos || value.find(L",max_outputs=") != std::wstring::npos)
                         throw std::invalid_argument("Unsupported Vulkan or multiple-display launcher profile");
                     ++graphics;
-                    result.insert(result.end(), {L"-vga", L"none"});
+                    if (bootDisplay == BootDisplay::StandardVga)
+                        result.insert(result.end(), {L"-device", L"VGA,id=wddm-boot-display"});
+                    else
+                        result.insert(result.end(), {L"-vga", L"none"});
                     continue;
                 }
                 if (value[0] == L'{' || model == L"VGA" || model == L"qxl" || model == L"qxl-vga" ||
                     model == L"secondary-vga" || model == L"bochs-display" || model == L"ramfb" || model == L"vmware-svga" ||
                     model == L"cirrus-vga" || model == L"ati-vga" ||
                     model.find(L"wddm-") == 0 || model.find(L"virtio-gpu") == 0 || model.find(L"virtio-vga") == 0 ||
-                    value.find(L",id=bridge-serial") != std::wstring::npos || value.find(L",id=relay") != std::wstring::npos)
+                    value.find(L",id=bridge-serial") != std::wstring::npos || value.find(L",id=relay") != std::wstring::npos ||
+                    value.find(L",id=wddm-boot-display") != std::wstring::npos)
                     throw std::invalid_argument("Conflicting graphics or transport device");
             }
             if (option == L"-chardev" && (value.find(L",id=wddm") != std::wstring::npos || value.find(L",id=graphics-trace") != std::wstring::npos))

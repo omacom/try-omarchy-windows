@@ -25,7 +25,16 @@
  } GraphicHwOps;
  
  QemuConsole *graphic_console_init(DeviceState *dev, uint32_t head,
-@@ -389,6 +400,9 @@
+@@ -382,6 +393,8 @@
+ void graphic_console_set_hwops(QemuConsole *con,
+                                const GraphicHwOps *hw_ops,
+                                void *opaque);
++/* Main-loop-only snapshot for a reversible boot-console proxy. */
++const GraphicHwOps *graphic_console_get_hwops(QemuConsole *con, void **opaque);
+ void graphic_console_close(QemuConsole *con);
+ 
+ void graphic_hw_update(QemuConsole *con);
+@@ -389,6 +402,9 @@
  void graphic_hw_invalidate(QemuConsole *con);
  void graphic_hw_text_update(QemuConsole *con, console_ch_t *chardata);
  void graphic_hw_gl_block(QemuConsole *con, bool block);
@@ -58,9 +67,31 @@
  void dpy_gl_update(QemuConsole *con,
                     uint32_t x, uint32_t y, uint32_t w, uint32_t h)
  {
+@@ -1168,6 +1182,12 @@
+     }
+ 
+     return display_state;
++}
++
++const GraphicHwOps *graphic_console_get_hwops(QemuConsole *con, void **opaque)
++{
++    *opaque = con->hw;
++    return con->hw_ops;
+ }
+ 
+ void graphic_console_set_hwops(QemuConsole *con,
 --- a/ui/sdl2-gl.c
 +++ b/ui/sdl2-gl.c
-@@ -256,6 +256,20 @@
+@@ -39,6 +39,8 @@
+     }
+ 
+     scon->scanout_mode = scanout;
++    /* A queued boot-surface redraw must not replace the first native frame. */
++    scon->updates = 0;
+     if (!scon->scanout_mode) {
+         egl_fb_destroy(&scon->guest_fb);
+         if (scon->surface) {
+@@ -256,6 +258,20 @@
      SDL_GetWindowSize(scon->real_window, &ww, &wh);
      egl_fb_setup_default(&scon->win_fb, ww, wh, 0, 0);
      egl_fb_blit(&scon->win_fb, &scon->guest_fb, !scon->y0_top);

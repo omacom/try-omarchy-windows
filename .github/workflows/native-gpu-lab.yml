@@ -132,6 +132,8 @@ jobs:
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror experimental/qemu/sdl_command_test.c -o /tmp/sdl-command-test
           /tmp/sdl-command-test
+          cc -std=c11 -O2 -Wall -Wextra -Werror experimental/qemu/sdl_boot_test.c -o /tmp/sdl-boot-test
+          /tmp/sdl-boot-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/framed_write_test.cpp -o /tmp/framed-write-test
           /tmp/framed-write-test
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09

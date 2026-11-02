@@ -40,7 +40,7 @@ def prepare(source):
     subprocess.run(['git', '-C', str(source), 'apply', '--check', str(graphics_patch)], check=True)
     subprocess.run(['git', '-C', str(source), 'apply', str(graphics_patch)], check=True)
     graphics_sources = {}
-    for name in ('wddm-sdl-relay.c', 'wddm-sdl-command.h'):
+    for name in ('wddm-sdl-relay.c', 'wddm-sdl-command.h', 'wddm-sdl-boot.h'):
         path = root / 'experimental/qemu' / name
         shutil.copyfile(path, source / 'hw/display' / name)
         graphics_sources[name] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -54,6 +54,8 @@ def prepare(source):
                  graphicsRelayPatchSha256=hashlib.sha256(graphics_patch.read_bytes()).hexdigest(),
                  graphicsRelaySources=graphics_sources,
                  graphicsRelayProtocolVersion=2,
+                 graphicsBootConsole=dict(optionalProperty='boot-display', singleWindow=True,
+                     normalGuestBootVerified=False, gpuTransitionVerified=False),
                  graphicsWindowAuditSchema=1,
                  inputFiles={name:hashlib.sha256((source/name).read_bytes()).hexdigest()
                              for name in sorted(input_files) if (source/name).is_file()},
