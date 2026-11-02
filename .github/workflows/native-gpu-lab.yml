@@ -124,6 +124,7 @@ jobs:
           python3 experimental/windows-native-gpu/test_guest_bridge_log.py
           python3 experimental/windows-native-gpu/test_guest_progress_snapshot.py
           python3 experimental/windows-native-gpu/test_launcher_guest_broker_session.py
+          python3 experimental/windows-native-gpu/test_normal_session_bootstrap.py --output "$RUNNER_TEMP/normal-session-bootstrap-controls"
           python3 experimental/windows-native-gpu/test_hyprland_session.py --output "$RUNNER_TEMP/hyprland-session-controls"
           python3 experimental/windows-native-gpu/test_hyprland_session_entry.py
           python3 experimental/windows-native-gpu/test_browser_target_retirement.py

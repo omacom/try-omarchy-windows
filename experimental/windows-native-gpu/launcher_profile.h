@@ -105,11 +105,12 @@ struct Profile {
         return result;
     }
     std::vector<std::wstring> compose(const driver_qemu_args::Transport& transport,const std::wstring& session,
-            const std::wstring& luid,unsigned ownerPort,unsigned graphicsPort) const {
+            const std::wstring& luid,unsigned ownerPort,unsigned graphicsPort,
+            driver_qemu_args::BootDisplay bootDisplay = driver_qemu_args::BootDisplay::None) const {
         if (!ownerPort || ownerPort > 65535 || !graphicsPort || graphicsPort > 65535 || ownerPort == graphicsPort ||
             ownerPort == transport.port || graphicsPort == transport.port)
             throw std::invalid_argument("Invalid private launcher QMP endpoints");
-        auto result = driver_qemu_args::replaceLauncherGraphics(arguments,transport,session,luid,auditDirectory.wstring());
+        auto result = driver_qemu_args::replaceLauncherGraphics(arguments,transport,session,luid,auditDirectory.wstring(),bootDisplay);
         result.insert(result.begin(),executable);
         result.insert(result.end(),{L"-qmp",L"tcp:127.0.0.1:"+std::to_wstring(ownerPort)+L",server=on,wait=off",
             L"-qmp",L"tcp:127.0.0.1:"+std::to_wstring(graphicsPort)+L",server=on,wait=off"});

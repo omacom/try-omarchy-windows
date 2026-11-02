@@ -61,8 +61,18 @@ def main():
     if child.returncode == 0 or 'Cancellation capability was not inherited' not in child.stderr or 'ownedQemuPid' in child.stdout:
         raise ValueError('Full Go profile did not reach lifetime validation before startup: ' + child.stdout + child.stderr)
     with (output / 'full-profile-invalid-capability.log').open('x') as log: log.write(child.stdout + child.stderr)
+    boot_prepared = list(prepared)
+    if '--driver-launcher-session' not in boot_prepared:
+        boot_prepared += ['--driver-launcher-session']
+    boot_prepared += ['--driver-boot-console']
+    child = subprocess.run(boot_prepared, capture_output=True, text=True, timeout=5, **options)
+    if child.returncode == 0 or 'Cancellation capability was not inherited' not in child.stderr or 'ownedQemuPid' in child.stdout:
+        raise ValueError('Boot-console Go profile did not reach lifetime validation before startup: ' + child.stdout + child.stderr)
+    with (output / 'boot-profile-invalid-capability.log').open('x') as log: log.write(child.stdout + child.stderr)
     if hashes != {name: sha(path) for name, path in binaries.items()}: raise ValueError('Compiled artifact changed')
     receipt = dict(schema=1, proof=proof, cliChecks=checks, exactGoFlagsReachedLifetimeValidation=True,
+        bootConsoleGoFlagsReachedLifetimeValidation=True,
+        bootProfileInvalidCapabilityLogSha256=sha(output / 'boot-profile-invalid-capability.log'),
         fullProfileInvalidCapabilityLogSha256=sha(output / 'full-profile-invalid-capability.log'),
         binaryHashes=hashes, exportedProfilesSha256=sha(exported), goExportLogSha256=sha(output / 'go-export.log'),
         bindingFixtureLogSha256=sha(output / 'binding-fixture.log'), earlyBindingCpuModes=5,

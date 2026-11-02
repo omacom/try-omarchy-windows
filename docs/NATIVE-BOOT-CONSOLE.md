@@ -17,8 +17,10 @@ The new `BootDisplay::StandardVga` composer option replaces only the launcher's
 graphics device with `VGA,id=wddm-boot-display` and binds the relay through
 `boot-display=wddm-boot-display`. It preserves the original SDL options, keyboard,
 tablet, QMP roles and every other original argument. The existing default
-composition remains unchanged. This option is not enabled in the released
-launcher or selected by the normal-session service yet.
+composition remains unchanged. The owned host now exposes an explicit
+`--driver-boot-console` selection requiring its persistent original profile and
+lifetime binding. It is not enabled in the released launcher.
+[Matched normal-bootstrap candidate and controls](NORMAL-SESSION-BOOTSTRAP.md).
 
 ## Implemented handoff
 

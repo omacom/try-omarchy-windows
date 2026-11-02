@@ -1,0 +1,188 @@
+{
+  "schema": 1,
+  "date": "2026-11-02",
+  "milestone": "owned-host-normal-bootstrap-and-private-package",
+  "sourceSha256": {
+    "experimental/windows-native-gpu/driver_bridge.cpp": "5336a8cb0e2dd5fa163966fe8530ef53e4f4b28076c148c21bb986ad40a1dccb",
+    "experimental/windows-native-gpu/qemu_runtime_host.h": "7ed044d42417bb80d917cea35aa5ad4e5897bfcd22a7955732b99c66991a671b",
+    "experimental/windows-native-gpu/launcher_profile.h": "eaa3e560fd41d083d1cb61a1222e7170747cd8c9c2eb705de8c9c8fc4820ef76",
+    "experimental/windows-native-gpu/launcher_profile_test.cpp": "2183532504a30eb008c2426b032f7c738d9b7e7db7353bcc315f82e99f479555",
+    "experimental/windows-native-gpu/test_launcher_lifetime_cli.py": "a74b0483365784fd47351df55cad0caa347a6b5a3c5ef132c5e4df9aae72a2fc",
+    "experimental/windows-native-gpu/test_launcher_profile.py": "2a342727c043db76735e22c1f04a1826c5ba737906fab0a99f32eec50e235073",
+    "experimental/windows-native-gpu/normal_root_guest_init.c": "71d97146f284e9798924093227a5d6aed1f39bb8d75c3998b08f7badd13270a7",
+    "experimental/windows-native-gpu/normal_session_root_payload.h": "bc6c273270fd07867f458800abe3da0a48ede344f9c8aaf9e90cd33bfba14c4b",
+    "experimental/windows-native-gpu/normal_session_command_line.h": "f26d5f950438d3b96f7a8dcaa079aec309c4a99c3a02717f0c5aa6f2f911261a",
+    "experimental/windows-native-gpu/test_normal_session_bootstrap.py": "dfdf6d9cbe3cde4a80c784eb2f973c30b267ec04118229dd9eea416b6e929b6f",
+    ".github/workflows/native-gpu-lab.yml": "79ff111fe76eb7368899b576e2f608571bf20e815aab6161a363ecdb34dcab6a"
+  },
+  "host": {
+    "strictBuilds": {
+      "default": {
+        "exit": 0,
+        "driverBridgeSha256": "307c5c37e41e0a36d8bedf20e8bd79575954e9b182eee52a192d0cdc1641e4b2",
+        "logSha256": "97be1a433a86c85317d45da107caf46ff3e6eaae3f2338f4907d1a6c5a76ab01"
+      },
+      "4k": {
+        "exit": 0,
+        "driverBridgeSha256": "e3f42482417250b048a1751ca93584b23ca5544fe8534f5e62379ddc9948e65f",
+        "logSha256": "097c9bf19b3905c5d6bca627a093bb62830b31aede728164a8f9cf293564ca75"
+      }
+    },
+    "actualGoProfiles": {
+      "accepted": 3,
+      "actualGoProfiles": 6,
+      "gpu": false,
+      "normalGuestBootVerified": false,
+      "originalBootInputPreserved": true,
+      "qemuStarted": false,
+      "rejected": 3,
+      "unicodeRoundtrip": true
+    },
+    "bootConsoleGoFlagsReachedLifetimeValidation": true,
+    "cliChecksPerBuild": 22,
+    "lifetimeFixtureModes": 5,
+    "profileControlReceiptSha256": "f1a19a9c568a4ca5deeb15bd9e37743f9c7c8d1a360e5d278c34ee958802a312",
+    "compiledHostSourcesVerified": [
+      "driver_bridge.cpp",
+      "qemu_runtime_host.h",
+      "launcher_profile.h",
+      "launcher_profile_test.cpp",
+      "test_launcher_lifetime_cli.py",
+      "test_launcher_profile.py"
+    ],
+    "unchangedLauncherSourceCount": 434
+  },
+  "bootstrap": {
+    "originalSourceSha256": "2040dcd82174256c323df2751454ef5bd3fae6cad2b028d2ee6e0a624ffcd15d",
+    "defaultPreprocessedCodeExact": true,
+    "defaultBinaryExact": true,
+    "binaries": {
+      "original": "94db9b6bc5659249eaad3a0f6e02cf6a0fae6b8187a2d18faf14020449bb3d0a",
+      "default": "94db9b6bc5659249eaad3a0f6e02cf6a0fae6b8187a2d18faf14020449bb3d0a",
+      "normal": "c7206f005afda355ac0a851ac3ae58b83f134fbeeb305e0ec04b476ae78547d3"
+    },
+    "staticBootstrapCompiled": true,
+    "pid1Refusals": [
+      "original",
+      "default",
+      "normal"
+    ],
+    "policyControls": 16,
+    "diagnosticServiceExcluded": true,
+    "mountsExecuted": false,
+    "overlayInstalled": false,
+    "guestBooted": false,
+    "gpuUsed": false,
+    "normalSessionVerified": false
+  },
+  "privatePackage": {
+    "redistributionApproved": false,
+    "initramfsSha256": "0cd96859fb6dc49ca6f4dbb71731e3f1e521dc70ef4220e3bbd908fb8d423c02",
+    "initramfsBytes": 121734505,
+    "runtimeBytes": 324757285,
+    "overlayBytes": 1824552,
+    "archiveVerification": {
+      "schema": 1,
+      "initramfsSha256": "0cd96859fb6dc49ca6f4dbb71731e3f1e521dc70ef4220e3bbd908fb8d423c02",
+      "filesVerified": 403,
+      "directoriesVerified": 68,
+      "symlinksVerified": 23,
+      "allOwnersRoot": true,
+      "allPayloadHashesVerified": true,
+      "allModesVerified": true,
+      "gzipIntegrityVerified": true,
+      "productionCriticalFiles": {
+        "init": "c7206f005afda355ac0a851ac3ae58b83f134fbeeb305e0ec04b476ae78547d3",
+        "normal-root-overlay/bin/hyprland-session-exec": "55f6a1bf2c091e16c3e66558e66dad78daae2448db1d860b2a9f26aa933aa5b3",
+        "normal-root-overlay/bin/normal-session-devices": "9d4dff65fe6f11b425cecdafb0749cbb74bc3d62c0ee4e41e90cd2706889915b",
+        "normal-root-overlay/bin/normal-session-service": "12bf58c6c520d726da75586519eab720b57bf912d5d507c52ae90307fb22652a",
+        "normal-root-overlay/lib/hyprland-session.so": "1e64ed1992ae20827847d04cd3b27b104aa541e37bea23f38809f5eb50e7c6b9",
+        "normal-root-overlay/lib/libaquamarine.so.0.15.1": "240c937d2fff6821d12791e37de6e7c2ed0a30e8f99f225e1b4134ac3adf68a0"
+      },
+      "diagnosticPayloadExcluded": true,
+      "runtimeBytes": 324757285,
+      "overlayBytes": 1824552,
+      "guestBooted": false,
+      "normalLoginVerified": false,
+      "gpuFrameVerified": false,
+      "dailyUseAccepted": false
+    },
+    "productionRuntimeSourceSha256": {
+      "normal_session_service.c": "1a03344a0342ef3ff68ca5c2d439b0dad107d0e06c87d836e8291afceeb953aa",
+      "guest_session_admission.h": "3b12863547bb635da69ff0dc8fc574fc3125579e065b9f9ed1830ba99ae07166",
+      "guest_session_activation.h": "2d212d4bf13a2e25492c0c0885ffc742c7eb4e5e7490d25d1fb39e7dd4475bd7",
+      "guest_session_process.h": "7559df8860bea65f5044751b5f7e0a0df2c317939396b61eeddc530ac3ee58c3",
+      "guest_primary_identity.h": "6256db18a20738fc5168d8ecc1136d7707cc37870adaac82fd23ec4301d8d55b",
+      "guest_session_owner.h": "83f35e5094cc8cc6f838b109ce409212bca5950040abac6201be0470ac595e9f",
+      "guest_session_devices.h": "9fd6a792d00f8418d01b0e30da2f781b1b700f76b5bffbe0cfb8f07d053a98eb",
+      "guest_graphics_port.h": "11d872180a7412ade646cf20af6bf4b18d283d7f96d9c86f7d5c3999ad60fd1a",
+      "guest-kernel/wddm_aperture.h": "00af5456ef9a1bfb17da45de1cb88cadb1a474c5d676ece6bf3d85851733fc7a",
+      "guest-kernel/wddm_render.h": "11407ab00b1a79416eaf08435faec8cc4f38606743f8f692956e0c1654b63b12",
+      "normal_session_devices.c": "7b80a75df7b8e661e4e302bf6219843e1199921c329eedeab64e619a15d47769",
+      "hyprland_session_exec.c": "740786303d9afdb14ce88e9414ffb6a9f3033b1062920938dd9da366ffe726df",
+      "hyprland_session_invocation.h": "a91b114acf975aa3e8ac8f00a8cbffc0d9b76c4d882be22ecef5b06892634182",
+      "hyprland_session.c": "3a602caa1729d3d61d27460dcfcda9d84614770f1e4e102e190c6a3a62867bc4",
+      "omarchy-nvgpu-session.service": "6f0f58c14720a8df0fbee237cd64ce98a5abbc429fdc916c01f31eaa01679a4a"
+    },
+    "officialSourceLock": {
+      "repository": "https://github.com/jorge-huxley/try-omarchy-win",
+      "commit": "aa009bd828037727de212c1412ccbe6ed7c95c7b",
+      "branch": "win"
+    },
+    "officialPatchedTree": "5f893e70f9743bd769c8c59416d7f10081b9f356",
+    "officialCommittedBytesUsed": true,
+    "installedAquamarineSha256": "240c937d2fff6821d12791e37de6e7c2ed0a30e8f99f225e1b4134ac3adf68a0",
+    "installedLibraryHasBuildRpath": false,
+    "firstAssemblyRejected": "Legacy GTK diagnostic probe library; excluded from fresh v2 assembly.",
+    "builderSha256": "cc87123c2d6802505a0f103cddf60ef7e603576d5cbb058545db079049664e6b",
+    "archiveVerifierSha256": "ce190bca20672897d29faebd45036030b54f3e73b55f9687876810d0654413bc"
+  },
+  "matchedQemu": {
+    "commit": "ec2e4caa05e4e85af7e30bdcf7f481445e916083",
+    "workflow": 41428527289,
+    "artifact": 13132683333,
+    "zipSha256": "98e5e0a196c625d1198d015fe8e978768f834878209d173a1563b7689db82bf0",
+    "qemuSha256": "0a8c31179159e08ee3f207a1676db4292cacae20e9c01988bd43bf38813cddfb",
+    "allGraphicsSourceBytesExact": true,
+    "bootConsoleControls": {
+      "schema": 1,
+      "controls": [
+        "missing-display",
+        "non-display",
+        "non-vga",
+        "multiple-consoles",
+        "second-owner",
+        "original-stopped-surface",
+        "borrowed-stopped-surface"
+      ],
+      "qemuSha256": "0a8c31179159e08ee3f207a1676db4292cacae20e9c01988bd43bf38813cddfb",
+      "cpuStopped": true,
+      "diskAttached": false,
+      "visibleWindowOpened": false,
+      "hostInputInjected": false,
+      "gpuTransitionVerified": false,
+      "normalGuestBootVerified": false
+    },
+    "gpuTransitionVerified": false
+  },
+  "limits": {
+    "defaultLauncherActivated": false,
+    "guestBooted": false,
+    "normalLoginVerified": false,
+    "applicationEnvironmentIntegrationVerified": false,
+    "actualGpuTransitionVerified": false,
+    "physicalInputVerified": false,
+    "sustainedUseVerified": false,
+    "recoveryVerified": false,
+    "matchedNativePerformanceVerified": false,
+    "broaderAPIsVerified": false,
+    "dailyUseAccepted": false,
+    "visibleWindowsOpened": 0,
+    "hostInputInjected": false
+  },
+  "acceptance": {
+    "backend": "4/8",
+    "desktop": "0/4",
+    "diagnosticScene": "3/3"
+  }
+}

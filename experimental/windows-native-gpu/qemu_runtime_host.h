@@ -156,9 +156,13 @@ class Runtime {
         throw std::runtime_error("SDL relay requires a hardware NVIDIA adapter");
     }
 public:
-    Runtime(unsigned short driverPort, const qemu_fence::Paths& paths, bool enableCpu = false, bool cpuStoreTest = false, bool cpuEofTest = false, bool hwQueueEofTest = false, std::size_t cpuSlots = driver_bridge::DefaultVendorCpuSlots, bool syncEofTest = false, bool reservationEofTest = false, bool gpuStateEofTest = false, bool cpuSpanEofTest = false, bool syncNoMaxEofTest = false, bool hwQueueNoBroadcastEofTest = false, bool hwQueueNoBroadcastWaitEofTest = false, std::uint32_t configuredFenceSlots = 0, const char* readonlyRoot = nullptr, bool desktopFences = false, bool enableWindowInput = false, bool inputSelfTest = false, bool enableSdl = false, bool virtioTrace = false, bool userNetwork = false, const driver_launcher::Profile* launcherProfile = nullptr, std::function<void()> requireLauncherLive = {}, std::function<void(const ProcessBinding&)> onBound = {})
+    Runtime(unsigned short driverPort, const qemu_fence::Paths& paths, bool enableCpu = false, bool cpuStoreTest = false, bool cpuEofTest = false, bool hwQueueEofTest = false, std::size_t cpuSlots = driver_bridge::DefaultVendorCpuSlots, bool syncEofTest = false, bool reservationEofTest = false, bool gpuStateEofTest = false, bool cpuSpanEofTest = false, bool syncNoMaxEofTest = false, bool hwQueueNoBroadcastEofTest = false, bool hwQueueNoBroadcastWaitEofTest = false, std::uint32_t configuredFenceSlots = 0, const char* readonlyRoot = nullptr, bool desktopFences = false, bool enableWindowInput = false, bool inputSelfTest = false, bool enableSdl = false, bool virtioTrace = false, bool userNetwork = false, const driver_launcher::Profile* launcherProfile = nullptr, std::function<void()> requireLauncherLive = {}, std::function<void(const ProcessBinding&)> onBound = {}, driver_qemu_args::BootDisplay bootDisplay = driver_qemu_args::BootDisplay::None)
         : fenceSlots(configuredFenceSlots ? configuredFenceSlots : cpuSlots >= driver_bridge::ExpandedVendorCpuSlots ? driver_bridge::ExpandedFenceSlots : driver_bridge::DefaultFenceSlots),
           allocationSlots(cpuSlots), allocationAperture(cpuSlots,desktopFences), allocationsEnabled(enableCpu), logfile(launcherProfile ? std::filesystem::path{} : std::filesystem::absolute(paths.log)) {
+        if (bootDisplay != driver_qemu_args::BootDisplay::None && bootDisplay != driver_qemu_args::BootDisplay::StandardVga)
+            throw std::runtime_error("Invalid launcher boot-console mode");
+        if (bootDisplay != driver_qemu_args::BootDisplay::None && (!launcherProfile || !requireLauncherLive || !onBound))
+            throw std::runtime_error("Boot console requires the owned original launcher profile and lifetime binding");
         if (launcherProfile && (!desktopFences || !enableSdl || readonlyRoot || enableWindowInput || inputSelfTest || virtioTrace || userNetwork))
             throw std::runtime_error("Launcher runtime requires its original devices and official SDL input");
         if (!driver_bridge::validFenceSlots(fenceSlots,desktopFences) || !driver_bridge::validVendorCpuSlots(cpuSlots,gpu_diagnostic::HighResolution,desktopFences) || (cpuSlots==driver_bridge::SparseVendorCpuSlots && fenceSlots!=(desktopFences ? 512u : 256u)) || (cpuSlots==driver_bridge::DesktopVendorCpuSlots && (!desktopFences || fenceSlots!=512)) || (!enableCpu && cpuSlots != driver_bridge::DefaultVendorCpuSlots))
@@ -225,7 +229,7 @@ public:
         if (launcherProfile) {
             const auto session=std::wstring(sdlGraphics->session.begin(),sdlGraphics->session.end());
             const auto luid=std::wstring(sdlGraphics->adapterLuid.begin(),sdlGraphics->adapterLuid.end());
-            args=launcherProfile->compose(transport,session,luid,qmpPort,graphicsPort);
+            args=launcherProfile->compose(transport,session,luid,qmpPort,graphicsPort,bootDisplay);
         } else {
         args={executable, L"-machine", L"q35,accel=whpx", L"-cpu", L"host", L"-m", std::to_wstring(memoryMiB), L"-smp", readonlyRoot ? L"2" : L"1",
             L"-display", enableSdl?L"sdl,gl=on,show-cursor=off,window-close=off":L"none", L"-monitor", L"none", L"-serial", L"stdio", L"-nodefaults", L"-no-reboot",

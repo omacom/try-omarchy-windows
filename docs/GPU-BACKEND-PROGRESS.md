@@ -8,6 +8,12 @@ graphics runtime.
 
 ## What is verified now?
 
+**Normal bootstrap candidate — November 2, 2026:** explicit host selection and
+the separate guest bootstrap pass build/CPU controls. A matched private archive
+is assembled and fully checked; it has not booted. Normal login and GPU handoff
+remain unverified. Counts stay **4/8, 0/4, 3/3**.
+[Implementation and exact limits](NORMAL-SESSION-BOOTSTRAP.md).
+
 **Native renderer selection — November 2, 2026:** the normal session's factory
 adapter excludes boot VGA from desktop rendering. The complete library builds
 and 17 factory controls pass; guest/GPU integration remains unverified. Counts

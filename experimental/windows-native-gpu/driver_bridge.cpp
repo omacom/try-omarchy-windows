@@ -3023,7 +3023,7 @@ int main(int argc, char** argv) {
         bool hwQueueNoBroadcastWaitEofTest = false;
         bool asyncSubmit = false, sharedResources = false, consumeShared = false, presentShared = false, nativeMetadata = false, consumeProcess = false, coordinated = false, windowInput = false, inputSelfTest = false, sdlRelay = false;
         unsigned sdlFailureTest=0;
-        bool virtioTrace=false,deferredResidency=false,userNetwork=false,mappedAdmission=false,applicationMemory=false,applicationObjects=false,launcherSession=false;
+        bool virtioTrace=false,deferredResidency=false,userNetwork=false,mappedAdmission=false,applicationMemory=false,applicationObjects=false,launcherSession=false,bootConsole=false;
         const char* readonlyRoot = nullptr;
         const char* launcherProfileJson = nullptr;
         std::optional<driver_launcher::Profile> launcherProfile;
@@ -3090,6 +3090,10 @@ int main(int argc, char** argv) {
             else if (option == "--driver-native-metadata" && !nativeMetadata) nativeMetadata = true;
             else if (option == "--driver-coordinator" && !coordinated) coordinated = true;
             else if (option == "--driver-launcher-session" && !launcherSession) launcherSession = true;
+            else if (option == "--driver-boot-console") {
+                if (bootConsole) throw std::runtime_error("Boot console must be specified once");
+                bootConsole = true;
+            }
             else if (option == "--driver-window-input" && !windowInput) windowInput = true;
             else if (option == "--driver-input-self-test" && !inputSelfTest) inputSelfTest = true;
             else if (option == "--driver-sdl-relay" && !sdlRelay) sdlRelay = true;
@@ -3110,6 +3114,8 @@ int main(int argc, char** argv) {
             else break;
             --argc;
         }
+        if (bootConsole && (!launcherSession || !launcherProfileJson || !launcherCancellation || !coordinated || !sdlRelay))
+            throw std::runtime_error("Boot console requires the persistent original launcher session, lifetime control and SDL coordinator");
         if (launcherCancellation && (argc!=7 || std::string(argv[1])!="--run-qemu"))
             throw std::runtime_error("Launcher lifetime requires the owned QEMU runtime");
         if (launcherCancellation && (!contexts || !queries))
@@ -3228,7 +3234,7 @@ int main(int argc, char** argv) {
         if (!ownedRuntime && ((argc != 3 && argc != 7) || std::string(argv[1]) != "--listen")) {
             std::cerr << "Usage: driver-bridge.exe --stdio | --listen port [--guest-section name --guest-ram-bytes count] "
                 "[--driver-contexts] [--driver-queries] [--driver-allocations] [--driver-gpuva] [--driver-residency] [--driver-cpu] [--driver-cpu-slots 16|32|64|128|256|512|1024] [--driver-translation] [--driver-hwqueues] [--driver-syncs] [--driver-submit] [--driver-async-submit] [--driver-retirement] [--driver-reservation] [--driver-gpu-state] [--cpu-store-test | --cpu-eof-test | --cpu-span-eof-test | --hwqueue-eof-test | --hwqueue-no-broadcast-eof-test | --hwqueue-no-broadcast-wait-eof-test | --sync-eof-test | --sync-no-max-eof-test | --reservation-eof-test | --gpu-state-eof-test]\n"
-                "       driver-bridge.exe --run-qemu qemu firmware kernel initramfs fresh-log --driver-contexts --driver-queries [--driver-fence-slots 64|128|256] [--driver-coordinator] [--driver-launcher-cancel-handle inherited-handle] [--driver-launcher-profile ascii-json]\n"; return 2;
+                "       driver-bridge.exe --run-qemu qemu firmware kernel initramfs fresh-log --driver-contexts --driver-queries [--driver-fence-slots 64|128|256] [--driver-coordinator] [--driver-launcher-cancel-handle inherited-handle] [--driver-launcher-profile ascii-json] [--driver-launcher-session --driver-boot-console]\n"; return 2;
         }
         if (ownedRuntime && (!contexts || !queries)) throw std::runtime_error("Owned QEMU runtime requires explicit query/context opt-ins");
         std::size_t end{}; const auto port = ownedRuntime ? 0ul : std::stoul(argv[2], &end);
@@ -3271,7 +3277,7 @@ int main(int argc, char** argv) {
             [watch=launcherLifetime.get()](const driver_qemu::ProcessBinding& binding) {
                 if(!watch) throw std::runtime_error("Launcher process binding requires lifetime control");
                 std::cout<<driver_launcher::bound(binding,*watch).dump()<<'\n'<<std::flush;
-            });
+            },bootConsole ? driver_qemu_args::BootDisplay::StandardVga : driver_qemu_args::BootDisplay::None);
         if (launcherLifetime) {
             launcherLifetime->start([vm=runtime.get()](driver_launcher::End why) {
                 vm->stopGuest();

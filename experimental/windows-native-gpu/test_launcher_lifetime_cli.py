@@ -20,6 +20,12 @@ cases += [(['--stdio','--driver-launcher-session'], 'Launcher session requires a
     (['--listen','0','--driver-launcher-session'], 'Launcher session requires an original profile'),
     (['--run-qemu','missing-qemu','firmware','kernel','image','log','--driver-launcher-session'], 'Launcher session requires an original profile'),
     (['--stdio','--driver-launcher-session','--driver-launcher-session'], 'Launcher session requires an original profile')]
+cases += [(command, 'Boot console requires the persistent original launcher session') for command in (
+    ['--stdio','--driver-boot-console'],
+    ['--listen','0','--driver-boot-console'],
+    ['--run-qemu','missing-qemu','firmware','kernel','image','log','--driver-boot-console'],
+    ['--stdio','--driver-launcher-session','--driver-boot-console'])]
+cases += [(['--stdio','--driver-boot-console','--driver-boot-console'], 'Boot console must be specified once')]
 for command, reason in cases:
     result = subprocess.run([str(args.bridge.resolve()), *command], capture_output=True, text=True, timeout=5,
         creationflags=subprocess.CREATE_NO_WINDOW)

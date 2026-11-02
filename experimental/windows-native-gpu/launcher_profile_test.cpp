@@ -22,17 +22,25 @@ template<class F> static void invalidProfile(F&& call) {
 }
 static void preserved(const Profile& profile) {
     const auto original=profile.arguments;
-    const auto args=profile.compose({123456,23456,512,1024},std::wstring(32,L'a'),std::wstring(16,L'b'),34567,45678);
-    auto expected=original;
-    unsigned replaced=0;
-    for(std::size_t i=0;i+1<expected.size();++i) if(expected[i]==L"-device" && expected[i+1].find(L"virtio-vga-gl")==0) {
-        expected[i]=L"-vga";expected[i+1]=L"none";++replaced;
+    for (const auto mode : {driver_qemu_args::BootDisplay::None,driver_qemu_args::BootDisplay::StandardVga}) {
+        const auto args=profile.compose({123456,23456,512,1024},std::wstring(32,L'a'),std::wstring(16,L'b'),34567,45678,mode);
+        auto expected=original;
+        unsigned replaced=0;
+        for(std::size_t i=0;i+1<expected.size();++i) if(expected[i]==L"-device" && expected[i+1].find(L"virtio-vga-gl")==0) {
+            expected[i]=mode==driver_qemu_args::BootDisplay::None ? L"-vga" : L"-device";
+            expected[i+1]=mode==driver_qemu_args::BootDisplay::None ? L"none" : L"VGA,id=wddm-boot-display";++replaced;
+        }
+        require(replaced==1 && args.size()==original.size()+17 && args.front()==profile.executable &&
+            std::equal(expected.begin(),expected.end(),args.begin()+1),"Original boot/input argument changed");
+        require(profile.arguments==original,"Composer mutated original argument vector");
+        require(args[args.size()-4]==L"-qmp" && args[args.size()-3]==L"tcp:127.0.0.1:34567,server=on,wait=off" &&
+            args[args.size()-2]==L"-qmp" && args.back()==L"tcp:127.0.0.1:45678,server=on,wait=off","Private QMP roles missing");
+        const auto relay=driver_qemu_args::relayDevice(std::wstring(32,L'a'),std::wstring(16,L'b'),profile.auditDirectory.wstring());
+        require(args[args.size()-5]==relay+(mode==driver_qemu_args::BootDisplay::StandardVga ? L",boot-display=wddm-boot-display" : L""),
+            "Boot console relay binding changed");
     }
-    require(replaced==1 && args.size()==original.size()+17 && args.front()==profile.executable &&
-        std::equal(expected.begin(),expected.end(),args.begin()+1),"Original boot/input argument changed");
-    require(profile.arguments==original,"Composer mutated original argument vector");
-    require(args[args.size()-4]==L"-qmp" && args[args.size()-3]==L"tcp:127.0.0.1:34567,server=on,wait=off" &&
-        args[args.size()-2]==L"-qmp" && args.back()==L"tcp:127.0.0.1:45678,server=on,wait=off","Private QMP roles missing");
+    invalidProfile([&]{profile.compose({123456,23456,512,1024},std::wstring(32,L'a'),std::wstring(16,L'b'),34567,45678,
+        static_cast<driver_qemu_args::BootDisplay>(2));});
 }
 int main(int argc,char** argv) {
     if(argc==4 && std::string(argv[1])=="--owned-child") return owned_qemu_fixture_main(argc,argv);

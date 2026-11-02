@@ -35,6 +35,7 @@ static void write_new(const char* path,const char* text,mode_t mode) {
     }
     if(close(fd)) fail("overlay-file-close");
 }
+#ifndef WDDM_NORMAL_SESSION_BOOTSTRAP
 static uint64_t copied_bytes;
 static void copy_bundle(int source,int target,unsigned depth) {
     if(depth>12) { errno=E2BIG;fail("bundle-depth"); }
@@ -141,11 +142,17 @@ static void graphics_payload(void) {
     if(symlink("../omarchy-wddm-normal-graphics.service","/newroot/etc/systemd/system/multi-user.target.wants/omarchy-wddm-normal-graphics.service")) fail("graphics-service-link");
     printf("NORMAL_ROOT_GRAPHICS_PAYLOAD copiedBytes=%llu ordinaryUid=1000 persistentWrites=false\n",(unsigned long long)copied_bytes);
 }
+#else
+#include "normal_session_root_payload.h"
+#endif
 int main(void) {
     // Never allow this executable to perform mounts on a host or as a child.
     if(getpid()!=1 || getuid()!=0 || geteuid()!=0) return 125;
     setvbuf(stdout,NULL,_IONBF,0); setvbuf(stderr,NULL,_IONBF,0);
     const int graphics=!access("/normal-root-overlay",F_OK);
+#ifdef WDDM_NORMAL_SESSION_BOOTSTRAP
+    if(!graphics || access("/normal-session-overlay",F_OK)) return 125;
+#endif
     puts(graphics ? "NORMAL_ROOT_BOOT_BEGIN graphicsRequested=true sourceWritesAllowed=false" : "NORMAL_ROOT_BOOT_BEGIN graphics=false sourceWritesAllowed=false");
     directory("/dev",0755); directory("/proc",0555); directory("/sys",0555);
     if(mount("devtmpfs","/dev","devtmpfs",MS_NOSUID,"mode=0755") ||
