@@ -22,4 +22,18 @@ inline bool validLiveRetirementProgress(LiveRetirementProgress p) {
         (!(p.flags&RetirementSharedReferences) || p.sharedReferences) &&
         (p.remaining ? p.phase<4 : p.phase==4 && !p.flags && !p.sharedReferences);
 }
+// Terminal progress describes one bounded actor step and the whole group's
+// completion separately. An empty actor does not imply an empty group.
+struct StoppedGroupRetirementProgress {
+    LiveRetirementProgress step;
+    std::uint64_t actor=0;
+    std::uint32_t actorsRemaining=0,reserved=0;
+};
+static_assert(sizeof(StoppedGroupRetirementProgress)==48,"Fixed terminal retirement response");
+constexpr unsigned MaxStoppedGroupSteps=8*(1024+4);
+inline bool validStoppedGroupRetirementProgress(StoppedGroupRetirementProgress p,unsigned limit=8) {
+    return (limit==4 || limit==8) && validLiveRetirementProgress(p.step) && !p.reserved &&
+        p.actorsRemaining<=limit && (p.actorsRemaining || !p.step.remaining) &&
+        (p.actor || (!p.actorsRemaining && !p.step.remaining && !p.step.attempted && !p.step.destroyed));
+}
 }

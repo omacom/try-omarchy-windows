@@ -10,7 +10,7 @@
 
 namespace driver_bridge::coordinator {
 constexpr std::uint32_t Magic=0x55504743; // CGPU
-constexpr std::uint16_t ProtocolVersion=4;
+constexpr std::uint16_t ProtocolVersion=5;
 enum class Operation : std::uint16_t { Initialize=1, Info, Register, Alias, ReapReference, Disconnect, Release, BeginLiveRetirement, RetireExitedActor, RetireStoppedGroup };
 enum class Role : std::uint32_t { Application=1, Compositor=2 };
 struct Frame {
@@ -88,6 +88,7 @@ class Runtime {
     bool poisoned=false,primaryClaimed=false;
     bool liveRetirement=false,terminalRetirement=false,presentationStopped=false;
     std::uint64_t primaryActor=0,retiredActors=0,retiredObjects=0;
+    std::uint64_t lastTerminalActor=0;
     std::uint32_t permittedActorLimit=static_cast<std::uint32_t>(actors::MaxActors);
     std::uint32_t actorLimit=static_cast<std::uint32_t>(actors::MaxActors);
     std::uint32_t permittedResourceReferences=MaxSharedResourceHandles;
@@ -216,10 +217,10 @@ public:
             if(h.bytes) return response(h,-22);
             if(!liveRetirement || !primaryClaimed) return response(h,-95);
             // Disconnected means the trusted broker observed pidfd exit and
-            // revoked CPU views. Non-primary actors must already be reclaimed;
-            // no session or capability may outlive this terminal transition.
+            // revoked CPU views. All shared capabilities must be drained before
+            // sealing the group; deferred empty-process actors may remain.
             for(const auto& entry:sessions)
-                if(entry.first!=primaryActor || !router.disconnected(entry.first) || entry.second->hasSharedReferences())
+                if(!router.disconnected(entry.first) || entry.second->hasSharedReferences())
                     return response(h,-16);
             terminalRetirement=true;
             if(!presentationStopped) {
@@ -228,22 +229,33 @@ public:
                 }
                 presentationStopped=true;
             }
-            LiveRetirementProgress progress;progress.phase=4;
-            const auto actor=sessions.find(primaryActor);
-            if(actor!=sessions.end()) {
-                try { progress=actor->second->retireStoppedPrimary(); }
+            StoppedGroupRetirementProgress result;result.step.phase=4;
+            auto& progress=result.step;
+            if(!sessions.empty()) {
+                // Other actors may need to release queues/devices before this
+                // actor's native parent can close. Retry fairly across actors.
+                auto actor=sessions.upper_bound(lastTerminalActor);
+                if(actor==sessions.end()) actor=sessions.begin();
+                result.actor=lastTerminalActor=actor->first;
+                try { progress=actor->first==primaryActor ? actor->second->retireStoppedPrimary() : actor->second->retireExitedActor(); }
                 catch(...) { poisoned=true;throw; }
                 if(!validLiveRetirementProgress(progress)) throw std::runtime_error("Malformed terminal retirement progress");
+                if(actor->first!=primaryActor) retiredObjects+=progress.destroyed;
                 if(!progress.remaining) {
-                    if(!router.detachEmpty(primaryActor)) throw std::runtime_error("Terminal primary still owns objects");
+                    if(!router.detachEmpty(actor->first)) throw std::runtime_error("Terminal actor still owns objects");
+                    if(actor->first!=primaryActor) ++retiredActors;
+                    retired.erase(actor->first);
                     sessions.erase(actor);
                 }
             }
+            result.actorsRemaining=static_cast<std::uint32_t>(sessions.size());
+            if(!validStoppedGroupRetirementProgress(result,actorLimit)) throw std::runtime_error("Malformed terminal group progress");
             std::cerr<<"{\"nativeStoppedGroupRetirement\":true,\"primaryActor\":"<<primaryActor<<",\"phase\":"<<progress.phase
                 <<",\"remaining\":"<<progress.remaining<<",\"attempted\":"<<progress.attempted<<",\"destroyed\":"<<progress.destroyed
                 <<",\"sharedReferences\":"<<progress.sharedReferences<<",\"flags\":"<<progress.flags<<",\"ntstatus\":"<<progress.ntstatus
+                <<",\"actor\":"<<result.actor<<",\"actorsRemaining\":"<<result.actorsRemaining
                 <<",\"presentationDrained\":true,\"groupSealed\":true,\"ordinaryClientOpcode\":false}\n";
-            return response(h,0,encoded(progress));
+            return response(h,0,encoded(result));
         }
         if(h.operation==Operation::BeginLiveRetirement) {
             LiveRetirementProfile wanted{};

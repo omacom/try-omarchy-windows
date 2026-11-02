@@ -55,7 +55,9 @@ or responsive desktop claim is made.
 
 The [receive-reset follow-up](BROKER-RECEIVE-RESET.md) now passes real-socket
 and pidfd CPU controls; GPU integration is pending. Next work is safe terminal
-draining of deferred actors and a corrected Foot scene fixture. Normal
+draining of deferred actors and a corrected Foot scene fixture. The
+[terminal scheduler implementation](TERMINAL-GROUP-RETIREMENT.md) now passes CPU
+controls and both Windows builds; paired GPU verification remains pending. Normal
 launcher activation, physical input latency, browsing, multiple windows, sustained
 sessions, bounded resources and recovery remain open. CUDA/OpenGL/Vulkan/video,
 DLSS, hardware ray tracing and at least 93% matched-native performance still need

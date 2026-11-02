@@ -205,6 +205,22 @@ static void liveRetirementControls() {
     std::cout<<"LIVE_RETIREMENT_CONTROL negotiatedOnly=true exitedApplicationOnly=true pendingGpuWorkRetained=true sharedReferencesRetained=true failedQueueRetainsParents=true batch16=true actorSlotsReused=true native=mock gpu=false\n";
 }
 static void terminalRetirementControls() {
+    {
+        StoppedGroupRetirementProgress value;value.step.phase=4;value.actor=1;value.actorsRemaining=1;
+        CHECK(validStoppedGroupRetirementProgress(value)); // This actor is empty; group is not.
+        for(unsigned mutation=0;mutation<7;++mutation) {
+            auto bad=value;
+            if(mutation==0) bad.actorsRemaining=9;
+            if(mutation==1) bad.reserved=1;
+            if(mutation==2) bad.actor=0;
+            if(mutation==3) { bad.actorsRemaining=0;bad.step.remaining=1;bad.step.phase=0; }
+            if(mutation==4) bad.step.attempted=17;
+            if(mutation==5) bad.step.version=2;
+            if(mutation==6) bad.step.remaining=1025;
+            CHECK(!validStoppedGroupRetirementProgress(bad));
+        }
+        value.actorsRemaining=8;CHECK(!validStoppedGroupRetirementProgress(value,4));
+    }
     for(unsigned scenario=0;scenario<4;++scenario) {
         NativeMock driver;cg::Runtime owner(driver);Control c{owner};
         c.control(cg::Operation::Initialize,encoded(cg::Initialization{GuestOpenGlDesktopReferenceCapacity,GuestCoordinatedReferenceObjects}));
@@ -217,9 +233,11 @@ static void terminalRetirementControls() {
         if(scenario==0) {
             const auto app=c.reg();c.control(cg::Operation::Disconnect,encoded(primary));
             CHECK(at<cg::Frame>(c.control(cg::Operation::RetireStoppedGroup)).status==-16 && !driver.presentationStops);
+            c.call(app,hello());c.call(app,inner(Op::BeginOpenGl,0,encoded(GuestOpenGlDesktopReferenceCapacity)));
+            c.call(app,inner(Op::OpenAdapter));c.call(app,inner(Op::CreateDevice,1));
             c.control(cg::Operation::Disconnect,encoded(app));
-            CHECK(at<cg::Frame>(c.control(cg::Operation::RetireStoppedGroup)).status==-16 && !driver.presentationStops);
-            CHECK(!at<cg::Frame>(c.control(cg::Operation::Release,encoded(app))).status);
+            driver.globalDevicePhase=true; // Primary adapter waits for the app device.
+
         } else if(scenario==1) {
             c.call(primary,inner(Op::BeginSyncSharing));c.call(primary,inner(Op::CreateDevice,1));
             const auto sync=at<Header>(c.call(primary,inner(Op::CreateSync,2,encoded(SyncDesc{5,NtSharedGpuSyncFlags,1,0,0}))),40);
@@ -242,24 +260,60 @@ static void terminalRetirementControls() {
         }
         const auto destroyedBefore=driver.destroyed;
         driver.requirePresentationStop=true;driver.liveReady=false;
-        auto progress=at<LiveRetirementProgress>(c.control(cg::Operation::RetireStoppedGroup),32);
-        CHECK(progress.flags==RetirementGpuBusy && !progress.attempted && driver.destroyed==destroyedBefore && driver.presentationStops==1);
+        auto progress=at<StoppedGroupRetirementProgress>(c.control(cg::Operation::RetireStoppedGroup),32);
+        CHECK(progress.step.flags==RetirementGpuBusy && !progress.step.attempted && driver.destroyed==destroyedBefore && driver.presentationStops==1);
         CHECK(at<cg::Frame>(c.control(cg::Operation::Register,encoded(cg::Registration{}))).status==-32);
         CHECK(at<cg::Frame>(c.control(cg::Operation::Alias,encoded(cg::Alias{}))).status==-32);
         driver.liveReady=true;driver.blockedHandle=*driver.live.rbegin();
-        progress=at<LiveRetirementProgress>(c.control(cg::Operation::RetireStoppedGroup),32);
-        CHECK(progress.remaining && progress.flags==RetirementNativeBusy && !driver.vmStopped);
+        progress=at<StoppedGroupRetirementProgress>(c.control(cg::Operation::RetireStoppedGroup),32);
+        CHECK(progress.step.remaining && progress.step.flags==RetirementNativeBusy && !driver.vmStopped);
         driver.blockedHandle=0;
         unsigned batches=0;
         do {
-            progress=at<LiveRetirementProgress>(c.control(cg::Operation::RetireStoppedGroup),32);++batches;
-            CHECK(validLiveRetirementProgress(progress) && progress.attempted<=16 && batches<=8);
-        } while(progress.remaining);
+            progress=at<StoppedGroupRetirementProgress>(c.control(cg::Operation::RetireStoppedGroup),32);++batches;
+            CHECK(validStoppedGroupRetirementProgress(progress) && progress.step.attempted<=16 && batches<=8);
+        } while(progress.actorsRemaining);
         CHECK(owner.actorCount()==0 && owner.objectCount()==0 && driver.live.empty() && driver.presentationStops==1 && !driver.vmStopped);
-        progress=at<LiveRetirementProgress>(c.control(cg::Operation::RetireStoppedGroup),32);
-        CHECK(!progress.remaining && !progress.attempted && driver.presentationStops==1);
+        progress=at<StoppedGroupRetirementProgress>(c.control(cg::Operation::RetireStoppedGroup),32);
+        CHECK(!progress.actorsRemaining && !progress.step.remaining && !progress.step.attempted && driver.presentationStops==1);
     }
-    std::cout<<"TERMINAL_GROUP_RETIREMENT stoppedActorsOnly=true referencesDrained=true presentationBeforeObjects=true failedDrainFatal=true sealed=true native=mock gpu=false\n";
+    {
+        NativeMock driver;driver.managedGpuMappings=true;
+        cg::Runtime owner(driver,8);Control c{owner};
+        const cg::ApplicationInitialization wanted{{GuestOpenGlMultiappCapacity,GuestCoordinatedMultiappObjects},8,0};
+        CHECK(!at<cg::Frame>(c.control(cg::Operation::Initialize,encoded(wanted))).status);
+        c.control(cg::Operation::BeginLiveRetirement,encoded(LiveRetirementProfile{}));
+        std::vector<std::uint64_t> actors{c.reg(cg::Role::Compositor)};
+        for(unsigned n=1;n<8;++n) actors.push_back(c.reg());
+        for(unsigned n=0;n<actors.size();++n) {
+            const auto id=actors[n];
+            if(n!=1) { // An empty secondary must not report the whole group finished.
+                c.call(id,hello());c.call(id,inner(Op::BeginOpenGl,0,encoded(GuestOpenGlMultiappCapacity)));
+                c.call(id,inner(Op::OpenAdapter));c.call(id,inner(Op::CreateDevice,1));
+                for(unsigned j=0;j<25;++j)
+                    CHECK(!at<Header>(c.call(id,inner(Op::ReserveGpuAddress,1,encoded(GpuReservationDesc{0,0,0,65536}))),40).status);
+            }
+            c.control(cg::Operation::Disconnect,encoded(id));
+        }
+        driver.requirePresentationStop=true;driver.globalDevicePhase=true;driver.liveReady=false;
+        std::set<std::uint64_t> visited;bool partialEmpty=false;unsigned steps=0;
+        for(unsigned n=0;n<8;++n) {
+            const auto result=at<StoppedGroupRetirementProgress>(c.control(cg::Operation::RetireStoppedGroup),32);
+            CHECK(validStoppedGroupRetirementProgress(result) && result.actorsRemaining==owner.actorCount());
+            CHECK(result.actorsRemaining && !result.step.attempted && !driver.destroyed);
+            visited.insert(result.actor);partialEmpty|=!result.step.remaining;
+        }
+        CHECK(visited.size()==8 && partialEmpty && owner.actorCount()==7 && driver.presentationStops==1);
+        driver.liveReady=true;
+        StoppedGroupRetirementProgress result;
+        do {
+            result=at<StoppedGroupRetirementProgress>(c.control(cg::Operation::RetireStoppedGroup),32);
+            CHECK(validStoppedGroupRetirementProgress(result) && result.actorsRemaining==owner.actorCount());
+            CHECK(++steps<100 && result.step.attempted<=16 && driver.presentationStops==1);
+        } while(result.actorsRemaining);
+        CHECK(!owner.objectCount() && driver.live.empty() && driver.devices.empty() && !driver.vmStopped);
+    }
+    std::cout<<"TERMINAL_GROUP_RETIREMENT stoppedActorsOnly=true referencesDrained=true presentationBeforeObjects=true failedDrainFatal=true sealed=true roundRobinActors=8 emptyActorNotGroupCompletion=true crossActorDependencies=true native=mock gpu=false\n";
 }
 static void applicationActorControls() {
     for(const auto limit:{0u,1u,5u,9u,UINT32_MAX}) {

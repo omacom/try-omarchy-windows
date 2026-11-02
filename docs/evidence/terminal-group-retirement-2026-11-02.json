@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "date": "2026-11-02",
+  "milestone": "terminal-group-retirement-scheduler",
+  "sourceSha256": {
+    "driver_coordinator_test.cpp": "987886781c3c27eeedad4860b5a8ea1dcd6e3800de8842fb6e647129864e812c",
+    "driver_coordinator.h": "ac6db19fcaccc9c686cb045fb8117dcc7c366f854ed7d27699fd6f47e9aec41e",
+    "driver_actor_router.h": "40a14c6cb85006131f229796740c64d8f91a74b1aa24fe83d47c7262be2a5249",
+    "driver_wire.h": "6e256f631348949ba49f8c2f3757cde416f8456f8bdf3029f2082afde6db0f98",
+    "actor_retirement.h": "9d100ca14204cbffc7d5ffe4dd1b7d6714606298134170453587793e93016e68",
+    "stream_profile.h": "b8fd35b87741283347b325cec773ca96b6383f8475fca7f354f7f1a35e6bd0a6",
+    "opengl_profile.h": "e70c5ce000921ee87c1af254d9faa40dce07113c5798cfdc52102750a39f5fa9",
+    "application_memory_profile.h": "b8c186ede089bb4fb339c3278b005fd6ccf34e5ed398facd3fa1d725afcd48b3",
+    "aggregate_gpu_budget.h": "c52f49e0f6bcc8de81856eb3fa345ac14c2a7614d3da9c683755a161cdf29c19",
+    "wire.h": "c53f29d0138d717edbb47d06338bcf053427b18273a38fb0464603aac91df72c",
+    "diagnostic_profile.h": "8fb6f1dfa80702fb1c6a3c2b0e47b3a9168e844275345972e540502b799631d1",
+    "gpu_state_ranges.h": "ad7926c7524984065ac5d7ef875ecc748c42ce18fe4638b6351ea00f3005c665",
+    "gpu_mapping_accounting.h": "a70a2fd22376ffd53ebbc60fbdb8a70235754c795f68adee2eb1dbef62948394",
+    "compositor_capture_wire.h": "7c7dcc72f056aa15c1d0a220b9ae6f3c0b8ceb33559b044849b4c89c7d17442c",
+    "guest_coordinator_test.cpp": "2793f46397b328549f8c55ea38e8280ce16c03e3bb411fcac66f2eb548547ca9",
+    "guest_coordinator.h": "2a82c8bf60a0b050a15b56d1fdec354e1f6cf12e4afc14a58dff584ec0ec8c00",
+    "guest_broker_server.h": "5a2784cb2ae05f1c4cacda5d5f9b77e64266e5b0947fff786bf3a99321761bad",
+    "guest_broker_views.h": "be288d68d0e9fb23b57f2f0f5ea85cdb884cba97613642ef681b4e2e0d4ef39d",
+    "guest_broker_client.h": "2c0d06998de6248ebe3e3ee2fa9eb4cc6f1ff6f339375f910623c9e7d48c69f9",
+    "guest_broker_peer.h": "f184dfcc82541893e5d1d2f9b8ef2c61c0676eb8d4c8a6646cd8cda35a963948",
+    "guest-kernel/wddm_aperture.h": "00af5456ef9a1bfb17da45de1cb88cadb1a474c5d676ece6bf3d85851733fc7a",
+    "guest_broker_objects.h": "23215a5451af1d1e0f05064e1c61847cb4c951440ebf3c3199f2e5b89b8bffba",
+    "guest_broker_receipts.h": "b67406386d14544a2bc47ef291961cb1b6eabc7a158cc0ba1e6e9140b8afb4fe",
+    "broker_residency_observation.h": "0a0d0d6c3950de49abd6a0eb011a567980ddd9226315491fd9f2fb9a9cf882f7",
+    "fair_rpc_mutex.h": "92f26002c4a3286eef1f64d8c87495bb94c60d7bdd140d6b0265b18d434df7ce",
+    "diagnostic_alias_refusal.h": "594dddecf8fc1391819f21362694b1147dcf42d148cc79c529d7382f5865ce5d",
+    "guest_graphics_broker.cpp": "64b4deb18218b44a3d528d61869ebbd8f6de8cfda8d5e32942b8126acdb01f9c",
+    "guest_primary_identity.h": "6256db18a20738fc5168d8ecc1136d7707cc37870adaac82fd23ec4301d8d55b",
+    "guest_broker_session.h": "931c8aaaa0d82bcb177ac983b6edcb875a1f9655dd0e48fd5641ed0a40827757",
+    "guest_broker_session_test.cpp": "b08acbaf4c38b8dac78a9f2ba35a432e0991fea7eaa8416a83a0697f69ecd860"
+  },
+  "sourceEncoding": "LF bytes frozen before compilation",
+  "coordinatorProtocolVersion": 5,
+  "pairedHostGuestUpgradeRequired": true,
+  "terminalReplyBytes": 48,
+  "perRpcNativeAttemptsAtMost": 16,
+  "guestWallBudgetSeconds": 8,
+  "guestStepLimit": 8224,
+  "cpuControls": {
+    "receiptSha256": "096d2b0e17975f4f2c3359be74cdeda617da09ca17efb7fc386e03c6fd4d8089",
+    "tests": [
+      {
+        "name": "driver_coordinator_test",
+        "exitCode": 0,
+        "binarySha256": "0e7df027ac59a75fccdcc1373cb7bd5961621032c5a207ea77d386baa357af03",
+        "logSha256": "e676b85f4bcd24d98f7251b66057a66b3339d59cc2cfa7cfb011695388465119"
+      },
+      {
+        "name": "guest_coordinator_test",
+        "exitCode": 0,
+        "binarySha256": "2dd7c74b2939529e0866e5ca9df4d3add20eb5274d42984f4835cbcbecda63ca",
+        "logSha256": "e8d0bf20dc7ea3c875060d532a886eb99cd74334698a98395264c109e2af3610"
+      },
+      {
+        "name": "guest_broker_session_test",
+        "exitCode": 0,
+        "binarySha256": "3ff04a23e1646abd1d66d5156a1f6bdca0b43356177f250b39d0c553c22b2d2a",
+        "logSha256": "cc6aa6680c8c862c72877bbe544ffb80bc3359b6836b046ede192db133a5bc80"
+      }
+    ],
+    "nativeGpuMocked": true,
+    "eightActorFairness": true,
+    "crossActorDependencies": true,
+    "emptyActorNotGroupCompletion": true,
+    "liveActorAndSharedReferenceRejection": true,
+    "presentationDrainBeforeNativeDestruction": true,
+    "failedPresentationDrainFatal": true,
+    "nativeBusyOwnershipRetained": true,
+    "sealedGroupRejectsRegistration": true,
+    "malformedGroupProgressRejected": true
+  },
+  "windowsBuilds": {
+    "default": {
+      "exitCode": 0,
+      "logSha256": "4a1cb1380e82858f536701223766875f62941f42f742e2eb9f8d76394254cd65",
+      "binarySha256": "fea46197d6d4897c132979e8486c1e1a1e561e73a26d59a889920a399583f30b"
+    },
+    "4k": {
+      "exitCode": 0,
+      "logSha256": "edaa7dc97d340ec76f334350c50f4ae0c51bfd99ea4776612d6c616b656b0936",
+      "binarySha256": "ed25c503b8a5058a5b984bb6f784557ca671d884e5de665efa1d9a3865ed7c96"
+    }
+  },
+  "windowsSourceManifestSha256": "658c55766ace7bc9303f5fa8705f4bf0adb0390b4f4a5800ad5fc863e549bb45",
+  "productionBrokerSha256": "dbd6b86a1acbba93bcb584dcbdba6658e98a9ee220bcb8ff091278ebb7fb6ae1",
+  "baselineReproductionReceiptSha256": "6cd68384391803bfaa91bc242734d1ffefdf45c9134d3e841e06752f23130d48",
+  "gpuIntegrationVerified": false,
+  "vmLaunched": false,
+  "hostInputSent": false,
+  "inputImplementationChanged": false,
+  "cleanupAccepted": false,
+  "completeOmarchySceneVerified": false,
+  "dailyUseAccepted": false,
+  "counts": {
+    "backend": "4/8",
+    "desktop": "0/4",
+    "diagnosticScene": "3/3"
+  }
+}

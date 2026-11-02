@@ -194,17 +194,17 @@ public:
         if(!liveRetirement) reject("Terminal group retirement not negotiated");
         const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(8);
         unsigned steps=0,destroyed=0;
-        driver_bridge::LiveRetirementProgress progress;
+        driver_bridge::StoppedGroupRetirementProgress progress;
         do {
-            progress=decode<driver_bridge::LiveRetirementProgress>(control(cg::Operation::RetireStoppedGroup));
-            if(!driver_bridge::validLiveRetirementProgress(progress)) reject("Terminal retirement progress mismatch");
-            ++steps;destroyed+=progress.destroyed;
-            if(!progress.remaining) {
+            progress=decode<driver_bridge::StoppedGroupRetirementProgress>(control(cg::Operation::RetireStoppedGroup));
+            if(!driver_bridge::validStoppedGroupRetirementProgress(progress,agreement.maxActors)) reject("Terminal retirement progress mismatch");
+            ++steps;destroyed+=progress.step.destroyed;
+            if(!progress.actorsRemaining) {
                 receipt("BROKER_COORDINATOR_PRIMARY_RETIRED destroyedWireObjects=%u steps=%u groupSealed=true\n",destroyed,steps);
                 return;
             }
             poll(nullptr,0,1);
-        } while(steps<512 && std::chrono::steady_clock::now()<deadline);
+        } while(steps<driver_bridge::MaxStoppedGroupSteps && std::chrono::steady_clock::now()<deadline);
         reject("Terminal group retirement did not finish within its bounded deadline");
     }
     driver_bridge::LiveRetirementProgress retireExited(std::uint64_t actor) {
