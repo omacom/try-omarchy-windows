@@ -24,11 +24,11 @@
 #ifndef WDDM_SESSION_ACTIVATION_SOCKET
 #define WDDM_SESSION_ACTIVATION_SOCKET "/run/omarchy-nvgpu/session.sock"
 #endif
-static const char* const keys[]={"LD_PRELOAD","LD_LIBRARY_PATH","D3D12_EXPERIMENTAL_NATIVE_SYNC",
-    "WDDM_BRIDGE_COMPOSITOR_SESSION","GALLIUM_DRIVER","LIBGL_DRIVERS_PATH","WDDM_BRIDGE_KERNEL_APERTURE",
+static const char* const keys[]={"LD_PRELOAD","LD_LIBRARY_PATH","D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE",
+    "D3D12_EXPERIMENTAL_NATIVE_BUFFERS","WDDM_BRIDGE_COMPOSITOR_SESSION","GALLIUM_DRIVER","LIBGL_DRIVERS_PATH","WDDM_BRIDGE_KERNEL_APERTURE",
     "WDDM_BRIDGE_RENDER_NODE","WDDM_BRIDGE_BROKER_SOCKET","WDDM_BRIDGE_LINUX_UMD_NAME",
     "AQ_EXPERIMENTAL_NATIVE_RENDER","WDDM_BRIDGE_NATIVE_INPUT","WDDM_BRIDGE_SESSION_SIZE",
-    "MESA_D3D12_DEFAULT_ADAPTER_NAME","WDDM_BRIDGE_ACTOR_PROFILE"};
+    "MESA_D3D12_DEFAULT_ADAPTER_NAME","WDDM_BRIDGE_ACTOR_PROFILE","GBM_BACKENDS_PATH"};
 struct environment { char data[16384];char* values[sizeof keys/sizeof keys[0]]; };
 static int owner_number(const char* text,unsigned actual) {
     if(!*text || *text=='0') return -1;
@@ -87,8 +87,8 @@ static int read_environment(struct environment* env) {
         }
         cursor=line+1;
     }
-    if(owner_fields!=7 || !env->values[0] || !env->values[1] || !env->values[2] || !env->values[3] ||
-       strcmp(env->values[2],"1") || strcmp(env->values[3],"1")) goto done;
+    if(owner_fields!=7 || !env->values[0] || !env->values[1] || !env->values[2] || !env->values[3] || !env->values[4] ||
+       strcmp(env->values[2],"true") || strcmp(env->values[3],"true") || strcmp(env->values[4],"1")) goto done;
     result=0;
 done:
     if(close(fd)) result=-1;

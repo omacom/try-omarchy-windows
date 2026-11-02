@@ -36,7 +36,7 @@ def run(output, compiler='cc'):
         if result.returncode:
             raise RuntimeError(f'Compile failed: {output}/compile-{index}.log')
     base = os.environ.copy()
-    for name in ('WDDM_BRIDGE_COMPOSITOR_SESSION','WDDM_BRIDGE_SESSION_SIZE','D3D12_EXPERIMENTAL_NATIVE_SYNC','AQ_EXPERIMENTAL_NATIVE_CAPTURE'):
+    for name in ('WDDM_BRIDGE_COMPOSITOR_SESSION','WDDM_BRIDGE_SESSION_SIZE','D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE','D3D12_EXPERIMENTAL_NATIVE_BUFFERS','AQ_EXPERIMENTAL_NATIVE_CAPTURE'):
         base.pop(name, None)
     base.update(LD_PRELOAD=str(test_library), SESSION_UNCHANGED='literal value with spaces')
     results = []
@@ -53,7 +53,7 @@ def run(output, compiler='cc'):
         if result.returncode != expected or (marker and marker not in result.stdout):
             raise AssertionError(f'{name}: expected {expected}, got {result.returncode}: {result.stdout}')
         results.append(dict(name=name, exit=result.returncode, gpuMock=True))
-    selected = dict(WDDM_BRIDGE_COMPOSITOR_SESSION='1', D3D12_EXPERIMENTAL_NATIVE_SYNC='1')
+    selected = dict(WDDM_BRIDGE_COMPOSITOR_SESSION='1', D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE='true',D3D12_EXPERIMENTAL_NATIVE_BUFFERS='true')
     # The installed start-hyprland watchdog probes --version-json before the
     # real compositor. Queries and rejected syntax must not claim its GPU role.
     query_sets=[['--version-json'],['--version'],['-v'],['--help'],['-h'],['--systeminfo'],['--verify-config'],
@@ -80,7 +80,10 @@ def run(output, compiler='cc'):
     control('production-path-is-exact', dict(selected, LD_PRELOAD=str(library)), 23, 'inactive argvPreserved=true')
     for bad in ('', '0', 'true', '01'):
         control('invalid-option-'+repr(bad).replace("'",''), dict(selected, WDDM_BRIDGE_COMPOSITOR_SESSION=bad),125)
-    control('missing-native-sync', dict(selected,D3D12_EXPERIMENTAL_NATIVE_SYNC=None),125)
+    control('missing-native-sync', dict(selected,D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE=None),125)
+    control('disabled-native-sync',dict(selected,D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE='false'),125)
+    control('missing-native-buffers',dict(selected,D3D12_EXPERIMENTAL_NATIVE_BUFFERS=None),125)
+    control('disabled-native-buffers',dict(selected,D3D12_EXPERIMENTAL_NATIVE_BUFFERS='false'),125)
     control('reject-cpu-capture',dict(selected,AQ_EXPERIMENTAL_NATIVE_CAPTURE='1'),125)
     control('unsupported-size',dict(selected,WDDM_BRIDGE_SESSION_SIZE='4096x2160'),125)
     for size in ('1920x1080','3840x2160'):
@@ -127,6 +130,34 @@ def run(output, compiler='cc'):
         assert log.startswith(prefix) and b'HYPRLAND_SESSION_BEGIN' in log and b'HYPRLAND_SESSION_RETURN' in log
         results.append(dict(name='existing-regular-log-preserved',exit=0,gpuMock=True,
                             parentDiagnosticFlagsUnchanged=True,existingLogPrefixPreserved=True))
+    # Real journald-style UNIX stream sockets cannot be reopened via /proc.
+    # Ordinary messages must arrive; full or closed peers must never block or
+    # raise SIGPIPE, and the inherited open-file flags must stay unchanged.
+    for socket_mode in ('readable','full','closed'):
+        reader,writer=socket.socketpair()
+        try:
+            filled=0
+            if socket_mode=='full':
+                writer.setblocking(False)
+                while filled<4*1024*1024:
+                    try:filled+=writer.send(b'x'*4096)
+                    except BlockingIOError:break
+                else:raise AssertionError('Could not fill actual diagnostic socket')
+                writer.setblocking(True)
+            if socket_mode=='closed':reader.close()
+            original_flags=fcntl.fcntl(writer.fileno(),fcntl.F_GETFL)
+            environment=base.copy();environment.update(selected,SESSION_TEST_CASE='queue_failure')
+            result=subprocess.run([str(executable),*ARGS],env=environment,stdout=subprocess.PIPE,
+                                  stderr=writer,text=True,timeout=5)
+            assert result.returncode==125 and 'fdBalanced=true' in result.stdout
+            assert fcntl.fcntl(writer.fileno(),fcntl.F_GETFL)==original_flags
+            if socket_mode=='readable':
+                reader.settimeout(2);received=reader.recv(4096)
+                assert b'HYPRLAND_SESSION_BEGIN' in received and b'HYPRLAND_SESSION_FAILURE' in received
+            results.append(dict(name='journal-socket-'+socket_mode,exit=result.returncode,gpuMock=True,
+                                parentDiagnosticFlagsUnchanged=True,backpressureBytes=filled))
+        finally:
+            reader.close();writer.close()
     receipt = dict(cpuControlsPassed=len(results), gpuMock=True, vmLaunched=False, inputSent=False,
                    persistentHardwareSessionVerified=False, dailyUseAccepted=False, controls=results,
                    sourceSha256={name:hashlib.sha256((frozen/name).read_bytes()).hexdigest() for name in ('hyprland_session.c','hyprland_session_invocation.h','hyprland_session_fixture.c','test_hyprland_session.py')},

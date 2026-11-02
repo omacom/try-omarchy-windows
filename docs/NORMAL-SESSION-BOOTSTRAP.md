@@ -1,10 +1,12 @@
 # Normal-session bootstrap candidate
 
-**November 2, 2026:** the owned host runtime can explicitly select the boot
-console, and a separate normal guest bootstrap compiles. A matched private image
-is assembled and its complete archive is verified. It has **not booted**; normal
-login, application graphics and the GPU handoff remain unverified. Counts stay
-**backend 4/8, desktop 0/4, scene 3/3**.
+**Original pre-boot snapshot, November 2, 2026:** the owned host runtime can
+explicitly select the boot console, and a separate normal guest bootstrap
+compiles. A matched private image is assembled and its complete archive is
+verified. Subsequent [actual normal-account boot attempts](NORMAL-SESSION-BOOT-ATTEMPTS.md)
+reach the official login and broker but reject the first persistent output.
+No normal GPU desktop frame passes. Counts stay **backend 4/8, desktop 0/4,
+scene 3/3**.
 
 ## Host selection
 

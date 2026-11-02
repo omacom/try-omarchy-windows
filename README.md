@@ -14,11 +14,12 @@ Normal launcher integration and a stable interactive desktop remain in developme
 
 ![Three GPU apps complete 1800 handoffs; backend 4/8; desktop product 0/4](https://raw.githubusercontent.com/7Wdev/try-omarchy-windows/windows-nvgpu-lab/docs/images/gpu-backend-progress-three-apps-2026-10-27.svg)
 
-**Normal bootstrap candidate — November 2, 2026:** explicit host selection and
-the separate guest bootstrap pass build/CPU controls. A matched private archive
-is assembled and fully checked; it has not booted. Normal login and GPU handoff
-remain unverified. Counts stay **4/8, 0/4, 3/3**.
-[Implementation and exact limits](docs/NORMAL-SESSION-BOOTSTRAP.md).
+**Normal-account boot attempts — November 2, 2026:** four inactive-desktop boots
+reach official provisioning, SDDM/PAM/UWSM and the authenticated broker. Runtime
+environment fixes reach a native 4K swapchain, but persistent output fails before
+the first presented frame. All four exit naturally with the observed cleanup
+checks passing; 132 CPU controls pass. Daily use remains unverified. Counts stay
+**4/8, 0/4, 3/3**. [Failures, fixes and exact limits](docs/NORMAL-SESSION-BOOT-ATTEMPTS.md).
 
 **Native renderer selection — November 2, 2026:** the normal session's factory
 adapter excludes boot VGA from desktop rendering. The complete library builds

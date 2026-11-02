@@ -83,10 +83,12 @@ def run(output,cc='cc'):
         config();umd.write_text('libcpu_mock.so\n');umd.chmod(0o644)
         base=os.environ.copy()
         for key in list(base):
-            if key.startswith(('WDDM_','SESSION_','ROOT_SERVICE_')) or key in ('LD_PRELOAD','LD_LIBRARY_PATH','NOTIFY_SOCKET'):base.pop(key)
+            if key.startswith(('WDDM_','SESSION_','ROOT_SERVICE_','D3D12_EXPERIMENTAL_')) or key in ('LD_PRELOAD','LD_LIBRARY_PATH','NOTIFY_SOCKET'):base.pop(key)
         base.update(SESSION_UNCHANGED='literal value with spaces',SESSION_TEST_CASE='roundtrip',SESSION_EXPECT_HOME='/home/custom-owner',HOME='/home/custom-owner',
                     SESSION_TEST_ARGUMENTS=''.join(arg+'\n' for arg in ARGS),SESSION_TEST_CLEAN_ENV='1',
-                    EGL_PLATFORM='wayland',WDDM_BRIDGE_PORT='forbidden',WDDM_BRIDGE_WINDOWS_WORKER='forbidden')
+                    EGL_PLATFORM='wayland',WDDM_BRIDGE_PORT='forbidden',WDDM_BRIDGE_WINDOWS_WORKER='forbidden',
+                    GBM_BACKENDS_PATH='/must-not-inherit',SESSION_EXPECT_GBM_BACKENDS_PATH='/opt/wddm-mesa/lib/gbm',
+                    D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE='false',D3D12_EXPERIMENTAL_NATIVE_BUFFERS='false',SESSION_EXPECT_D3D12_INTEROP='1')
         def spawn(binary,args=(),env=None,user=0,group=0,pass_fds=(),umask=-1):
             child=subprocess.Popen([str(binary),*args],env=env or base,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
                                     user=user,group=group,extra_groups=[],pass_fds=pass_fds,umask=umask)

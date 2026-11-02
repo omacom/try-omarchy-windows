@@ -92,6 +92,12 @@ int main(int argc,char** argv,char** environment) {
     }
     const char* expected_home=getenv("SESSION_EXPECT_HOME");
     if(expected_home) assert(getenv("HOME") && !strcmp(getenv("HOME"),expected_home));
+    const char* expected_gbm=getenv("SESSION_EXPECT_GBM_BACKENDS_PATH");
+    if(expected_gbm) assert(getenv("GBM_BACKENDS_PATH") && !strcmp(getenv("GBM_BACKENDS_PATH"),expected_gbm));
+    if(getenv("SESSION_EXPECT_D3D12_INTEROP")) {
+        assert(getenv("D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE") && !strcmp(getenv("D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE"),"true"));
+        assert(getenv("D3D12_EXPERIMENTAL_NATIVE_BUFFERS") && !strcmp(getenv("D3D12_EXPERIMENTAL_NATIVE_BUFFERS"),"true"));
+    }
     if(getenv("SESSION_TEST_CLEAN_ENV"))
         assert(!getenv("EGL_PLATFORM") && !getenv("WDDM_BRIDGE_PORT") && !getenv("WDDM_BRIDGE_WINDOWS_WORKER"));
     const char* expected=getenv("SESSION_TEST_ARGUMENTS");

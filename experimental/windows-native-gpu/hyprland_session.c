@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 #include "hyprland_session_invocation.h"
@@ -33,15 +34,21 @@ static void* (*create_sync)(void*,unsigned,const int*);
 static unsigned (*destroy_sync)(void*,void*);
 static int (*duplicate_sync)(void*,void*);
 
-// Reopen only our inherited diagnostic sink with a separate nonblocking file
-// description. Never change the parent's flags or wait for a full journal pipe.
+// Journald supplies a stream socket, which cannot be reopened through /proc.
+// Use per-send nonblocking flags there; reopen pipes/files with a separate file
+// description. Never change the parent's flags or wait for a full sink.
 static void session_diagnostic(const char* line,int bytes) {
     const int saved=errno;
     if(bytes>0 && bytes<256) {
-        const int fd=open("/proc/self/fd/2",O_WRONLY|O_CLOEXEC|O_NONBLOCK|O_NOCTTY|O_APPEND);
-        if(fd>=0) {
-            const ssize_t ignored=write(fd,line,(size_t)bytes);(void)ignored;
-            const int closed=close(fd);(void)closed;
+        int type=0;socklen_t size=sizeof type;
+        if(!getsockopt(STDERR_FILENO,SOL_SOCKET,SO_TYPE,&type,&size) && size==sizeof type) {
+            const ssize_t ignored=send(STDERR_FILENO,line,(size_t)bytes,MSG_DONTWAIT|MSG_NOSIGNAL);(void)ignored;
+        } else {
+            const int fd=open("/proc/self/fd/2",O_WRONLY|O_CLOEXEC|O_NONBLOCK|O_NOCTTY|O_APPEND);
+            if(fd>=0) {
+                const ssize_t ignored=write(fd,line,(size_t)bytes);(void)ignored;
+                const int closed=close(fd);(void)closed;
+            }
         }
     }
     errno=saved;
@@ -144,8 +151,9 @@ static int session_main(int argc,char** argv,char** environment) {
         session_width=3840;session_height=2160;
     }
     if(getenv("AQ_EXPERIMENTAL_NATIVE_CAPTURE")) return 125;
-    const char* sync=getenv("D3D12_EXPERIMENTAL_NATIVE_SYNC");
-    if(!sync || strcmp(sync,"1")) return 125;
+    const char* sync=getenv("D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE");
+    const char* buffers=getenv("D3D12_EXPERIMENTAL_NATIVE_BUFFERS");
+    if(!sync || strcmp(sync,"true") || !buffers || strcmp(buffers,"true")) return 125;
     int (*begin)(void)=(int (*)(void))dlsym(RTLD_DEFAULT,"wddm_bridge_begin_opengl_multiapp_render");
     native_info=(int (*)(int,uint64_t*))dlsym(RTLD_DEFAULT,"wddm_bridge_native_buffer_info");
     native_queue=(int (*)(int,int,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint64_t*))

@@ -56,14 +56,16 @@ def run(output,cc='cc'):
             if result.returncode:raise RuntimeError(f'Compile failed: {output}/compile-{index}.log')
         base=os.environ.copy()
         for name in list(base):
-            if name.startswith(('WDDM_','SESSION_TEST_')) or name in ('LD_PRELOAD','LD_LIBRARY_PATH','D3D12_EXPERIMENTAL_NATIVE_SYNC'):
+            if name.startswith(('WDDM_','SESSION_TEST_','D3D12_EXPERIMENTAL_')) or name in ('LD_PRELOAD','LD_LIBRARY_PATH'):
                 base.pop(name)
         base.update(SESSION_UNCHANGED='literal value with spaces',SESSION_TEST_CASE='roundtrip',
                     SESSION_EXPECT_HOME='/home/custom-owner',HOME='/home/custom-owner',EGL_PLATFORM='wayland',
                     WDDM_BRIDGE_PORT='/must-not-inherit',WDDM_BRIDGE_WINDOWS_WORKER='must-not-inherit',SESSION_TEST_CLEAN_ENV='1')
         normal=('WDDM_SESSION_VERSION=1\n'+f'WDDM_SESSION_UID={UID}\nWDDM_SESSION_GID={GID}\n'+
                 f'LD_PRELOAD="{hook}"\nLD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu"\n'+
-                'D3D12_EXPERIMENTAL_NATIVE_SYNC="1"\nWDDM_BRIDGE_COMPOSITOR_SESSION="1"\nWDDM_BRIDGE_SESSION_SIZE="3840x2160"\n')
+                'D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE="true"\nD3D12_EXPERIMENTAL_NATIVE_BUFFERS="true"\n'+
+                'WDDM_BRIDGE_COMPOSITOR_SESSION="1"\nWDDM_BRIDGE_SESSION_SIZE="3840x2160"\n'+
+                'GBM_BACKENDS_PATH="/opt/wddm-mesa/lib/gbm"\n')
         def write_config(data=normal,mode=0o644,owner=0):
             if config.is_symlink() or config.exists():config.unlink()
             config.write_bytes(data.encode() if isinstance(data,str) else data)
@@ -78,6 +80,9 @@ def run(output,cc='cc'):
             if query:
                 env.update(LD_PRELOAD=str(hook),WDDM_BRIDGE_COMPOSITOR_SESSION='1',SESSION_TEST_QUERY='1')
                 env.pop('SESSION_TEST_CLEAN_ENV',None)
+            else:
+                env.update(GBM_BACKENDS_PATH='/must-not-inherit',SESSION_EXPECT_GBM_BACKENDS_PATH='/opt/wddm-mesa/lib/gbm',
+                           D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE='false',D3D12_EXPERIMENTAL_NATIVE_BUFFERS='false',SESSION_EXPECT_D3D12_INTEROP='1')
             return env
         def spawn(binary,arguments,env=None,pass_fds=(),root=False,groups=()):
             child=subprocess.Popen([str(binary),*arguments],env=env or base,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
@@ -141,11 +146,15 @@ def run(output,cc='cc'):
             'missing-owner':normal.replace(f'WDDM_SESSION_UID={UID}\n',''),
             'duplicate-version':normal+'WDDM_SESSION_VERSION=1\n',
             'duplicate-variable':normal+'LD_LIBRARY_PATH="/tmp"\n',
+            'duplicate-gbm-backend-path':normal+'GBM_BACKENDS_PATH="/tmp"\n',
             'reject-home-override':normal+'HOME="/root"\n',
             'reject-unknown-variable':normal+'ARBITRARY="value"\n',
             'missing-newline':normal.rstrip('\n'),
             'embedded-null':normal.encode()+b'\0\n',
-            'wrong-native-sync':normal.replace('NATIVE_SYNC="1"','NATIVE_SYNC="0"'),
+            'wrong-native-sync':normal.replace('NATIVE_SYNC_FILE="true"','NATIVE_SYNC_FILE="false"'),
+            'missing-native-sync':normal.replace('D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE="true"\n',''),
+            'wrong-native-buffers':normal.replace('NATIVE_BUFFERS="true"','NATIVE_BUFFERS="false"'),
+            'missing-native-buffers':normal.replace('D3D12_EXPERIMENTAL_NATIVE_BUFFERS="true"\n',''),
             'wrong-session-selection':normal.replace('COMPOSITOR_SESSION="1"','COMPOSITOR_SESSION="0"'),
             'wrong-version':normal.replace('VERSION=1','VERSION=2'),
             'control-character':normal.replace('/usr/lib/x86_64-linux-gnu','/usr/lib/\x1f'),

@@ -1,5 +1,11 @@
 # Daily-use readiness
 
+**Normal-account boot follow-up, November 2:** official provisioning and the
+SDDM/PAM/UWSM broker path now execute in four inactive-desktop tests. Environment
+corrections reach a native 4K swapchain, but the first persistent output fails.
+No normal desktop frame or daily-use acceptance is established. Counts remain
+**4/8, 0/4, 3/3**. [Retained failures, fixes and cleanup observations](NORMAL-SESSION-BOOT-ATTEMPTS.md).
+
 **Root activation, November 2:** the service now authenticates and registers the
 configured compositor and passes CPU lifecycle controls. Guest bundling, normal
 GPU boot, sustained use and recovery remain unverified; acceptance stays **0/4**.

@@ -83,8 +83,10 @@ static int write_environment(struct wddm_root_runtime* runtime) {
     char data[4096];const int length=snprintf(data,sizeof data,
         "WDDM_SESSION_VERSION=1\nWDDM_SESSION_UID=%u\nWDDM_SESSION_GID=%u\n"
         "LD_PRELOAD=\"%s\"\nLD_LIBRARY_PATH=\"/opt/wddm-mesa/lib:/usr/lib/wsl/lib:/usr/lib/x86_64-linux-gnu\"\n"
-        "D3D12_EXPERIMENTAL_NATIVE_SYNC=\"1\"\nWDDM_BRIDGE_COMPOSITOR_SESSION=\"1\"\n"
+        "D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE=\"true\"\nD3D12_EXPERIMENTAL_NATIVE_BUFFERS=\"true\"\n"
+        "WDDM_BRIDGE_COMPOSITOR_SESSION=\"1\"\n"
         "GALLIUM_DRIVER=\"d3d12\"\nLIBGL_DRIVERS_PATH=\"/opt/wddm-mesa/lib/dri\"\n"
+        "GBM_BACKENDS_PATH=\"/opt/wddm-mesa/lib/gbm\"\n"
         "WDDM_BRIDGE_KERNEL_APERTURE=\"1\"\nWDDM_BRIDGE_RENDER_NODE=\"%s\"\n"
         "WDDM_BRIDGE_BROKER_SOCKET=\"%s/graphics.sock\"\nWDDM_BRIDGE_LINUX_UMD_NAME=\"%s\"\n"
         "AQ_EXPERIMENTAL_NATIVE_RENDER=\"1\"\nWDDM_BRIDGE_NATIVE_INPUT=\"1\"\n"
