@@ -3,7 +3,9 @@
 **November 2, 2026:** an explicit graphics-only boot-console mode is implemented.
 CPU ownership, queued-redraw and real-launcher argument controls pass, as do both
 strict Windows host builds. A rebuilt QEMU now passes seven stopped, windowless
-console controls locally. The actual GPU transition still requires validation.
+console controls locally. A subsequent normal session now submits its first
+61 GPU frames across the transition; the captured scene is incomplete and
+shutdown fails. [Actual transition and tested limits](NORMAL-SESSION-FIRST-GPU-FRAMES.md).
 Counts remain **backend 4/8, desktop 0/4, scene 3/3**.
 
 ## Why this is needed

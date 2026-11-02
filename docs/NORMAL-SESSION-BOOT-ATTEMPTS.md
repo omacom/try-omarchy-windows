@@ -1,10 +1,15 @@
 # Normal-account GPU boot attempts
 
-**November 2, 2026:** four background boots reach official provisioning, SDDM,
+**First four attempts, November 2, 2026:** four background boots reach official provisioning, SDDM,
 PAM, UWSM and the authenticated compositor broker. The corrected runtime creates
 a native **3840×2160 swapchain**, but the first persistent output submission
 fails before a frame reaches Windows. **No normal desktop frame passes.** Counts
 remain **backend 4/8, desktop 0/4, diagnostic scene 3/3**.
+
+Later [normal-session GPU transport tests](NORMAL-SESSION-FIRST-GPU-FRAMES.md)
+submit 61 native 4K frames after correcting these startup failures. Their capture
+contains only background/cursor and their shutdown fails; full desktop and
+cleanup acceptance remain open.
 
 ## Actual boot path
 

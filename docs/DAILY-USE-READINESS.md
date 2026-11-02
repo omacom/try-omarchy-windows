@@ -1,5 +1,11 @@
 # Daily-use readiness
 
+**Normal GPU transport follow-up, November 2:** the real account/session submits
+61 native 4K frames after the boot-console transition. The screencopy contains
+only background/cursor; shutdown fails before SDL detach completes. Full scene,
+cleanup/recovery and daily-use acceptance remain open. Counts stay **4/8, 0/4,
+3/3**. [Exact observations and retained failures](NORMAL-SESSION-FIRST-GPU-FRAMES.md).
+
 **Normal-account boot follow-up, November 2:** official provisioning and the
 SDDM/PAM/UWSM broker path now execute in four inactive-desktop tests. Environment
 corrections reach a native 4K swapchain, but the first persistent output fails.

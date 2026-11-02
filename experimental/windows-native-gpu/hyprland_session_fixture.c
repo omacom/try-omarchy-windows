@@ -16,7 +16,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-static unsigned begins,created,destroyed,flushed,queued,attempts;
+static unsigned begins,created,destroyed,flushed,queued,attempts,display_queries;
 static int held_fence=-1,duplicate_fd=-1;
 static const char* scenario;
 static volatile sig_atomic_t shutdown_requests;
@@ -32,9 +32,14 @@ int wddm_bridge_begin_opengl_multiapp_render(void) {
 }
 int wddm_bridge_native_buffer_info(int fd,uint64_t* bytes) {
     struct stat st;if(fstat(fd,&st)) return -1;
-    *bytes=(uint64_t)st.st_size+(is_case("wrong_bytes")?1:0);return 0;
+    *bytes=(uint64_t)st.st_size+((is_case("wrong_bytes") || is_case("startup_wrong_bytes"))?1:0);return 0;
 }
-void* eglGetCurrentDisplay(void) { return is_case("no_display")?NULL:(void*)(uintptr_t)1; }
+void* eglGetCurrentDisplay(void) {
+    ++display_queries;
+    return is_case("no_display") || is_case("startup_wrong_bytes") ||
+        (is_case("startup_no_display") && display_queries==1) ||
+        (is_case("late_no_display") && display_queries>1) ? NULL : (void*)(uintptr_t)1;
+}
 static void* mock_create(void* display,unsigned type,const int* attrs) {
     assert(display==(void*)(uintptr_t)1 && type==0x3144 && !attrs && held_fence<0);
     if(is_case("create_failure")) return NULL;
@@ -139,12 +144,22 @@ int main(int argc,char** argv,char** environment) {
     const int buffer=memfd_create("cpu-only-compositor-buffer",MFD_CLOEXEC);assert(buffer>=0);
     assert(!ftruncate(buffer,(off_t)width*height*4));
     if(is_case("fd_zero")) { assert(!close(0));--before; }
-    const int expect_failure=!(is_case("roundtrip") || is_case("retry") || is_case("main_failure") || is_case("fd_zero") || is_case("reentrant"));
+    const int expect_failure=!(is_case("roundtrip") || is_case("startup_no_display") || is_case("retry") || is_case("main_failure") || is_case("fd_zero") || is_case("reentrant"));
     if(expect_failure) {
         struct sigaction action={0};action.sa_handler=mock_shutdown;sigemptyset(&action.sa_mask);
         assert(!sigaction(SIGTERM,&action,NULL));
     }
-    const unsigned frames=is_case("roundtrip")?10000:1;
+    if(is_case("startup_no_display") || is_case("no_display")) {
+        assert(!commit(buffer,width,height,0x34325241u,width*4,0));
+        assert(!queued && !attempts && !created && !destroyed && held_fence<0 && !shutdown_requests);
+        assert(fd_count()==before+1);
+        puts("SESSION_STARTUP_BUFFER_CONTROL nativeQueueCalls=0 fencesCreated=0 renderedFrames=0");
+    }
+    if(is_case("late_no_display")) {
+        assert(!commit(buffer,width,height,0x34325241u,width*4,0));
+        assert(queued==1 && created==destroyed && held_fence<0 && !shutdown_requests);
+    }
+    const unsigned frames=(is_case("roundtrip") || is_case("startup_no_display"))?10000:1;
     for(unsigned n=0;n<frames;++n) {
         int fd=buffer;
         uint32_t w=width,h=height,format=0x34325241u,stride=w*4;
@@ -157,6 +172,7 @@ int main(int argc,char** argv,char** environment) {
         assert(expect_failure?result==-1:result==0);
         if(is_case("deadline")) assert(errno==ETIMEDOUT);
         if(is_case("wrong_sequence")) assert(errno==EPROTO);
+        if(is_case("startup_wrong_bytes")) assert(!display_queries && !attempts && !created);
         assert(created==destroyed && held_fence<0);
         if(duplicate_fd>=0) assert(fcntl(duplicate_fd,F_GETFD)<0 && errno==EBADF);
     }

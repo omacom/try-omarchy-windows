@@ -4,8 +4,9 @@
 explicitly select the boot console, and a separate normal guest bootstrap
 compiles. A matched private image is assembled and its complete archive is
 verified. Subsequent [actual normal-account boot attempts](NORMAL-SESSION-BOOT-ATTEMPTS.md)
-reach the official login and broker but reject the first persistent output.
-No normal GPU desktop frame passes. Counts stay **backend 4/8, desktop 0/4,
+reach the official login and broker. Later [frame-transport tests](NORMAL-SESSION-FIRST-GPU-FRAMES.md)
+submit 61 native 4K frames, with an incomplete scene and failed shutdown.
+No complete normal desktop passes. Counts stay **backend 4/8, desktop 0/4,
 scene 3/3**.
 
 ## Host selection

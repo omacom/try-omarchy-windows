@@ -25,6 +25,7 @@ static _Atomic int session_active,session_failed;
 static atomic_flag committing=ATOMIC_FLAG_INIT;
 static uint32_t session_width=1920,session_height=1080,session_format;
 static uint64_t session_frames;
+static unsigned startup_buffer_deferred;
 static int (*native_info)(int,uint64_t*);
 static int (*native_queue)(int,int,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint64_t*);
 static void* (*current_display)(void);
@@ -53,10 +54,10 @@ static void session_diagnostic(const char* line,int bytes) {
     }
     errno=saved;
 }
-static int fail_session(int error) {
+static int fail_session(int error,const char* stage) {
     if(!atomic_exchange(&session_failed,1)) {
         char line[256];
-        const int bytes=snprintf(line,sizeof line,"HYPRLAND_SESSION_FAILURE errno=%d softwareFallback=false\n",error);
+        const int bytes=snprintf(line,sizeof line,"HYPRLAND_SESSION_FAILURE errno=%d softwareFallback=false stage=%s\n",error,stage);
         session_diagnostic(line,bytes);
         // Hyprland owns its SIGTERM event source. Request ordinary shutdown
         // only after our duplicated fence and EGL sync have been released.
@@ -82,13 +83,18 @@ int wddm_bridge_compositor_commit(int buffer_fd,uint32_t width,uint32_t height,
     if(atomic_load(&session_failed)) { errno=EIO;return -1; }
     if(atomic_flag_test_and_set(&committing)) { errno=EBUSY;return -1; }
     int result=-1,error=EINVAL,fence_fd=-1;void* display=NULL;void* fence=NULL;
+    const char* stage="buffer-layout";
     uint64_t bytes=0,frame=0;
     if(buffer_fd<0 || width!=session_width || height!=session_height || stride!=width*4 ||
        (format!=0x34325241u && format!=0x34325258u && format!=0x34324241u && format!=0x34324258u) ||
        (session_format && format!=session_format)) goto done;
+    stage="frame-sequence";
     if(session_frames>=UINT64_MAX-1) { error=EOVERFLOW;goto done; }
+    stage="buffer-info";
     if(native_info(buffer_fd,&bytes)) { error=errno?errno:EIO;goto done; }
+    stage="buffer-bytes";
     if(bytes!=(uint64_t)stride*height) goto done;
+    stage="egl-entry-points";
     if(!current_display) {
         current_display=(void* (*)(void))dlsym(RTLD_DEFAULT,"eglGetCurrentDisplay");
         get_proc=(void* (*)(const char*))dlsym(RTLD_DEFAULT,"eglGetProcAddress");
@@ -99,17 +105,33 @@ int wddm_bridge_compositor_commit(int buffer_fd,uint32_t width,uint32_t height,
         duplicate_sync=(int (*)(void*,void*))get_proc("eglDupNativeFenceFDANDROID");
     }
     if(!create_sync || !destroy_sync || !duplicate_sync) { error=ENOSYS;goto done; }
+    stage="egl-current-display";
     display=current_display();
-    if(!display) { error=ENODEV;goto done; }
+    if(!display) {
+        // Hyprland commits its initial output buffer before making its render
+        // context current. Consume only that validated startup state; it has no
+        // rendered content/fence and must never reach the Windows frame queue.
+        if(!session_frames && !startup_buffer_deferred) {
+            startup_buffer_deferred=1;
+            static const char line[]="HYPRLAND_SESSION_STARTUP_BUFFER deferred=true reason=no-current-egl-display nativeBufferValidated=true renderedFrame=false\n";
+            session_diagnostic(line,(int)sizeof line-1);
+            result=0;error=0;goto done;
+        }
+        error=ENODEV;goto done;
+    }
+    stage="egl-create-sync";
     fence=create_sync(display,0x3144,NULL);
     if(!fence) { error=EIO;goto done; }
     flush_commands();
+    stage="egl-duplicate-sync";
     fence_fd=duplicate_sync(display,fence);
     if(fence_fd<0) { error=errno?errno:EIO;goto done; }
+    stage="queue-clock";
     const uint64_t start=monotonic_ns();
     if(!start || start>UINT64_MAX-5000000000ull) { error=EIO;goto done; }
     const uint64_t deadline=start+5000000000ull;
     for(;;) {
+        stage="native-queue";
         // Zero flags: no audit readback, finite-frame sentinel or END command.
         result=native_queue(buffer_fd,fence_fd,width,height,format,stride,0,&frame);
         if(!result) break;
@@ -124,13 +146,14 @@ int wddm_bridge_compositor_commit(int buffer_fd,uint32_t width,uint32_t height,
         if(!after_sleep || after_sleep<now) { error=EIO;goto done; }
         if(after_sleep>=deadline) { error=ETIMEDOUT;goto done; }
     }
+    stage="queue-sequence";
     if(frame!=session_frames+1) { result=-1;error=EPROTO;goto done; }
     session_frames=frame;session_format=format;
     error=0;
 done:
-    if(fence_fd>=0 && close(fence_fd)) { if(!error) error=errno?errno:EIO;result=-1; }
-    if(fence && !destroy_sync(display,fence)) { if(!error) error=EIO;result=-1; }
-    if(error) result=fail_session(error);
+    if(fence_fd>=0 && close(fence_fd)) { if(!error) { error=errno?errno:EIO;stage="close-fence-fd"; }result=-1; }
+    if(fence && !destroy_sync(display,fence)) { if(!error) { error=EIO;stage="destroy-egl-sync"; }result=-1; }
+    if(error) result=fail_session(error,stage);
     atomic_flag_clear(&committing);
     return result;
 }

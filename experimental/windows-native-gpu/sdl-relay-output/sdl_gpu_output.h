@@ -103,7 +103,9 @@ public:
             event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
             if(!event) throw std::runtime_error("Cannot create SDL retirement event");
             const auto state=control->command("attach:1");
-            validateState(*control,state,0,0,true);opened=true;
+            // A successful attach command owns imported objects even when its
+            // state reply is rejected. Keep them tracked for ordered teardown.
+            opened=true;validateState(*control,state,0,0,true);
             closeExports();
             std::cerr<<"{\"nativeSdlCompositorOpened\":true,\"session\":\""<<control->session
                 <<"\",\"adapterLuid\":\""<<control->adapterLuid<<"\",\"width\":3840,\"height\":2160,\"format\":\"BGRA8\""

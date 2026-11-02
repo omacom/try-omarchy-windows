@@ -88,10 +88,17 @@ def run(output, compiler='cc'):
     control('unsupported-size',dict(selected,WDDM_BRIDGE_SESSION_SIZE='4096x2160'),125)
     for size in ('1920x1080','3840x2160'):
         control('rolling-'+size,dict(selected,WDDM_BRIDGE_SESSION_SIZE=size,SESSION_TEST_CASE='roundtrip'),0,'frames=10000 attempts=10000 fdBalanced=true')
-    for scenario in ('retry','fd_zero','reentrant','main_failure','wrong_bytes','no_display','create_failure','duplicate_failure',
+    for scenario in ('retry','fd_zero','reentrant','main_failure','wrong_bytes','no_display','startup_no_display','late_no_display','startup_wrong_bytes','create_failure','duplicate_failure',
                      'destroy_failure','no_egl_entry','queue_failure','wrong_sequence','invalid_fd','wrong_size','wrong_stride','wrong_format','deadline'):
-        expected = 0 if scenario in ('retry','fd_zero','reentrant') else 37 if scenario=='main_failure' else 125
+        expected = 0 if scenario in ('retry','fd_zero','reentrant','startup_no_display') else 37 if scenario=='main_failure' else 125
         control(scenario,dict(selected,SESSION_TEST_CASE=scenario),expected,'fdBalanced=true')
+        failure_stages={'wrong_bytes':'buffer-bytes','startup_wrong_bytes':'buffer-bytes','no_display':'egl-current-display','late_no_display':'egl-current-display','no_egl_entry':'egl-entry-points',
+                        'create_failure':'egl-create-sync','duplicate_failure':'egl-duplicate-sync',
+                        'queue_failure':'native-queue','wrong_sequence':'queue-sequence','destroy_failure':'destroy-egl-sync'}
+        if scenario in failure_stages:
+            assert 'stage='+failure_stages[scenario] in (output/(scenario+'.log')).read_text()
+        if scenario in ('startup_no_display','no_display'):
+            assert 'nativeQueueCalls=0 fencesCreated=0 renderedFrames=0' in (output/(scenario+'.log')).read_text()
     control('begin_failure',dict(selected,SESSION_TEST_CASE='begin_failure'),125)
     # A real full pipe with a BLOCKING inherited writer must not hang either
     # startup, failure, or return diagnostics. The original flags stay unchanged.

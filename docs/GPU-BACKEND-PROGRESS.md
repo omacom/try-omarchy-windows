@@ -8,12 +8,12 @@ graphics runtime.
 
 ## What is verified now?
 
-**Normal-account boot attempts — November 2, 2026:** four inactive-desktop boots
-reach official provisioning, SDDM/PAM/UWSM and the authenticated broker. Runtime
-environment fixes reach a native 4K swapchain, but persistent output fails before
-the first presented frame. All four exit naturally with the observed cleanup
-checks passing; 132 CPU controls pass. Daily use remains unverified. Counts stay
-**4/8, 0/4, 3/3**. [Failures, fixes and exact limits](NORMAL-SESSION-BOOT-ATTEMPTS.md).
+**Normal-session frame transport — November 2, 2026:** the provisioned-account
+session completes 61 native 4K GPU handoffs through the boot-console transition.
+The actual capture contains only background/cursor, and shutdown fails. Full
+wallpaper/application scenes and daily use remain unverified. Both strict host
+builds and 135 CPU controls pass. Counts stay **4/8, 0/4, 3/3**.
+[Actual capture, fixes and retained failures](NORMAL-SESSION-FIRST-GPU-FRAMES.md).
 
 **Native renderer selection — November 2, 2026:** the normal session's factory
 adapter excludes boot VGA from desktop rendering. The complete library builds

@@ -199,6 +199,7 @@ public:
         if(enableSdl) {
             sdlGraphics=std::make_shared<driver_sdl::Control>();sdlGraphics->session=name.substr(5);
             sdlGraphics->adapterLuid=nvidiaLuid();
+            sdlGraphics->bootConsole=bootDisplay==driver_qemu_args::BootDisplay::StandardVga;
         }
         Handle source, log, input;
         if (!DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(), &source.value,
