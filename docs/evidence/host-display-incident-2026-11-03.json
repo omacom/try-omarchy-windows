@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "date": "2026-11-03",
+  "userReportedWholeHostDisplayCorruption": true,
+  "userReportedExtremeBrightness": true,
+  "userConfirmedProblemPersists": true,
+  "hostRecoveryVerified": false,
+  "readOnlyInventoryUtc": "2026-11-03T16:35:37Z",
+  "ownedGpuTestProcessesFound": false,
+  "previousRunReceiptUtc": "2026-11-03T16:10:04Z",
+  "nvidiaEvents": [
+    {
+      "utc": "2026-11-03T16:33:48.5393773Z",
+      "id": 153,
+      "provider": "nvlddmkm",
+      "operation": "UCodeReset TDR"
+    },
+    {
+      "utc": "2026-11-03T16:33:48.9404491Z",
+      "id": 153,
+      "provider": "nvlddmkm",
+      "operation": "Resetting TDR"
+    },
+    {
+      "utc": "2026-11-03T16:33:51.6739940Z",
+      "id": 153,
+      "provider": "nvlddmkm",
+      "operation": "Reset TDR"
+    },
+    {
+      "utc": "2026-11-03T16:33:51.7000309Z",
+      "id": 153,
+      "provider": "nvlddmkm",
+      "operation": "Restarting TDR"
+    }
+  ],
+  "testCausationEstablished": false,
+  "testCausationExcluded": false,
+  "inactiveDesktopIsolatesPhysicalGpuDriver": false,
+  "unchangedDriverFilesProveHealthyDriverState": false,
+  "newGpuWorkloadsLaunchedAfterReport": false,
+  "agentPerformedHostInputOrDisplayChanges": false,
+  "agentPerformedDriverResetOrReboot": false,
+  "rawEventRecordsPublished": false,
+  "hardwareTestingOnThisHostOnHold": true,
+  "allowedContinuation": "source work and verified offline CPU-only checks",
+  "dailyUseAccepted": false,
+  "releaseBlocked": true,
+  "counts": {
+    "backend": "4/8",
+    "desktop": "0/4",
+    "diagnosticScene": "3/3"
+  },
+  "privateRawEventRecordSha256": "4f8e2434529f1be9f9c90d9d2f7e48b33a6d52346d27521e09cee3a96f65ba80"
+}

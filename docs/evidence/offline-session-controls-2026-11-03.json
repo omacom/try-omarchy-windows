@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "date": "2026-11-03",
+  "gpuUsed": false,
+  "vmLaunched": false,
+  "hostInputSent": false,
+  "displayOrDriverChanged": false,
+  "qmp": {
+    "strictFullBuilds": {
+      "default": {
+        "exitCode": 0,
+        "logSha256": "7ac900d040f26ed5061a82882ce43fb30218f98e9f068437aff81ca8d6530387",
+        "binarySha256": "89136d7d9781ca7f79c6d65dbc399be515b65c002386b7b442c190859bb6db5d"
+      },
+      "4k": {
+        "exitCode": 0,
+        "logSha256": "24b11d4f606b8e20dba6db5ffb17e315e3f7518da972f1403f7875a6561dfb83",
+        "binarySha256": "46507b54a10fc1649a1d8a5e148e917d5ef4639c9a6e03ddf8be3528558a7726"
+      }
+    },
+    "frozenCompileInputs": 576,
+    "compileInputsMatchedCurrentSource": true,
+    "cpuControls": [
+      "expired deadline",
+      "connected quiet peer deadline",
+      "write readiness",
+      "read readiness",
+      "invalid socket Winsock error",
+      "orderly EOF preserved"
+    ],
+    "deadlinesChanged": false,
+    "ownershipChecksChanged": false
+  },
+  "scene": {
+    "syntheticUnitTests": 12,
+    "privateSavedCapturesRejected": 10,
+    "run9Captures": 1,
+    "run10Captures": 9,
+    "mappedTerminalAndPingWithCrashReportersRejected": true,
+    "visualInspectionStillRequired": true,
+    "healthyDesktopAccepted": false,
+    "hostDriverStabilityAccepted": false,
+    "dailyUseAccepted": false
+  },
+  "normalizedLfSourceSha256": {
+    "experimental/windows-native-gpu/qmp_socket_wait.h": "867566a21d03d734d0e07554e81c9a4348771bda40311915bc9645f41af41a89",
+    "experimental/windows-native-gpu/qmp_socket_wait_test.cpp": "9f04e62642831a3eca11af7339e2c2a1348cbdd9a011200108cad647be3e1770",
+    "experimental/windows-native-gpu/qemu_runtime_host.h": "0b7ad8f745d21e57f863c5b9312e719de6e46ec3d0811b9f69f905f4e5344af1",
+    "experimental/windows-native-gpu/build.ps1": "6c338522e3295929f0271ade3cf3e17959c659212facc113a5fd83e07986ecf3",
+    "experimental/windows-native-gpu/normal_scene_gate.py": "0833702b7cef7af0189299877669e5067a617f3b45af9dc48df89e9fa05a3732",
+    "experimental/windows-native-gpu/test_normal_scene_gate.py": "3e20d853a6d73339ee0a3a030cff5b75551af57827452f2c10242a20b2f8e5d1"
+  },
+  "privateReceiptSha256": {
+    "windowsBuild": "54fb8402193ef33edce6b4eb41cd3af23ab9fafcc079befe709d4d0427931bfe",
+    "sceneReplay": "04fcdf446c05e0bdf93347e8e96b11cce2b0f70da81f1c2fee03eb021a87fa0f"
+  },
+  "hardwareTestingOnThisHostOnHold": true,
+  "rendererStabilityEstablished": false,
+  "hostIncidentResolved": false,
+  "codeCommit": "ff20626d474fe2a6f87d04fc875d5095858c6515"
+}

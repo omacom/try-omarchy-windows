@@ -3,8 +3,9 @@
 **November 3, 2026:** ordinary `close` and three-argument `ioctl` calls no longer
 construct the GPU bridge when that process has never used it. Real preloaded
 process controls pass, along with **217 existing fake-worker controls**. The
-fixed shim has not yet been tested in the Omarchy VM; daily-use acceptance and
-performance requirements remain open.
+fixed shim is also used in [run 10](NORMAL-SESSION-CRASH-DIAGNOSTIC-2026-11-03.md),
+whose captured terminal prompt has no zero-activity summary flood. Quickshell
+and shutdown still fail; daily-use acceptance and performance remain open.
 
 The run-9 terminal capture contains repeated zero-activity bridge summaries from
 ordinary shell commands that inherit `LD_PRELOAD`. Both generic FD hooks called
@@ -30,7 +31,7 @@ new controls against its 4K library build.
 
 These controls verify this forwarding and reporting change. They do not measure
 desktop latency, prove general libc interposer compatibility, or resolve the
-QEMU retirement and Quickshell EGL/RHI failures. The existing three-argument
+QEMU retirement and Quickshell draw-time failures. The existing three-argument
 ioctl scope is unchanged. Full healthy desktop operation, sustained browsing,
 recovery, broad APIs and at least 93% matched-native performance remain open.
 Counts stay **backend 4/8, desktop 0/4, diagnostic scene 3/3**.

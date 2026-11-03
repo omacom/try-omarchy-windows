@@ -1,5 +1,9 @@
 # Normal-session GPU attempt: terminal capture and retained failures
 
+This page preserves run 9. The subsequent [run 10 diagnostic](NORMAL-SESSION-CRASH-DIAGNOSTIC-2026-11-03.md)
+tests the trace and idle-preload changes, captures draw-time crash stacks and
+records a stalled VGA return followed by forced containment.
+
 **November 3, 2026:** the explicitly approved inactive-desktop test completes
 **183 native 3840×2160 GPU handoffs** and reaches the trusted final group-cleanup
 stage. A same-VM capture shows a readable Foot terminal and a **Quickshell crash

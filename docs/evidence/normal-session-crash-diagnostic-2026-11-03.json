@@ -1,0 +1,137 @@
+{
+  "schema": 1,
+  "date": "2026-11-03",
+  "run": 10,
+  "runtimeSourceCommit": "bf75d4586102bf777d969544ec3f5a038236d60b",
+  "counts": {
+    "backend": "4/8",
+    "desktop": "0/4",
+    "diagnosticScene": "3/3"
+  },
+  "gpuTransport": {
+    "width": 3840,
+    "height": 2160,
+    "handoffs": 176,
+    "exactSequence": true,
+    "producerFenceObserved": 176,
+    "consumerFenceObserved": 176,
+    "rootAdapterVerifiedEveryFrame": true,
+    "borrowedPrimaryConsoleActiveEveryFrame": true,
+    "cpuTextureUpload": false,
+    "ordinaryCpuFenceWait": false,
+    "displayedFpsMeasured": false,
+    "sourceToSdlPixelAuditPerformed": false
+  },
+  "scene": {
+    "candidates": 9,
+    "allRejectedByPrerequisites": true,
+    "visualInspectionPerformed": true,
+    "readableFootPrompt": true,
+    "zeroActivitySummarySpamVisible": false,
+    "quickshellCrashDialogVisible": true,
+    "wallpaperAndBarVerified": false,
+    "completeDesktopAccepted": false
+  },
+  "quickshell": {
+    "reports": [
+      {
+        "sha256": "35343d3c9770de793f0673d8fb7e80eb9ad33dd4f081d794c80a883fabe0c80e",
+        "signal": 11,
+        "mesaFrameOffsets": [
+          "0x42a447",
+          "0x11ab1a",
+          "0x30bb5c"
+        ]
+      },
+      {
+        "sha256": "f49f63c61f9417fa37b209aa8e820a83f89926f58cdb510a25b307efceda57c7",
+        "signal": 11,
+        "mesaFrameOffsets": [
+          "0x42a447",
+          "0x11ab1a",
+          "0x30bb5c"
+        ]
+      }
+    ],
+    "mesaLibrarySha256": "0128e184833f6e22679f1ed0097a88498f60b806cf52eafbfb9fcf225e25b744",
+    "stack": [
+      "libc",
+      "libc",
+      "st_update_vs_constants",
+      "st_prepare_draw",
+      "_mesa_DrawElements",
+      "Qt GUI",
+      "Qt GUI",
+      "QRhi::endFrame"
+    ],
+    "mesaBaseInferredFromThreeSymbolsAndPageAlignment": true,
+    "uniformCopyCallLocatedByDisassembly": true,
+    "pointerValuesAvailable": false,
+    "nullDestinationProved": false,
+    "rootCauseFixed": false
+  },
+  "retirement": {
+    "detachStages": [
+      "activate-context",
+      "create-fence",
+      "wait-fence",
+      "delete-fence",
+      "disable-scanout",
+      "delete-objects",
+      "delete-import-context",
+      "restore-boot-console"
+    ],
+    "detachComplete": false,
+    "failure": {
+      "audits": 0,
+      "consumerFenceObserved": 176,
+      "deviceRemovalHresult": 0,
+      "healthyBeforeFailure": true,
+      "message": "QMP control socket failed",
+      "nativeSdlCompositorFailure": true,
+      "outputAttached": true,
+      "performanceAccepted": false,
+      "phase": "retirement",
+      "producerFenceObserved": 176,
+      "submitted": 176
+    },
+    "brokerGroupStoppedMarkerObserved": false,
+    "qemuForcedStop": true,
+    "qemuExit": 90,
+    "nativeExit": 3,
+    "spontaneousQemuCrashEstablished": false,
+    "exactBlockingInstructionKnown": false,
+    "cleanupAccepted": false
+  },
+  "containment": {
+    "ownedJobActiveProcesses": 0,
+    "privateDesktopClosed": true,
+    "parentDesktopUnchanged": true,
+    "switchDesktopCalled": false,
+    "hostInputSent": false,
+    "guestInputSent": false,
+    "timeout": false,
+    "sourceDiskUnchanged": true,
+    "installedNvidiaUnchanged": true,
+    "officialInputModified": false
+  },
+  "normalLauncherGuiVerified": false,
+  "physicalInputVerified": false,
+  "performanceAccepted": false,
+  "dailyUseAccepted": false,
+  "capture": {
+    "path": "docs/images/normal-session-run10-failure-4k-2026-11-03.png",
+    "sha256": "ab6c8303aa4d9f2d11ffd10c8af95f551abf1188d12248387f331ebb254a9010",
+    "unmodified": true,
+    "source": "guest grim screencopy; GPU transport separately observed"
+  },
+  "privateEvidenceSha256": {
+    "source.json": "5eca07aa15b7ef87b035d8b8c58439966f42d4be1ccb8651b862258f025d96f8",
+    "go-owner.json": "200ce2ae599e2ecbf854f277715d0105c142d44e87c4672aa33ce3dba0262caa",
+    "isolation/isolation.json": "0dd09188d5be2b29682c445063f6f8680b6804f8e3933566317224bb5424ae65",
+    "guest-observation.json": "91c59ea37aa44cf9fd4c78e59d51bedf7526c7de4d934ef58f98df5cbc2f5c96",
+    "isolation/child.log": "d8aeda44f6461e6a8e8ce81205a3fa103b875b82e51b3bdf0a0850d2b3fe3d79",
+    "vm/serial-gpu.log": "a84d2a32c2f609af8592ec9f9844fde49ca8ae94828bc1933229ea6475e61d1d",
+    "quickshell-crashes-reporters.tar": "7a84d99b770f9dfcaa2b46bc898d315a38fe2946b2095c6fce5001f85219890c"
+  }
+}

@@ -1,6 +1,6 @@
 # NVIDIA backend progress
 
-Updated **2026-11-02**. This page tracks the experimental QEMU/WHPX Windows-native
+Updated **2026-11-03**. This page tracks the experimental QEMU/WHPX Windows-native
 NVIDIA backend. The released Try Omarchy launcher continues using the upstream
 graphics runtime.
 
@@ -8,12 +8,18 @@ graphics runtime.
 
 ## What is verified now?
 
-**Normal-session GPU follow-up — November 3, 2026:** the approved background
-run completes 183 native 4K handoffs and captures a readable terminal plus a
-Quickshell crash dialog. Final group cleanup is reached, but QEMU exits
-`0xc0000005` during retirement. Complete desktop, cleanup and daily use remain
-unverified; counts stay **4/8, 0/4, 3/3**.
-[Actual failure frame and exact limits](NORMAL-SESSION-GPU-ATTEMPT-2026-11-03.md).
+**Host display incident — November 3, 2026:** the user reports brightness and
+graphics corruption across Windows; NVIDIA driver-reset events are recorded.
+GPU/VM tests on this host are on hold. Cause and recovery remain unverified;
+work continues through source and CPU-only checks. **Daily use is blocked.**
+[Incident observations and limits](HOST-DISPLAY-INCIDENT-2026-11-03.md).
+
+**Normal-session diagnostic — November 3, 2026:** run 10 records 176 native
+4K handoffs with a clean terminal prompt. Quickshell crashes during a Mesa
+constant-buffer copy; the return to VGA stalls and containment forcibly stops
+QEMU. Complete desktop, cleanup and daily use remain unverified; counts stay
+**4/8, 0/4, 3/3**.
+[Actual frame, captured stacks and tested limits](NORMAL-SESSION-CRASH-DIAGNOSTIC-2026-11-03.md).
 
 **Normal-session retirement follow-up — November 2, 2026:** the diagnostic
 PID-file collision is removed from normal-session lifetime. Run 8 records
