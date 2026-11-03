@@ -6,6 +6,8 @@ controls and both complete strict Windows builds pass. **The updated host and
 guest have not yet been tested together on the GPU.** Run 8 remains failed cleanup
 evidence; daily-use acceptance stays open.
 
+[November 3 GPU follow-up: group cleanup is reached, but QEMU retirement and Quickshell still fail](NORMAL-SESSION-GPU-ATTEMPT-2026-11-03.md).
+
 ## Failure and implementation
 
 The previous terminal handler required every secondary actor to be reclaimed

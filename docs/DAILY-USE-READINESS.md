@@ -1,5 +1,12 @@
 # Daily-use readiness
 
+**Normal-session GPU follow-up — November 3, 2026:** the approved background
+run completes 183 native 4K handoffs and captures a readable terminal plus a
+Quickshell crash dialog. Final group cleanup is reached, but QEMU exits
+`0xc0000005` during retirement. Complete desktop, cleanup and daily use remain
+unverified; counts stay **4/8, 0/4, 3/3**.
+[Actual failure frame and exact limits](NORMAL-SESSION-GPU-ATTEMPT-2026-11-03.md).
+
 **Normal-session retirement follow-up — November 2, 2026:** the diagnostic
 PID-file collision is removed from normal-session lifetime. Run 8 records
 **432 native 4K GPU handoffs** and same-process actor retirement, but socket

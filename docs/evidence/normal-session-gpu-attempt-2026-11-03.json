@@ -1,0 +1,125 @@
+{
+  "schema": 1,
+  "date": "2026-11-03",
+  "milestone": "normal-session-terminal-capture-and-retirement-failure",
+  "counts": {
+    "backend": "4/8",
+    "desktop": "0/4",
+    "diagnosticScene": "3/3"
+  },
+  "normalSessionGpuTransportVerified": true,
+  "completeOmarchySceneVerified": false,
+  "cleanupAccepted": false,
+  "dailyUseAccepted": false,
+  "runtimeSourceCommit": "047dde8afcdd63e1d00805727f8d08fc85ec0224",
+  "run9": {
+    "width": 3840,
+    "height": 2160,
+    "nativeGpuHandoffs": 183,
+    "exactSequence": true,
+    "producerFenceObserved": 183,
+    "consumerFenceObserved": 183,
+    "rootAdapterVerifiedForEveryFrame": true,
+    "nativeBorrowedConsoleActiveForEveryFrame": true,
+    "cpuTextureUpload": false,
+    "ordinaryCpuFenceWait": false,
+    "displayedFpsMeasured": false,
+    "nearNativePerformanceMeasured": false,
+    "brokerRouteFailures": 0,
+    "brokerProtocolRejections": 0,
+    "groupStoppedWithPidfdsAndEmptyRegistry": true,
+    "terminalNativeStepCompleted": false,
+    "retirementFailure": {
+      "audits": 0,
+      "consumerFenceObserved": 183,
+      "deviceRemovalHresult": 0,
+      "healthyBeforeFailure": true,
+      "message": "QMP disconnected",
+      "nativeSdlCompositorFailure": true,
+      "outputAttached": true,
+      "performanceAccepted": false,
+      "phase": "retirement",
+      "producerFenceObserved": 183,
+      "submitted": 183
+    },
+    "nativeExit": 3,
+    "qemuExit": 3221225477,
+    "qemuExitHex": "0xc0000005",
+    "exactFaultInstructionKnown": false,
+    "qemuReapedThroughHeldHandle": true,
+    "ownedJobActiveProcesses": 0,
+    "parentDesktopUnchanged": true,
+    "privateDesktopNeverInput": true,
+    "sourceDiskUnchanged": true,
+    "installedDriverUnchanged": true,
+    "normalLauncherGuiActivated": false,
+    "physicalInputVerified": false,
+    "hostInputSent": false,
+    "guestInputSent": false,
+    "powerdownRequested": true,
+    "sourceImageSha256": "3954123192111ce2d28cafb9dd108e1ca14c288bfc2429ed899b0f36aeccf942",
+    "privateImageSha256": "19cba7d3a5829163affec46205d4aae23b105936a2bbcecec60f6da93765cdfc",
+    "imageParentDiff": {
+      "parentImageSha256": "8cda909df8ff539d09d8c6bbc4ca896b478d726948c7fc1087370aa1e2f0d8df",
+      "imageSha256": "19cba7d3a5829163affec46205d4aae23b105936a2bbcecec60f6da93765cdfc",
+      "changedPayloads": {
+        "normal-root-overlay/bin/guest-graphics-broker": {
+          "before": "d6b523724f61b5949461b3e9b495aea6d53cc924d2750900193bfeebf3ea3e40",
+          "after": "dbd6b86a1acbba93bcb584dcbdba6658e98a9ee220bcb8ff091278ebb7fb6ae1"
+        }
+      },
+      "otherPayloadHashesAndModesExact": true
+    },
+    "originalSceneCheckPassed": false,
+    "sameVmCorrectionReceipt": {
+      "schema": 1,
+      "originalHarnessUnchanged": true,
+      "sameHeldVm": true,
+      "noAdditionalTerminalRequested": true,
+      "hostInputSent": false,
+      "guestInputSent": false,
+      "commandSha256": "67a044e820d295938062a114e2538f845117a91e32d93a2f1d79dd77f688b9a3",
+      "diagnosticSha256": "7dc78a62f21a04b0de83c715a9f39390e93d97ae65f7229cd44aeefe81ea374b",
+      "exitCode": 0,
+      "gpuOrDailyReadinessAccepted": false,
+      "captureSha256": "b2258fd33e04f09d6271da19c4d48f2c7bbbca010ffbd46ab957e1dec1961bcc",
+      "visualInspectionRequired": true
+    },
+    "visualInspection": {
+      "performed": true,
+      "readableFootTerminal": true,
+      "quickshellCrashDialogVisible": true,
+      "wallpaperAndBarVerified": false,
+      "healthyCompleteDesktop": false
+    },
+    "quickshellFailure": "EGL initialization / QRhiGles2 context creation failure; exact cause unproved",
+    "sameUnsupportedEscapeWarningsAlsoInWorkingCompositor": true,
+    "privateEvidenceSha256": {
+      "source.json": "3db15ccfa192e24fb9600ebfdc3f9686889c4beec67a1cbc4e0ab21dcf73859d",
+      "go-owner.json": "85ae8b87c61840854794efc3ad635ca95e494a1f2612a929ecd04464cb602d8a",
+      "isolation/isolation.json": "0b861b90d9fe6154ae0779daba3b8ef8ed64df32bfd2f03e518e969d82b63192",
+      "guest-observation.json": "07d8b2c532274baa0f431376d35ba9e86d7dfcac8a20bc3e657204aac30259c2",
+      "isolation/child.log": "2169cf8896e00d45fee1025bd74510eec7d407fcc9e4b0ee66627ab4f1816845",
+      "vm/serial-gpu.log": "67449fc9da04fc6717350739e48cf2943a42d1a4619e6517e01a3edf6f376d40",
+      "guest-snapshot-final.txt": "0cb6d81c108a7fe968a74a23242537af7cd9862beef1263ce69647640ef821fe",
+      "scene-correction-receipt.json": "b537cf9f5e691ed286d75fcbeceb2c43503cdc254c87f3e370b7dc6713c4934d",
+      "scene-environment-diagnostic.txt": "7dc78a62f21a04b0de83c715a9f39390e93d97ae65f7229cd44aeefe81ea374b",
+      "scene-correction-observation.txt": "034ebd441d6b75e7022711461ad5286ac2685258d785d28fe658eee6a0aabd8c"
+    }
+  },
+  "capture": {
+    "path": "docs/images/normal-session-failure-4k-2026-11-03.png",
+    "sha256": "b2258fd33e04f09d6271da19c4d48f2c7bbbca010ffbd46ab957e1dec1961bcc",
+    "unmodified": true,
+    "source": "guest grim screencopy; source-to-SDL pixel audit not performed"
+  },
+  "newDiagnostics": {
+    "path": "experimental/qemu/wddm-sdl-relay.c",
+    "sourceSha256": "214a89fb1227dc351ee04df524c0e7bb3fd7a2fb0100c17155ee2186d316a65b",
+    "retirementOperationsByteIdenticalAfterRemovingDiagnosticFunctionAndCalls": true,
+    "presentationPathLoggingAdded": false,
+    "gpuTested": false,
+    "fullQemuBuildPending": true,
+    "exactCrashPhaseKnown": false
+  }
+}

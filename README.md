@@ -14,6 +14,13 @@ Normal launcher integration and a stable interactive desktop remain in developme
 
 ![Three GPU apps complete 1800 handoffs; backend 4/8; desktop product 0/4](https://raw.githubusercontent.com/7Wdev/try-omarchy-windows/windows-nvgpu-lab/docs/images/gpu-backend-progress-three-apps-2026-10-27.svg)
 
+**Normal-session GPU follow-up — November 3, 2026:** the approved background
+run completes 183 native 4K handoffs and captures a readable terminal plus a
+Quickshell crash dialog. Final group cleanup is reached, but QEMU exits
+`0xc0000005` during retirement. Complete desktop, cleanup and daily use remain
+unverified; counts stay **4/8, 0/4, 3/3**.
+[Actual failure frame and exact limits](docs/NORMAL-SESSION-GPU-ATTEMPT-2026-11-03.md).
+
 **Normal-session retirement follow-up — November 2, 2026:** the diagnostic
 PID-file collision is removed from normal-session lifetime. Run 8 records
 **432 native 4K GPU handoffs** and same-process actor retirement, but socket

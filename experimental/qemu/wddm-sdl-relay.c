@@ -533,6 +533,18 @@ static bool relay_present(WddmSdlRelay *s, uint64_t frame, bool audit, Error **e
     return true;
 }
 
+/* Teardown-only breadcrumbs survive a process fault before the QMP reply.
+ * Keep these off the presentation path and flush before each operation.
+ */
+static void relay_detach_stage(WddmSdlRelay *s, const char *stage)
+{
+    fprintf(stderr, "{\"qemuSdlDetachStage\":\"%s\",\"bootConsoleBorrowed\":%s,"
+            "\"nativeConsoleActive\":%s,\"lastQueuedFrame\":%" PRIu64 "}\n",
+            stage, s->boot.console ? "true" : "false",
+            s->boot.native ? "true" : "false", s->last_frame);
+    fflush(stderr);
+}
+
 static bool relay_detach(WddmSdlRelay *s, Error **errp)
 {
     GLsync retired;
@@ -541,6 +553,7 @@ static bool relay_detach(WddmSdlRelay *s, Error **errp)
         error_setg(errp, "SDL GPU relay is not attached");
         return false;
     }
+    relay_detach_stage(s, "activate-context");
     if (!s->boot.console || s->boot.native) {
         dpy_gl_scanout_texture(s->con, s->scanout_texture, false, s->width, s->height,
                               0, 0, s->width, s->height, NULL);
@@ -549,12 +562,15 @@ static bool relay_detach(WddmSdlRelay *s, Error **errp)
         s->poisoned = true;
         return false;
     }
+    relay_detach_stage(s, "create-fence");
     retired = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     if (!retired) {
         error_setg(errp, "Cannot create the SDL teardown retirement fence");
         return false;
     }
+    relay_detach_stage(s, "wait-fence");
     waited = glClientWaitSync(retired, GL_SYNC_FLUSH_COMMANDS_BIT, UINT64_C(5000000000));
+    relay_detach_stage(s, "delete-fence");
     glDeleteSync(retired);
     if ((waited != GL_ALREADY_SIGNALED && waited != GL_CONDITION_SATISFIED) ||
         !relay_gl_ok(errp, "bounded teardown retirement")) {
@@ -565,21 +581,26 @@ static bool relay_detach(WddmSdlRelay *s, Error **errp)
         return false;
     }
     if (!s->boot.console || s->boot.native) {
+        relay_detach_stage(s, "disable-scanout");
         dpy_gl_scanout_disable(s->con);
     }
+    relay_detach_stage(s, "delete-objects");
     relay_delete_objects(s);
     if (!relay_gl_ok(errp, "shared GPU reference release")) {
         s->poisoned = true;
         return false;
     }
+    relay_detach_stage(s, "delete-import-context");
     dpy_gl_ctx_destroy(s->con, s->import_context);
     s->import_context = NULL;
     s->attached = false;
+    relay_detach_stage(s, "restore-boot-console");
     if (s->boot.console && !wddm_sdl_boot_leave(&s->boot)) {
         error_setg(errp, "SDL GPU relay cannot return its retired boot console");
         s->poisoned = true;
         return false;
     }
+    relay_detach_stage(s, "complete");
     return true;
 }
 
