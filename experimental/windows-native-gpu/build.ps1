@@ -32,6 +32,10 @@ cl /nologo /std:c++17 /EHsc /W4 /WX /O2 "$PSScriptRoot\wire_test.cpp" /Fe:wire-t
 if not "%errorlevel%"=="0" exit /b %errorlevel%
 wire-test.exe
 if not "%errorlevel%"=="0" exit /b %errorlevel%
+cl /nologo /std:c++17 /EHsc /W4 /WX /O2 "$PSScriptRoot\qmp_socket_wait_test.cpp" /Fe:qmp-socket-wait-test.exe /link ws2_32.lib
+if not "%errorlevel%"=="0" exit /b %errorlevel%
+qmp-socket-wait-test.exe
+if not "%errorlevel%"=="0" exit /b %errorlevel%
 cl /nologo /std:c++17 /EHsc /W4 /WX /O2 "$PSScriptRoot\atomic_line_log_test.cpp" /Fe:atomic-line-log-test.exe
 if not "%errorlevel%"=="0" exit /b %errorlevel%
 atomic-line-log-test.exe

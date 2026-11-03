@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include "qmp_protocol.h"
+#include "qmp_socket_wait.h"
 #include "driver_wire.h"
 #include "cpu_aperture.h"
 #include "qemu_fence_test.h"
@@ -45,13 +46,7 @@ class Qmp {
     std::string buffered;
     std::uint64_t next = 0;
     void ready(bool reading, ULONGLONG deadline) {
-        const auto now = GetTickCount64();
-        if (now >= deadline) throw std::runtime_error("QMP control deadline exceeded");
-        fd_set set; FD_ZERO(&set); FD_SET(socket.value, &set);
-        const auto remaining = deadline - now;
-        timeval timeout{static_cast<long>(remaining / 1000), static_cast<long>((remaining % 1000) * 1000)};
-        if (select(0, reading ? &set : nullptr, reading ? nullptr : &set, nullptr, &timeout) != 1)
-            throw std::runtime_error("QMP control socket failed");
+        waitQmpSocket(socket.value, reading, deadline);
     }
     driver_qmp::Json read(ULONGLONG deadline) {
         for (;;) {
