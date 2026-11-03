@@ -1986,17 +1986,18 @@ public:
 // Stop forwarding under the same mutex used by every hook, but preserve state
 // and CPU views for late DSO finalizers. Explicit object destruction during
 // normal execution still releases its mappings and native references promptly.
-Bridge* bridgeInstance = nullptr;
+std::atomic<Bridge*> bridgeInstance{nullptr};
 void stopBridge() {
-    if (!bridgeInstance) return;
-    std::lock_guard<std::mutex> lock(bridgeInstance->guard);
+    auto* state=bridgeInstance.load(std::memory_order_acquire);
+    if (!state) return;
+    std::lock_guard<std::mutex> lock(state->guard);
     if (bridgeStopped.exchange(true)) return;
-    bridgeInstance->finish();
+    state->finish();
 }
 Bridge& bridge() {
     static Bridge* instance = [] {
         auto result = new Bridge;
-        bridgeInstance = result;
+        bridgeInstance.store(result,std::memory_order_release);
         std::atexit(stopBridge);
         return result;
     }();
@@ -2330,8 +2331,13 @@ extern "C" int openat(int directory, const char* path, int flags, ...) {
 }
 extern "C" int close(int fd) {
     if (bridgeStopped) return rawClose(fd);
+    // An inherited preload must leave ordinary processes idle. A bridge-owned
+    // descriptor cannot be returned before its fully constructed state is
+    // published by the explicit GPU open/hook path.
+    auto* existing=bridgeInstance.load(std::memory_order_acquire);
+    if (!existing) return rawClose(fd);
     const auto saved = errno;
-    { auto& state = bridge(); std::lock_guard<std::mutex> lock(state.guard); if (!bridgeStopped) state.closed(fd); }
+    { auto& state = *existing; std::lock_guard<std::mutex> lock(state.guard); if (!bridgeStopped) state.closed(fd); }
     errno = saved; return rawClose(fd);
 }
 extern "C" int ioctl(int fd, unsigned long requestNumber, ...) noexcept {
@@ -2339,7 +2345,9 @@ extern "C" int ioctl(int fd, unsigned long requestNumber, ...) noexcept {
     // A general libc interposer must also handle no-argument ioctl variants.
     va_list a; va_start(a, requestNumber); void* pointer = va_arg(a, void*); va_end(a);
     if (bridgeStopped) { errno = ESHUTDOWN; return -1; }
-    auto& state = bridge(); std::lock_guard<std::mutex> lock(state.guard);
+    auto* existing=bridgeInstance.load(std::memory_order_acquire);
+    if (!existing) return static_cast<int>(syscall(SYS_ioctl, fd, requestNumber, pointer));
+    auto& state = *existing; std::lock_guard<std::mutex> lock(state.guard);
     if (bridgeStopped) { errno = ESHUTDOWN; return -1; }
     const auto saved = errno;
     if (!state.owns(fd)) { errno = saved; return static_cast<int>(syscall(SYS_ioctl, fd, requestNumber, pointer)); }

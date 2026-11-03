@@ -67,6 +67,9 @@ were not present in run 9, have no presentation-path logging, and still require
 a complete QEMU build and a separately authorized GPU run. They localize the
 next failure; they are not a crash fix.
 
+The [idle-preload follow-up](IDLE-PRELOAD.md) removes the zero-activity summary
+spam from ordinary processes and passes CPU controls; VM integration is pending.
+
 Next work is the QEMU retirement fault and Quickshell's actual EGL/RHI failure,
 with a corrected session-aware scene check and earlier bounded crash collection.
 Normal launcher activation, responsive input, browsing/multiple windows through
