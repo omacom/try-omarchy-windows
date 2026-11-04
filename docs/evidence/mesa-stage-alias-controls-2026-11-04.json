@@ -1,0 +1,164 @@
+{
+  "schema": 1,
+  "date": "2026-11-04",
+  "scope": "Filesystem alias-gate regression with captured Mesa library files; not a fresh Linux build or runtime test",
+  "baseline": {
+    "schema": 1,
+    "originalVerifierSha256": "db4c4d7bf5f185d416fe3618136323db92dbdae82ba1cedececcd8a4b8015b9a",
+    "originalAliasGateAcceptedWrongEglTarget": true,
+    "wrongAlias": "usr/lib/libEGL.so.1",
+    "wrongTarget": "libgbm.so.1",
+    "capturedMesaLibrarySha256": {
+      "usr/lib/libgallium-26.0.8.so": "0128e184833f6e22679f1ed0097a88498f60b806cf52eafbfb9fcf225e25b744",
+      "usr/lib/libGLESv2.so.2.0.0": "7429256c24b176de3322c5297ca4f77cb2ffcd1a57d9ee99ec09bc12a545dcf7",
+      "usr/lib/libgbm.so.1.0.0": "10496ebe7912fd4b83e0654a1764e52e854d1d6c9d1ea33f1b5a916f5eb8fd21",
+      "usr/lib/libEGL.so.1.0.0": "b95bedee6546b3b42e5dc38242f3cddf4fb63095f4983a57b92653f5d308cb8a",
+      "usr/lib/gbm/dri_gbm.so": "fe6015e00f84bdbf7ce3482596496b819007813321a0d80af1c4476d9e714605"
+    },
+    "scope": "Alias gate only; actual Linux install and whole-stage verification not exercised",
+    "runtimeLoaded": false,
+    "gpuWorkloadRun": false,
+    "vmLaunched": false
+  },
+  "updatedControls": {
+    "schema": 1,
+    "cases": [
+      {
+        "name": "valid-loader-chains",
+        "expectedAccepted": true,
+        "accepted": true
+      },
+      {
+        "name": "wrong-target-libEGL.so",
+        "expectedAccepted": false,
+        "accepted": false,
+        "errorType": "ValueError"
+      },
+      {
+        "name": "wrong-target-libEGL.so.1",
+        "expectedAccepted": false,
+        "accepted": false,
+        "errorType": "ValueError"
+      },
+      {
+        "name": "wrong-target-libgbm.so",
+        "expectedAccepted": false,
+        "accepted": false,
+        "errorType": "ValueError"
+      },
+      {
+        "name": "wrong-target-libgbm.so.1",
+        "expectedAccepted": false,
+        "accepted": false,
+        "errorType": "ValueError"
+      },
+      {
+        "name": "wrong-target-libGLESv2.so",
+        "expectedAccepted": false,
+        "accepted": false,
+        "errorType": "ValueError"
+      },
+      {
+        "name": "wrong-target-libGLESv2.so.2",
+        "expectedAccepted": false,
+        "accepted": false,
+        "errorType": "ValueError"
+      },
+      {
+        "name": "alias-escapes-fixture",
+        "expectedAccepted": false,
+        "accepted": false,
+        "errorType": "ValueError"
+      },
+      {
+        "name": "dangling-alias",
+        "expectedAccepted": false,
+        "accepted": false,
+        "errorType": "FileNotFoundError"
+      },
+      {
+        "name": "alias-cycle",
+        "expectedAccepted": false,
+        "accepted": false,
+        "errorType": "OSError"
+      },
+      {
+        "name": "missing-required-alias",
+        "expectedAccepted": false,
+        "accepted": false,
+        "errorType": "ValueError"
+      },
+      {
+        "name": "regular-file-alias",
+        "expectedAccepted": false,
+        "accepted": false,
+        "errorType": "ValueError"
+      },
+      {
+        "name": "unlisted-link-escapes-fixture",
+        "expectedAccepted": false,
+        "accepted": false,
+        "errorType": "ValueError"
+      },
+      {
+        "name": "restored-loader-chains",
+        "expectedAccepted": true,
+        "accepted": true
+      }
+    ],
+    "validCases": 2,
+    "rejectedCases": 12,
+    "librarySha256": {
+      "usr/lib/libgallium-26.0.8.so": "0128e184833f6e22679f1ed0097a88498f60b806cf52eafbfb9fcf225e25b744",
+      "usr/lib/libGLESv2.so.2.0.0": "7429256c24b176de3322c5297ca4f77cb2ffcd1a57d9ee99ec09bc12a545dcf7",
+      "usr/lib/libgbm.so.1.0.0": "10496ebe7912fd4b83e0654a1764e52e854d1d6c9d1ea33f1b5a916f5eb8fd21",
+      "usr/lib/libEGL.so.1.0.0": "b95bedee6546b3b42e5dc38242f3cddf4fb63095f4983a57b92653f5d308cb8a",
+      "usr/lib/gbm/dri_gbm.so": "fe6015e00f84bdbf7ce3482596496b819007813321a0d80af1c4476d9e714605"
+    },
+    "libraryContentsPreserved": true,
+    "inputStageUnchanged": true,
+    "aliasGateTested": true,
+    "wholeLinuxStagingVerified": false,
+    "runtimeLoaded": false,
+    "gpuWorkloadRun": false,
+    "vmLaunched": false,
+    "hardwareIntegrationTested": false,
+    "dailyUseAccepted": false
+  },
+  "requiredAliasTargets": {
+    "usr/lib/libEGL.so": "usr/lib/libEGL.so.1.0.0",
+    "usr/lib/libEGL.so.1": "usr/lib/libEGL.so.1.0.0",
+    "usr/lib/libgbm.so": "usr/lib/libgbm.so.1.0.0",
+    "usr/lib/libgbm.so.1": "usr/lib/libgbm.so.1.0.0",
+    "usr/lib/libGLESv2.so": "usr/lib/libGLESv2.so.2.0.0",
+    "usr/lib/libGLESv2.so.2": "usr/lib/libGLESv2.so.2.0.0"
+  },
+  "testedFileSha256": {
+    "verify_mesa_stage.py": "22afe2cc355db086131ac2417f24b6867d0fe2b297131f745002b4d4d633b696",
+    "test_mesa_stage_aliases.py": "34e9680c10eeac5a6c09c42aaad099b41127fc4c8014f35c3450a1c6785a70a2",
+    "stage-contract.json": "2ee0e62d5ffe749b0f763644695f19a527cd1dba3828cb8c2ca1bc2f8b0e2880"
+  },
+  "sourceCxxChanged": false,
+  "normalWindowsInputChanged": false,
+  "remoteWaylandStagingVerified": false,
+  "runtimeLoaded": false,
+  "gpuWorkloadRun": false,
+  "vmLaunched": false,
+  "hostDisplayRecoveryVerified": false,
+  "dailyUseAccepted": false,
+  "retainedRemoteBuildFailure": {
+    "headCommit": "742a6a469c8f0af438efb30648f54ccdde7c93ad",
+    "workflowRunId": 41863425648,
+    "jobId": 126691241030,
+    "conclusion": "failure",
+    "failedStep": "Build pinned Wayland libraries, scanner and protocol data; tests disabled",
+    "waylandCoreBuildAndInstallCompleted": true,
+    "waylandScannerVersion": "1.26.0",
+    "missingGeneratedHeader": "include/wayland-protocols/linux-dmabuf-v1-enum.h",
+    "cause": "Protocol install used --no-rebuild before the required enum-header generation build",
+    "fix": "Compile protocols-build with two CPU jobs before --no-rebuild installation",
+    "mesaCompilationReached": false,
+    "linuxStagingReached": false,
+    "gpuWorkloadRun": false
+  }
+}

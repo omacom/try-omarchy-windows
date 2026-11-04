@@ -61,6 +61,7 @@ jobs:
           test "$(pkg-config --modversion wayland-client)" = '1.26.0'
           wayland-scanner --version
           "$meson" setup "$RUNNER_TEMP/protocols-build" "$RUNNER_TEMP/wayland-protocols-1.47" --prefix "$RUNNER_TEMP/protocols-install" --buildtype=release -Dtests=false
+          "$meson" compile -C "$RUNNER_TEMP/protocols-build" -j 2
           "$meson" install -C "$RUNNER_TEMP/protocols-build" --no-rebuild
       - name: Restore pinned Mesa archive
         id: mesa-source-cache
@@ -99,6 +100,7 @@ jobs:
           SOURCE_HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           "$RUNNER_TEMP/meson-env/bin/meson" install -C "$RUNNER_TEMP/mesa-build" --no-rebuild --destdir "$RUNNER_TEMP/mesa-stage"
+          "$RUNNER_TEMP/meson-env/bin/python" experimental/windows-native-gpu/mesa/test_mesa_stage_aliases.py --stage "$RUNNER_TEMP/mesa-stage" --output "$RUNNER_TEMP/mesa-alias-controls"
           "$RUNNER_TEMP/meson-env/bin/python" experimental/windows-native-gpu/mesa/verify_mesa_stage.py --source "$RUNNER_TEMP/mesa-26.0.8" --build "$RUNNER_TEMP/mesa-build" --stage "$RUNNER_TEMP/mesa-stage" --output "$RUNNER_TEMP/mesa-source-build.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -107,6 +109,7 @@ jobs:
           path: |
             ${{ runner.temp }}/mesa-source-build.json
             ${{ runner.temp }}/presentation-source-controls/result.json
+            ${{ runner.temp }}/mesa-alias-controls/result.json
             ${{ runner.temp }}/wayland-build/meson-logs/meson-log.txt
             ${{ runner.temp }}/protocols-build/meson-logs/meson-log.txt
             ${{ runner.temp }}/mesa-build/meson-logs/meson-log.txt

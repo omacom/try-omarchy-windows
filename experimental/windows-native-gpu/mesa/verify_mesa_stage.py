@@ -72,6 +72,24 @@ def inspect_elf(path):
                     syntheticAbsoluteVersionNodes=version_nodes)
 
 
+def verify_aliases(stage, aliases):
+    stage = stage.resolve(strict=True)
+    links = {}
+    for path in stage.rglob('*'):
+        if path.is_symlink():
+            target = path.resolve(strict=True)
+            check(target.is_relative_to(stage), 'Staged symlink escapes destination')
+            links[path.relative_to(stage).as_posix()] = os.readlink(path)
+    for relative, expected in aliases.items():
+        path = stage / relative
+        check(path.is_symlink(), 'Required installed library alias missing: ' + relative)
+        expected_target = (stage / expected).resolve(strict=True)
+        check(expected_target.is_relative_to(stage), 'Library alias contract escapes destination')
+        check(path.resolve(strict=True) == expected_target,
+              'Installed library alias points to the wrong library: ' + relative)
+    return links
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ['source', 'build', 'stage', 'output']:
@@ -111,14 +129,7 @@ def main():
     ninja = (build / 'build.ninja').read_text(encoding='utf-8')
     for flag in ['HAVE_WL_DISPATCH_QUEUE_TIMEOUT', 'HAVE_WL_CREATE_QUEUE_WITH_NAME']:
         check('-D' + flag in ninja, 'Required Wayland code path not compiled: ' + flag)
-    links = {}
-    for path in stage.rglob('*'):
-        if path.is_symlink():
-            target = path.resolve(strict=True)
-            check(target.is_relative_to(stage), 'Staged symlink escapes destination')
-            links[path.relative_to(stage).as_posix()] = os.readlink(path)
-    for relative in contract['requiredAliases']:
-        check((stage / relative).is_symlink(), 'Required installed library alias missing: ' + relative)
+    links = verify_aliases(stage, contract['libraryAliases'])
     for relative in contract['requiredFiles']:
         check((stage / relative).is_file(), 'Required staged development file missing: ' + relative)
     libraries = {}
@@ -138,7 +149,8 @@ def main():
                   headCommit=os.environ.get('SOURCE_HEAD_COMMIT'), mesaVersion=contract['mesaVersion'],
                   installPrefix='/usr', libdir='lib', patchedSourceSha256=sources,
                   independentlyGeneratedWaylandSha256=generated, stagedLibraries=libraries,
-                  stagedLibraryAliases=links, comparedApiExports=sum(r['apiExportCount'] for r in libraries.values()),
+                  stagedLibraryAliases=links, verifiedLibraryAliasTargets=contract['libraryAliases'],
+                  comparedApiExports=sum(r['apiExportCount'] for r in libraries.values()),
                   waylandDependencyVersions=required_dependencies, libraryLayoutVerified=True,
                   binaryInterfaceComparisonPassed=True, standaloneRuntimePackage=False,
                   runtimeLoaded=False, gpuWorkloadRun=False, vmLaunched=False,

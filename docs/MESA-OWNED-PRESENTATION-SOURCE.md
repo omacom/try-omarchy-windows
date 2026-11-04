@@ -10,7 +10,11 @@ frame or resolve the [host display incident](HOST-DISPLAY-INCIDENT-2026-11-03.md
 The previous public compile workflow omitted this patch and the Wayland
 platform. The updated workflow is configured to build that desktop path, then
 stage and inspect its Linux files without loading them. **The first full
-Wayland staging result is pending.**
+Wayland staging result is pending.** Run 41863425648 builds and installs the
+pinned Wayland libraries and scanner, then fails when protocol installation
+cannot find an unbuilt generated enum header. The workflow now compiles those
+protocol targets before installation. Mesa compilation and staging were not
+reached in that failed run; it does not count as a staging pass.
 
 ## Resource behavior
 
@@ -49,6 +53,22 @@ all 527 API exports, including types, bindings, visibility and versions. This
 validates the reader against known files; it does not test a new Linux staging
 tree locally or prove complete binary compatibility.
 
+## Loader-alias validation follow-up
+
+The first alias gate checked that links existed and stayed inside the staging
+tree. It accepted an EGL alias pointing to GBM inside that tree, while the
+separate canonical library files could still pass their export checks. That
+could let a broken loader layout pass verification.
+
+The gate now requires each EGL, GBM and GLES2 alias to resolve to its intended
+versioned library. Fourteen filesystem controls use copied captured Mesa files:
+two valid-chain cases pass and twelve invalid cases are rejected. They cover
+all six wrong-target aliases, escape, dangling link, cycle, missing alias,
+regular-file replacement and an unlisted escaping link. Library contents and
+the input tree remain unchanged. No Mesa code is loaded or executed; the whole
+new Linux staging tree remains unverified until CI runs.
+[Reproduction and exact alias controls](evidence/mesa-stage-alias-controls-2026-11-04.json).
+
 ## Linux build and staging contract
 
 The workflow pins [Wayland 1.26.0 and protocols 1.47](https://wayland.freedesktop.org/releases.html)
@@ -72,8 +92,8 @@ The data-only stage verifier requires:
   version 3 metadata.
 - Five x86-64 ELF libraries preserving the 527 compared API exports and symbol
   versions, correct SONAMEs, and no RPATH/RUNPATH or host dependency paths.
-- Expected development files and library aliases, with every staged symlink
-  resolving inside the owned destination.
+- Expected development files and library aliases bound to the intended versioned
+  libraries, with every staged symlink resolving inside the owned destination.
 
 Only evidence and build logs are uploaded. The workflow does not load the Mesa
 libraries, call a graphics API, start a VM or test shaders. Its Ubuntu compiler

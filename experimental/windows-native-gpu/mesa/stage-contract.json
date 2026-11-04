@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "mesaVersion": "26.0.8",
   "installPrefix": "/usr",
   "libdir": "lib",
@@ -41,14 +41,6 @@
       "apiExportAbiSha256": "9b6a30c28ee7edabf3178fefa346ae849d65748712ac65e15991642fda7fa634"
     }
   },
-  "requiredAliases": [
-    "usr/lib/libEGL.so",
-    "usr/lib/libEGL.so.1",
-    "usr/lib/libgbm.so",
-    "usr/lib/libgbm.so.1",
-    "usr/lib/libGLESv2.so",
-    "usr/lib/libGLESv2.so.2"
-  ],
   "requiredFiles": [
     "usr/include/EGL/egl.h",
     "usr/include/GLES2/gl2.h",
@@ -62,5 +54,13 @@
     "src/loader/linux-dmabuf-unstable-v1-client-protocol.h": "4221ad39c4520e8dd194dab07e50996b9c2aecca3ec385bd3e1ede4a42265d15",
     "src/loader/presentation-time-protocol.c": "fd29539eb8a1382c1d981f59f1c7e587f578553f5b851d89fe16ff0d366ca257",
     "src/loader/presentation-time-client-protocol.h": "e40161a50563dd3a8909b8d9cdd83aa19b02cf36abbd5a797d47a85b4b29f154"
+  },
+  "libraryAliases": {
+    "usr/lib/libEGL.so": "usr/lib/libEGL.so.1.0.0",
+    "usr/lib/libEGL.so.1": "usr/lib/libEGL.so.1.0.0",
+    "usr/lib/libgbm.so": "usr/lib/libgbm.so.1.0.0",
+    "usr/lib/libgbm.so.1": "usr/lib/libgbm.so.1.0.0",
+    "usr/lib/libGLESv2.so": "usr/lib/libGLESv2.so.2.0.0",
+    "usr/lib/libGLESv2.so.2": "usr/lib/libGLESv2.so.2.0.0"
   }
 }
