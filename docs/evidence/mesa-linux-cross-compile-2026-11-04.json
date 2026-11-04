@@ -1,0 +1,413 @@
+{
+  "schema": 1,
+  "date": "2026-11-04",
+  "scope": "CPU-only Windows-to-Linux source compilation and data-only ELF inspection; not runtime or readiness acceptance",
+  "mesaVersion": "26.0.8",
+  "mesaArchiveSha256": "caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc",
+  "publicPatchSha256": {
+    "fence-fd-patch.json": "75e4e383eb55538278c564e4d3015b4679232303136dbd1e6000e6fb051bf9a1",
+    "native-sync-patch.json": "bf2222f4b922ecdf2c6ae2d031098300caa671632d65161246139ac7f3a690ad",
+    "native-image-patch.json": "8590be1d2b36eda92cec4bfd77c52d42a98b033754993d1dbee46693e108f12e",
+    "native-render-patch.json": "0b14eaf0bec63e77dbadb7d19d39d303c33b16d44e11f46542b0b4c7c874fa07",
+    "upload-failure-patch.json": "376faba04b821f67bfd12d88a001593a172409308c39193d43b380326e3b55b0",
+    "constbuf-failure-patch.json": "e549c5b6e56fcccef39db71e617e2d609943e9093ce4cfea2dd9856312776a90"
+  },
+  "privateOwnedPresentationPatchSha256": "4aa09190463ce5f3ad70b3b080990cfd1071d4cdf9b787cff6d89ff84acc1677",
+  "privatePresentationOverlayPublished": false,
+  "capturedBaselineInstalledGalliumSha256": "0128e184833f6e22679f1ed0097a88498f60b806cf52eafbfb9fcf225e25b744",
+  "baselineChangedPathReconstructionSha256": "355768edfb51374e11dfc705dcba286f31061554bc64bdd6c4541d54a0d4f86d",
+  "frozenSourceInventorySha256": "4a18c3ec7628f02b14c69cb739fba152cf678d2d08e18e948cc85c07e173e1d8",
+  "patchedSourceSha256": {
+    "src/gallium/auxiliary/util/u_upload_mgr.c": "3622c693947740363a6812d59fa2c00adea0dfb58ca4bc6a998610de95963f25",
+    "src/mesa/state_tracker/st_atom_constbuf.c": "ac27eaac67c3e4ae1fa9b235c5154a1eae371bf6dcb1f8e571c33385f4d34073"
+  },
+  "affectedObjectSha256": {
+    "src/gallium/auxiliary/libgallium.a.p/util_u_upload_mgr.c.o": "174c4137f1ceb42fd3ccfd58d7aebc29c97884195e5384358c4c8bf9df1e10b3",
+    "src/mesa/libmesa.a.p/state_tracker_st_atom_constbuf.c.o": "5f09003df7004796238cb0ae9f1b971e06c4004d7df72b769e3d6ed16920ad9b"
+  },
+  "toolchain": {
+    "buildHost": "Windows x86_64",
+    "target": "x86_64-linux-gnu.2.38",
+    "zigVersion": "0.14.1",
+    "zigWindowsArchiveSha256": "554f5378228923ffd558eac35e21af020c73789d87afeabf4bfd16f2e6feed2c",
+    "mesonVersion": "1.8.3",
+    "directXHeadersCommit": "adbd6f3ba40795c46a8d0f33af00bcb57ff0f0a4",
+    "gnuCxxHeaders": "GCC 13.2",
+    "gnuCxxSharedRuntime": "GCC 14 Ubuntu noble",
+    "bundledLibcxxUsed": false
+  },
+  "features": {
+    "galliumDrivers": [
+      "d3d12"
+    ],
+    "platforms": [
+      "wayland",
+      "surfaceless",
+      "drm"
+    ],
+    "egl": true,
+    "gbm": true,
+    "openGL": true,
+    "glx": false,
+    "llvm": false,
+    "vulkanDrivers": [],
+    "galliumVideo": false,
+    "xmlconfig": false,
+    "shaderCache": true,
+    "gles1": "enabled by auto; captured baseline disabled",
+    "gles2": "enabled by auto; captured baseline explicitly enabled"
+  },
+  "capturedDependencies": {
+    "wayland": "1.26.0",
+    "waylandProtocols": "1.47",
+    "libdrm": "2.4.131",
+    "zlib": "1.3.1",
+    "zstd": "1.5.7",
+    "expat": "2.7.4"
+  },
+  "capturedWaylandGeneration": {
+    "producerVersion": "1.26.0",
+    "independentlyRegenerated": false,
+    "records": [
+      {
+        "mode": "private-code",
+        "options": [],
+        "inputSha256": "0681c01199393662229b0d9f71a4bd502350ea8f782a7049fa30e392b50fb2c8",
+        "outputSha256": "b5f3c72cb60e095ec472efb14c2a486d9652976ebf3a260c214d328a4a4d3ead",
+        "baselineOutput": "src/loader/linux-dmabuf-unstable-v1-protocol.c"
+      },
+      {
+        "mode": "client-header",
+        "options": [],
+        "inputSha256": "0681c01199393662229b0d9f71a4bd502350ea8f782a7049fa30e392b50fb2c8",
+        "outputSha256": "4221ad39c4520e8dd194dab07e50996b9c2aecca3ec385bd3e1ede4a42265d15",
+        "baselineOutput": "src/loader/linux-dmabuf-unstable-v1-client-protocol.h"
+      },
+      {
+        "mode": "private-code",
+        "options": [],
+        "inputSha256": "dffac93bcb2bb1d8c385e72b8a8c2c0d4d79a336866322f3ba886dce2b27b1e2",
+        "outputSha256": "fd29539eb8a1382c1d981f59f1c7e587f578553f5b851d89fe16ff0d366ca257",
+        "baselineOutput": "src/loader/presentation-time-protocol.c"
+      },
+      {
+        "mode": "client-header",
+        "options": [],
+        "inputSha256": "dffac93bcb2bb1d8c385e72b8a8c2c0d4d79a336866322f3ba886dce2b27b1e2",
+        "outputSha256": "e40161a50563dd3a8909b8d9cdd83aa19b02cf36abbd5a797d47a85b4b29f154",
+        "baselineOutput": "src/loader/presentation-time-client-protocol.h"
+      }
+    ],
+    "unusedUncapturedTargetsRejected": 10
+  },
+  "build": {
+    "plannedCommands": 1003,
+    "successfulUniqueCommands": 1003,
+    "responseFiles": 866,
+    "fullDefaultGraphCompleted": true,
+    "originalNinjaSha256": "657fd5d48185da733e555aa9ff48916b655fd24689e9fb21e6755a37d7e493a9",
+    "hiddenPlanSha256": "396ef98753eb53ae54a794491fd9ef29428ba2fb22ded91529ce0dba0fc99871",
+    "commandReceiptAggregateSha256": "dc8df32c32e626c1f32ba2a45e5ababf033bc4a73dd26e0695e398d45e937b58",
+    "sequentialHiddenNativeExecutor": true,
+    "unmodifiedNinjaExecution": false,
+    "limits": {
+      "logicalCpuLimit": 2,
+      "jobCommitLimitBytes": 2147483648,
+      "belowNormalPriority": true,
+      "killOwnedDescendantsOnOwnerExit": true
+    },
+    "peakBuildJobCommitBytes": 1378672640,
+    "affectedLibrariesFreshlyLinked": true
+  },
+  "crossBuildAdaptations": [
+    "Keep GCC C++ headers before Zig libc headers using joined -Idir arguments",
+    "Omit native WinFlex --wincompat for three Linux-target generated lexers",
+    "Forward linker version-script/path in one comma-separated -Wl token",
+    "Name Gallium export version node with SONAME to reproduce captured GNU --default-symver",
+    "Relink six outputs separately without Windows build RUNPATH"
+  ],
+  "retainedFailures": [
+    "xc4 initial C++ compile: libstdc++ include_next could not find libc stdlib.h",
+    "xc5 configure returned zero but split -I paths broke C++ probes; not accepted as build candidate",
+    "xc6 command 82: Windows-target lexer included io.h; regenerate affected lexer for Linux",
+    "xc6 command 958: separate version-script file treated as unsupported compiler input",
+    "Initial linked Gallium missed captured SONAME symbol-version metadata and retained Windows RUNPATH",
+    "First separate relink still lacked default symbol-version node; replaced anonymous Gallium node with named SONAME node"
+  ],
+  "elfInspection": {
+    "libraryCount": 6,
+    "baselineLibraryComparisons": 5,
+    "baselineApiExportsCompared": 527,
+    "allComparedApiTypesBindingsVisibilityAndVersionsMatch": true,
+    "syntheticAbsoluteVersionNodeSymbolsExcludedFromApiComparison": true,
+    "allRunpathsAbsent": true,
+    "inspectionReceiptSha256": "4ef7e6c267493e202eae809f615464ddd89ce6179710c290cf71bfe6bc899dc9",
+    "libraries": {
+      "libgallium-26.0.8.so": {
+        "sha256": "524324937547e776df618c2e3938a48e718cfcfe9ba8459b24f13e0a7de51b7e",
+        "bytes": 84577920,
+        "elfClass": 64,
+        "elfMachine": "x86_64",
+        "soname": [
+          "libgallium-26.0.8.so"
+        ],
+        "neededLibraries": [
+          "libstdc++.so.6",
+          "libgcc_s.so.1",
+          "libdrm.so.2",
+          "libz.so.1",
+          "libzstd.so.1",
+          "libm.so.6",
+          "libc.so.6",
+          "ld-linux-x86-64.so.2"
+        ],
+        "runpaths": [],
+        "versionDefinitions": {
+          "1": "libgallium-26.0.8.so",
+          "2": "libgallium-26.0.8.so"
+        },
+        "requiredSymbolVersions": {
+          "libstdc++.so.6": [
+            "GLIBCXX_3.4",
+            "GLIBCXX_3.4.11",
+            "GLIBCXX_3.4.18",
+            "GLIBCXX_3.4.29",
+            "CXXABI_1.3",
+            "CXXABI_1.3.9"
+          ],
+          "libgcc_s.so.1": [
+            "GCC_3.0"
+          ],
+          "libm.so.6": [
+            "GLIBC_2.2.5",
+            "GLIBC_2.27",
+            "GLIBC_2.29"
+          ],
+          "libc.so.6": [
+            "GLIBC_2.2.5",
+            "GLIBC_2.3",
+            "GLIBC_2.3.2",
+            "GLIBC_2.3.4",
+            "GLIBC_2.6",
+            "GLIBC_2.7",
+            "GLIBC_2.8",
+            "GLIBC_2.11",
+            "GLIBC_2.14",
+            "GLIBC_2.17",
+            "GLIBC_2.28",
+            "GLIBC_2.32",
+            "GLIBC_2.33",
+            "GLIBC_2.34",
+            "GLIBC_2.38"
+          ],
+          "ld-linux-x86-64.so.2": [
+            "GLIBC_2.3"
+          ]
+        },
+        "apiExportCount": 83,
+        "apiExportAbiSha256": "3cb4468cd714eb6b209191107ca9f4c5280dbffb6b6d6f0962f049c8bfaacded",
+        "baselineSha256": "0128e184833f6e22679f1ed0097a88498f60b806cf52eafbfb9fcf225e25b744",
+        "baselineApiExportCount": 83,
+        "missingApiExports": [],
+        "exportAbiDifferences": {},
+        "additionalApiExports": []
+      },
+      "libGLESv1_CM.so.1.1.0": {
+        "sha256": "5d60fbe1e8acae8d01c41c5c731b3bd1ebd1b2eb5e554e9a0f6cbc8f061fd332",
+        "bytes": 20512,
+        "elfClass": 64,
+        "elfMachine": "x86_64",
+        "soname": [
+          "libGLESv1_CM.so.1"
+        ],
+        "neededLibraries": [
+          "libgallium-26.0.8.so"
+        ],
+        "runpaths": [],
+        "versionDefinitions": {},
+        "requiredSymbolVersions": {
+          "libgallium-26.0.8.so": [
+            "libgallium-26.0.8.so"
+          ]
+        },
+        "apiExportCount": 145,
+        "apiExportAbiSha256": "057b9fef4721bc26955f0acf91bd45750c2a4e0c2d9d06735309353a60ce88b9"
+      },
+      "libGLESv2.so.2.0.0": {
+        "sha256": "a749e6cce72e5cdc7b6c809a1a16eef0855c9c821aadaf4660cac2219add131a",
+        "bytes": 50832,
+        "elfClass": 64,
+        "elfMachine": "x86_64",
+        "soname": [
+          "libGLESv2.so.2"
+        ],
+        "neededLibraries": [
+          "libgallium-26.0.8.so"
+        ],
+        "runpaths": [],
+        "versionDefinitions": {},
+        "requiredSymbolVersions": {
+          "libgallium-26.0.8.so": [
+            "libgallium-26.0.8.so"
+          ]
+        },
+        "apiExportCount": 358,
+        "apiExportAbiSha256": "2f007ae84bf3d08eac088910b6640b12a065c2967e4b5ab4b787ec0298183118",
+        "baselineSha256": "7429256c24b176de3322c5297ca4f77cb2ffcd1a57d9ee99ec09bc12a545dcf7",
+        "baselineApiExportCount": 358,
+        "missingApiExports": [],
+        "exportAbiDifferences": {},
+        "additionalApiExports": []
+      },
+      "libgbm.so.1.0.0": {
+        "sha256": "67049544670b8d6289a017283789dbf2ad6af1cc078fe0bbfbc11d58353d0910",
+        "bytes": 708800,
+        "elfClass": 64,
+        "elfMachine": "x86_64",
+        "soname": [
+          "libgbm.so.1"
+        ],
+        "neededLibraries": [
+          "libdrm.so.2",
+          "libc.so.6"
+        ],
+        "runpaths": [],
+        "versionDefinitions": {},
+        "requiredSymbolVersions": {
+          "libc.so.6": [
+            "GLIBC_2.2.5",
+            "GLIBC_2.33",
+            "GLIBC_2.34"
+          ]
+        },
+        "apiExportCount": 38,
+        "apiExportAbiSha256": "3fc06c3c8e64bb7901fb8f908a4131d8cea1882303762882e19d8cad1b8972ac",
+        "baselineSha256": "10496ebe7912fd4b83e0654a1764e52e854d1d6c9d1ea33f1b5a916f5eb8fd21",
+        "baselineApiExportCount": 38,
+        "missingApiExports": [],
+        "exportAbiDifferences": {},
+        "additionalApiExports": []
+      },
+      "libEGL.so.1.0.0": {
+        "sha256": "120e5332cafead67cc7684caca045aa23b502cae82f76821e43b8b1c3ed94bd6",
+        "bytes": 4519168,
+        "elfClass": 64,
+        "elfMachine": "x86_64",
+        "soname": [
+          "libEGL.so.1"
+        ],
+        "neededLibraries": [
+          "libgallium-26.0.8.so",
+          "libgbm.so.1",
+          "libdrm.so.2",
+          "libwayland-client.so.0",
+          "libm.so.6",
+          "libc.so.6"
+        ],
+        "runpaths": [],
+        "versionDefinitions": {},
+        "requiredSymbolVersions": {
+          "libgallium-26.0.8.so": [
+            "libgallium-26.0.8.so"
+          ],
+          "libm.so.6": [
+            "GLIBC_2.29"
+          ],
+          "libc.so.6": [
+            "GLIBC_2.2.5",
+            "GLIBC_2.3",
+            "GLIBC_2.3.2",
+            "GLIBC_2.3.4",
+            "GLIBC_2.7",
+            "GLIBC_2.11",
+            "GLIBC_2.14",
+            "GLIBC_2.17",
+            "GLIBC_2.27",
+            "GLIBC_2.28",
+            "GLIBC_2.33",
+            "GLIBC_2.34",
+            "GLIBC_2.38"
+          ]
+        },
+        "apiExportCount": 47,
+        "apiExportAbiSha256": "9b45d35dd03fb585109a0d80fa47226012f23005b8408d7a465a26231229b3e0",
+        "baselineSha256": "b95bedee6546b3b42e5dc38242f3cddf4fb63095f4983a57b92653f5d308cb8a",
+        "baselineApiExportCount": 47,
+        "missingApiExports": [],
+        "exportAbiDifferences": {},
+        "additionalApiExports": []
+      },
+      "dri_gbm.so": {
+        "sha256": "82508ae1460e44db8765f5fdfedd1e050d3aa2b5ee8fc69a45d474a3813146e9",
+        "bytes": 1107128,
+        "elfClass": 64,
+        "elfMachine": "x86_64",
+        "soname": [
+          "dri_gbm.so"
+        ],
+        "neededLibraries": [
+          "libgallium-26.0.8.so",
+          "libdrm.so.2",
+          "libm.so.6",
+          "libc.so.6"
+        ],
+        "runpaths": [],
+        "versionDefinitions": {},
+        "requiredSymbolVersions": {
+          "libgallium-26.0.8.so": [
+            "libgallium-26.0.8.so"
+          ],
+          "libm.so.6": [
+            "GLIBC_2.29"
+          ],
+          "libc.so.6": [
+            "GLIBC_2.2.5",
+            "GLIBC_2.3",
+            "GLIBC_2.3.4",
+            "GLIBC_2.14",
+            "GLIBC_2.33",
+            "GLIBC_2.34",
+            "GLIBC_2.38"
+          ]
+        },
+        "apiExportCount": 1,
+        "apiExportAbiSha256": "9b6a30c28ee7edabf3178fefa346ae849d65748712ac65e15991642fda7fa634",
+        "baselineSha256": "fe6015e00f84bdbf7ce3482596496b819007813321a0d80af1c4476d9e714605",
+        "baselineApiExportCount": 1,
+        "missingApiExports": [],
+        "exportAbiDifferences": {},
+        "additionalApiExports": []
+      }
+    }
+  },
+  "runtimeLoaded": false,
+  "linuxTargetExecuted": false,
+  "gpuWorkloadRun": false,
+  "vmLaunched": false,
+  "wslLaunched": false,
+  "desktopInputSent": false,
+  "installedRuntimeChanged": false,
+  "vmImageChanged": false,
+  "releasePackagePrepared": false,
+  "hardwareIntegrationTested": false,
+  "quickshellCrashResolutionVerified": false,
+  "hostDisplayRecoveryVerified": false,
+  "performanceAcceptanceVerified": false,
+  "dailyUseAccepted": false,
+  "remainingBuildLimits": [
+    "Cross outputs retain build-time prefix defaults; they are not a guest installation package",
+    "Captured Wayland generated sources reused; independent protocol generation unverified",
+    "C++ cross compiler, GLES1 option and linker differ from captured Linux build",
+    "Public compile workflow lacks the private owned-presentation overlay; it does not reproduce this exact source profile",
+    "Vulkan, CUDA, video, DLSS, ray tracing and matched-native performance are not covered"
+  ],
+  "readiness": {
+    "backendStages": 4,
+    "backendTotal": 8,
+    "desktopGates": 0,
+    "desktopTotal": 4,
+    "diagnosticScene": 3,
+    "diagnosticTotal": 3,
+    "hardwareTestingOnHold": true
+  }
+}

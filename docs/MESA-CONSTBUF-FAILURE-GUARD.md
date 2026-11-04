@@ -69,8 +69,10 @@ python3 experimental/windows-native-gpu/mesa/apply_mesa_upload_failure.py /path/
 python3 experimental/windows-native-gpu/mesa/apply_mesa_constbuf_failure.py /path/to/mesa-26.0.8
 ```
 
-Neither patch has been built into the installed private Mesa runtime or a VM
-image. Full runtime compilation and hardware integration remain unverified.
+A subsequent [full Linux-target D3D12/EGL/GBM build](MESA-LINUX-CROSS-COMPILE-2026-11-04.md)
+compiles both patches and links six libraries without loading them. Neither
+patch has been installed in the private runtime or a VM image. Linux packaging,
+runtime and hardware integration remain unverified.
 The void state-update function does not propagate a draw-cancellation result;
 reporting an allocation error does not promise application-level recovery.
 

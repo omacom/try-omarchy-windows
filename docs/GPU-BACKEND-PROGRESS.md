@@ -22,6 +22,13 @@ CPU retries preserved. Full runtime, Quickshell and hardware validation remain o
 [Patch, CPU evidence and limits](MESA-UPLOAD-FAILURE-LIFETIME.md).
 [Constant-buffer guard and limits](MESA-CONSTBUF-FAILURE-GUARD.md).
 
+**Full Linux-target source build - November 4, 2026:** the complete selected
+D3D12/Wayland/EGL/GBM graph compiles with the upload guards and captured private
+presentation source. Six libraries link; 527 compared API exports preserve
+their types, bindings, visibility and symbol versions. Nothing is loaded or
+installed. Runtime, recovery and daily use remain unverified; counts stay
+**4/8, 0/4, 3/3**. [Exact build scope and limits](MESA-LINUX-CROSS-COMPILE-2026-11-04.md).
+
 **Source-only shutdown follow-up — November 4, 2026:** retirement now polls
 the owned graphics thread before joining, and the relay command/state pair
 shares one bounded deadline. CPU controls and both Windows owner compilations

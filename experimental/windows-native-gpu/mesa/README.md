@@ -19,10 +19,15 @@ stages and successful copies; runtime integration remains unverified. See
 [guard, exact evidence and limits](../../../docs/MESA-CONSTBUF-FAILURE-GUARD.md).
 
 Both complete affected C files also compile against real Mesa headers in the
-Windows D3D12 configuration. This produces object files only; the Linux runtime
-and hardware still require validation. The prepared `mesa-source-build.yml`
-workflow compiles D3D12/EGL on a remote Linux runner without loading it. Its
-Meson wheel is pinned by version and digest in `source-build-tools.txt`.
+Windows D3D12 configuration. That check produces object files only. A subsequent
+[full Linux-target build](../../../docs/MESA-LINUX-CROSS-COMPILE-2026-11-04.md)
+compiles D3D12/EGL/GBM with both guards and the captured private presentation
+overlay, then compares 527 API exports and their versions. No library is loaded;
+packaging, runtime and hardware validation remain open.
+
+The prepared `mesa-source-build.yml` workflow compiles D3D12/EGL on a remote
+Linux runner without loading it. Its Meson wheel is pinned by version and digest
+in `source-build-tools.txt`.
 
 Apply `apply_mesa_fence_fd.py` first, then `apply_mesa_native_sync.py` to that
 exact pinned tree. The additive helper verifies both patch digests and every
