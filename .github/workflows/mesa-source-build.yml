@@ -31,7 +31,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential ninja-build pkg-config bison flex python3-venv python3-mako python3-yaml python3-packaging libdrm-dev libexpat1-dev libzstd-dev zlib1g-dev libelf-dev
           python3 -m venv --system-site-packages "$RUNNER_TEMP/meson-env"
-          "$RUNNER_TEMP/meson-env/bin/python" -m pip install meson==1.4.2
+          "$RUNNER_TEMP/meson-env/bin/python" -m pip install --only-binary=:all: --require-hashes -r experimental/windows-native-gpu/mesa/source-build-tools.txt
       - name: Compile and stage pinned DirectX headers; tests disabled
         run: |
           "$RUNNER_TEMP/meson-env/bin/meson" setup "$RUNNER_TEMP/headers-build" .runtime-headers --prefix "$RUNNER_TEMP/headers-install" --libdir lib -Dbuild-test=false

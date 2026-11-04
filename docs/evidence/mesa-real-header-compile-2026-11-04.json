@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "mesaVersion": "26.0.8",
+  "fullSourceFilesCompiled": true,
+  "realMesaHeaders": true,
+  "cpuFixtureTypesUsed": false,
+  "platform": "Windows x64 MSVC D3D12 configuration",
+  "mesonVersion": "1.8.3",
+  "results": [
+    {
+      "file": "src/gallium/auxiliary/util/u_upload_mgr.c",
+      "variant": "baseline",
+      "sourceSha256": "31e9544a8ba017d58449f12dc0a8e829ca03c672503874c3c52276c78423b582",
+      "objectSha256": "bf199294d5565e9b18e8cb22117bb00b7758308dd92365bd878ee7a0d7896feb",
+      "objectBytes": 13213,
+      "exitCode": 0
+    },
+    {
+      "file": "src/gallium/auxiliary/util/u_upload_mgr.c",
+      "variant": "patched",
+      "sourceSha256": "3622c693947740363a6812d59fa2c00adea0dfb58ca4bc6a998610de95963f25",
+      "objectSha256": "17fe40f2dc468093c3f9efb01c7e51c8667b3eca172b7fbc1ac42a61d0b4a2ab",
+      "objectBytes": 13235,
+      "exitCode": 0
+    },
+    {
+      "file": "src/mesa/state_tracker/st_atom_constbuf.c",
+      "variant": "baseline",
+      "sourceSha256": "c2a723eec0894931c2553ff6ca7dcca24e3e8650239df7d77ede48b1fdd2df8d",
+      "objectSha256": "1a1bbaa282c5cdfe1994f6bb02b834cbf15425b3e3bc51efdcee3c629428a2f9",
+      "objectBytes": 8661,
+      "exitCode": 0
+    },
+    {
+      "file": "src/mesa/state_tracker/st_atom_constbuf.c",
+      "variant": "patched",
+      "sourceSha256": "ac27eaac67c3e4ae1fa9b235c5154a1eae371bf6dcb1f8e571c33385f4d34073",
+      "objectSha256": "12c4f83c71ce94e2b86caffa81ee5667daf12203d3d393a229c227cb71f28716",
+      "objectBytes": 8955,
+      "exitCode": 0
+    }
+  ],
+  "capturedGeneratedHeaders": {
+    "src/compiler/builtin_types.h": "bbd87e8770e7bad40740528b631d0e42a0d19275e304519a7444f17a716caded",
+    "src/compiler/ir_expression_operation.h": "4d4a903d2a4754782d8ded8605bf53a14aebc651eac1c8573e0e310a2b82c2e7",
+    "src/mesa/format_info.h": "0a39f89ae10de90ff12e8cce564291849a9cf92f34a59645ecbdb1516fc5dfdf",
+    "src/mesa/get_hash.h": "30a25b77f976075e08bdcf4e8a0a5f7f8e98826bf5bcf0ae672a8e7e490a88fc",
+    "src/util/driconf_static.h": "9b38999e9060c5cb9ab57be9f086ee53df2c6cef87d1b5a76763929071609a8e",
+    "src/util/shader_stats.h": "6242948e644d16ca8d5d57fb1d22cf8e2369a2af83b4dd8cce522a383bee4ef9",
+    "src/util/format/u_format_gen.h": "8a915df38e9eef82eabf78ab0c953f310c8e3550d7e723e08f2e02ee3b047edd",
+    "src/util/format/u_format_pack.h": "ef31a9bb8c2876e482a1cdc356a8c15ea03eb2d68e59a13c93a81d6b25d65f39",
+    "src/mesa/program/program_parse.tab.h": "dadfe26e1f9b24b8bdccd39688342881307700b56bad5ba9b9047f045c1d5ba3",
+    "src/mesa/glapi/es2api/es2_glapi_mapi_tmp.h": "35b81f7db63c979b624f8b1ba3dd0047013644eb799a73a5f0d5d6248715971e",
+    "src/mesa/glapi/shared-glapi/shared_glapi_mapi_tmp.h": "bbdcad950fac84cd709a7e195e41926a5f6bac67fc1377bd3a3e202cd9069bd8",
+    "src/mesa/glapi/glapi/gen/api_beginend_init.h": "7552e856cc7459d2bbbabda236084adb8f79c3b09ffbf192a1da1609e4badfc2",
+    "src/mesa/glapi/glapi/gen/api_exec_decl.h": "bf2306ca93ce1e38452ce12ef85a9350f64ae4644e2f728422a9cf840b90e853",
+    "src/mesa/glapi/glapi/gen/api_hw_select_init.h": "485559234389c371e5938fda9f4a934047bf022cbe2d42382e8b7158deee843f",
+    "src/mesa/glapi/glapi/gen/api_save.h": "3da61f011cf2dc8d4986b735ef5362bb0265bf11c906d9a77d4d7b1a721f371a",
+    "src/mesa/glapi/glapi/gen/api_save_init.h": "71805942e8db80f1a67dd9611470a060c8f774d2b19034638e0ab88e72cfa5e0",
+    "src/mesa/glapi/glapi/gen/dispatch.h": "5c351a0e0d193e0f5e3c8cf72b6c15916303bd02c21e4806fc236fda6cd36b63",
+    "src/mesa/glapi/glapi/gen/marshal_generated.h": "341b975e973c1e78ea19d236ff41fca664de5fbee18c931565aaae98bdd06b49",
+    "src/compiler/glsl/astc_glsl.h": "77049e0b2666ff8c05476d8af5f81d2a9a14c83cebbafcc0c4f5224898feef0f",
+    "src/compiler/glsl/bc1_glsl.h": "45681ecb8811f49264ae7ac098baa058fbec154c0d04deda9ea6556d2cf929a1",
+    "src/compiler/glsl/bc4_glsl.h": "23fa37694a54f25f07da72b5d1cf40e439d01a21ec09cb01f93617f914c30c8c",
+    "src/compiler/glsl/cross_platform_settings_piece_all.h": "00c28299eadab477e4f5d71062edca04d560a3345d52b418dd78a835e9be458a",
+    "src/compiler/glsl/etc2_rgba_stitch_glsl.h": "c4529acd68364d136955b15b6f581ca5cc32ce853e59923cd2a65585f82daeb5",
+    "src/compiler/glsl/float64_glsl.h": "42c2dadcd7e9f42087de92df54290f4be1df3106798e71bc8582f7b655765819",
+    "src/compiler/glsl/glsl_parser.h": "1064e18c976cc064a4409f9df895816a3b3c3ef4b83b3442469065fad2591def",
+    "src/compiler/glsl/ir_expression_operation_constant.h": "082ebf0c8614b6af042082015eaea988000bc8182d3e450e492e9af223f4f11a",
+    "src/compiler/glsl/ir_expression_operation_strings.h": "52bc09d8671511ac72efd388d59144580365af9f4d5c77457161401a381b4650",
+    "src/compiler/nir/nir_builder_opcodes.h": "a0aeb4111f4c8992b54de59b785c067f583a0b33d34b23e2c71a20574adc2806",
+    "src/compiler/nir/nir_intrinsics.h": "d87734c83507e10e2ae096533d10d5871b2348d76864e48858a66616392a5039",
+    "src/compiler/nir/nir_intrinsics_indices.h": "8a5a48d58b2fb54b631bb736655ba1c109b0422030b5a37f71176aaebbca1fb9",
+    "src/compiler/nir/nir_opcodes.h": "e00792b36861a4c8f96bb0d4a264cd65eecd33eae2256af789726aeb324727f8",
+    "src/compiler/spirv/spirv_info.h": "6a75183ba3c8056438287fcb6a97a8b07a31c884d4a4a136cff5f8fb9509b410",
+    "src/compiler/spirv/vtn_generator_ids.h": "9421a981acf7c383ea381a0ce5e984f6295ec594d14e7fbfb6196694d4d4f8b4",
+    "src/compiler/glsl/glcpp/glcpp-parse.h": "8afeea7e5fcc55d1ec0926c102f7d5b25990a95182b9d1857d634bc848dc4e6e"
+  },
+  "generatedHeadersRegeneratedForWindows": false,
+  "fullRuntimeBuilt": false,
+  "objectsLinked": false,
+  "runtimeLoaded": false,
+  "gpuWorkloadRun": false,
+  "vmLaunched": false,
+  "wslLaunched": false,
+  "desktopInputSent": false,
+  "hardwareRecoveryVerified": false,
+  "quickshellCrashFixed": false,
+  "dailyUseAccepted": false,
+  "date": "2026-11-04",
+  "mesaArchiveSha256": "caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc",
+  "privateReceiptSha256": "2d75e54ab9fa395ba71f27e1245ac96e9a26e331e16cf6152055cc85d6354121",
+  "windowsMesonConfigurationGenerated": true,
+  "compilerWarningsProfile": "Upstream Meson release /W2 and selected errors; not the /W4 /WX callback fixture",
+  "optionalCMakeDiscoveryDisabled": true,
+  "hardwareTestingOnThisHostOnHold": true,
+  "counts": {
+    "backend": "4/8",
+    "desktop": "0/4",
+    "diagnosticScene": "3/3"
+  },
+  "retainedPreparationFailures": [
+    {
+      "attempt": "v1",
+      "result": "CPU configure supervisor timed out after 180 seconds while optional CMake dependency checks failed with an MSVC debug-database mismatch; later process inventory found no owned child",
+      "gpu": false
+    },
+    {
+      "attempt": "v2",
+      "result": "Copy preparation stopped at unrelated GitLab CI symlink permissions; no configure or compile ran",
+      "gpu": false
+    }
+  ]
+}

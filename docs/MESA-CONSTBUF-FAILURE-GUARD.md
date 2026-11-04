@@ -51,6 +51,17 @@ Upstream signedness warnings are suppressed only around upstream function text;
 fixture code remains under warnings-as-errors. Portable CI runs the same test
 with `cc`.
 
+A separate real-header check compiles both complete affected C files, including
+the state tracker's stage wrappers and UBO handlers, with Mesa's actual types
+and declarations. The original and patched variants produce four MSVC object
+files under a Windows D3D12 Meson configuration. This check uses upstream release
+warning settings, not the callback fixture's warning profile. It reuses 34
+captured generated headers from the pinned Linux build while generating Windows
+compiler settings with Meson; Windows header generation is not independently
+verified. The objects are neither linked nor loaded. This closes a source/header
+compatibility gap without building or exercising the Linux guest runtime.
+[Exact source/object hashes and limits](evidence/mesa-real-header-compile-2026-11-04.json).
+
 Apply the two source patches to a fresh pinned tree in order:
 
 ```sh
