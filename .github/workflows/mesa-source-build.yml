@@ -1,0 +1,116 @@
+name: Mesa D3D12 source build
+on:
+  workflow_dispatch:
+  push:
+    branches: [windows-nvgpu-lab]
+    paths:
+      - experimental/windows-native-gpu/mesa/**
+      - .github/workflows/mesa-source-build.yml
+  pull_request:
+    paths:
+      - experimental/windows-native-gpu/mesa/**
+      - .github/workflows/mesa-source-build.yml
+permissions:
+  contents: read
+concurrency:
+  group: mesa-source-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  d3d12-compile-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: microsoft/DirectX-Headers
+          ref: adbd6f3ba40795c46a8d0f33af00bcb57ff0f0a4
+          path: .runtime-headers
+      - name: Install CPU compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential ninja-build pkg-config bison flex python3-venv python3-mako python3-yaml python3-packaging libdrm-dev libexpat1-dev libzstd-dev zlib1g-dev libelf-dev
+          python3 -m venv --system-site-packages "$RUNNER_TEMP/meson-env"
+          "$RUNNER_TEMP/meson-env/bin/python" -m pip install meson==1.4.2
+      - name: Compile and stage pinned DirectX headers; tests disabled
+        run: |
+          "$RUNNER_TEMP/meson-env/bin/meson" setup "$RUNNER_TEMP/headers-build" .runtime-headers --prefix "$RUNNER_TEMP/headers-install" --libdir lib -Dbuild-test=false
+          "$RUNNER_TEMP/meson-env/bin/meson" install -C "$RUNNER_TEMP/headers-build"
+      - name: Restore pinned Mesa archive
+        id: mesa-source-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: /tmp/mesa-26.0.8.tar.xz
+          key: linux-mesa-source-26.0.8-caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc
+      - name: Fetch and verify source; apply reviewed graphics and failure fixes
+        run: |
+          if [ ! -f /tmp/mesa-26.0.8.tar.xz ]; then
+            curl --fail --location --retry 3 --retry-all-errors --connect-timeout 15 --max-time 180 https://archive.mesa3d.org/mesa-26.0.8.tar.xz -o /tmp/mesa-26.0.8.tar.xz
+          fi
+          echo 'caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc  /tmp/mesa-26.0.8.tar.xz' | sha256sum --check
+          tar -xJf /tmp/mesa-26.0.8.tar.xz -C "$RUNNER_TEMP"
+          source="$RUNNER_TEMP/mesa-26.0.8"
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_fence_fd.py "$source"
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_native_sync.py "$source"
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_native_images.py "$source"
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_native_render.py "$source"
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_upload_failure.py "$source"
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_constbuf_failure.py "$source"
+      - name: Configure D3D12 graphics with real headers; graphics tests disabled
+        run: |
+          export PKG_CONFIG_PATH="$RUNNER_TEMP/headers-install/lib/pkgconfig"
+          "$RUNNER_TEMP/meson-env/bin/meson" setup "$RUNNER_TEMP/mesa-build" "$RUNNER_TEMP/mesa-26.0.8" --wrap-mode=nofallback --buildtype=release -Dplatforms=[] -Dgallium-drivers=d3d12 -Dvulkan-drivers=[] -Dllvm=disabled -Dglx=disabled -Degl=enabled -Dgbm=enabled -Dglvnd=disabled -Dgallium-d3d12-video=disabled -Dgallium-va=disabled -Dvideo-codecs=[] -Dbuild-tests=false
+      - name: Compile full Mesa D3D12 runtime; never load or execute it
+        run: |
+          "$RUNNER_TEMP/meson-env/bin/meson" compile -C "$RUNNER_TEMP/mesa-build" -j 2
+      - name: Record source and compiled output hashes without loading libraries
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          base = pathlib.Path(os.environ['RUNNER_TEMP'])
+          source, build = base / 'mesa-26.0.8', base / 'mesa-build'
+          recipe = pathlib.Path('experimental/windows-native-gpu/mesa')
+          digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+          sources = {}
+          for name in ('upload-failure-patch.json', 'constbuf-failure-patch.json'):
+              manifest = json.loads((recipe / name).read_text())
+              for relative, record in manifest['files'].items():
+                  actual = digest(source / relative)
+                  if actual != record['patchedSha256']:
+                      raise RuntimeError('Compiled source hash differs: ' + relative)
+                  sources[relative] = actual
+          outputs = {}
+          for relative in ('src/mesa/libmesa.a', 'src/gallium/auxiliary/libgallium.a', 'src/gallium/drivers/d3d12/libd3d12.a'):
+              path = build / relative
+              if not path.is_file() or not path.stat().st_size:
+                  raise RuntimeError('Required compiled archive missing: ' + relative)
+              outputs[relative] = digest(path)
+          shared = []
+          for directory in ('src/gallium/targets/dri', 'src/egl'):
+              libraries = [p for p in (build / directory).glob('*.so*') if p.is_file() and not p.is_symlink()]
+              if not libraries:
+                  raise RuntimeError('Linked shared runtime missing: ' + directory)
+              shared.extend(libraries)
+          for path in shared:
+              outputs[path.relative_to(build).as_posix()] = digest(path)
+          receipt = dict(schema=1, sourceCommit=os.environ['SOURCE_COMMIT'], mesaVersion='26.0.8',
+                         directXHeadersCommit='adbd6f3ba40795c46a8d0f33af00bcb57ff0f0a4',
+                         mesonVersion=subprocess.check_output([str(base / 'meson-env/bin/meson'), '--version'], text=True).strip(),
+                         sourceSha256=sources, compiledOutputSha256=outputs, fullD3D12GraphicsCompiled=True,
+                         galliumVideoBuilt=False, vulkanBuilt=False, runtimeLoaded=False, gpuWorkloadRun=False,
+                         vmLaunched=False, hardwareIntegrationTested=False, quickshellCrashFixed=False,
+                         dailyUseAccepted=False)
+          (base / 'mesa-source-build.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          print(json.dumps(receipt, indent=2))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mesa-d3d12-compile-evidence
+          path: |
+            ${{ runner.temp }}/mesa-source-build.json
+            ${{ runner.temp }}/mesa-build/meson-logs/meson-log.txt
+            ${{ runner.temp }}/headers-build/meson-logs/meson-log.txt
+          retention-days: 14
