@@ -176,9 +176,13 @@ func validOpenFilePath(rel string) bool {
 		if !clipboardFileName(part) {
 			return false
 		}
-		base := strings.ToUpper(strings.SplitN(part, ".", 2)[0])
+		// Win32 drops spaces before the extension, so "NUL .txt" is still a device.
+		base := strings.TrimRight(strings.ToUpper(strings.SplitN(part, ".", 2)[0]), " ")
+		if slices.Contains([]string{"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}, base) {
+			return false
+		}
 		for _, prefix := range []string{"COM", "LPT"} {
-			if base == prefix+"¹" || base == prefix+"²" || base == prefix+"³" {
+			if suffix, ok := strings.CutPrefix(base, prefix); ok && (len(suffix) == 1 && suffix[0] >= '0' && suffix[0] <= '9' || suffix == "¹" || suffix == "²" || suffix == "³") {
 				return false
 			}
 		}

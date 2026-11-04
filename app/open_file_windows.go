@@ -272,7 +272,7 @@ func validateFileOpener(appPath string) error {
 
 func isFileOpenerInterpreter(appPath string) bool {
 	base := strings.ToLower(strings.TrimSuffix(filepath.Base(appPath), filepath.Ext(appPath)))
-	return strings.HasPrefix(base, "python") || slices.Contains([]string{"py", "pyw", "powershell", "pwsh", "cmd", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "node", "java", "javaw", "bash", "wsl", "conhost"}, base)
+	return strings.HasPrefix(base, "python") || slices.Contains([]string{"py", "pyw", "powershell", "pwsh", "cmd", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "node", "java", "javaw", "bash", "wsl", "conhost", "perl", "ruby", "php", "lua", "tclsh", "wish", "dotnet", "msiexec", "forfiles", "pcalua", "msbuild", "installutil", "regasm", "regsvcs", "cmstp", "hh", "wmic", "bitsadmin", "certutil", "explorer"}, base)
 }
 
 func openSharedWindowsFile(dir, rel string) error {

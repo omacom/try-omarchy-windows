@@ -179,7 +179,7 @@ func TestParseOpenFileRequest(t *testing.T) {
 	for _, rel := range []string{
 		"", "../file.txt", "a/../file.txt", "./file.txt", ".", "..", "/file.txt", "//host/file.txt", "a//file.txt", "a/", "a/./file.txt",
 		`a\file.txt`, `C:/file.txt`, "file.txt:stream", "file.txt:", "file.txt.", "file.txt ", "a./file.txt", "a /file.txt",
-		"CON", "nul.txt", "COM0", "COM9.txt", "LPT0", "LPT¹", "com².txt", "COM³.txt", "LPT².txt", "lpt³.txt", "CONIN$", "CONOUT$.txt",
+		"CON", "nul.txt", "COM0", "COM9.txt", "LPT0", "LPT¹", "com².txt", "COM³.txt", "LPT².txt", "lpt³.txt", "CONIN$", "COM1 .txt", "NUL .pdf", "lpt¹ .md", "AUX  .csv", "CONOUT$.txt",
 		"file\x00.txt", "file\n.txt", "file\r.txt", "file\t.txt", "file\x1f.txt", "file\x7f.txt", "file\u0085.txt", "file\xff.txt",
 		"a<.txt", "a>.txt", "a|.txt", "a?.txt", "a*.txt", "a\".txt", strings.Repeat("a", 1025), longPath + "x",
 	} {
