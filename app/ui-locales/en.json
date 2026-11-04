@@ -177,6 +177,7 @@
   "settings.error.recovery": "Could not open recovery controls:\n\n{error}",
   "settings.error.choose_app": "Could not choose Windows app:\n\n{error}",
   "settings.error.approve_app": "Could not approve Windows app:\n\n{error}",
+  "settings.error.file_choose": "Choose a file type and the app that opens it.",
   "settings.error.file_interpreter": "Interpreters cannot open shared files. Choose another approved Windows app.",
   "settings.error.allow_link": "Could not allow this link type:\n\n{error}",
   "settings.error.usb": "Could not open USB choices: {error}",

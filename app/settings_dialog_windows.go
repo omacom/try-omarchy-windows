@@ -464,6 +464,7 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 				typeIndex, _, _ := procSendMessageW.Call(hFileType, 0x147, 0, 0) // CB_GETCURSEL
 				appIndex, _, _ := procSendMessageW.Call(hFileOpener, 0x147, 0, 0)
 				if typeIndex >= uintptr(len(availableFileTypes)) || appIndex > uintptr(len(approvedApps.Apps)) {
+					errorBox(uiText("settings.error.file_choose"))
 					return 0
 				}
 				entry := approvedFileType{Ext: availableFileTypes[typeIndex]}

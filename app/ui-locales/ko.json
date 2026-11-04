@@ -177,6 +177,7 @@
   "settings.error.recovery": "복구 도구를 열지 못했습니다:\n\n{error}",
   "settings.error.choose_app": "Windows 앱을 선택하지 못했습니다:\n\n{error}",
   "settings.error.approve_app": "Windows 앱을 허용하지 못했습니다:\n\n{error}",
+  "settings.error.file_choose": "파일 형식과 그 형식을 열 앱을 선택하세요.",
   "settings.error.file_interpreter": "인터프리터로 공유 파일을 열 수 없습니다. 다른 허용된 Windows 앱을 선택하세요.",
   "settings.error.allow_link": "이 링크 종류를 허용하지 못했습니다:\n\n{error}",
   "settings.error.usb": "USB 선택 창을 열지 못했습니다: {error}",
