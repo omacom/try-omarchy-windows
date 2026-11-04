@@ -1,0 +1,87 @@
+# Owned presentation source and Wayland build
+
+**November 4, 2026:** the opt-in Mesa owned-presentation patch is included in
+the public recipe as `0011-linux-d3d12-owned-presentation.patch`. Its bytes and
+four resulting source hashes match the previously captured presentation patch.
+It is the same source included in the [complete CPU-only cross-build](MESA-LINUX-CROSS-COMPILE-2026-11-04.md),
+with both uploader failure guards. Publication does not establish a new rendered
+frame or resolve the [host display incident](HOST-DISPLAY-INCIDENT-2026-11-03.md).
+
+The previous public compile workflow omitted this patch and the Wayland
+platform. The updated workflow is configured to build that desktop path, then
+stage and inspect its Linux files without loading them. **The first full
+Wayland staging result is pending.**
+
+## Resource behavior
+
+The patch permits GBM scanout usage to select the existing owned, opaque native
+allocation. It keeps the texture in GPU layout; scanout usage cannot silently
+make an owned texture CPU-linear. It does not create a KMS plane or physical
+scanout device. Linear allocation, foreign attachment, shader-image usage,
+unsupported formats, mipmaps, arrays and multisampling retain their resource
+restrictions.
+
+The path requires both `D3D12_EXPERIMENTAL_NATIVE_BUFFERS` and
+`D3D12_EXPERIMENTAL_NATIVE_PRESENTATION`, the existing native-buffer hooks and
+a presentation-support response of exactly one. Defaults remain disabled. A
+matching kernel, broker, shim and Windows-native runtime still provide resource
+ownership and transport; these source changes do not supply a standalone GPU
+installation. Official Windows keyboard and mouse code is unchanged.
+
+## Recipe and CPU controls
+
+Apply the four pinned graphics predecessors, then
+`apply_mesa_native_presentation.py`, followed by the uploader and constant-buffer
+failure guards. The presentation helper verifies all predecessor digests,
+changed and unchanged source hashes, dry-runs with zero fuzz and verifies the
+result. Repeated application verifies without rewriting.
+
+Eight source controls pass on genuine copied Mesa source: normal application,
+repeat verification, and six rejections for wrong version, modified predecessor,
+modified target, mixed targets, corrupted patch and broken dependency chain.
+All rejected trees remain unchanged. A process-sandbox denial of Git's MSYS
+namespace during fixture preparation is retained; the hidden source-only
+controls pass outside that restricted process environment. No Mesa runtime, VM, compositor or graphics API is invoked by these recipe
+controls.
+
+The new ELF reader is checked against five captured Mesa libraries and matches
+all 527 API exports, including types, bindings, visibility and versions. This
+validates the reader against known files; it does not test a new Linux staging
+tree locally or prove complete binary compatibility.
+
+## Linux build and staging contract
+
+The workflow pins [Wayland 1.26.0 and protocols 1.47](https://wayland.freedesktop.org/releases.html)
+by archive hashes. Both archives were downloaded and verified as data; the two
+protocol XML inputs match the captured inputs. Wayland libraries and scanner
+build with tests and documentation disabled. The scanner performs XML source
+generation; no Wayland server or desktop session starts.
+
+Mesa builds with D3D12, Wayland, EGL and GBM, with GLES2 enabled and GLES1, GLX,
+LLVM, Vulkan, video and XML configuration disabled. Its installation prefix is
+`/usr`, with `libdir=lib`. Meson stages only into the owned CI destination using
+`--no-rebuild --destdir`; no host runtime is installed. Staged binaries are not
+published as a usable release.
+
+The data-only stage verifier requires:
+
+- All final hashes from the seven applied source manifests.
+- Four freshly generated protocol C/header files matching the captured hashes,
+  and the two Wayland queue/timeout code paths enabled during compilation.
+- Exact configured Wayland client/server 1.26.0, protocols 1.47 and EGL-backend
+  version 3 metadata.
+- Five x86-64 ELF libraries preserving the 527 compared API exports and symbol
+  versions, correct SONAMEs, and no RPATH/RUNPATH or host dependency paths.
+- Expected development files and library aliases, with every staged symlink
+  resolving inside the owned destination.
+
+Only evidence and build logs are uploaded. The workflow does not load the Mesa
+libraries, call a graphics API, start a VM or test shaders. Its Ubuntu compiler
+and other system dependency versions still differ from the captured guest.
+
+Normal Omarchy startup, responsive browsing and multiple windows through 4K,
+sustained sessions, resource bounds, cleanup/recovery, broader API support and
+matched-native performance remain unverified. Hardware testing remains on hold.
+Counts stay **backend 4/8, desktop 0/4, diagnostic scene 3/3**.
+
+[Source provenance and exact CPU controls](evidence/mesa-owned-presentation-source-2026-11-04.json).

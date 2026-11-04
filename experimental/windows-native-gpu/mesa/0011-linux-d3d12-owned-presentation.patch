@@ -1,0 +1,86 @@
+--- a/src/gallium/drivers/d3d12/d3d12_native_buffer.h
++++ b/src/gallium/drivers/d3d12/d3d12_native_buffer.h
+@@ -31,6 +31,18 @@
+           dlsym(RTLD_DEFAULT, "wddm_bridge_native_buffer_info") &&
+           dlsym(RTLD_DEFAULT, "wddm_bridge_prepare_native_resource") &&
+           dlsym(RTLD_DEFAULT, "wddm_bridge_cancel_native_resource") && supported() == 1;
++}
++
++// GBM scanout usage can select this owned opaque presentation route. This
++// does not advertise a KMS plane, a linear modifier or a foreign attachment.
++static inline bool
++d3d12_native_presentation_available()
++{
++   if (!debug_get_bool_option("D3D12_EXPERIMENTAL_NATIVE_PRESENTATION", false) ||
++       !d3d12_native_buffer_available())
++      return false;
++   auto supported = (int (*)(void))dlsym(RTLD_DEFAULT, "wddm_bridge_native_presentation_supported");
++   return supported && supported() == 1;
+ }
+ 
+ static inline bool
+--- a/src/gallium/drivers/d3d12/d3d12_screen.h
++++ b/src/gallium/drivers/d3d12/d3d12_screen.h
+@@ -89,6 +89,7 @@
+    int native_sync_fd;
+    bool native_sync_fd_valid;
+    bool native_buffer_enabled;
++   bool native_presentation_enabled;
+    int native_render_fd;
+    bool native_render_fd_valid;
+ #endif
+--- a/src/gallium/drivers/d3d12/d3d12_screen.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_screen.cpp
+@@ -402,6 +402,7 @@
+     * interoperability remain separate acceptance requirements. */
+    caps->native_fence_fd = d3d12_native_sync_file_enabled();
+    screen->native_buffer_enabled = d3d12_native_buffer_available();
++   screen->native_presentation_enabled = screen->native_buffer_enabled && d3d12_native_presentation_available();
+    caps->dmabuf = screen->native_buffer_enabled ? DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT : 0;
+    if (screen->native_buffer_enabled) {
+       screen->base.is_dmabuf_format_supported = d3d12_native_buffer_format_supported;
+@@ -478,7 +479,9 @@
+    if (MAX2(1, sample_count) != MAX2(1, storage_sample_count))
+       return false;
+ #ifndef _WIN32
+-   if (screen->native_render_fd_valid && (bind & PIPE_BIND_SCANOUT))
++   if (screen->native_render_fd_valid && (bind & PIPE_BIND_SCANOUT) &&
++       (!screen->native_presentation_enabled || target != PIPE_TEXTURE_2D ||
++        MAX2(sample_count, 1) != 1 || !d3d12_native_buffer_format_supported(pscreen, format)))
+       return false;
+ #endif
+ 
+@@ -550,7 +553,8 @@
+ #ifndef _WIN32
+       if (screen->native_render_fd_valid) {
+          if (!screen->native_buffer_enabled || target != PIPE_TEXTURE_2D || MAX2(sample_count, 1) != 1 ||
+-             (bind & PIPE_BIND_SCANOUT) || !d3d12_native_buffer_format_supported(pscreen, format))
++             ((bind & PIPE_BIND_SCANOUT) && !screen->native_presentation_enabled) ||
++             !d3d12_native_buffer_format_supported(pscreen, format))
+             return false;
+       } else
+ #endif
+--- a/src/gallium/drivers/d3d12/d3d12_resource.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_resource.cpp
+@@ -294,7 +294,8 @@
+    if (native_shared) {
+       if (heap || templ->target != PIPE_TEXTURE_2D || templ->last_level || templ->array_size != 1 ||
+           MAX2(templ->nr_samples, 1) != 1 ||
+-          (templ->bind & (PIPE_BIND_LINEAR | PIPE_BIND_SCANOUT | PIPE_BIND_SHADER_IMAGE)) ||
++          (templ->bind & (PIPE_BIND_LINEAR | PIPE_BIND_SHADER_IMAGE)) ||
++          ((templ->bind & PIPE_BIND_SCANOUT) && !screen->native_presentation_enabled) ||
+           !d3d12_native_buffer_format_supported(&screen->base, templ->format))
+          return false;
+       /* Native runtime metadata describes a typed, opaque render target.
+@@ -336,7 +337,10 @@
+       }
+    }
+ 
+-   if (templ->bind & (PIPE_BIND_SCANOUT | PIPE_BIND_LINEAR))
++   // Owned native presentation uses the same typed opaque allocation exported
++   // to the compositor. GBM scanout usage must not silently turn it CPU-linear.
++   if ((templ->bind & PIPE_BIND_LINEAR) ||
++       ((templ->bind & PIPE_BIND_SCANOUT) && !native_shared))
+       desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+ 
+    HRESULT hres = E_FAIL;

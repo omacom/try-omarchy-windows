@@ -1,0 +1,145 @@
+{
+  "schema": 1,
+  "date": "2026-11-04",
+  "mesaVersion": "26.0.8",
+  "patch": "0011-linux-d3d12-owned-presentation.patch",
+  "patchSha256": "4aa09190463ce5f3ad70b3b080990cfd1071d4cdf9b787cff6d89ff84acc1677",
+  "matchesCapturedOwnedPresentationPatch": true,
+  "compiledSourceSha256": {
+    "src/gallium/drivers/d3d12/d3d12_native_buffer.h": "c0edf8471f8eb08ace132d2e91f1d88a545147ffc4fe10eb9465366096d913ee",
+    "src/gallium/drivers/d3d12/d3d12_screen.h": "0095232ee0cd1e3c97a315293cdf8d1f4eb84dc8a39e91f2a26466e24d425a0d",
+    "src/gallium/drivers/d3d12/d3d12_screen.cpp": "ecbc82234b0ea76e2629b9bf03c154b6c6dd8edd261c6ae1013f4043e950cc65",
+    "src/gallium/drivers/d3d12/d3d12_resource.cpp": "9d3fa4f00817659c33b0a9ba565036c1cd3e1e5bd623558c08df0f05b76d4a43"
+  },
+  "previousCompleteSourceBuildEvidence": "mesa-linux-cross-compile-2026-11-04.json",
+  "sourceRecipeControls": {
+    "schema": 1,
+    "sourceFilesVerified": 18,
+    "changedSourceFiles": 4,
+    "patchSha256": "4aa09190463ce5f3ad70b3b080990cfd1071d4cdf9b787cff6d89ff84acc1677",
+    "cases": [
+      {
+        "name": "apply",
+        "expectedSuccess": true,
+        "returnCode": 0
+      },
+      {
+        "name": "apply",
+        "expectedSuccess": true,
+        "returnCode": 0
+      },
+      {
+        "name": "wrong-version",
+        "expectedSuccess": false,
+        "returnCode": 2
+      },
+      {
+        "name": "changed-predecessor",
+        "expectedSuccess": false,
+        "returnCode": 2
+      },
+      {
+        "name": "changed-target",
+        "expectedSuccess": false,
+        "returnCode": 2
+      },
+      {
+        "name": "mixed-targets",
+        "expectedSuccess": false,
+        "returnCode": 2
+      },
+      {
+        "name": "corrupted-patch",
+        "expectedSuccess": false,
+        "returnCode": 2
+      },
+      {
+        "name": "broken-chain",
+        "expectedSuccess": false,
+        "returnCode": 2
+      }
+    ],
+    "idempotencePreservesMtime": true,
+    "rejectedSourcesUnchanged": true,
+    "gpuWorkloadRun": false,
+    "runtimeLoaded": false,
+    "vmLaunched": false,
+    "hardwareAcceptance": false,
+    "dailyUseAccepted": false
+  },
+  "elfReaderControl": {
+    "schema": 1,
+    "dataOnlyReaderCheckedAgainstCapturedLibraries": true,
+    "libraries": {
+      "libgallium-26.0.8.so": {
+        "sha256": "0128e184833f6e22679f1ed0097a88498f60b806cf52eafbfb9fcf225e25b744",
+        "apiExports": 83,
+        "apiAbiSha256": "3cb4468cd714eb6b209191107ca9f4c5280dbffb6b6d6f0962f049c8bfaacded"
+      },
+      "libGLESv2.so.2.0.0": {
+        "sha256": "7429256c24b176de3322c5297ca4f77cb2ffcd1a57d9ee99ec09bc12a545dcf7",
+        "apiExports": 358,
+        "apiAbiSha256": "2f007ae84bf3d08eac088910b6640b12a065c2967e4b5ab4b787ec0298183118"
+      },
+      "libgbm.so.1.0.0": {
+        "sha256": "10496ebe7912fd4b83e0654a1764e52e854d1d6c9d1ea33f1b5a916f5eb8fd21",
+        "apiExports": 38,
+        "apiAbiSha256": "3fc06c3c8e64bb7901fb8f908a4131d8cea1882303762882e19d8cad1b8972ac"
+      },
+      "libEGL.so.1.0.0": {
+        "sha256": "b95bedee6546b3b42e5dc38242f3cddf4fb63095f4983a57b92653f5d308cb8a",
+        "apiExports": 47,
+        "apiAbiSha256": "9b45d35dd03fb585109a0d80fa47226012f23005b8408d7a465a26231229b3e0"
+      },
+      "dri_gbm.so": {
+        "sha256": "fe6015e00f84bdbf7ce3482596496b819007813321a0d80af1c4476d9e714605",
+        "apiExports": 1,
+        "apiAbiSha256": "9b6a30c28ee7edabf3178fefa346ae849d65748712ac65e15991642fda7fa634"
+      }
+    },
+    "comparedApiExports": 527,
+    "linuxStageLayoutTestedLocally": false,
+    "runtimeLoaded": false,
+    "gpuWorkloadRun": false
+  },
+  "waylandSources": {
+    "schema": 1,
+    "sources": [
+      {
+        "url": "https://gitlab.freedesktop.org/wayland/wayland/-/releases/1.26.0/downloads/wayland-1.26.0.tar.xz",
+        "sha256": "64176eaa46e4969903e286f8e5ef8331affc17fdf03ac9b58381d2b23162b7a3",
+        "bytes": 612384,
+        "filename": "wayland-1.26.0.tar.xz",
+        "version": "1.26.0"
+      },
+      {
+        "url": "https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/1.47/downloads/wayland-protocols-1.47.tar.xz",
+        "sha256": "5fd4349bcbc9bab9a46f8cf77d1f434296a7a052c87440a094f63fcf62a58e20",
+        "bytes": 136148,
+        "filename": "wayland-protocols-1.47.tar.xz",
+        "version": "1.47"
+      }
+    ]
+  },
+  "defaultEnabled": false,
+  "normalWindowsInputChanged": false,
+  "remoteWaylandStageVerified": false,
+  "runtimeLoaded": false,
+  "gpuWorkloadRun": false,
+  "vmLaunched": false,
+  "hardwareIntegrationTested": false,
+  "hostDisplayRecoveryVerified": false,
+  "dailyUseAccepted": false,
+  "remainingLimits": [
+    "Matching kernel, broker, shim and Windows-native runtime are still required",
+    "Published source is the existing owned opaque presentation route, not a new KMS implementation",
+    "Linux Wayland regeneration and /usr staging workflow is prepared; its first result is pending",
+    "No normal-session, crash-recovery, sustained-session or performance acceptance from these CPU checks"
+  ],
+  "testedRecipeFileSha256": {
+    "apply_mesa_native_presentation.py": "ce2f06d947667959924bab5f2ccb50ff43ab83ccd09cb81fadc179c50e95bd00",
+    "test_mesa_native_presentation.py": "a276cc4d70c434c18d477008cebb1af715b598c5819a9f416f7e2c5ca28ecf28",
+    "native-presentation-patch.json": "da1b8e0cb9a901594810b49bea0fbc3974039d538a3de296132e26063d677fa6",
+    "0011-linux-d3d12-owned-presentation.patch": "4aa09190463ce5f3ad70b3b080990cfd1071d4cdf9b787cff6d89ff84acc1677"
+  }
+}

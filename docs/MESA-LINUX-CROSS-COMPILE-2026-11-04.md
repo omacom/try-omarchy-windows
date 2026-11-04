@@ -16,9 +16,9 @@ installed runtime and VM image remain unchanged. Hardware testing remains
 ## Source and build scope
 
 The source is reconstructed from the pinned Mesa archive, public graphics
-patches 1–4 and the exact private owned-presentation patch. The changed paths
+patches 1â€“4 and the exact private owned-presentation patch. The changed paths
 match the captured source associated with run 10's installed Gallium module
-(`0128e184…`). The public uploader and constant-buffer guards are then applied
+(`0128e184â€¦`). The public uploader and constant-buffer guards are then applied
 and their source hashes verified. Both complete affected files compile in the
 full graph; this does not use the CPU callback substitutes.
 
@@ -87,9 +87,14 @@ A separate [remote Linux compile-only run](https://github.com/7Wdev/try-omarchy-
 now passes for PR head `545d12b` (workflow merge commit `5902aaf`). Its recorded
 source hashes match both upload guards, and its linked Gallium/EGL hashes are
 retained in the [CI receipt](evidence/mesa-linux-source-ci-2026-11-04.json).
-This workflow builds public patches 1-4 and 9-10 with `platforms=[]`; it does
+That tested workflow revision builds patches 1-4 and 9-10 with `platforms=[]`; it does
 not include the private presentation overlay or reproduce this Wayland
 source/dependency profile. It never loads the libraries.
+
+The [owned-presentation source follow-up](MESA-OWNED-PRESENTATION-SOURCE.md)
+now adds the captured presentation patch to the public recipe and extends the
+workflow to pinned Wayland and Linux staging. Its first staging result is
+pending; the historical results above retain their original scope.
 
 The patched runtime has not been installed or loaded. Quickshell recovery,
 normal launcher sessions, ordinary Windows input, sustained browsing and app

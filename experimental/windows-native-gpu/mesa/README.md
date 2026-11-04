@@ -36,6 +36,20 @@ Use `D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE=true` before screen creation for the
 new path; both native bridge hooks must also be present. That option is
 independent of `D3D12_EXPERIMENTAL_FENCE_FD`. All defaults remain off.
 
+## Owned opaque desktop presentation source
+
+`apply_mesa_native_presentation.py` follows graphics patches 1-4. Patch 0011
+publishes the same owned-presentation source used by the captured desktop build;
+patch numbers 0005-0008 remain the separate Dozen work. Both native-buffer and
+presentation options are disabled by default. The matching kernel/broker/shim
+contract remains required; this does not implement KMS or general foreign imports.
+
+Eight source recipe controls pass. The compile-only workflow now includes pinned
+Wayland 1.26.0 and protocols 1.47, independent protocol generation and data-only
+inspection of an owned Linux staging tree. Its first full staging result remains
+pending. No staged library is loaded or shipped as a usable runtime.
+[Source, requirements and verification limits](../../../docs/MESA-OWNED-PRESENTATION-SOURCE.md).
+
 ## Native EGL image development patch
 
 Apply `apply_mesa_native_images.py` after both existing timeline patches. It
