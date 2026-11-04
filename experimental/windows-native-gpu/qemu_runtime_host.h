@@ -6,6 +6,8 @@
 #include <bcrypt.h>
 #include "qmp_protocol.h"
 #include "qmp_socket_wait.h"
+#include "qmp_deadline_budget.h"
+#include "qmp_relay_transaction.h"
 #include "driver_wire.h"
 #include "cpu_aperture.h"
 #include "qemu_fence_test.h"
@@ -45,6 +47,8 @@ class Qmp {
     Socket socket;
     std::string buffered;
     std::uint64_t next = 0;
+    const driver_qmp::ChannelPurpose channelPurpose;
+    const std::uint32_t commandBudgetMs;
     void ready(bool reading, ULONGLONG deadline) {
         waitQmpSocket(socket.value, reading, deadline);
     }
@@ -63,7 +67,9 @@ class Qmp {
         }
     }
 public:
-    Qmp(unsigned short port, const OwnedProcess& owner, const std::string& name) {
+    Qmp(unsigned short port, const OwnedProcess& owner, const std::string& name,
+        driver_qmp::ChannelPurpose purpose = driver_qmp::ChannelPurpose::Control)
+        : channelPurpose(purpose), commandBudgetMs(driver_qmp::commandTimeoutMs(purpose)) {
         const auto deadline = GetTickCount64() + 10000;
         for (;;) {
             socket.value = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -87,14 +93,14 @@ public:
         if (!identity.is_object() || !identity.contains("name") || identity.at("name") != name)
             throw std::runtime_error("QMP owned machine name mismatch");
     }
-    driver_qmp::Json call(const std::string& operation, driver_qmp::Json arguments = nullptr) {
+private:
+    driver_qmp::Json callUntil(const std::string& operation, driver_qmp::Json arguments, ULONGLONG deadline) {
         if (next == UINT64_MAX) throw std::runtime_error("QMP ID exhausted");
         const auto id = "fence-" + std::to_string(++next);
         driver_qmp::Json command{{"execute", operation}, {"id", id}};
         if (!arguments.is_null()) command["arguments"] = std::move(arguments);
         const auto bytes = command.dump() + '\n';
         if (bytes.size() > driver_qmp::MaxMessage) throw std::runtime_error("QMP request bound exceeded");
-        const auto deadline = GetTickCount64() + 5000;
         std::size_t sent = 0;
         while (sent < bytes.size()) {
             ready(false, deadline);
@@ -108,6 +114,18 @@ public:
             return driver_qmp::result(reply, id);
         }
         throw std::runtime_error("QMP asynchronous event bound exceeded");
+    }
+public:
+    driver_qmp::Json call(const std::string& operation, driver_qmp::Json arguments = nullptr) {
+        return callUntil(operation,std::move(arguments),GetTickCount64()+commandBudgetMs);
+    }
+    driver_qmp::Json relayCommandState(const std::string& instruction) {
+        if(channelPurpose!=driver_qmp::ChannelPurpose::SdlGraphics)
+            throw std::runtime_error("SDL transaction requires its dedicated graphics channel");
+        const auto deadline=GetTickCount64()+commandBudgetMs;
+        return driver_qmp::relayTransaction([this](const std::string& operation,driver_qmp::Json arguments,std::uint64_t until) {
+            return callUntil(operation,std::move(arguments),until);
+        },instruction,deadline);
     }
     void mapping(const std::string& command) {
         const auto reply = call("qom-set", {{"path", "/machine/peripheral/wddm-fences"}, {"property", "fence-mapping"}, {"value", command}});
@@ -316,16 +334,13 @@ public:
                 <<"\"internetConnectivityVerified\":false,\"browserRenderingVerified\":false}\n"<<std::flush;
         }
         if(enableSdl) {
-            auto graphicsQmp=std::make_shared<Qmp>(graphicsPort,process,qmpName);
+            auto graphicsQmp=std::make_shared<Qmp>(graphicsPort,process,qmpName,
+                driver_qmp::ChannelPurpose::SdlGraphics);
             const auto options=graphicsQmp->call("query-display-options");
             if(options!=driver_qmp::Json{{"gl","on"},{"window-close",false},{"type","sdl"},{"show-cursor",launcherProfile && launcherProfile->hostCursor}})
                 throw std::runtime_error("Owned SDL display options differ");
             sdlGraphics->command=[graphicsQmp](const std::string& instruction) {
-                const auto acknowledgement=graphicsQmp->call("qom-set",{{"path","/machine/peripheral/relay"},
-                    {"property","relay-command"},{"value",instruction}});
-                if(!acknowledgement.is_object() || !acknowledgement.empty()) throw std::runtime_error("SDL graphics acknowledgement invalid");
-                const auto state=driver_qmp::Json::parse(graphicsQmp->call("qom-get",{{"path","/machine/peripheral/relay"},
-                    {"property","relay-state"}}).get<std::string>());
+                const auto state=graphicsQmp->relayCommandState(instruction);
                 std::cerr<<"{\"nativeSdlGraphicsCommand\":true,\"command\":\""<<instruction<<"\",\"state\":"<<state.dump()<<"}\n";
                 return state;
             };

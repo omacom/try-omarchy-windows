@@ -130,6 +130,13 @@ jobs:
           python3 experimental/windows-native-gpu/test_browser_target_retirement.py
           python3 experimental/windows-native-gpu/test_sustained_terminal_pulse.py
           python3 experimental/windows-native-gpu/test_normal_scene_gate.py
+          python3 experimental/windows-native-gpu/test_qmp_deadline_contract.py
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/qmp_deadline_budget_test.cpp -o /tmp/qmp-deadline-budget-test
+          /tmp/qmp-deadline-budget-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/qmp_relay_transaction_test.cpp -o /tmp/qmp-relay-transaction-test
+          /tmp/qmp-relay-transaction-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/stopped_group_retirement_poll_test.cpp -o /tmp/stopped-group-retirement-poll-test
+          /tmp/stopped-group-retirement-poll-test
       - name: Check bounded SDL relay host command grammar
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror experimental/qemu/sdl_command_test.c -o /tmp/sdl-command-test

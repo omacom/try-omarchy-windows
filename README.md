@@ -20,6 +20,12 @@ GPU/VM tests on this host are on hold. Cause and recovery remain unverified;
 work continues through source and CPU-only checks. **Daily use is blocked.**
 [Incident observations and limits](docs/HOST-DISPLAY-INCIDENT-2026-11-03.md).
 
+**Source-only shutdown follow-up — November 4, 2026:** retirement now polls
+the owned graphics thread before joining, and the relay command/state pair
+shares one bounded deadline. CPU controls and both Windows owner compilations
+pass; the owners are never executed. GPU/VM testing remains on hold.
+[Changes, CPU evidence and remaining limits](docs/RETIREMENT-POLLING-AND-QMP-DEADLINES.md).
+
 **Normal-session diagnostic — November 3, 2026:** run 10 records 176 native
 4K handoffs with a clean terminal prompt. Quickshell crashes during a Mesa
 constant-buffer copy; the return to VGA stalls and containment forcibly stops

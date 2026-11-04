@@ -20,6 +20,7 @@ struct NativeMock : Driver {
     std::uint32_t blockedHandle=0;
     unsigned livePrepares=0;
     unsigned presentationStops=0;
+    unsigned pendingPresentationPolls=0;
     bool presentationReady=true,presentationStopped=false,requirePresentationStop=false;
     std::map<std::uint32_t,std::uint32_t> paging,hardware;
     std::set<std::uint32_t> pagingSyncs,hardwareSyncs;
@@ -32,6 +33,10 @@ struct NativeMock : Driver {
     bool prepareLiveRetirement() override { ++livePrepares;return supportsLiveRetirement() && liveReady; }
     bool stopCoordinatedPresentation() override {
         ++presentationStops;presentationStopped=presentationReady;return presentationStopped;
+    }
+    PresentationStopProgress pollCoordinatedPresentationStop() override {
+        if(pendingPresentationPolls) { --pendingPresentationPolls;return PresentationStopProgress::Pending; }
+        return stopCoordinatedPresentation() ? PresentationStopProgress::Complete : PresentationStopProgress::Failed;
     }
     SyncResult createSync(std::uint32_t device,SyncDesc desc) override {
         CHECK(devices.count(device) && validSync(desc));return {openAdapter(),{desc.type==5 ? 4096ull : 0ull,desc.type==5 ? 8192ull : 0ull}};
@@ -259,6 +264,17 @@ static void terminalRetirementControls() {
             continue;
         }
         const auto destroyedBefore=driver.destroyed;
+        if(scenario==0) {
+            driver.pendingPresentationPolls=3;
+            const auto actorsBefore=owner.actorCount(),objectsBefore=owner.objectCount();
+            for(unsigned n=0;n<3;++n) {
+                CHECK(at<cg::Frame>(c.control(cg::Operation::RetireStoppedGroup)).status==-16);
+                CHECK(!owner.failed() && driver.destroyed==destroyedBefore && !driver.presentationStops);
+                CHECK(owner.actorCount()==actorsBefore && owner.objectCount()==objectsBefore);
+                CHECK(at<cg::Frame>(c.control(cg::Operation::Register,encoded(cg::Registration{}))).status==-32);
+                CHECK(!at<cg::Frame>(c.control(cg::Operation::Info)).status);
+            }
+        }
         driver.requirePresentationStop=true;driver.liveReady=false;
         auto progress=at<StoppedGroupRetirementProgress>(c.control(cg::Operation::RetireStoppedGroup),32);
         CHECK(progress.step.flags==RetirementGpuBusy && !progress.step.attempted && driver.destroyed==destroyedBefore && driver.presentationStops==1);

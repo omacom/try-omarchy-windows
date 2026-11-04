@@ -6,6 +6,7 @@
 #include "guest_broker_receipts.h"
 #include "broker_residency_observation.h"
 #include "fair_rpc_mutex.h"
+#include "stopped_group_retirement_poll.h"
 #include <deque>
 #include <set>
 #include <atomic>
@@ -85,6 +86,8 @@ public:
         const auto r=at<cg::Frame>(reply);
         if(r.magic!=cg::Magic || r.version!=cg::ProtocolVersion || r.operation!=operation || r.sequence!=h.sequence || r.reserved ||
             r.bytes!=reply.size()-sizeof r || r.status>0 || r.status< -4095 || (r.status && r.bytes)) reject("Coordinator reply identity mismatch");
+        if(operation==cg::Operation::RetireStoppedGroup && r.status==-EBUSY)
+            throw driver_bridge::StoppedGroupPending{};
         if(r.status) throw std::system_error(-r.status,std::generic_category(),"Coordinator control refused");
         return {reply.begin()+sizeof r,reply.end()};
     }
@@ -192,20 +195,12 @@ public:
     bool retirementWitnessesEnabled() const { return retirementWitnessFiles; }
     void retireStoppedGroup() {
         if(!liveRetirement) reject("Terminal group retirement not negotiated");
-        const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(8);
-        unsigned steps=0,destroyed=0;
-        driver_bridge::StoppedGroupRetirementProgress progress;
-        do {
-            progress=decode<driver_bridge::StoppedGroupRetirementProgress>(control(cg::Operation::RetireStoppedGroup));
-            if(!driver_bridge::validStoppedGroupRetirementProgress(progress,agreement.maxActors)) reject("Terminal retirement progress mismatch");
-            ++steps;destroyed+=progress.step.destroyed;
-            if(!progress.actorsRemaining) {
-                receipt("BROKER_COORDINATOR_PRIMARY_RETIRED destroyedWireObjects=%u steps=%u groupSealed=true\n",destroyed,steps);
-                return;
-            }
-            poll(nullptr,0,1);
-        } while(steps<driver_bridge::MaxStoppedGroupSteps && std::chrono::steady_clock::now()<deadline);
-        reject("Terminal group retirement did not finish within its bounded deadline");
+        try {
+            const auto summary=driver_bridge::pollStoppedGroupRetirement([&] {
+                return decode<driver_bridge::StoppedGroupRetirementProgress>(control(cg::Operation::RetireStoppedGroup));
+            },[] { return std::chrono::steady_clock::now(); },[] { poll(nullptr,0,1); },agreement.maxActors);
+            receipt("BROKER_COORDINATOR_PRIMARY_RETIRED destroyedWireObjects=%u steps=%u groupSealed=true\n",summary.destroyed,summary.attempts);
+        } catch(...) { failed=true;throw; }
     }
     driver_bridge::LiveRetirementProgress retireExited(std::uint64_t actor) {
         if(!liveRetirement) reject("Live retirement not negotiated");

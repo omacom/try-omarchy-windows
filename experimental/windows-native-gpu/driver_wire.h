@@ -567,11 +567,13 @@ inline bool validCoordinatedAgreement(OpenGlDesktopPresentationCapacity capacity
         (capacity.mapping.aperture.version==14 ? (objects.version==9 || (applicationMemory && objects.version==10)) : capacity.mapping.aperture.version==13 ? (objects.version>=5 && objects.version<=8) :
             objects.version==(capacity.mapping.aperture.version>=11 ? 4u : 3u));
 }
+enum class PresentationStopProgress { Pending, Complete, Failed };
 class Driver {
 public:
     virtual bool supportsLiveRetirement() const { return false; }
     virtual bool prepareLiveRetirement() { return false; }
     virtual bool stopCoordinatedPresentation() { return false; }
+    virtual PresentationStopProgress pollCoordinatedPresentationStop() { return PresentationStopProgress::Failed; }
     virtual bool beginCoordinatedObjects(CoordinatedObjectCapacity) { return false; }
     virtual bool beginApplicationMemory(ApplicationMemoryProfile) { return false; }
     virtual ~Driver() = default;

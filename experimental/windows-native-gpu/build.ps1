@@ -36,6 +36,22 @@ cl /nologo /std:c++17 /EHsc /W4 /WX /O2 "$PSScriptRoot\qmp_socket_wait_test.cpp"
 if not "%errorlevel%"=="0" exit /b %errorlevel%
 qmp-socket-wait-test.exe
 if not "%errorlevel%"=="0" exit /b %errorlevel%
+cl /nologo /std:c++17 /EHsc /W4 /WX /O2 "$PSScriptRoot\qmp_deadline_budget_test.cpp" /Fe:qmp-deadline-budget-test.exe /link ws2_32.lib
+if not "%errorlevel%"=="0" exit /b %errorlevel%
+qmp-deadline-budget-test.exe
+if not "%errorlevel%"=="0" exit /b %errorlevel%
+cl /nologo /std:c++17 /EHsc /W4 /WX /O2 "$PSScriptRoot\qmp_relay_transaction_test.cpp" /Fe:qmp-relay-transaction-test.exe
+if not "%errorlevel%"=="0" exit /b %errorlevel%
+qmp-relay-transaction-test.exe
+if not "%errorlevel%"=="0" exit /b %errorlevel%
+cl /nologo /std:c++17 /EHsc /W4 /WX /O2 "$PSScriptRoot\owned_thread_completion_test.cpp" /Fe:owned-thread-completion-test.exe
+if not "%errorlevel%"=="0" exit /b %errorlevel%
+owned-thread-completion-test.exe
+if not "%errorlevel%"=="0" exit /b %errorlevel%
+cl /nologo /std:c++17 /EHsc /W4 /WX /O2 "$PSScriptRoot\stopped_group_retirement_poll_test.cpp" /Fe:stopped-group-retirement-poll-test.exe
+if not "%errorlevel%"=="0" exit /b %errorlevel%
+stopped-group-retirement-poll-test.exe
+if not "%errorlevel%"=="0" exit /b %errorlevel%
 cl /nologo /std:c++17 /EHsc /W4 /WX /O2 "$PSScriptRoot\atomic_line_log_test.cpp" /Fe:atomic-line-log-test.exe
 if not "%errorlevel%"=="0" exit /b %errorlevel%
 atomic-line-log-test.exe

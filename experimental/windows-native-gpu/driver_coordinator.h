@@ -224,7 +224,9 @@ public:
                     return response(h,-16);
             terminalRetirement=true;
             if(!presentationStopped) {
-                if(!driver.stopCoordinatedPresentation()) {
+                const auto state=driver.pollCoordinatedPresentationStop();
+                if(state==PresentationStopProgress::Pending) return response(h,-16);
+                if(state!=PresentationStopProgress::Complete) {
                     poisoned=true;throw std::runtime_error("Terminal presentation drain failed");
                 }
                 presentationStopped=true;

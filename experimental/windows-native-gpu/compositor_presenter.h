@@ -15,6 +15,7 @@
 #include "sdl-relay-output/compositor_output.h"
 #include "input_delivery_diagnostic.h"
 #include "staging_reclaim.h"
+#include "owned_thread_completion.h"
 namespace driver_shared {
 class CompositorPresenter {
     using Device = Microsoft::WRL::ComPtr<ID3D12Device>;
@@ -427,6 +428,13 @@ public:
         return S_OK;
     }
     void releaseSource(std::uint32_t resource) { sources.erase(resource); }
+    ThreadCompletion pollStop() {
+        if (ui.joinable()) {
+            { std::lock_guard<std::mutex> lock(guard); stopping=true; }
+            if (!SetEvent(work)) return ThreadCompletion::Failed;
+        }
+        return queryOwnedThreadCompletion(ui);
+    }
     bool stop() {
         if (!ui.joinable()) {
             if (work && !CloseHandle(work)) fatalExit();

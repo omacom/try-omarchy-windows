@@ -1,6 +1,6 @@
 # NVIDIA backend progress
 
-Updated **2026-11-03**. This page tracks the experimental QEMU/WHPX Windows-native
+Updated **2026-11-04**. This page tracks the experimental QEMU/WHPX Windows-native
 NVIDIA backend. The released Try Omarchy launcher continues using the upstream
 graphics runtime.
 
@@ -13,6 +13,12 @@ graphics corruption across Windows; NVIDIA driver-reset events are recorded.
 GPU/VM tests on this host are on hold. Cause and recovery remain unverified;
 work continues through source and CPU-only checks. **Daily use is blocked.**
 [Incident observations and limits](HOST-DISPLAY-INCIDENT-2026-11-03.md).
+
+**Source-only shutdown follow-up — November 4, 2026:** retirement now polls
+the owned graphics thread before joining, and the relay command/state pair
+shares one bounded deadline. CPU controls and both Windows owner compilations
+pass; the owners are never executed. GPU/VM testing remains on hold.
+[Changes, CPU evidence and remaining limits](RETIREMENT-POLLING-AND-QMP-DEADLINES.md).
 
 **Normal-session diagnostic — November 3, 2026:** run 10 records 176 native
 4K handoffs with a clean terminal prompt. Quickshell crashes during a Mesa

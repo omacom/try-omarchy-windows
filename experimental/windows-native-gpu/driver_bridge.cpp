@@ -747,6 +747,16 @@ public:
         }
         return true;
     }
+    PresentationStopProgress pollCoordinatedPresentationStop() override {
+        if(!supportsLiveRetirement()) return PresentationStopProgress::Failed;
+        if(!compositorOutput) return PresentationStopProgress::Complete;
+        const auto state=compositorOutput->pollStop();
+        if(state==driver_shared::ThreadCompletion::Pending) return PresentationStopProgress::Pending;
+        if(state!=driver_shared::ThreadCompletion::Complete || !compositorOutput->stop())
+            return PresentationStopProgress::Failed;
+        compositorOutput.reset();
+        return PresentationStopProgress::Complete;
+    }
     bool stopCoordinatedPresentation() override {
         if(!supportsLiveRetirement()) return false;
         // Stop joins the UI thread and retires its real input/output fences

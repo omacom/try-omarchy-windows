@@ -1,0 +1,109 @@
+{
+  "schema": 1,
+  "date": "2026-11-04",
+  "scope": "source changes, CPU controls and compile-only production owners",
+  "gpuExecuted": false,
+  "vmLaunched": false,
+  "wslLaunched": false,
+  "hostInputSent": false,
+  "displayOrDriverOperations": false,
+  "cpuExecutables": [
+    "qmp-deadline-budget-test.exe",
+    "qmp-relay-transaction-test.exe",
+    "owned-thread-completion-test.exe",
+    "stopped-group-retirement-poll-test.exe",
+    "driver-coordinator-test.exe"
+  ],
+  "cpuControlExitCode": 0,
+  "sourceFilesFrozen": 585,
+  "normalizedLfSourceSha256": {
+    "experimental/windows-native-gpu/build.ps1": "743934d6d377e6acf48dd1446d7c5a4a8d61858da3ce290767d655af2d29ca42",
+    "experimental/windows-native-gpu/compositor_presenter.h": "f216217911daba9429465a8d192fa5fb8ada43d4c856e97dc9e52b51dde2e8a3",
+    "experimental/windows-native-gpu/driver_bridge.cpp": "1bd9f0c441f7cff1f6a7a93f676079ff638153c4ad0675816064041a6831a8c5",
+    "experimental/windows-native-gpu/driver_coordinator.h": "7d9a75915cd48be1398a21a1f611ffc5684bad633b21bdde5276b43af086f4ef",
+    "experimental/windows-native-gpu/driver_coordinator_test.cpp": "449564a370b2e5b7c6283f694eafe81c606d7a86c039ced433efb06184307f6b",
+    "experimental/windows-native-gpu/driver_wire.h": "22139ab96ddf3ba6d4dcd064d1fbc4a1baf9699f3cca8ffef674259370e3c7bd",
+    "experimental/windows-native-gpu/guest_coordinator.h": "e371832bc13aabf5f49d5d2537238bd82bacac627fd4ba6847f876af7c0d085f",
+    "experimental/windows-native-gpu/owned_thread_completion.h": "ed86a172aa31fd038afebf0f70c452c6cb5e84216f0ab60436cd836b2255891e",
+    "experimental/windows-native-gpu/owned_thread_completion_test.cpp": "4b0713457de703e3037665fc531cd3b1c591004c7e21dae213c552f217815577",
+    "experimental/windows-native-gpu/qemu_runtime_host.h": "c425fd21684f1e3fed55fecbbca67d8612577b5183158d19fa6a43bb1aa14c1c",
+    "experimental/windows-native-gpu/qmp_deadline_budget.h": "996a58f7a38a67e480b3012ac55ea2f41beb46f9c7be9201175a0bdc95de17e7",
+    "experimental/windows-native-gpu/qmp_deadline_budget_test.cpp": "c892cff9172f7c6b9f0698386f12244e0687862edc74bc808f89d0aea2307029",
+    "experimental/windows-native-gpu/qmp_relay_transaction.h": "6510ae62fa6f2fcab2a6c4cce5f5f97f3adbbcecd91b6d4b9d74de9d52d5eb62",
+    "experimental/windows-native-gpu/qmp_relay_transaction_test.cpp": "4b69c646925e2c65cdb58f479ab7f3f6bf56d72e9b6c332e4bb2e6b6fb7a9966",
+    "experimental/windows-native-gpu/stopped_group_retirement_poll.h": "8c65584b7921e12231f1d3f6ff4dfcc3bfb098b1965ecdc1c970c4eddbdfaf34",
+    "experimental/windows-native-gpu/stopped_group_retirement_poll_test.cpp": "96e3b43160ed0401415688cec179e0a3a04fcae0b5943100fac423294361e0aa",
+    "experimental/windows-native-gpu/test_qmp_deadline_contract.py": "b0bf015d28c0a3e7606512177d5823543555709ffe12157be314f3baa45f3445"
+  },
+  "compiledOwners": {
+    "neverExecuted": true,
+    "profiles": {
+      "default": "08aaf6ba6d5a8723e9689e40571b6bff72b1461efc87eae2c99adbff0f5be1e3",
+      "4k": "d63a0b10578259dbd7fdd4797d345b18f266f3bcea2c24049e642d794e4be999"
+    },
+    "strictFlags": [
+      "/W4",
+      "/WX",
+      "/O2"
+    ]
+  },
+  "controls": {
+    "loopbackReplyAfterMs": 5200,
+    "controlBudgetMs": 5000,
+    "graphicsTransactionBudgetMs": 7000,
+    "guestAdmissionMs": 8000,
+    "wireTransferMs": 10000,
+    "commandAndStateShareDeadline": true,
+    "pendingThreadQueries": 1000,
+    "joinOnlyAfterThreadTermination": true,
+    "nativeMockPendingPolls": 3,
+    "actorsAndObjectsRetainedWhilePending": true,
+    "groupSealedWhilePending": true,
+    "busyIsNotCompletion": true,
+    "busyAttemptsCountTowardCap": true,
+    "lateCompletionRejected": true,
+    "malformedProgressRejected": true,
+    "transportFailurePropagated": true,
+    "transportBusyPropagatedWithoutRetry": true
+  },
+  "matchedHostAndGuestUpdateRequired": true,
+  "unfinishedKernelExcluded": true,
+  "originalSandboxAttempt": {
+    "exitCode": 3221226505,
+    "stage": "CPU test loopback connect assertion",
+    "retained": true
+  },
+  "privateReceiptSha256": {
+    "passed": "8e05fb446a4f1614f9eb1aef429611397413e5e0845518af1982d914eafb4ee2",
+    "original": "ae67bd37d5e6848ad1e91b97fdaa3f1f813476a71ae242f4d3d79795ebaaacb6",
+    "updated": "5846effc348505d5dc23aa7df8b0e371237c9f149d06510df0edc1732b7765b5"
+  },
+  "gpuQuiescenceVerified": false,
+  "vgaReturnVerified": false,
+  "hostDriverRecoveryVerified": false,
+  "quickshellCrashFixed": false,
+  "hardwareTestingOnThisHostOnHold": true,
+  "dailyUseAccepted": false,
+  "counts": {
+    "backend": "4/8",
+    "desktop": "0/4",
+    "diagnosticScene": "3/3"
+  },
+  "wireProtocolChanged": false,
+  "cpuEvidence": {
+    "initialSuiteTests": 5,
+    "updatedPollingSuiteTests": 1,
+    "unchangedControlsReused": [
+      "QMP delayed peer",
+      "QMP shared transaction deadline",
+      "held thread completion",
+      "native mock coordinator"
+    ],
+    "allRecordedSourcesVerified": true
+  },
+  "sourceDeadlineContract": {
+    "unitTestExitCode": 0,
+    "normalizedLfQemuRelaySha256": "214a89fb1227dc351ee04df524c0e7bb3fd7a2fb0100c17155ee2186d316a65b",
+    "normalizedLfGuestPortSha256": "5a2784cb2ae05f1c4cacda5d5f9b77e64266e5b0947fff786bf3a99321761bad"
+  }
+}
