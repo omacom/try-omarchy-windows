@@ -6,6 +6,12 @@ verified in [two hardware runs](../../../docs/LIVE-GPU-EGL-NATIVE-SYNC.md),
 with disabled-extension and timeline regressions. It does not implement general
 sync-file interoperability, DRM/GBM or a compositor desktop.
 
+The independent pinned `apply_mesa_upload_failure.py` patch corrects upload-buffer
+failure ownership in Mesa 26.0.8. Its complete-uploader CPU regression reproduces
+lost references and duplicate releases without a graphics runtime. The full
+runtime and Quickshell crash still need validation; see
+[failure cases and limits](../../../docs/MESA-UPLOAD-FAILURE-LIFETIME.md).
+
 Apply `apply_mesa_fence_fd.py` first, then `apply_mesa_native_sync.py` to that
 exact pinned tree. The additive helper verifies both patch digests and every
 changed/unchanged base file, dry-runs with zero fuzz and rejects mixed sources.

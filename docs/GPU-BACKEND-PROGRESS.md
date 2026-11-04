@@ -14,6 +14,12 @@ GPU/VM tests on this host are on hold. Cause and recovery remain unverified;
 work continues through source and CPU-only checks. **Daily use is blocked.**
 [Incident observations and limits](HOST-DISPLAY-INCIDENT-2026-11-03.md).
 
+**Uploader failure follow-up — November 4, 2026:** CPU fault injection
+reproduces lost references and duplicate releases in the pinned Mesa uploader.
+A failure-path ownership patch passes ten cases with successful data copies
+preserved. Full runtime, Quickshell and hardware validation remain open.
+[Patch, CPU evidence and limits](MESA-UPLOAD-FAILURE-LIFETIME.md).
+
 **Source-only shutdown follow-up — November 4, 2026:** retirement now polls
 the owned graphics thread before joining, and the relay command/state pair
 shares one bounded deadline. CPU controls and both Windows owner compilations

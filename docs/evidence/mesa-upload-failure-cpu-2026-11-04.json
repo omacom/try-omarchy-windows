@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "mesaVersion": "26.0.8",
+  "actualWholeUploaderCompiled": true,
+  "onlyIncludeDirectivesReplaced": true,
+  "cpuCallbackModel": true,
+  "libraryAssertionsDisabled": true,
+  "explicitFixtureChecksActive": true,
+  "sourceSha256": {
+    "originalSha256": "31e9544a8ba017d58449f12dc0a8e829ca03c672503874c3c52276c78423b582",
+    "patchedSha256": "3622c693947740363a6812d59fa2c00adea0dfb58ca4bc6a998610de95963f25"
+  },
+  "baselineCases": 10,
+  "patchedCases": 10,
+  "positiveDataCopies": 4,
+  "baselineDanglingOwners": 4,
+  "baselineDuplicateReleases": 4,
+  "baselineLeakedResources": 4,
+  "patchedDanglingOwners": 0,
+  "patchedDuplicateReleases": 0,
+  "patchedLeakedResources": 0,
+  "patchIdempotent": true,
+  "rejectedInputs": 3,
+  "inputTreeUnchanged": true,
+  "gpuUsed": false,
+  "vmLaunched": false,
+  "wslLaunched": false,
+  "intentionalNativeCrash": false,
+  "quickshellCrashFixed": false,
+  "date": "2026-11-04",
+  "normalizedLfRecipeSha256": {
+    "0009-gallium-upload-failure-lifetime.patch": "376faba04b821f67bfd12d88a001593a172409308c39193d43b380326e3b55b0",
+    "upload-failure-patch.json": "c6b1f9e2d0bb26abeb28d19b299ce40c24e98bb5c9b5a92992564801a17c7c01",
+    "apply_mesa_upload_failure.py": "f13b8b0fb538c14744fb21f1a94f8351ec7ea7ef73741f8ce00683cddd2ada7c",
+    "test_mesa_upload_failure.py": "71e5cad231141297ae77dfdbf5610dab7851eafab2156ab6a8090e77bd932fe8",
+    "upload_failure_stubs.h": "d0773ba92cbcea08542e48405e4636142d3cab0c28740038912a61836362be4e",
+    "upload_failure_cases.h": "3245304728d2b5a40ab85dd551a4810c246e01e87e7eef71f52db8f620baf2dc"
+  },
+  "privateReceiptSha256": "d90222bd72d4096d9baf1fa5cb18b4100772dd7bea4534988441729ea879dd53",
+  "nativeRuntimeBuilt": false,
+  "hardwareIntegrationTested": false,
+  "stateTrackerNullPointerFixed": false,
+  "hostDisplayRecoveryVerified": false,
+  "dailyUseAccepted": false,
+  "hardwareTestingOnThisHostOnHold": true,
+  "counts": {
+    "backend": "4/8",
+    "desktop": "0/4",
+    "diagnosticScene": "3/3"
+  }
+}
