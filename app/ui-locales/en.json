@@ -179,6 +179,7 @@
   "settings.error.approve_app": "Could not approve Windows app:\n\n{error}",
   "settings.error.file_choose": "Choose a file type and the app that opens it.",
   "settings.error.file_interpreter": "Interpreters cannot open shared files. Choose another approved Windows app.",
+  "settings.error.file_opener_in_share": "Apps inside the shared folder cannot open shared files. Choose an app installed elsewhere.",
   "settings.error.allow_link": "Could not allow this link type:\n\n{error}",
   "settings.error.usb": "Could not open USB choices: {error}",
   "settings.error.fullscreen_display": "choose a fullscreen display",

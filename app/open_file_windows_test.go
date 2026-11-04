@@ -387,3 +387,62 @@ func TestOpenSharedFileNative(t *testing.T) {
 	}
 	time.Sleep(4 * time.Second)
 }
+
+func TestFileOpenerInsideShareRefusedNative(t *testing.T) {
+	launcher := os.Getenv("TRYOMARCHY_LAUNCHER_TEST_EXE")
+	if os.Getenv("TRYOMARCHY_UI_TEST") != "1" || launcher == "" {
+		t.Skip("requires an interactive Windows desktop and a candidate launcher")
+	}
+	dir := t.TempDir()
+	share := openFileTempDir(t)
+	appPath := filepath.Join(share, "tools", "viewer.exe")
+	writeOpenFileFixture(t, appPath)
+	if err := saveSettings(settingsPath(dir), settings{SchemaVersion: settingsSchemaVersion, MemoryMiB: 4096, CPUs: 2, Share: share}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveApprovedWindowsApps(dir, approvedAppPreferences{Apps: []approvedWindowsApp{{ID: strings.Repeat("b", 32), Name: "Viewer", Path: appPath}}}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(launcher, "-dir", dir, "-settings")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Process.Kill()
+	owned := func(window uintptr) bool {
+		var owner uint32
+		procGetWindowThreadProcessId.Call(window, uintptr(unsafe.Pointer(&owner)))
+		return owner == uint32(cmd.Process.Pid)
+	}
+	class, _ := syscall.UTF16PtrFromString("TryOmarchySettings")
+	var window, list uintptr
+	for deadline := time.Now().Add(15 * time.Second); list == 0 && time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
+		window, _, _ = user32.NewProc("FindWindowW").Call(uintptr(unsafe.Pointer(class)), 0)
+		if window != 0 && owned(window) {
+			list = findSettingsControl(window, settingsFileListID)
+		}
+	}
+	if list == 0 {
+		t.Fatal("file types section did not appear")
+	}
+	procSendMessageW.Call(window, wmCommand, settingsPageBase+4, 0)
+	procSendMessageW.Call(findSettingsControl(window, settingsFileTypeID), 0x14E, 0, 0)   // CB_SETCURSEL
+	procSendMessageW.Call(findSettingsControl(window, settingsFileOpenerID), 0x14E, 1, 0) // the app inside the share
+	procPostMessageW.Call(window, wmCommand, settingsFileAddID, 0)
+	dialogClass, _ := syscall.UTF16PtrFromString("#32770")
+	title, _ := syscall.UTF16PtrFromString(appTitle)
+	var box uintptr
+	for deadline := time.Now().Add(5 * time.Second); box == 0 && time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
+		if found, _, _ := user32.NewProc("FindWindowW").Call(uintptr(unsafe.Pointer(dialogClass)), uintptr(unsafe.Pointer(title))); found != 0 && owned(found) {
+			box = found
+		}
+	}
+	if box == 0 {
+		t.Fatal("no error for an opener inside the share")
+	}
+	procPostMessageW.Call(box, wmCommand, 1, 0) // IDOK on the message box only
+	time.Sleep(300 * time.Millisecond)
+	if count, _, _ := procSendMessageW.Call(list, 0x18B, 0, 0); count != 0 { // LB_GETCOUNT
+		t.Fatalf("opener inside the share was added: rows=%d", count)
+	}
+}

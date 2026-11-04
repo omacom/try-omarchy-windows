@@ -474,6 +474,14 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 						errorBox(uiText("settings.error.file_interpreter"))
 						return 0
 					}
+					// Opening refuses an opener inside the share, so say so now. Settings
+					// runs in its own process and only knows the folder chosen here;
+					// the open-time check still covers a different running share.
+					shareOn, _, _ := procSendMessageW.Call(hShareOn, bmGetcheck, 0, 0)
+					if share := strings.TrimSpace(text(hShare)); shareOn == bstChecked && share != "" && pathsOverlapWindows(app.Path, share) {
+						errorBox(uiText("settings.error.file_opener_in_share"))
+						return 0
+					}
 					entry.App = app.ID
 				}
 				approvedFiles.Types = append(approvedFiles.Types, entry)
