@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "mesaVersion": "26.0.8",
+  "sourceSha256": {
+    "src/mesa/state_tracker/st_atom_constbuf.c": {
+      "originalSha256": "c2a723eec0894931c2553ff6ca7dcca24e3e8650239df7d77ede48b1fdd2df8d",
+      "patchedSha256": "ac27eaac67c3e4ae1fa9b235c5154a1eae371bf6dcb1f8e571c33385f4d34073"
+    }
+  },
+  "requiredUploaderSha256": "3622c693947740363a6812d59fa2c00adea0dfb58ca4bc6a998610de95963f25",
+  "actualWholeUploaderCompiled": true,
+  "actualWholeTrackerFunctionsCompiled": 2,
+  "cpuCallbackModel": true,
+  "nullWritesInterceptedWithoutDereference": true,
+  "libraryAssertionsDisabled": true,
+  "explicitFixtureChecksActive": true,
+  "baselineCases": 338,
+  "patchedCases": 338,
+  "failureCasesPerVariant": 216,
+  "positiveCasesPerVariant": 122,
+  "baselineInvalidCopies": 144,
+  "baselineInvalidStateWrites": 144,
+  "baselineInvalidBinds": 216,
+  "patchedFaultsGuarded": 216,
+  "patchedCpuRetries": 216,
+  "allEightShaderStages": true,
+  "callerReleaseOwnershipChecked": true,
+  "cleanupReferenceCountsChecked": true,
+  "patchIdempotent": true,
+  "rejectedInputs": 4,
+  "inputTreeUnchanged": true,
+  "gpuUsed": false,
+  "vmLaunched": false,
+  "wslLaunched": false,
+  "nativeRuntimeBuilt": false,
+  "intentionalNativeCrash": false,
+  "quickshellCrashFixed": false,
+  "date": "2026-11-04",
+  "normalizedLfRecipeSha256": {
+    "0009-gallium-upload-failure-lifetime.patch": "376faba04b821f67bfd12d88a001593a172409308c39193d43b380326e3b55b0",
+    "upload-failure-patch.json": "c6b1f9e2d0bb26abeb28d19b299ce40c24e98bb5c9b5a92992564801a17c7c01",
+    "apply_mesa_upload_failure.py": "f13b8b0fb538c14744fb21f1a94f8351ec7ea7ef73741f8ce00683cddd2ada7c",
+    "test_mesa_upload_failure.py": "71e5cad231141297ae77dfdbf5610dab7851eafab2156ab6a8090e77bd932fe8",
+    "upload_failure_stubs.h": "d0773ba92cbcea08542e48405e4636142d3cab0c28740038912a61836362be4e",
+    "upload_failure_cases.h": "3245304728d2b5a40ab85dd551a4810c246e01e87e7eef71f52db8f620baf2dc",
+    "0010-mesa-constbuf-upload-failure.patch": "e549c5b6e56fcccef39db71e617e2d609943e9093ce4cfea2dd9856312776a90",
+    "constbuf-failure-patch.json": "833306e8346119af2ae499da42e5ed1c3b1554f21ae875a022213c6f869688c2",
+    "apply_mesa_constbuf_failure.py": "db2133dd3a15ffe75dcc5a7ce16b36a34ce1fb101fc1ef1e6b2cb54109504c93",
+    "test_mesa_constbuf_failure.py": "334cea158c05d8b3ba2a04afbb61ada5472bdc52d9e3e9b619607bdb6703c5c0",
+    "constbuf_failure_stubs.h": "a2e6a4c20106866b7372d1d2e6e5f74ceee98a529170390f4327a86e6e0a6642",
+    "constbuf_failure_cases.h": "62fdd80f4f5a07502d3c7c16d630c2c53143ee53fac4f1d89624952a6e498752"
+  },
+  "privateReceiptSha256": "1ff591addf3d7563c3f0d75c53135df8136b5fb5221cd86e8133a2ed8dd15343",
+  "hardwareIntegrationTested": false,
+  "hostDisplayRecoveryVerified": false,
+  "dailyUseAccepted": false,
+  "hardwareTestingOnThisHostOnHold": true,
+  "counts": {
+    "backend": "4/8",
+    "desktop": "0/4",
+    "diagnosticScene": "3/3"
+  }
+}

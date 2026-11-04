@@ -16,9 +16,11 @@ work continues through source and CPU-only checks. **Daily use is blocked.**
 
 **Uploader failure follow-up — November 4, 2026:** CPU fault injection
 reproduces lost references and duplicate releases in the pinned Mesa uploader.
-A failure-path ownership patch passes ten cases with successful data copies
-preserved. Full runtime, Quickshell and hardware validation remain open.
+The ownership patch passes ten cases. A separate state-tracker guard prevents
+null constant uploads in 216 CPU failure cases, with successful copies and
+CPU retries preserved. Full runtime, Quickshell and hardware validation remain open.
 [Patch, CPU evidence and limits](MESA-UPLOAD-FAILURE-LIFETIME.md).
+[Constant-buffer guard and limits](MESA-CONSTBUF-FAILURE-GUARD.md).
 
 **Source-only shutdown follow-up — November 4, 2026:** retirement now polls
 the owned graphics thread before joining, and the relay command/state pair

@@ -12,6 +12,12 @@ lost references and duplicate releases without a graphics runtime. The full
 runtime and Quickshell crash still need validation; see
 [failure cases and limits](../../../docs/MESA-UPLOAD-FAILURE-LIFETIME.md).
 
+Apply `apply_mesa_constbuf_failure.py` after that ownership fix to guard the
+state tracker's constant uploads against allocation/map failure. The recipe
+requires both pinned source hashes. Its CPU regression checks all eight shader
+stages and successful copies; runtime integration remains unverified. See
+[guard, exact evidence and limits](../../../docs/MESA-CONSTBUF-FAILURE-GUARD.md).
+
 Apply `apply_mesa_fence_fd.py` first, then `apply_mesa_native_sync.py` to that
 exact pinned tree. The additive helper verifies both patch digests and every
 changed/unchanged base file, dry-runs with zero fuzz and rejects mixed sources.

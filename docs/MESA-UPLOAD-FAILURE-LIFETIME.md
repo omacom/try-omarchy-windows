@@ -51,7 +51,8 @@ No installed driver, running graphics runtime or VM image is modified here.
 The run-10 Quickshell stack reaches a uniform `memcpy` following an upload
 allocation. Its saved reports lack pointer values, so this experiment does not
 establish that either ownership error caused that crash. The state tracker's
-unchecked null upload pointer needs separate failure-path work. The draw-time
+unchecked null upload pointer has a separate
+[CPU-tested guard](MESA-CONSTBUF-FAILURE-GUARD.md). The draw-time
 crash, VGA-return failure, host display incident, API coverage and performance
 requirements remain open. Counts stay **backend 4/8, desktop 0/4, diagnostic
 scene 3/3**; daily use is unverified.
