@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "date": "2026-11-04",
+  "repository": "7Wdev/try-omarchy-windows",
+  "headCommit": "545d12bbc22bfa32328ea8f92232adffe579621d",
+  "workflowRunId": 41855718282,
+  "jobId": 126663666604,
+  "workflowUrl": "https://github.com/7Wdev/try-omarchy-windows/actions/runs/41855718282",
+  "conclusion": "success",
+  "evidenceSource": "JSON printed by the completed compile-only job; original field values preserved",
+  "sourceCommitIsWorkflowGithubSha": true,
+  "artifact": {
+    "id": 13336823865,
+    "name": "mesa-d3d12-compile-evidence",
+    "sha256": "0250cc1c081c4e1bb9ca5d9794032a15d9ba52ca81b8945672ac7ff9cee5a8bc",
+    "expiresAt": "2026-11-18T15:20:08Z"
+  },
+  "buildReceipt": {
+    "schema": 1,
+    "sourceCommit": "5902aafdfa61b6cbba2c83941c52e254306513d8",
+    "mesaVersion": "26.0.8",
+    "directXHeadersCommit": "adbd6f3ba40795c46a8d0f33af00bcb57ff0f0a4",
+    "mesonVersion": "1.8.3",
+    "sourceSha256": {
+      "src/gallium/auxiliary/util/u_upload_mgr.c": "3622c693947740363a6812d59fa2c00adea0dfb58ca4bc6a998610de95963f25",
+      "src/mesa/state_tracker/st_atom_constbuf.c": "ac27eaac67c3e4ae1fa9b235c5154a1eae371bf6dcb1f8e571c33385f4d34073"
+    },
+    "compiledOutputSha256": {
+      "src/mesa/libmesa.a": "289c72377367268e712f3f2a6d0ec0fa3a1cee5d24285bd844250b1e54a95f4e",
+      "src/gallium/auxiliary/libgallium.a": "2db3565ef2f8889d89aa60e470d11aeaa64ee6c3dce89d7029457e743569c0ad",
+      "src/gallium/drivers/d3d12/libd3d12.a": "c10b9dbe490459aae3043167296923bdd72be51515d44607a68589bf2c70b75b",
+      "src/gallium/targets/dri/libgallium-26.0.8.so": "f3181db45b79678c46fe67c2ba25f8bcaafb08cceec4a930599b97f7e6e69969",
+      "src/egl/libEGL.so.1.0.0": "a2d2ef9b3386a58412f971be54618b087891e16303eaa45b89c80842bdd1d12b"
+    },
+    "fullD3D12GraphicsCompiled": true,
+    "galliumVideoBuilt": false,
+    "vulkanBuilt": false,
+    "runtimeLoaded": false,
+    "gpuWorkloadRun": false,
+    "vmLaunched": false,
+    "hardwareIntegrationTested": false,
+    "quickshellCrashFixed": false,
+    "dailyUseAccepted": false
+  },
+  "limits": [
+    "Public source profile: graphics patches 1-4 and upload guards 9-10; no private owned-presentation overlay",
+    "platforms=[]; no Wayland platform; separate from the local captured Wayland cross-build",
+    "Linux build/link evidence only; libraries never loaded or executed; no guest integration or hardware acceptance"
+  ],
+  "sourceCommitKind": "Pull-request synthetic merge commit from github.sha; head commit recorded separately"
+}

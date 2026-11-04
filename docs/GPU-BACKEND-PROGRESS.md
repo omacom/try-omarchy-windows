@@ -25,8 +25,9 @@ CPU retries preserved. Full runtime, Quickshell and hardware validation remain o
 **Full Linux-target source build - November 4, 2026:** the complete selected
 D3D12/Wayland/EGL/GBM graph compiles with the upload guards and captured private
 presentation source. Six libraries link; 527 compared API exports preserve
-their types, bindings, visibility and symbol versions. Nothing is loaded or
-installed. Runtime, recovery and daily use remain unverified; counts stay
+their types, bindings, visibility and symbol versions. A separate public-source
+Linux D3D12/EGL compile-only workflow also passes. Nothing is loaded or installed.
+Runtime, recovery and daily use remain unverified; counts stay
 **4/8, 0/4, 3/3**. [Exact build scope and limits](MESA-LINUX-CROSS-COMPILE-2026-11-04.md).
 
 **Source-only shutdown follow-up — November 4, 2026:** retirement now polls

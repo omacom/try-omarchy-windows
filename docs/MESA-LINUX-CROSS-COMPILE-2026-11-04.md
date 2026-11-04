@@ -83,9 +83,13 @@ runtime compatibility.
 
 These artifacts retain build-prefix defaults and are **not a guest installation
 package**. A proper Linux build and packaging pass still needs validation.
-The public compile-only workflow does not include the private presentation
-overlay or reproduce this exact source/dependency profile. Its remote execution
-also remains unverified while publication is blocked.
+A separate [remote Linux compile-only run](https://github.com/7Wdev/try-omarchy-windows/actions/runs/41855718282)
+now passes for PR head `545d12b` (workflow merge commit `5902aaf`). Its recorded
+source hashes match both upload guards, and its linked Gallium/EGL hashes are
+retained in the [CI receipt](evidence/mesa-linux-source-ci-2026-11-04.json).
+This workflow builds public patches 1-4 and 9-10 with `platforms=[]`; it does
+not include the private presentation overlay or reproduce this Wayland
+source/dependency profile. It never loads the libraries.
 
 The patched runtime has not been installed or loaded. Quickshell recovery,
 normal launcher sessions, ordinary Windows input, sustained browsing and app
