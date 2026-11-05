@@ -4,6 +4,12 @@ Updated **2026-11-05**. This page tracks the experimental QEMU/WHPX Windows-nati
 NVIDIA backend. The released Try Omarchy launcher continues using the upstream
 graphics runtime.
 
+**Vulkan source build recipe - November 5, 2026:** a separate full patched
+Dozen build and component archive are defined alongside the desktop build.
+Build evidence requires a completed run for the current revision. This does
+not implement GPU-backed Wayland presentation or add runtime acceptance.
+[Recipe, file controls and limits](MESA-DOZEN-SOURCE-BUILD.md).
+
 ![Three GPU apps verified; backend stages 4/8; desktop gates 0/4](https://raw.githubusercontent.com/7Wdev/try-omarchy-windows/windows-nvgpu-lab/docs/images/gpu-backend-progress-three-apps-2026-10-27.svg)
 
 ## What is verified now?

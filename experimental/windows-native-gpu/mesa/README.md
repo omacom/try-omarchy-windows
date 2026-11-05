@@ -1,5 +1,11 @@
 # Experimental Mesa D3D12 fence FDs
 
+The [full Dozen build recipe](../../../docs/MESA-DOZEN-SOURCE-BUILD.md) adds a
+separate reproducible Vulkan component profile using existing patches 0005-0008.
+A completed CI run for the current revision is required for build evidence.
+It does not implement GPU-backed Wayland presentation or establish
+application/driver stability.
+
 Two independently opt-in patches are available: the private timeline-FD patch
 below and an additive owned Linux sync-file/EGL callback patch. The latter is
 verified in [two hardware runs](../../../docs/LIVE-GPU-EGL-NATIVE-SYNC.md),

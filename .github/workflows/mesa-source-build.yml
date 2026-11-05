@@ -145,6 +145,29 @@ jobs:
             ${{ runner.temp }}/mesa-d3d12-wayland-components.tar.gz
             ${{ runner.temp }}/mesa-d3d12-wayland-components.tar.gz.sha256
           retention-days: 14
+      - name: Build and stage patched Dozen; never load or execute the ICD
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash experimental/windows-native-gpu/mesa/build_dozen_components_ci.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mesa-dozen-wayland-components
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/mesa-dozen-wayland-components.tar.gz
+            ${{ runner.temp }}/mesa-dozen-wayland-components.tar.gz.sha256
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mesa-dozen-compile-evidence
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/mesa-dozen-source-build.json
+            ${{ runner.temp }}/mesa-dozen-controls.json
+            ${{ runner.temp }}/mesa-dozen-build/meson-logs/meson-log.txt
+          retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
