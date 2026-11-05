@@ -1,5 +1,11 @@
 # Experimental Mesa D3D12 fence FDs
 
+The [guarded guest candidate builder](../../../docs/GUEST-MESA-CANDIDATE.md)
+prepares an eleven-file Mesa update in a fresh private normal-root initramfs,
+using archive/ELF data only. Completed controls for the revision and a private
+assembly receipt are required. The recipe neither activates a runtime nor
+establishes GPU/desktop stability.
+
 The [full Dozen build recipe](../../../docs/MESA-DOZEN-SOURCE-BUILD.md) adds a
 separate reproducible Vulkan component profile using existing patches 0005-0008.
 A completed CI run for the current revision is required for build evidence.

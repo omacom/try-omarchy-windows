@@ -4,6 +4,13 @@ Updated **2026-11-05**. This page tracks the experimental QEMU/WHPX Windows-nati
 NVIDIA backend. The released Try Omarchy launcher continues using the upstream
 graphics runtime.
 
+**Guarded guest candidate preparation - November 5, 2026:** a data-only updater
+is defined to place the compiled Mesa guards into a fresh normal-root image,
+with static ELF dependency checks and exact preservation of other payloads.
+Completed controls and a private assembly receipt are required; the recipe
+alone adds no desktop acceptance.
+[Preparation, bounds and remaining validation](GUEST-MESA-CANDIDATE.md).
+
 **Teardown dependency guard - November 5, 2026:** disconnect and owner
 cleanup now retain failed children before attempting parent destruction or later
 phases. Native device/adapter guards are added. CPU fault-comparison evidence

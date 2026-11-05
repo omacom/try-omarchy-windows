@@ -145,6 +145,18 @@ jobs:
             ${{ runner.temp }}/mesa-d3d12-wayland-components.tar.gz
             ${{ runner.temp }}/mesa-d3d12-wayland-components.tar.gz.sha256
           retention-days: 14
+      - name: Validate private-candidate assembly with public ELF fixtures; never boot
+        env:
+          SOURCE_HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          "$RUNNER_TEMP/meson-env/bin/python" experimental/windows-native-gpu/mesa/test_guest_mesa_candidate.py --components "$RUNNER_TEMP/mesa-d3d12-wayland-components.tar.gz" --component-head "$SOURCE_HEAD_COMMIT" --provider-directory "$RUNNER_TEMP/wayland-install/lib" --output "$RUNNER_TEMP/guest-mesa-candidate-controls"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: guest-mesa-candidate-controls
+          if-no-files-found: ignore
+          path: ${{ runner.temp }}/guest-mesa-candidate-controls/result.json
+          retention-days: 14
       - name: Build and stage patched Dozen; never load or execute the ICD
         env:
           SOURCE_COMMIT: ${{ github.sha }}
