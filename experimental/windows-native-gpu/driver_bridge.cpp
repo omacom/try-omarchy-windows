@@ -2636,13 +2636,25 @@ public:
             D3DKMT_DESTROYCONTEXT a{}; a.hContext = handle; status = D3DKMTDestroyContext(&a);
             if (status >= 0) { --activeContexts; contextOwners.erase(handle); }
         } else if (kind == Kind::Device) {
+            if(!deviceAdapters.count(handle)) return {Invalid,0,0};
+            // This driver is shared by coordinated actors. Enforce native
+            // ownership independently of any one Session's wire bookkeeping.
+            for(const auto& item:contextOwners) if(item.second.device==handle) return {Invalid,0,0};
+            for(const auto& item:hwQueues) if(item.second.device==handle) return {Invalid,0,0};
+            for(const auto& item:pagingFences) if(item.second.device==handle) return {Invalid,0,0};
+            for(const auto& item:syncObjects) if(item.second.device==handle) return {Invalid,0,0};
+            for(const auto& item:allocations) if(item.second.device==handle) return {Invalid,0,0};
+            for(const auto& item:vendorAllocations) if(item.second.device==handle) return {Invalid,0,0};
             D3DKMT_DESTROYDEVICE a{}; a.hDevice = handle; status = D3DKMTDestroyDevice(&a);
-            if (status >= 0) { --activeDevices; deviceAdapters.erase(handle); deviceExecutionStates.erase(handle); }
+            if(status>0) status=Invalid;
+            if (status == 0) { --activeDevices; deviceAdapters.erase(handle); deviceExecutionStates.erase(handle); }
         } else {
             if (kind != Kind::Adapter || !ownedAdapters.count(handle)) return {Invalid, 0, 0};
+            for(const auto& device:deviceAdapters) if(device.second==handle) return {Invalid,0,0};
             for (const auto& range : gpuReservations) if (range.second.adapter == handle) return {Invalid, 0, 0};
             D3DKMT_CLOSEADAPTER a{}; a.hAdapter = handle; status = D3DKMTCloseAdapter(&a);
-            if (status >= 0) { --activeAdapters; ownedAdapters.erase(handle); }
+            if(status>0) status=Invalid;
+            if (status == 0) { --activeAdapters; ownedAdapters.erase(handle); }
         }
         if (status < 0) ++cleanupFailures;
         if(!status && referenceClosedDuringGpuWork) {

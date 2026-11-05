@@ -4,6 +4,12 @@ Updated **2026-11-05**. This page tracks the experimental QEMU/WHPX Windows-nati
 NVIDIA backend. The released Try Omarchy launcher continues using the upstream
 graphics runtime.
 
+**Teardown dependency guard - November 5, 2026:** disconnect and owner
+cleanup now retain failed children before attempting parent destruction or later
+phases. Native device/adapter guards are added. CPU fault-comparison evidence
+requires a completed run for the current revision. No hardware recovery is claimed.
+[Fault, source changes and limits](NATIVE-TEARDOWN-PARENT-GUARD.md).
+
 **Vulkan source build recipe - November 5, 2026:** a separate full patched
 Dozen build and component archive are defined alongside the desktop build.
 Build evidence requires a completed run for the current revision. This does

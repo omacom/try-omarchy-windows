@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <iostream>
 #include <map>
+#include <new>
 #include <stdexcept>
 
 namespace driver_bridge {
@@ -982,45 +983,54 @@ private:
         if(objects.empty()) { progress.phase=liveRetirementPhase=4;progress.flags=0;progress.ntstatus=0; }
         return progress;
     }
+    static unsigned teardownPhase(Kind kind) {
+        return kind==Kind::HwQueue || kind==Kind::HwQueueSync ? 0u :
+               kind==Kind::GpuReservation ? 2u : kind==Kind::Adapter ? 3u : 1u;
+    }
+    void teardownObjectsPhase(unsigned phase) {
+        if(!phase) queries.clear();
+        // A failed queue can still retain allocations unrelated to its direct
+        // parent chain. Keep this session's later phases blocked until every
+        // earlier phase has actually completed, not merely been attempted.
+        if(std::any_of(objects.begin(),objects.end(),[phase](const auto& item) {
+            return teardownPhase(item.second.kind)<phase;
+        })) return;
+        // Count parent dependencies once instead of scanning the entire live
+        // object table for every destruction. Allocation failure retains all
+        // ownership; no native release is attempted with an incomplete index.
+        std::map<std::uint32_t,std::size_t> children;
+        try {
+            for(const auto& item:objects) if(item.second.parent) ++children[item.second.parent];
+        } catch(const std::bad_alloc&) { return; }
+        auto cursor=objects.end();
+        while(cursor!=objects.begin()) {
+            auto current=std::prev(cursor);
+            const auto childCount=children.find(current->first);
+            if(teardownPhase(current->second.kind)!=phase ||
+               (childCount!=children.end() && childCount->second)) { cursor=current;continue; }
+            const auto result=driver.destroy(current->second.kind,current->second.nativeHandle);
+            // Informational/malformed replies do not prove native release.
+            // Retain the child so neither its parent nor a later phase runs.
+            if(!result.ntstatus && !result.nativeHandle && !result.value) {
+                const auto parent=children.find(current->second.parent);
+                if(parent!=children.end() && parent->second) --parent->second;
+                cursor=objects.erase(current);
+            }
+            else cursor=current;
+        }
+    }
 public:
     // Trusted owner-only cleanup after proven VM exit. The coordinator runs
     // each phase across every Session before advancing: another actor's live
     // hardware queue must not prevent reservation release permanently.
     void ownerTeardownPhase(unsigned phase) {
         if(!coordinated || phase>3) throw std::runtime_error("Invalid coordinated teardown phase");
-        if(!phase) queries.clear();
-        auto cursor=objects.end();
-        while(cursor!=objects.begin()) {
-            auto current=std::prev(cursor);const auto kind=current->second.kind;
-            const bool queue=kind==Kind::HwQueue || kind==Kind::HwQueueSync;
-            const bool selected=phase==0 ? queue : phase==1 ? !queue && kind!=Kind::GpuReservation && kind!=Kind::Adapter :
-                                phase==2 ? kind==Kind::GpuReservation : kind==Kind::Adapter;
-            if(!selected) { cursor=current;continue; }
-            const auto result=driver.destroy(kind,current->second.nativeHandle);
-            if(!result.ntstatus && !result.nativeHandle && !result.value) cursor=objects.erase(current);
-            else cursor=current; // Keep failed native ownership charged.
-        }
+        teardownObjectsPhase(phase);
     }
-    // A disconnect releases child objects before their parents. The Windows
-    // worker is also one process per connection, so OS teardown is a backstop.
+    // Disconnect follows the same dependency checks. Failed native ownership
+    // remains tracked by the Driver until its process-teardown backstop.
     ~Session() {
-        queries.clear();
-        // Queue-private data may reference any allocation on its device.
-        // Destroy queues before allocations even when allocations were created
-        // later. Borrowed progress syncs are released by their owning queue.
-        for (auto i = objects.rbegin(); i != objects.rend(); ++i)
-            if (i->second.kind == Kind::HwQueue || i->second.kind == Kind::HwQueueSync)
-                driver.destroy(i->second.kind, i->second.nativeHandle);
-        for (auto i = objects.rbegin(); i != objects.rend(); ++i)
-            if (i->second.kind != Kind::HwQueue && i->second.kind != Kind::HwQueueSync &&
-                i->second.kind != Kind::GpuReservation && i->second.kind != Kind::Adapter)
-                driver.destroy(i->second.kind, i->second.nativeHandle);
-        // Reserved process address ranges outlive their allocation mappings,
-        // but must be released before their adapter is closed.
-        for (auto i = objects.rbegin(); i != objects.rend(); ++i)
-            if (i->second.kind == Kind::GpuReservation) driver.destroy(i->second.kind, i->second.nativeHandle);
-        for (auto i = objects.rbegin(); i != objects.rend(); ++i)
-            if (i->second.kind == Kind::Adapter) driver.destroy(i->second.kind, i->second.nativeHandle);
+        for(unsigned phase=0;phase<4;++phase) teardownObjectsPhase(phase);
     }
     std::vector<std::uint8_t> dispatch(const std::vector<std::uint8_t>& packet) {
         if (packet.size() < sizeof(Header)) return {};

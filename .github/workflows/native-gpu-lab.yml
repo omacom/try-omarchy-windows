@@ -114,6 +114,26 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Read the pinned pre-fix teardown header
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 0a2dea044fdbb429055077c939f88d99eee39547
+          path: .teardown-baseline
+          sparse-checkout: experimental/windows-native-gpu/driver_wire.h
+          sparse-checkout-cone-mode: false
+      - name: Compare teardown failure paths using CPU-only mock drivers
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 experimental/windows-native-gpu/test_teardown_parent_guard.py --baseline-header .teardown-baseline/experimental/windows-native-gpu/driver_wire.h --output "$RUNNER_TEMP/teardown-parent-controls"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: teardown-parent-cpu-controls
+          path: |
+            ${{ runner.temp }}/teardown-parent-controls/result.json
+            ${{ runner.temp }}/teardown-parent-controls/*.txt
+          retention-days: 14
       - name: Check named graphics port discovery without opening devices
         run: |
           sudo python3 experimental/windows-native-gpu/test_guest_graphics_port.py --device-fixtures -v

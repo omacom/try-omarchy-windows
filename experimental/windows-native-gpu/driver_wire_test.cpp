@@ -2,6 +2,7 @@
 #include "driver_wire.h"
 #include "adapter_query_client.h"
 #include <iostream>
+#include <memory>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -423,6 +424,83 @@ struct Fake : Driver {
     }
 };
 
+static void teardownFailureDependencies() {
+    struct TeardownNative : Fake {
+        Kind blocked=Kind::HwQueue;Result rejection{-123,0,0};bool reject=false;
+        unsigned failures=0;
+        std::vector<Kind> attempts;
+        native_gpu::Capabilities capabilities() const override {
+            auto value=Fake::capabilities();
+            value.flags|=AsyncHwSubmitCapability|SyncCapability|GpuReservationCapability|VendorMemoryManagementCapability|
+                ExpandedVendorGpuCapability|ExpandedVendorCpuCapability|VendorAllocationCapability|SharedVendorResourceCapability|NativeSharedTextureCapability;
+            return value;
+        }
+        OpenGlProfile beginOpenGl(std::uint32_t version) override { require(version==14);return GuestOpenGlMultiappProfile; }
+        bool beginCoordinatedObjects(CoordinatedObjectCapacity value) override { return value.version==9 && validCoordinatedObjectCapacity(value); }
+        bool allowsReservationBackedMappings() const override { return true; }
+        bool retainsMappedResidencyOnEvict() const override { return true; }
+        SyncSharingProfile beginSyncSharing() override { return GuestSyncSharingProfile; }
+        Result destroy(Kind kind,std::uint32_t handle) override {
+            attempts.push_back(kind);
+            if(reject && kind==blocked) { ++failures;return rejection; }
+            return Fake::destroy(kind,handle);
+        }
+    };
+    unsigned cases=0;
+    for(const bool coordinated:{false,true}) for(unsigned fault=0;fault<13;++fault) {
+        TeardownNative native;native.hwQueuesEnabled=true;
+        std::unique_ptr<CoordinatedProfiles> profile;
+        if(coordinated) profile=std::make_unique<CoordinatedProfiles>(native,GuestOpenGlMultiappCapacity,GuestCoordinatedMultiappObjects);
+        auto session=coordinated ? std::make_unique<Session>(native,*profile) : std::make_unique<Session>(native);
+        require(!header(session->dispatch(hello())).status);
+        const auto create=[&](std::vector<std::uint8_t> packet) {
+            const auto result=header(session->dispatch(packet));require(!result.status && result.handle);return result.handle;
+        };
+        const auto adapter=create(request(Op::OpenAdapter));
+        const auto device=create(request(Op::CreateDevice,adapter));
+        auto contextPacket=request(Op::CreateContext,device,ContextDesc{0,1,16,12,4,0});
+        contextPacket.insert(contextPacket.end(),{1,2,3,4});
+        const auto context=create(contextPacket);
+        auto queuePacket=request(Op::CreateHwQueue,context,HwQueueDesc{0,4,0,0});
+        queuePacket.insert(queuePacket.end(),{37,38,39,40});
+        create(queuePacket);
+        create(request(Op::CreateAllocation,device,std::uint32_t{4096}));
+        require(session->objectCount()==6);
+        if(fault) {
+            const auto target=(fault-1)/4, reply=(fault-1)%4;
+            native.blocked=target==0 ? Kind::HwQueue : target==1 ? Kind::Allocation : Kind::Device;
+            native.rejection=reply==0 ? Result{-123,0,0} : reply==1 ? Result{259,0,0} :
+                             reply==2 ? Result{0,777,0} : Result{0,0,1};
+            native.reject=true;
+        }
+        if(coordinated) for(unsigned phase=0;phase<4;++phase) session->ownerTeardownPhase(phase);
+        else session.reset();
+        if(fault) {
+            for(const auto kind:native.attempts) {
+                const bool forbidden=native.blocked==Kind::HwQueue ? kind!=Kind::HwQueue && kind!=Kind::HwQueueSync :
+                                     native.blocked==Kind::Allocation ? kind==Kind::Device || kind==Kind::Adapter : kind==Kind::Adapter;
+                if(forbidden) throw std::runtime_error("TEARDOWN_PARENT_GUARD_REPRO: destruction advanced past a failed dependency");
+            }
+            require(native.failures==1);
+            if(native.blocked==Kind::HwQueue) require(native.hwQueueParents.size()==1 && native.buffers.size()==1);
+            if(native.blocked==Kind::Allocation) require(native.buffers.size()==1);
+            if(coordinated) {
+                require(session->objectCount()==(native.blocked==Kind::HwQueue ? 5u : native.blocked==Kind::Allocation ? 3u : 2u));
+                native.reject=false;
+                for(unsigned phase=0;phase<4;++phase) session->ownerTeardownPhase(phase);
+                require(!session->objectCount() && native.buffers.empty() && native.hwQueueParents.empty());
+            }
+        } else {
+            require(native.destroyed==std::vector<Kind>{Kind::HwQueue,Kind::Allocation,Kind::Context,Kind::Device,Kind::Adapter});
+            require(native.buffers.empty() && native.hwQueueParents.empty());
+            if(coordinated) require(!session->objectCount());
+        }
+        if(coordinated) require(native.destroyed.size()==5);
+        ++cases;
+    }
+    std::cout<<"TEARDOWN_PARENT_GUARD_PASS cases="<<cases<<" coordinatedRetry=true eof=true mock=true gpu=false\n";
+}
+
 static void actorResourceAliases() {
     struct AliasNative : Fake {
         bool equivalent=true;unsigned duplicates=0;int broken=0;std::uint32_t known=0;
@@ -534,6 +612,7 @@ static void applicationResourceReferences() {
     std::cout<<"APPLICATION_RESOURCE_REFERENCES perActor32=true thirtyThirdRefusedBeforeNative=true group64=true sixtyFifthRefused=true lastCloseReusesSlot=true donorPreserved=true mock=true gpu=false\n";
 }
 int main() {
+    teardownFailureDependencies();
     {
         SubmissionActivity countOverflow{UINT64_MAX,0,0,true};
         countOverflow.record(true,4096);
