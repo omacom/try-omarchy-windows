@@ -9,6 +9,7 @@
 #include <d3dkmthk.h>
 #include <wrl/client.h>
 #include <array>
+#include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -16,6 +17,7 @@
 #include <stdexcept>
 #include <string>
 #include "wire.h"
+#include "checked_fence_completion.h"
 using Microsoft::WRL::ComPtr;
 using namespace native_gpu;
 constexpr UINT Width = 640, Height = 360;
@@ -114,7 +116,7 @@ class NativeGpu : public Renderer {
     ComPtr<ID3D12CommandAllocator> allocator, consumerAllocator;
     ComPtr<ID3D12GraphicsCommandList> commands, consumerCommands;
     ComPtr<ID3D12Fence> fence, importedFence;
-    ComPtr<ID3D12Resource> image, importedImage, readback;
+    ComPtr<ID3D12Resource> image, importedImage, readback, backBuffer;
     ComPtr<ID3D12DescriptorHeap> rtvHeap;
     ComPtr<IDXGISwapChain3> swap;
     Handle resourceHandle, fenceHandle, event;
@@ -125,14 +127,34 @@ class NativeGpu : public Renderer {
     DXGI_ADAPTER_DESC1 description{};
     std::string kmt;
     std::uint32_t presented = 0;
-    bool ready = false;
+    bool ready = false, workSubmitted = false;
+    [[noreturn]] static void retainAndExit(const char* reason) noexcept {
+        std::fputs(reason, stderr);
+        std::fflush(stderr);
+        // Bypass C++/COM unwinding when retirement cannot be established.
+        // This is process termination, not a GPU reset or verified recovery.
+        ExitProcess(3);
+    }
     void wait(std::uint64_t value) {
-        if (fence->GetCompletedValue() == UINT64_MAX) throw std::runtime_error("GPU device removed");
-        if (fence->GetCompletedValue() < value) {
-            check(fence->SetEventOnCompletion(value, event.value), "SetEventOnCompletion");
-            if (WaitForSingleObject(event.value, 10000) != WAIT_OBJECT_0)
-                throw std::runtime_error("GPU fence timed out");
+        const auto result = checkedFenceCompletion(value,
+            [&] { return fence->GetCompletedValue(); },
+            [&] { return SUCCEEDED(fence->SetEventOnCompletion(value, event.value)); },
+            [&] { return WaitForSingleObject(event.value, 10000) == WAIT_OBJECT_0; });
+        switch (result) {
+        case FenceCompletion::Complete:
+            workSubmitted = false;
+            return;
+        case FenceCompletion::DeviceRemoved: throw std::runtime_error("GPU device removed");
+        case FenceCompletion::ArmFailed: throw std::runtime_error("Cannot arm GPU completion event");
+        case FenceCompletion::WaitFailed: throw std::runtime_error("GPU fence wait failed or timed out");
+        case FenceCompletion::Incomplete: throw std::runtime_error("GPU fence woke before target completed");
         }
+        throw std::runtime_error("Invalid GPU completion result");
+    }
+    std::uint64_t beginSubmission() {
+        if (fenceValue >= UINT64_MAX - 1) throw std::runtime_error("GPU fence value exhausted");
+        workSubmitted = true;
+        return ++fenceValue;
     }
 public:
     NativeGpu() {
@@ -151,6 +173,11 @@ public:
         }
         if (!device) throw std::runtime_error("No hardware NVIDIA D3D12 adapter; software fallback is refused");
         kmt = kmtFacts(description.AdapterLuid);
+    }
+    ~NativeGpu() override {
+        if (!workSubmitted) return;
+        try { finish(); }
+        catch (...) { retainAndExit("FAIL: unretired diagnostic GPU work; process teardown retains backing\n"); }
     }
     Capabilities capabilities() const override { return {1, ready ? 3u : 0u, description.VendorId, description.DeviceId}; }
     void initializeWindow(HWND window) {
@@ -204,19 +231,21 @@ public:
         if (!ready) return false;
         wait(fenceValue);
         check(allocator->Reset(), "Reset allocator"); check(commands->Reset(allocator.Get(), nullptr), "Reset commands");
-        ComPtr<ID3D12Resource> back;
-        check(swap->GetBuffer(swap->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&back)), "GetBuffer");
+        // Keep the submitted backbuffer in the owner, including exception paths.
+        check(swap->GetBuffer(swap->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&backBuffer)), "GetBuffer");
         transition(commands.Get(), image.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET);
         float rgba[4]; for (UINT i = 0; i < 4; ++i) rgba[i] = color.rgba[i] / 255.0f;
         commands->ClearRenderTargetView(rtvHeap->GetCPUDescriptorHandleForHeapStart(), rgba, 0, nullptr);
         transition(commands.Get(), image.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        transition(commands.Get(), back.Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST);
-        commands->CopyResource(back.Get(), image.Get());
-        transition(commands.Get(), back.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+        transition(commands.Get(), backBuffer.Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST);
+        commands->CopyResource(backBuffer.Get(), image.Get());
+        transition(commands.Get(), backBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
         transition(commands.Get(), image.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
         check(commands->Close(), "Close commands"); ID3D12CommandList* lists[]{commands.Get()};
+        const auto target = beginSubmission();
         queue->ExecuteCommandLists(1, lists);
-        check(queue->Signal(fence.Get(), ++fenceValue), "Signal producer fence");
+        if (FAILED(queue->Signal(fence.Get(), target)))
+            retainAndExit("FAIL: cannot signal submitted producer work; process teardown retains backing\n");
         lastColor = color;
         auto hr = swap->Present(1, 0); check(hr, "Present");
         if (hr == S_OK) ++presented;
@@ -235,8 +264,11 @@ public:
         consumerCommands->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
         transition(consumerCommands.Get(), importedImage.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
         check(consumerCommands->Close(), "Close consumer commands");
-        ID3D12CommandList* lists[]{consumerCommands.Get()}; consumerQueue->ExecuteCommandLists(1, lists);
-        check(consumerQueue->Signal(importedFence.Get(), ++fenceValue), "Signal consumer fence");
+        ID3D12CommandList* lists[]{consumerCommands.Get()};
+        const auto target = beginSubmission();
+        consumerQueue->ExecuteCommandLists(1, lists);
+        if (FAILED(consumerQueue->Signal(importedFence.Get(), target)))
+            retainAndExit("FAIL: cannot signal submitted consumer work; process teardown retains backing\n");
         wait(fenceValue);
         const D3D12_RANGE range{0, static_cast<SIZE_T>(totalSize)}; std::uint8_t* pixels = nullptr;
         check(readback->Map(0, &range, reinterpret_cast<void**>(&pixels)), "Map readback");

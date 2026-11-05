@@ -298,6 +298,8 @@ jobs:
           /tmp/guest-broker-receipts-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/bounded_gpu_retirement_wait_test.cpp -o /tmp/bounded-gpu-retirement-wait-test
           /tmp/bounded-gpu-retirement-wait-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/checked_fence_completion_test.cpp -o /tmp/checked-fence-completion-test
+          /tmp/checked-fence-completion-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/deferred_residency_test.cpp -o /tmp/deferred-residency-test
           /tmp/deferred-residency-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/mapped_residency_admission_test.cpp -o /tmp/mapped-residency-admission-test
