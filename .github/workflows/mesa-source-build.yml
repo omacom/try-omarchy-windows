@@ -102,6 +102,49 @@ jobs:
           "$RUNNER_TEMP/meson-env/bin/meson" install -C "$RUNNER_TEMP/mesa-build" --no-rebuild --destdir "$RUNNER_TEMP/mesa-stage"
           "$RUNNER_TEMP/meson-env/bin/python" experimental/windows-native-gpu/mesa/test_mesa_stage_aliases.py --stage "$RUNNER_TEMP/mesa-stage" --output "$RUNNER_TEMP/mesa-alias-controls"
           "$RUNNER_TEMP/meson-env/bin/python" experimental/windows-native-gpu/mesa/verify_mesa_stage.py --source "$RUNNER_TEMP/mesa-26.0.8" --build "$RUNNER_TEMP/mesa-build" --stage "$RUNNER_TEMP/mesa-stage" --output "$RUNNER_TEMP/mesa-source-build.json"
+      - name: Archive verified Mesa component files; never activate them
+        run: |
+          mesa_component_dir="$RUNNER_TEMP/mesa-component"
+          mkdir -p "$mesa_component_dir/root" "$mesa_component_dir/licenses"
+          cp -a "$RUNNER_TEMP/mesa-stage/usr" "$mesa_component_dir/root/"
+          cp "$RUNNER_TEMP/mesa-source-build.json" "$mesa_component_dir/BUILD-RECEIPT.json"
+          cp experimental/windows-native-gpu/mesa/COMPONENT-README.md "$mesa_component_dir/README.md"
+          cp -a "$RUNNER_TEMP/mesa-26.0.8/licenses" "$mesa_component_dir/licenses/Mesa"
+          cp "$RUNNER_TEMP/mesa-26.0.8/docs/license.rst" "$mesa_component_dir/licenses/Mesa-license.rst"
+          cp .runtime-headers/LICENSE "$mesa_component_dir/licenses/DirectX-Headers-LICENSE"
+          PYTHONPATH="$GITHUB_WORKSPACE/experimental/windows-native-gpu/mesa" "$RUNNER_TEMP/meson-env/bin/python" - "$mesa_component_dir/root" <<'PY'
+          import json, pathlib, sys
+          from verify_mesa_stage import verify_aliases
+          contract = json.loads(pathlib.Path('experimental/windows-native-gpu/mesa/stage-contract.json').read_text())
+          verify_aliases(pathlib.Path(sys.argv[1]), contract['libraryAliases'])
+          PY
+          tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -C "$mesa_component_dir" -cf - . | gzip -n > "$RUNNER_TEMP/mesa-d3d12-wayland-components.tar.gz"
+          "$RUNNER_TEMP/meson-env/bin/python" - <<'PY'
+          import hashlib, json, os, pathlib, tarfile
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'mesa-d3d12-wayland-components.tar.gz'
+          with tarfile.open(path, 'r:gz') as archive:
+              members = {m.name.removeprefix('./'): m for m in archive.getmembers()}
+              receipt = json.load(archive.extractfile(members['BUILD-RECEIPT.json']))
+              for relative, record in receipt['stagedLibraries'].items():
+                  member = members['root/' + relative]
+                  if not member.isfile() or hashlib.sha256(archive.extractfile(member).read()).hexdigest() != record['sha256']:
+                      raise RuntimeError('Archived component library differs: ' + relative)
+              for relative, target in receipt['stagedLibraryAliases'].items():
+                  member = members['root/' + relative]
+                  if not member.issym() or member.linkname != target:
+                      raise RuntimeError('Archived component alias differs: ' + relative)
+          print('MESA_COMPONENT_ARCHIVE_FILES_PASS runtimeLoaded=false')
+          PY
+          cd "$RUNNER_TEMP"
+          sha256sum mesa-d3d12-wayland-components.tar.gz > mesa-d3d12-wayland-components.tar.gz.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mesa-d3d12-wayland-components
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/mesa-d3d12-wayland-components.tar.gz
+            ${{ runner.temp }}/mesa-d3d12-wayland-components.tar.gz.sha256
+          retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

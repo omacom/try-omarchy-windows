@@ -93,8 +93,9 @@ source/dependency profile. It never loads the libraries.
 
 The [owned-presentation source follow-up](MESA-OWNED-PRESENTATION-SOURCE.md)
 now adds the captured presentation patch to the public recipe and extends the
-workflow to pinned Wayland and Linux staging. Its first staging result is
-pending; the historical results above retain their original scope.
+workflow to pinned Wayland and Linux staging. The [completed Linux staging run](evidence/mesa-wayland-stage-ci-2026-11-04.json)
+now verifies that component layout and its interfaces without loading a library.
+The historical cross-build results above retain their original scope.
 
 The patched runtime has not been installed or loaded. Quickshell recovery,
 normal launcher sessions, ordinary Windows input, sustained browsing and app

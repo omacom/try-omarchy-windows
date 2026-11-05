@@ -46,8 +46,9 @@ contract remains required; this does not implement KMS or general foreign import
 
 Eight source recipe controls pass. The compile-only workflow now includes pinned
 Wayland 1.26.0 and protocols 1.47, independent protocol generation and data-only
-inspection of an owned Linux staging tree. Its first full staging result remains
-pending. No staged library is loaded or shipped as a usable runtime.
+inspection of an owned Linux staging tree. The completed `6c652f3` run passes
+that build, generation and staging contract, including the six loader aliases
+and 527 API exports. No staged library is loaded or shipped as a usable runtime.
 [Source, requirements and verification limits](../../../docs/MESA-OWNED-PRESENTATION-SOURCE.md).
 
 ## Native EGL image development patch

@@ -7,10 +7,16 @@ It is the same source included in the [complete CPU-only cross-build](MESA-LINUX
 with both uploader failure guards. Publication does not establish a new rendered
 frame or resolve the [host display incident](HOST-DISPLAY-INCIDENT-2026-11-03.md).
 
+**Review - November 5, 2026:** the [completed Linux run for `6c652f3`](https://github.com/7Wdev/try-omarchy-windows/actions/runs/41867101381)
+passes the full public Wayland/D3D12 build and component staging checks. It
+verifies 20 patched source files, four independently generated protocol files,
+five staged libraries, 527 API exports and the six intended loader-alias targets.
+The eight source-recipe and fourteen alias controls also pass. No Mesa library
+is loaded or executed. [Original CI receipt and exact limits](evidence/mesa-wayland-stage-ci-2026-11-04.json).
+
 The previous public compile workflow omitted this patch and the Wayland
-platform. The updated workflow is configured to build that desktop path, then
-stage and inspect its Linux files without loading them. **The first full
-Wayland staging result is pending.** Run 41863425648 builds and installs the
+platform. The successful follow-up builds that desktop path, then stages and
+inspects its Linux files. Earlier run 41863425648 builds and installs the
 pinned Wayland libraries and scanner, then fails when protocol installation
 cannot find an unbuilt generated enum header. The workflow now compiles those
 protocol targets before installation. Mesa compilation and staging were not
@@ -65,8 +71,8 @@ versioned library. Fourteen filesystem controls use copied captured Mesa files:
 two valid-chain cases pass and twelve invalid cases are rejected. They cover
 all six wrong-target aliases, escape, dangling link, cycle, missing alias,
 regular-file replacement and an unlisted escaping link. Library contents and
-the input tree remain unchanged. No Mesa code is loaded or executed; the whole
-new Linux staging tree remains unverified until CI runs.
+the input tree remain unchanged. The completed Linux CI repeats these controls
+with its newly staged component files, without loading or executing Mesa code.
 [Reproduction and exact alias controls](evidence/mesa-stage-alias-controls-2026-11-04.json).
 
 ## Linux build and staging contract
@@ -80,8 +86,8 @@ generation; no Wayland server or desktop session starts.
 Mesa builds with D3D12, Wayland, EGL and GBM, with GLES2 enabled and GLES1, GLX,
 LLVM, Vulkan, video and XML configuration disabled. Its installation prefix is
 `/usr`, with `libdir=lib`. Meson stages only into the owned CI destination using
-`--no-rebuild --destdir`; no host runtime is installed. Staged binaries are not
-published as a usable release.
+`--no-rebuild --destdir`; no host runtime is installed. These components are
+not a usable backend release.
 
 The data-only stage verifier requires:
 
@@ -95,8 +101,17 @@ The data-only stage verifier requires:
 - Expected development files and library aliases bound to the intended versioned
   libraries, with every staged symlink resolving inside the owned destination.
 
-Only evidence and build logs are uploaded. The workflow does not load the Mesa
-libraries, call a graphics API, start a VM or test shaders. Its Ubuntu compiler
+The completed `6c652f3` run uploads evidence and build logs. The workflow now
+also defines a component archive containing the staged files, build receipt and
+upstream notices. It preserves Linux symlinks and checks their targets after
+relocation, then reads back packaged library hashes and link targets against
+the build receipt without extracting or running them. This archive step is new
+after the completed run cited above; that receipt does not verify packaging.
+The archive supplies no installer, activation script, proprietary runtime or
+VM image.
+
+The workflow does not load the Mesa libraries, call a graphics API, start a VM
+or test shaders. Its Ubuntu compiler
 and other system dependency versions still differ from the captured guest.
 
 Normal Omarchy startup, responsive browsing and multiple windows through 4K,

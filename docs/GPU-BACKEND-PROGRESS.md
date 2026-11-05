@@ -1,6 +1,6 @@
 # NVIDIA backend progress
 
-Updated **2026-11-04**. This page tracks the experimental QEMU/WHPX Windows-native
+Updated **2026-11-05**. This page tracks the experimental QEMU/WHPX Windows-native
 NVIDIA backend. The released Try Omarchy launcher continues using the upstream
 graphics runtime.
 
@@ -22,11 +22,12 @@ CPU retries preserved. Full runtime, Quickshell and hardware validation remain o
 [Patch, CPU evidence and limits](MESA-UPLOAD-FAILURE-LIFETIME.md).
 [Constant-buffer guard and limits](MESA-CONSTBUF-FAILURE-GUARD.md).
 
-**Owned presentation source - November 4, 2026:** the captured opt-in Mesa
-presentation patch is included in the public recipe. Eight source-application
-controls pass; the Linux workflow is extended to pinned Wayland and owned
-staging with data-only ELF checks. Its first full staging result is pending.
-No runtime or hardware validation is added; counts remain **4/8, 0/4, 3/3**.
+**Wayland component staging - November 5, 2026 review:** completed Linux CI
+builds the public presentation source and upload guards, regenerates four
+protocol files and stages five libraries under `/usr` in an owned destination.
+All 527 compared API exports and six loader-alias targets pass; eight source
+controls and fourteen filesystem controls pass. The libraries are never loaded.
+Runtime and hardware acceptance remain open; counts stay **4/8, 0/4, 3/3**.
 [Exact scope and requirements](MESA-OWNED-PRESENTATION-SOURCE.md).
 
 **Full Linux-target source build - November 4, 2026:** the complete selected

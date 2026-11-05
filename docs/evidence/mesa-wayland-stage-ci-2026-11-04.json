@@ -1,0 +1,199 @@
+{
+  "schema": 1,
+  "reviewDate": "2026-11-05",
+  "repository": "7Wdev/try-omarchy-windows",
+  "headCommit": "6c652f32e2b86a91ad2f250b7b3c74e2b038ee55",
+  "workflowRunId": 41867101381,
+  "jobId": 126703994326,
+  "workflowUrl": "https://github.com/7Wdev/try-omarchy-windows/actions/runs/41867101381",
+  "conclusion": "success",
+  "evidenceSource": "Receipt and completion markers read from an already-completed CI job; no new test run was started for this review",
+  "sourceCommitKind": "Pull-request synthetic merge commit; headCommit recorded separately",
+  "artifact": {
+    "id": 13342702867,
+    "name": "mesa-d3d12-wayland-compile-evidence",
+    "sha256": "192ee1a19962e367648481ae02cf857e35799778c887398515606def3739bcbd",
+    "createdAt": "2026-11-04T16:30:28Z",
+    "expiresAt": "2026-11-18T16:30:26Z"
+  },
+  "completedControlMarkers": [
+    "PRESENTATION_SOURCE_RECIPE_PASS cases=8 gpu=false",
+    "MESA_STAGE_ALIAS_CONTROLS_PASS cases=14 runtimeLoaded=false"
+  ],
+  "buildReceipt": {
+    "schema": 2,
+    "sourceCommit": "c11c2012af66ed92a55ea923dc1306201d9fa3e5",
+    "headCommit": "6c652f32e2b86a91ad2f250b7b3c74e2b038ee55",
+    "mesaVersion": "26.0.8",
+    "installPrefix": "/usr",
+    "libdir": "lib",
+    "patchedSourceSha256": {
+      "src/gallium/drivers/d3d12/d3d12_context_common.cpp": "be1cbd931e1bbc30565490053d283bdaacaa57d79c2064a411e585554bc00475",
+      "src/gallium/drivers/d3d12/d3d12_fence.cpp": "9611e32b4cb5634fc8dda41296d51c51f44ed64635bc506a6344f844357fa40d",
+      "src/gallium/drivers/d3d12/d3d12_screen.cpp": "ecbc82234b0ea76e2629b9bf03c154b6c6dd8edd261c6ae1013f4043e950cc65",
+      "src/mesa/main/externalobjects.c": "fb18301b9db318abd9a7f3b16e79c09dcdc10a0752dcc4e39f6f5c092e0c2e67",
+      "src/gallium/drivers/d3d12/d3d12_fence.h": "bb08eea13a37f6aa44ff5d5163e9021b6c6ace847eb53415cf5eb74319cb8765",
+      "src/gallium/drivers/d3d12/d3d12_screen.h": "0095232ee0cd1e3c97a315293cdf8d1f4eb84dc8a39e91f2a26466e24d425a0d",
+      "src/gallium/drivers/d3d12/d3d12_native_buffer.h": "c0edf8471f8eb08ace132d2e91f1d88a545147ffc4fe10eb9465366096d913ee",
+      "src/gallium/drivers/d3d12/d3d12_resource.cpp": "9d3fa4f00817659c33b0a9ba565036c1cd3e1e5bd623558c08df0f05b76d4a43",
+      "src/gallium/drivers/d3d12/d3d12_resource.h": "61a9bb38807905fd5eec1b02a9fc7636bbe30139c77bc453ad33f77dfdda39c2",
+      "src/gallium/include/pipe/p_screen.h": "28e6286da0c0a195c7182b9921ad402ca2dc96335ab360f319cf5a59db9b023e",
+      "src/gallium/frontends/dri/dri_helpers.c": "6b95edadb413bf07e1aaa651826f522c08fa27834ae81e78d62fec861ddffdf3",
+      "src/gallium/frontends/dri/dri2.c": "5464e75f04c49c354f4fa9f7a9cf0f1766dcc972104a9ec9c1bf5ef5b0907549",
+      "src/gallium/drivers/d3d12/d3d12_native_render.h": "9f9b603f0218d15c518a5c00674064a22dd701fb8aa50761a8096ab0fecc11ec",
+      "src/gallium/drivers/d3d12/d3d12_public.h": "b888fa3aadce98540bef97cf5cd9771f2eb3f466277df1435456afcdd47cb8e5",
+      "src/gallium/drivers/d3d12/d3d12_dxcore_screen.cpp": "f19e61f751e9d70621faf6e0daabf77747f1c9b8a7f57b1c26f2e49d5e3125a1",
+      "src/gallium/auxiliary/target-helpers/drm_helper.h": "69d657c598e3ba82d56bf5e2eb063ee3c11d3443dfa65a7f49dd5f047cd3523f",
+      "src/gallium/auxiliary/target-helpers/drm_helper_public.h": "0395e5b80a940a045e55bf7a4136ba74e0b781fb75d03768b501d30b66125d30",
+      "src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c": "de441ca559360a6fd545f8a1b93aeaabcce28f1bf712a72c46a6f886af1dd0cc",
+      "src/gallium/auxiliary/util/u_upload_mgr.c": "3622c693947740363a6812d59fa2c00adea0dfb58ca4bc6a998610de95963f25",
+      "src/mesa/state_tracker/st_atom_constbuf.c": "ac27eaac67c3e4ae1fa9b235c5154a1eae371bf6dcb1f8e571c33385f4d34073"
+    },
+    "independentlyGeneratedWaylandSha256": {
+      "src/loader/linux-dmabuf-unstable-v1-protocol.c": "b5f3c72cb60e095ec472efb14c2a486d9652976ebf3a260c214d328a4a4d3ead",
+      "src/loader/linux-dmabuf-unstable-v1-client-protocol.h": "4221ad39c4520e8dd194dab07e50996b9c2aecca3ec385bd3e1ede4a42265d15",
+      "src/loader/presentation-time-protocol.c": "fd29539eb8a1382c1d981f59f1c7e587f578553f5b851d89fe16ff0d366ca257",
+      "src/loader/presentation-time-client-protocol.h": "e40161a50563dd3a8909b8d9cdd83aa19b02cf36abbd5a797d47a85b4b29f154"
+    },
+    "stagedLibraries": {
+      "usr/lib/libgallium-26.0.8.so": {
+        "sha256": "e40e796d1895d33956f25b1c37c331f75764e52a5f7bf2fef1ff513d244a22df",
+        "bytes": 22195224,
+        "soname": [
+          "libgallium-26.0.8.so"
+        ],
+        "neededLibraries": [
+          "libdrm.so.2",
+          "libz.so.1",
+          "libzstd.so.1",
+          "libstdc++.so.6",
+          "libm.so.6",
+          "libgcc_s.so.1",
+          "libc.so.6"
+        ],
+        "runpaths": [],
+        "apiExportCount": 83,
+        "apiExportAbiSha256": "3cb4468cd714eb6b209191107ca9f4c5280dbffb6b6d6f0962f049c8bfaacded",
+        "syntheticAbsoluteVersionNodes": [
+          "libgallium-26.0.8.so"
+        ]
+      },
+      "usr/lib/libGLESv2.so.2.0.0": {
+        "sha256": "e03298704ef8245f5cdd5128c306a22415f2e331aff1da1dafcc2860497e73aa",
+        "bytes": 59144,
+        "soname": [
+          "libGLESv2.so.2"
+        ],
+        "neededLibraries": [
+          "libgallium-26.0.8.so"
+        ],
+        "runpaths": [],
+        "apiExportCount": 358,
+        "apiExportAbiSha256": "2f007ae84bf3d08eac088910b6640b12a065c2967e4b5ab4b787ec0298183118",
+        "syntheticAbsoluteVersionNodes": []
+      },
+      "usr/lib/libgbm.so.1.0.0": {
+        "sha256": "fb82c8447aab76bae44bd9b5638cf452f339c16cf27c813b64f1b7c6b7a6c7c6",
+        "bytes": 27112,
+        "soname": [
+          "libgbm.so.1"
+        ],
+        "neededLibraries": [
+          "libdrm.so.2",
+          "libm.so.6",
+          "libgcc_s.so.1",
+          "libc.so.6"
+        ],
+        "runpaths": [],
+        "apiExportCount": 38,
+        "apiExportAbiSha256": "3fc06c3c8e64bb7901fb8f908a4131d8cea1882303762882e19d8cad1b8972ac",
+        "syntheticAbsoluteVersionNodes": []
+      },
+      "usr/lib/libEGL.so.1.0.0": {
+        "sha256": "c2156dc4bc0773aafc86d4f4c9b872f49a06872925b4cae8db8019c6c32235b5",
+        "bytes": 560808,
+        "soname": [
+          "libEGL.so.1"
+        ],
+        "neededLibraries": [
+          "libgallium-26.0.8.so",
+          "libgbm.so.1",
+          "libdrm.so.2",
+          "libwayland-client.so.0",
+          "libm.so.6",
+          "libgcc_s.so.1",
+          "libc.so.6"
+        ],
+        "runpaths": [],
+        "apiExportCount": 47,
+        "apiExportAbiSha256": "9b45d35dd03fb585109a0d80fa47226012f23005b8408d7a465a26231229b3e0",
+        "syntheticAbsoluteVersionNodes": []
+      },
+      "usr/lib/gbm/dri_gbm.so": {
+        "sha256": "e8c7c77b2284b56cceaf87a4757375f2bb5731cccd74ca1bee5235def67231d4",
+        "bytes": 250096,
+        "soname": [
+          "dri_gbm.so"
+        ],
+        "neededLibraries": [
+          "libgallium-26.0.8.so",
+          "libdrm.so.2",
+          "libm.so.6",
+          "libgcc_s.so.1",
+          "libc.so.6"
+        ],
+        "runpaths": [],
+        "apiExportCount": 1,
+        "apiExportAbiSha256": "9b6a30c28ee7edabf3178fefa346ae849d65748712ac65e15991642fda7fa634",
+        "syntheticAbsoluteVersionNodes": []
+      }
+    },
+    "stagedLibraryAliases": {
+      "usr/lib/libEGL.so": "libEGL.so.1",
+      "usr/lib/libEGL.so.1": "libEGL.so.1.0.0",
+      "usr/lib/libgbm.so": "libgbm.so.1",
+      "usr/lib/libGLESv2.so.2": "libGLESv2.so.2.0.0",
+      "usr/lib/libgbm.so.1": "libgbm.so.1.0.0",
+      "usr/lib/libGLESv2.so": "libGLESv2.so.2"
+    },
+    "verifiedLibraryAliasTargets": {
+      "usr/lib/libEGL.so": "usr/lib/libEGL.so.1.0.0",
+      "usr/lib/libEGL.so.1": "usr/lib/libEGL.so.1.0.0",
+      "usr/lib/libgbm.so": "usr/lib/libgbm.so.1.0.0",
+      "usr/lib/libgbm.so.1": "usr/lib/libgbm.so.1.0.0",
+      "usr/lib/libGLESv2.so": "usr/lib/libGLESv2.so.2.0.0",
+      "usr/lib/libGLESv2.so.2": "usr/lib/libGLESv2.so.2.0.0"
+    },
+    "comparedApiExports": 527,
+    "waylandDependencyVersions": {
+      "wayland-client": "1.26.0",
+      "wayland-server": "1.26.0",
+      "wayland-egl-backend": "3",
+      "wayland-protocols": "1.47"
+    },
+    "libraryLayoutVerified": true,
+    "binaryInterfaceComparisonPassed": true,
+    "standaloneRuntimePackage": false,
+    "runtimeLoaded": false,
+    "gpuWorkloadRun": false,
+    "vmLaunched": false,
+    "hardwareIntegrationTested": false,
+    "quickshellCrashResolutionVerified": false,
+    "performanceAcceptanceVerified": false,
+    "dailyUseAccepted": false
+  },
+  "allThreeHeadWorkflowsPassed": {
+    "general": 41867101279,
+    "native": 41867101411,
+    "mesa": 41867101381
+  },
+  "limits": [
+    "Linux compiler, source generation, component installation layout and metadata/interface checks only",
+    "Mesa libraries were never loaded or executed; no GPU rendering, VM launch or physical input test",
+    "Other Ubuntu system dependencies still differ from the captured guest",
+    "Staged Mesa components do not include the matching kernel, broker, shim and proprietary native runtime required for a working backend",
+    "Normal launcher sessions, responsive multiple applications through 4K, sustained resource bounds, cleanup/recovery and matched-native performance remain unverified",
+    "Host display recovery and Quickshell crash resolution remain unverified; local hardware hold remains in force"
+  ]
+}
+
