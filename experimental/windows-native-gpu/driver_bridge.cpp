@@ -21,6 +21,7 @@
 #include "driver_wire.h"
 #include "driver_coordinator.h"
 #include "bounded_gpu_retirement_wait.h"
+#include "checked_fence_completion.h"
 #include "shared_resource_probe.h"
 #include "shared_sync_handle.h"
 #include "shared_resource_handle.h"
@@ -2412,9 +2413,11 @@ public:
         ID3D12CommandList* lists[] = {list.Get()}; copyQueue->ExecuteCommandLists(1, lists);
         const auto target = ++copyFenceValue;
         hr = copyQueue->Signal(copyFence.Get(), target);
-        if (SUCCEEDED(hr)) hr = copyFence->SetEventOnCompletion(target, copyEvent);
-        if (FAILED(hr) || WaitForSingleObject(copyEvent, 5000) != WAIT_OBJECT_0 ||
-            copyFence->GetCompletedValue() == UINT64_MAX || copyFence->GetCompletedValue() < target) {
+        if (FAILED(hr) || native_gpu::checkedFenceCompletion(target,
+                [&] { return copyFence->GetCompletedValue(); },
+                [&] { return SUCCEEDED(copyFence->SetEventOnCompletion(target, copyEvent)); },
+                [&] { return WaitForSingleObject(copyEvent, 5000) == WAIT_OBJECT_0; }) !=
+                native_gpu::FenceCompletion::Complete) {
             // GPU may still own the section and resources. Keep them alive for
             // OS process teardown; never unwind and unmap in-flight backing.
             std::cerr << "FAIL: GPU copy did not complete; worker terminated with backing retained\n" << std::flush;
