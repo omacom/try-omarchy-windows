@@ -10,35 +10,69 @@
         "libGLESv2.so.2"
       ],
       "apiExportCount": 358,
-      "apiExportAbiSha256": "2f007ae84bf3d08eac088910b6640b12a065c2967e4b5ab4b787ec0298183118"
+      "apiExportAbiSha256": "2f007ae84bf3d08eac088910b6640b12a065c2967e4b5ab4b787ec0298183118",
+      "neededLibraries": [
+        "libgallium-26.2.6.so"
+      ]
     },
     "usr/lib/libgbm.so.1.0.0": {
       "soname": [
         "libgbm.so.1"
       ],
       "apiExportCount": 38,
-      "apiExportAbiSha256": "3fc06c3c8e64bb7901fb8f908a4131d8cea1882303762882e19d8cad1b8972ac"
+      "apiExportAbiSha256": "3fc06c3c8e64bb7901fb8f908a4131d8cea1882303762882e19d8cad1b8972ac",
+      "neededLibraries": [
+        "libdrm.so.2",
+        "libm.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6"
+      ]
     },
     "usr/lib/libEGL.so.1.0.0": {
       "soname": [
         "libEGL.so.1"
       ],
       "apiExportCount": 47,
-      "apiExportAbiSha256": "9b45d35dd03fb585109a0d80fa47226012f23005b8408d7a465a26231229b3e0"
+      "apiExportAbiSha256": "9b45d35dd03fb585109a0d80fa47226012f23005b8408d7a465a26231229b3e0",
+      "neededLibraries": [
+        "libgallium-26.2.6.so",
+        "libgbm.so.1",
+        "libdrm.so.2",
+        "libwayland-client.so.0",
+        "libm.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6"
+      ]
     },
     "usr/lib/gbm/dri_gbm.so": {
       "soname": [
         "dri_gbm.so"
       ],
       "apiExportCount": 1,
-      "apiExportAbiSha256": "9b6a30c28ee7edabf3178fefa346ae849d65748712ac65e15991642fda7fa634"
+      "apiExportAbiSha256": "9b6a30c28ee7edabf3178fefa346ae849d65748712ac65e15991642fda7fa634",
+      "neededLibraries": [
+        "libgallium-26.2.6.so",
+        "libdrm.so.2",
+        "libm.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6"
+      ]
     },
     "usr/lib/libgallium-26.2.6.so": {
       "soname": [
         "libgallium-26.2.6.so"
       ],
       "apiExportCount": 83,
-      "apiExportAbiSha256": "3cb4468cd714eb6b209191107ca9f4c5280dbffb6b6d6f0962f049c8bfaacded"
+      "apiExportAbiSha256": "25054b48c7ac9f793e562e67dac7b5b1d847cf6cfd70e62ff0d1e7d920ccab61",
+      "neededLibraries": [
+        "libdrm.so.2",
+        "libz.so.1",
+        "libzstd.so.1",
+        "libstdc++.so.6",
+        "libm.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6"
+      ]
     }
   },
   "requiredFiles": [
@@ -65,5 +99,13 @@
   },
   "abiComparisonBaselineMesaVersion": "26.0.8",
   "abiComparisonPassed": false,
-  "status": "proposed; requires a new source build and explicit ABI comparison"
+  "status": "Exact SONAME/export-version transition reviewed from pinned artifacts; current build acceptance still required.",
+  "abiTransitionEvidence": "docs/evidence/mesa-2626-abi-transition-2026-11-06.json",
+  "allowedExportMetadataTransition": {
+    "library": "usr/lib/libgallium-26.2.6.so",
+    "fromVersion": "libgallium-26.0.8.so",
+    "toVersion": "libgallium-26.2.6.so",
+    "affectedExports": 83,
+    "otherExportMetadataChangesAllowed": false
+  }
 }

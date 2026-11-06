@@ -174,6 +174,9 @@ def main():
         check(not actual['runpaths'], 'Runtime build search path retained: ' + relative)
         check(all('/' not in name and '\\' not in name and ':' not in name for name in actual['neededLibraries']),
               'Dependency contains an absolute or host path')
+        if 'neededLibraries' in wanted:
+            check(actual['neededLibraries'] == wanted['neededLibraries'],
+                  'Reviewed component dependencies differ: ' + relative)
         check(actual['apiExportCount'] == wanted['apiExportCount'] and
               actual['apiExportAbiSha256'] == wanted['apiExportAbiSha256'],
               'API exports, types, bindings, visibility or versions differ: ' + relative)

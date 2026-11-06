@@ -10,8 +10,10 @@ successful. Graphics UMDs matching the user's updated NVIDIA installation are
 privately staged. Mesa 26.2.6 Dozen compiles and passes seven recipe and eleven
 ICD/file controls remotely. The corrected graphics job compiles all five
 libraries and passes twenty actual-fence CPU plus fourteen loader-alias controls,
-then stops at the strict `libgallium` ABI comparison. Exact symbol changes need
-review before acceptance; the candidate workflow remains failed. No new guest
+then stops at the strict `libgallium` ABI comparison. Completed artifact review
+confirms only the 83 gallium version tags changed across 527 exports; the exact
+transition and dependency lists are now pinned. A new acceptance build is
+pending approval; the existing candidate workflow remains failed. No new guest
 image or hardware validation is claimed;
 counts remain **4/8, 0/4, 3/3**.
 [Exact update state and remaining steps](GRAPHICS-DRIVER-UPDATE-2026-11-06.md).

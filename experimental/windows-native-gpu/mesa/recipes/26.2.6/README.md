@@ -15,9 +15,12 @@ The corrected batch at `f95e3b5` compiled all five graphics libraries and passed
 seven recipe, twenty actual-fence CPU and fourteen loader-alias cases. It then
 failed the strict 26.0.8 ABI baseline comparison for `libgallium-26.2.6.so`.
 No accepted graphics archive was produced. [Exact scope and failure](../../../../../docs/evidence/mesa-2626-graphics-abi-gate-2026-11-06.json).
-A prepared diagnostic now saves symbol/type/binding/version observations before
-the unchanged acceptance gate; a new remote batch requires approval. Expected
-hashes are not updated automatically to match an observed new library.
+The diagnostic batch at `98aa0cf` saves symbol/type/binding/version observations
+before the unchanged gate. Reviewing its completed artifact confirms all 527
+names/types/bindings/visibility/default-version flags are preserved; only the
+83 gallium SONAME-based version tags change. The contract now records that exact
+independently derived transition and pins the five dependency lists. Its new
+acceptance build still needs approval. [Review and limits](../../../../../docs/MESA-2626-ABI-TRANSITION.md).
 This is not an installed guest update or a usable desktop. It contains no NVIDIA
 binary, guest disk, host driver installer or GPU test.
 
@@ -43,10 +46,10 @@ be reproduced. The resource retry check verifies source scope; it does not
 exercise real memory pressure or GPU allocation retries.
 
 Staging inspection reads ELF and loader metadata without loading the libraries.
-The graphics ABI contract initially requires the exact historical public export
-types, bindings, visibility and versions, with the gallium SONAME updated to
-26.2.6. A changed upstream ABI fails the gate and needs explicit review; this
-recipe does not invent new successful export counts. Generated protocol hashes
+The graphics ABI contract requires the reviewed public export metadata and the
+exact 83 gallium version-tag transition, with its SONAME updated to 26.2.6.
+Other ABI/dependency changes fail the gate and need explicit review. The
+527-export count remains unchanged. Generated protocol hashes
 and EGL/GBM/GLES loader aliases are also checked. Dozen has separate file/ICD
 rejection controls. Successful archives remain inactive build components.
 
