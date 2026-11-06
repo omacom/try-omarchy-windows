@@ -24,6 +24,8 @@ import (
 //   host -> guest: "open-url <base64 link>" open an allowed link clicked in Windows
 //   guest -> host: "open-settings"     one-shot request on a separate connection
 //   guest -> host: "launch-app <approved ID>" one-shot allowlisted Windows app request
+//   guest -> host: "open-file <base64 UTF-8 relative path>" one-shot shared file request
+//   host -> guest: "file-types <base64 JSON>" file extensions allowed in Settings
 //   guest -> host: "drop-drag <ticket ID> <x> <y>" one-shot: drag a drop into the app (see drop_drag.go)
 // The host sends the time on connect, every few minutes, and after Windows
 // resumes from sleep, when the guest clock is the thing most likely to be wrong.
@@ -39,10 +41,12 @@ type guestAgent struct {
 	batteryLine   func() (string, error)
 	appsDir       string
 	launchApp     func(string) error
+	openFile      func(string) error
 	dropDrag      func(id string, x, y int) error
 	peerAllowed   func(net.Conn) bool
 	health        *compositorHealth
 	lastAppLaunch time.Time
+	lastFileOpen  time.Time
 	// urlSend keeps each url-approved snapshot and the open-url that follows
 	// it together on one connection. urlReady is set when this connection's
 	// guest reported its link types, so an older agent never gets a link.
@@ -117,6 +121,21 @@ func (a *guestAgent) serve(c net.Conn) {
 		_, _ = c.Write([]byte(status))
 		return
 	}
+	if strings.HasPrefix(first, "open-file ") {
+		status := "unavailable\n"
+		if rel, ok := parseOpenFileRequest(first); ok {
+			if err := a.requestFileOpen(rel); err == nil {
+				status = "ok\n"
+			} else {
+				logf("files: refused request: %v", err)
+			}
+		} else {
+			logf("files: refused malformed request")
+		}
+		_ = c.SetWriteDeadline(time.Now().Add(3 * time.Second))
+		_, _ = c.Write([]byte(status))
+		return
+	}
 	if strings.HasPrefix(first, "drop-drag ") {
 		status := "unavailable\n"
 		if id, x, y, ok := parseDropDragRequest(first); ok && a.dropDrag != nil {
@@ -155,7 +174,35 @@ func (a *guestAgent) serve(c net.Conn) {
 	a.sendBattery()
 	a.sendApprovedApps()
 	a.sendApprovedURLSchemes()
+	a.sendApprovedFileTypes()
 	a.read(c, r)
+}
+
+func (a *guestAgent) requestFileOpen(rel string) error {
+	if !validOpenFilePath(rel) || a.openFile == nil {
+		return fmt.Errorf("invalid or unavailable shared file")
+	}
+	a.mu.Lock()
+	if !a.lastFileOpen.IsZero() && a.now().Sub(a.lastFileOpen) < time.Second {
+		a.mu.Unlock()
+		return fmt.Errorf("file open rate limit")
+	}
+	a.lastFileOpen = a.now()
+	a.mu.Unlock()
+	return a.openFile(rel)
+}
+
+// A corrupt or unreadable file revokes the guest's previous snapshot.
+func (a *guestAgent) sendApprovedFileTypes() bool {
+	if a.appsDir == "" {
+		return false
+	}
+	prefs, err := loadApprovedFileTypes(a.appsDir)
+	if err != nil {
+		logf("agent: could not read allowed file types")
+		prefs = approvedFileTypePreferences{SchemaVersion: 1}
+	}
+	return a.sendLine(fileTypesLine(prefs))
 }
 
 func (a *guestAgent) requestAppLaunch(id string) error {
@@ -413,6 +460,7 @@ func (a *guestAgent) run(l net.Listener, resumed <-chan struct{}) {
 		a.sendBattery()
 		a.sendApprovedApps()
 		a.sendApprovedURLSchemes()
+		a.sendApprovedFileTypes()
 	})
 }
 

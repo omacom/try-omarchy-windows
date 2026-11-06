@@ -1762,6 +1762,7 @@ func runGuestAgent(dir string) {
 	a.health = &guestCompositorHealth
 	a.appsDir = dir
 	a.launchApp = func(id string) error { return launchApprovedWindowsApp(dir, id) }
+	a.openFile = func(rel string) error { return openSharedWindowsFile(dir, rel) }
 	a.dropDrag = performDropDrag
 	theAgent.Store(a)
 	a.run(l, hostResumed)
