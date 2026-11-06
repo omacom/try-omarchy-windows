@@ -207,7 +207,7 @@ func TestVMRestoreSpaceAndCancellation(t *testing.T) {
 }
 
 func TestVMBackupNamesAndDestination(t *testing.T) {
-	for _, name := range []string{"../disk.raw", "guest/../settings.json", "guest/CON", "runtime/bin/file:stream", "guest/trailing.", "vm/disk.qcow2", "shared/personal.txt"} {
+	for _, name := range []string{"../disk.raw", "guest/../settings.json", "guest/CON", "runtime/bin/file:stream", "guest/trailing.", "vm/disk.qcow2", "shared/personal.txt", approvedAppsFilename, approvedURLSchemesFilename, approvedFileTypesFilename} {
 		if backupNameAllowed(name) {
 			t.Errorf("accepted unsupported name %q", name)
 		}
@@ -324,5 +324,36 @@ func TestVMRestoreBudgetsCompressedSizeAndRestampsReceipts(t *testing.T) {
 	}
 	if restored.ModTime().UnixNano() != stamp {
 		t.Fatalf("receipt time not restored: got %d, want %d", restored.ModTime().UnixNano(), stamp)
+	}
+}
+
+func TestVMBackupExcludesHostApprovals(t *testing.T) {
+	dir, archive := backupFixture(t)
+	names := []string{approvedAppsFilename, approvedURLSchemesFilename, approvedFileTypesFilename}
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("host approval fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writeVMBackup(dir, archive); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := zip.OpenReader(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	for _, entry := range reader.File {
+		for _, name := range names {
+			if entry.Name == name {
+				t.Errorf("backup contains host approval file %s", name)
+			}
+		}
+	}
+	for _, name := range names {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || string(data) != "host approval fixture" {
+			t.Fatalf("backup changed source approval file %s: %q, %v", name, data, err)
+		}
 	}
 }

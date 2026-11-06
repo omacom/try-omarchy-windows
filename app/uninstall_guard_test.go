@@ -236,3 +236,18 @@ func TestUninstallBootstrapPreservesOtherInstallAndUnknownFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestUninstallRemovesHostApprovals(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{provisionModeFilename, approvedAppsFilename, approvedURLSchemesFilename, approvedFileTypesFilename} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := removeUninstallDirectory(dir, os.RemoveAll); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("installation or approvals remain: %v", err)
+	}
+}

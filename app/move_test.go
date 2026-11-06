@@ -94,7 +94,7 @@ func TestMoveVolumeIdentificationFailureHasRecoveryGuidance(t *testing.T) {
 
 func TestMovePreservesContentsCapacityTimestampsAndRedirects(t *testing.T) {
 	s, source, destination := moveFixture(t)
-	for _, name := range []string{"my-notes.txt", "vm/before-reset-old/disk.raw"} {
+	for _, name := range []string{"my-notes.txt", "vm/before-reset-old/disk.raw", approvedAppsFilename, approvedURLSchemesFilename, approvedFileTypesFilename} {
 		path := filepath.Join(source, name)
 		os.MkdirAll(filepath.Dir(path), 0700)
 		if err := os.WriteFile(path, []byte("keep this too"), 0600); err != nil {
@@ -104,6 +104,12 @@ func TestMovePreservesContentsCapacityTimestampsAndRedirects(t *testing.T) {
 	m := prepareFixtureMove(t, s, source, destination)
 	if err := s.recover(func(*installationMove) error { return nil }); err != nil {
 		t.Fatal(err)
+	}
+	for _, name := range []string{approvedAppsFilename, approvedURLSchemesFilename, approvedFileTypesFilename} {
+		data, err := os.ReadFile(filepath.Join(destination, name))
+		if err != nil || string(data) != "keep this too" {
+			t.Fatalf("approval file %s was not retained: %q, %v", name, data, err)
+		}
 	}
 	for _, entry := range m.Files {
 		if entry.Directory {
