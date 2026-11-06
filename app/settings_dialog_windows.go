@@ -76,6 +76,11 @@ const (
 	settingsLinkListID           = 2131
 	settingsLinkAllowID          = 2132
 	settingsLinkRevokeID         = 2133
+	settingsFileListID           = 2134
+	settingsFileTypeID           = 2135
+	settingsFileOpenerID         = 2136
+	settingsFileAddID            = 2137
+	settingsFileRemoveID         = 2138
 	settingsSaveID               = 2001
 	settingsCancelID             = 2002
 	settingsBrowseID             = 2003
@@ -224,6 +229,13 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		errorBox(uiTextWith("settings.error.read_apps", map[string]string{"error": err.Error()}))
 		return false
 	}
+	approvedFiles, err := loadApprovedFileTypes(dataDir)
+	if err != nil {
+		errorBox(uiTextWith("settings.error.read_file_types", map[string]string{"error": err.Error()}))
+		// Leave the unreadable file untouched until the user saves Settings.
+		approvedFiles = approvedFileTypePreferences{SchemaVersion: 1, Types: []approvedFileType{}}
+	}
+	approvedFiles.Types = slices.Clone(approvedFiles.Types)
 	// Portable copies never register link types: the drive can move.
 	approvedLinks := approvedURLSchemePreferences{SchemaVersion: 1}
 	var linkRows []string
@@ -291,9 +303,10 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 	var hCameraOn, hMicrophoneOn, hCamera, hUpdateOn uintptr
 	var hAudioOutput, hAudioInput, hVolumeSync uintptr
 	var hResourceProfile, hResourceHelp uintptr
-	var hApprovedApps, hLinks uintptr
+	var hApprovedApps, hLinks, hFiles, hFileType, hFileOpener uintptr
+	var availableFileTypes []string
 	var updateResourceControls func()
-	var refreshApprovedApps, refreshLinks func()
+	var refreshApprovedApps, refreshLinks, refreshFiles, refreshFileOpeners func()
 	profileValues := []string{resourceBalanced, resourceMaximum, resourceManual}
 	selectedProfile := func() string {
 		index, _, _ := procSendMessageW.Call(hResourceProfile, 0x147, 0, 0) // CB_GETCURSEL
@@ -440,8 +453,44 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 			case settingsAppRemoveID:
 				index, _, _ := procSendMessageW.Call(hApprovedApps, 0x188, 0, 0) // LB_GETCURSEL
 				if index < uintptr(len(approvedApps.Apps)) {
+					removedID := approvedApps.Apps[index].ID
+					approvedFiles.Types = slices.DeleteFunc(approvedFiles.Types, func(entry approvedFileType) bool {
+						return entry.App == removedID
+					})
 					approvedApps.Apps = append(approvedApps.Apps[:index], approvedApps.Apps[index+1:]...)
 					refreshApprovedApps()
+				}
+			case settingsFileAddID:
+				typeIndex, _, _ := procSendMessageW.Call(hFileType, 0x147, 0, 0) // CB_GETCURSEL
+				appIndex, _, _ := procSendMessageW.Call(hFileOpener, 0x147, 0, 0)
+				if typeIndex >= uintptr(len(availableFileTypes)) || appIndex > uintptr(len(approvedApps.Apps)) {
+					errorBox(uiText("settings.error.file_choose"))
+					return 0
+				}
+				entry := approvedFileType{Ext: availableFileTypes[typeIndex]}
+				if appIndex > 0 {
+					app := approvedApps.Apps[appIndex-1]
+					if isFileOpenerInterpreter(app.Path) {
+						errorBox(uiText("settings.error.file_interpreter"))
+						return 0
+					}
+					// Opening refuses an opener inside the share, so say so now. Settings
+					// runs in its own process and only knows the folder chosen here;
+					// the open-time check still covers a different running share.
+					shareOn, _, _ := procSendMessageW.Call(hShareOn, bmGetcheck, 0, 0)
+					if share := strings.TrimSpace(text(hShare)); shareOn == bstChecked && share != "" && pathsOverlapWindows(app.Path, share) {
+						errorBox(uiText("settings.error.file_opener_in_share"))
+						return 0
+					}
+					entry.App = app.ID
+				}
+				approvedFiles.Types = append(approvedFiles.Types, entry)
+				refreshFiles()
+			case settingsFileRemoveID:
+				index, _, _ := procSendMessageW.Call(hFiles, 0x188, 0, 0) // LB_GETCURSEL
+				if index < uintptr(len(approvedFiles.Types)) {
+					approvedFiles.Types = slices.Delete(approvedFiles.Types, int(index), int(index)+1)
+					refreshFiles()
 				}
 			case settingsLinkAllowID, settingsLinkRevokeID:
 				index, _, _ := procSendMessageW.Call(hLinks, 0x188, 0, 0) // LB_GETCURSEL
@@ -640,6 +689,10 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 				}
 				if err := saveApprovedWindowsApps(dataDir, approvedApps); err != nil {
 					errorBox(uiTextWith("settings.error.save_apps", map[string]string{"error": err.Error()}))
+					return 0
+				}
+				if err := saveApprovedFileTypes(dataDir, approvedFiles); err != nil {
+					errorBox(uiTextWith("settings.error.save_file_types", map[string]string{"error": err.Error()}))
 					return 0
 				}
 				if !portable {
@@ -1317,6 +1370,10 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 			label, _ := syscall.UTF16PtrFromString(app.Name + " - " + app.Path)
 			procSendMessageW.Call(hApprovedApps, 0x180, 0, uintptr(unsafe.Pointer(label))) // LB_ADDSTRING
 		}
+		if refreshFileOpeners != nil {
+			refreshFileOpeners()
+			refreshFiles()
+		}
 	}
 	refreshApprovedApps()
 	y += 250
@@ -1325,6 +1382,64 @@ func runLauncherSettings(path, dataDir string, portable, launcher bool, beforeRe
 		rowButton{uiText("settings.apps.remove"), 160, settingsAppRemoveID})
 	y += 40 + grow
 	y = note(uiText("settings.apps.save_help"), left, y, clientW-2*left, 70, 76)
+	section(uiText("settings.section.files"))
+	y = note(uiText("settings.files.help"), left, y, clientW-2*left, 70, 76)
+	hFiles = mk("LISTBOX", "", left, y, clientW-2*left, 160, wsBorder|wsVscroll|wsTabstop|0x0001, settingsFileListID) // LBS_NOTIFY
+	y += 170
+	grow = fieldLabel(uiText("settings.files.type"), y, 20)
+	hFileType = mk("COMBOBOX", "", fieldX, y, fieldW, 220, 0x0003|wsVscroll|wsTabstop, settingsFileTypeID)
+	y += 34 + grow
+	grow = fieldLabel(uiText("settings.files.opener"), y, 20)
+	hFileOpener = mk("COMBOBOX", "", fieldX, y, fieldW, 220, 0x0003|wsVscroll|wsTabstop, settingsFileOpenerID)
+	y += 34 + grow
+	refreshFileOpeners = func() {
+		// A removed selection must not silently become the default opener.
+		procSendMessageW.Call(hFileOpener, 0x14B, 0, 0) // CB_RESETCONTENT
+		label, _ := syscall.UTF16PtrFromString(uiText("settings.files.default_app"))
+		procSendMessageW.Call(hFileOpener, 0x143, 0, uintptr(unsafe.Pointer(label))) // CB_ADDSTRING
+		for _, app := range approvedApps.Apps {
+			label, _ := syscall.UTF16PtrFromString(app.Name)
+			procSendMessageW.Call(hFileOpener, 0x143, 0, uintptr(unsafe.Pointer(label)))
+		}
+	}
+	refreshFiles = func() {
+		procSendMessageW.Call(hFiles, 0x184, 0, 0) // LB_RESETCONTENT
+		for _, entry := range approvedFiles.Types {
+			opener := uiText("settings.files.default_app")
+			if entry.App != "" {
+				opener = uiText("settings.files.unavailable_app")
+				for _, app := range approvedApps.Apps {
+					if app.ID == entry.App {
+						opener = app.Name
+						break
+					}
+				}
+			}
+			label, _ := syscall.UTF16PtrFromString(entry.Ext + " - " + opener)
+			procSendMessageW.Call(hFiles, 0x180, 0, uintptr(unsafe.Pointer(label))) // LB_ADDSTRING
+		}
+		procSendMessageW.Call(hFileType, 0x14B, 0, 0) // CB_RESETCONTENT
+		availableFileTypes = nil
+		for _, ext := range ReviewedFileTypes() {
+			if slices.ContainsFunc(approvedFiles.Types, func(entry approvedFileType) bool { return entry.Ext == ext }) {
+				continue
+			}
+			availableFileTypes = append(availableFileTypes, ext)
+			label, _ := syscall.UTF16PtrFromString(ext)
+			procSendMessageW.Call(hFileType, 0x143, 0, uintptr(unsafe.Pointer(label))) // CB_ADDSTRING
+		}
+		if len(availableFileTypes) > 0 {
+			procSendMessageW.Call(hFileType, 0x14E, 0, 0) // CB_SETCURSEL
+		}
+	}
+	refreshFileOpeners()
+	procSendMessageW.Call(hFileOpener, 0x14E, 0, 0) // CB_SETCURSEL, default on initial load only
+	refreshFiles()
+	_, grow = buttons(left, y, 28, 10,
+		rowButton{uiText("settings.files.add"), 150, settingsFileAddID},
+		rowButton{uiText("settings.files.remove"), 160, settingsFileRemoveID})
+	y += 40 + grow
+	y = note(uiText("settings.files.save_help"), left, y, clientW-2*left, 48, 54)
 	section(uiText("settings.section.links"))
 	if portable {
 		y = note(uiText("settings.links.portable"), left, y, clientW-2*left, 20, 26)

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/base64"
+	"fmt"
 	"net"
 	"os"
 	"slices"
@@ -399,6 +400,9 @@ func TestURLOpenWaitsForThisConnectionsReportAndStaysBounded(t *testing.T) {
 				t.Fatal(err)
 			}
 			if line == urlApprovedLine([]string{"zoommtg"}) {
+				if line, err := r.ReadString('\n'); err != nil || line != "file-types W10=\n" {
+					t.Fatalf("file types: %q, %v", line, err)
+				}
 				return c, r
 			}
 		}
@@ -504,6 +508,11 @@ func connectReadyURLGuest(t *testing.T, a *guestAgent, addr string) (net.Conn, *
 			t.Fatal(err)
 		}
 		if strings.HasPrefix(line, "url-approved ") {
+			if a.appsDir != "" {
+				if line, err := r.ReadString('\n'); err != nil || !strings.HasPrefix(line, "file-types ") {
+					t.Fatalf("file types: %q, %v", line, err)
+				}
+			}
 			break
 		}
 	}
@@ -521,6 +530,129 @@ func connectReadyURLGuest(t *testing.T, a *guestAgent, addr string) (net.Conn, *
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func TestOpenFileRequestRepliesAndIndependentRateLimit(t *testing.T) {
+	now := time.Now()
+	a := &guestAgent{now: func() time.Time { return now }}
+	var opened []string
+	a.openFile = func(rel string) error { opened = append(opened, rel); return nil }
+	launches := 0
+	a.launchApp = func(string) error { launches++; return nil }
+	ask := func(line string) string {
+		t.Helper()
+		host, guest := net.Pipe()
+		defer guest.Close()
+		done := make(chan struct{})
+		go func() { a.serve(host); close(done) }()
+		guest.SetDeadline(time.Now().Add(2 * time.Second))
+		if _, err := guest.Write([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+		reply, err := bufio.NewReader(guest).ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-done
+		return reply
+	}
+	id := strings.Repeat("a", 32)
+	for _, tc := range []struct{ line, want string }{
+		{"launch-app " + id + "\n", "ok\n"},
+		{openFileTestLine("folder/file.pdf"), "ok\n"},
+		{openFileTestLine("folder/file.pdf"), "unavailable\n"},
+		{"launch-app " + id + "\n", "unavailable\n"},
+		{openFileTestLine("../file.pdf"), "unavailable\n"},
+		{"open-file !!!\n", "unavailable\n"},
+	} {
+		if got := ask(tc.line); got != tc.want {
+			t.Fatalf("%q: %q, want %q", tc.line, got, tc.want)
+		}
+	}
+	now = now.Add(time.Second)
+	if got := ask(openFileTestLine("second.txt")); got != "ok\n" {
+		t.Fatal(got)
+	}
+	if got := ask("launch-app " + id + "\n"); got != "ok\n" {
+		t.Fatal(got)
+	}
+	if !slices.Equal(opened, []string{"folder/file.pdf", "second.txt"}) || launches != 2 {
+		t.Fatalf("calls: %v, %d", opened, launches)
+	}
+	now = now.Add(time.Second)
+	a.openFile = func(string) error { return fmt.Errorf("refused") }
+	if got := ask(openFileTestLine("second.txt")); got != "unavailable\n" {
+		t.Fatal(got)
+	}
+	a.openFile = nil
+	if got := ask(openFileTestLine("second.txt")); got != "unavailable\n" {
+		t.Fatal(got)
+	}
+}
+
+func TestOpenFileRefusesForeignPeer(t *testing.T) {
+	host, guest := net.Pipe()
+	defer guest.Close()
+	a := &guestAgent{now: time.Now, peerAllowed: func(net.Conn) bool { return false },
+		openFile: func(string) error { t.Error("foreign peer opened a file"); return nil }}
+	done := make(chan struct{})
+	go func() { a.serve(host); close(done) }()
+	guest.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := guest.Write([]byte(openFileTestLine("file.pdf"))); err == nil {
+		t.Fatal("foreign peer accepted")
+	}
+	<-done
+}
+
+func TestFileTypesSentOnConnectAndAfterSettingsChange(t *testing.T) {
+	dir := t.TempDir()
+	prefs := approvedFileTypePreferences{SchemaVersion: 1, Types: []approvedFileType{{Ext: ".pdf"}}}
+	if err := saveApprovedFileTypes(dir, prefs); err != nil {
+		t.Fatal(err)
+	}
+	host, guest := net.Pipe()
+	defer guest.Close()
+	a := &guestAgent{now: time.Now, appsDir: dir}
+	done := make(chan struct{})
+	go func() { a.serve(host); close(done) }()
+	guest.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := guest.Write([]byte("hello 7\n")); err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(guest)
+	for _, prefix := range []string{"time ", "apps ", "url-approved ", "file-types "} {
+		line, err := r.ReadString('\n')
+		if err != nil || !strings.HasPrefix(line, prefix) {
+			t.Fatalf("connect: %q, %v; want %q", line, err, prefix)
+		}
+		if prefix == "file-types " && line != fileTypesLine(prefs) {
+			t.Fatal(line)
+		}
+	}
+	prefs.Types = []approvedFileType{{Ext: ".txt"}}
+	if err := saveApprovedFileTypes(dir, prefs); err != nil {
+		t.Fatal(err)
+	}
+	sent := make(chan bool, 1)
+	go func() { sent <- a.sendApprovedFileTypes() }()
+	if line, err := r.ReadString('\n'); err != nil || line != fileTypesLine(prefs) {
+		t.Fatalf("changed settings: %q, %v", line, err)
+	}
+	if !<-sent {
+		t.Fatal("update not sent")
+	}
+	if err := os.WriteFile(approvedFileTypesPath(dir), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	go func() { sent <- a.sendApprovedFileTypes() }()
+	if line, err := r.ReadString('\n'); err != nil || line != "file-types W10=\n" {
+		t.Fatalf("unreadable settings: %q, %v", line, err)
+	}
+	if !<-sent {
+		t.Fatal("revocation not sent")
+	}
+	guest.Close()
+	<-done
 }
 
 func TestURLOpenCannotFollowANewerRevocation(t *testing.T) {
