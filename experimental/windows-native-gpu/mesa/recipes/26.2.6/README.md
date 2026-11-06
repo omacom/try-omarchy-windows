@@ -5,9 +5,15 @@ This recipe ports the eleven existing experimental bridge and failure guards to
 2026. The official archive SHA-256 is pinned in `recipe.json`. The historical
 26.0.8 recipe remains separate and remains the default of the existing tools.
 
-This is an **unbuilt source candidate** until a completed run for this revision
-establishes otherwise. It is not an installed guest update or a usable desktop.
-It contains no NVIDIA binary, guest disk, host driver installer or GPU test.
+The [first remote batch](https://github.com/7Wdev/try-omarchy-windows/actions/runs/42206143342)
+compiled the complete Dozen profile and passed seven recipe and eleven ICD/file
+controls at commit `5a33343`. The graphics profile stopped during patch dry-run:
+the generated diff omitted a marker for an upstream file without a final newline.
+The corrected graphics diff still needs a new approved build. The overall run
+failed; no graphics build or fence-control result is claimed for it.
+[Dozen receipt and explicit limits](../../../../../docs/evidence/mesa-2626-dozen-source-build-2026-11-06.json).
+This is not an installed guest update or a usable desktop. It contains no NVIDIA
+binary, guest disk, host driver installer or GPU test.
 
 The graphics profile preserves timeline/native sync files, native images,
 render-node discovery, owned presentation, uploader ownership and constant-buffer

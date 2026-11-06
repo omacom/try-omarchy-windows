@@ -199,7 +199,9 @@
  
     *out_adapter_luid = &screen->base.adapter_luid;
     return &screen->base.base;
--}+}
+-}
+\ No newline at end of file
++}
 --- a/src/gallium/drivers/d3d12/d3d12_fence.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_fence.cpp
 @@ -27,15 +27,56 @@

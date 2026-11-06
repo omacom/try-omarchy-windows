@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "date": "2026-11-06",
+  "headCommit": "5a333430d27d626a9a4e086404892b59a07dddca",
+  "sourceCommit": "e9ea5774fca783b23169153cb6fe5a8b7275d7bf",
+  "mesaVersion": "26.2.6",
+  "runId": 42206143342,
+  "jobId": 127853152220,
+  "jobConclusion": "success",
+  "overallRunConclusion": "failure",
+  "overallFailure": "Graphics profile stopped during patch dry-run; no new graphics compilation/fence execution.",
+  "recipeControls": [
+    "valid",
+    "idempotent",
+    "wrong-version",
+    "modified-source",
+    "mixed-stages",
+    "corrupted-patch",
+    "escaping-target"
+  ],
+  "recipeCasesPassed": 7,
+  "icdLayoutCasesPassed": 11,
+  "compiledLibraries": {
+    "usr/lib/libvulkan_dzn.so": {
+      "sha256": "e1e819f202dea099f4875034afa60ad3c11d349e2dd24b29bfb1d9d16f24200c",
+      "bytes": 13592560,
+      "soname": [
+        "libvulkan_dzn.so"
+      ],
+      "neededLibraries": [
+        "libz.so.1",
+        "libzstd.so.1",
+        "libdrm.so.2",
+        "libwayland-client.so.0",
+        "libm.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6"
+      ],
+      "runpaths": [],
+      "apiExportCount": 222,
+      "apiExportAbiSha256": "8c79355ae21a2c24134d16dfd4e433e7010638d5214eec3383ab1e29f8a5a4e7",
+      "syntheticAbsoluteVersionNodes": []
+    }
+  },
+  "icdManifest": {
+    "path": "usr/share/vulkan/icd.d/dzn_icd.x86_64.json",
+    "sha256": "1318c04e4cc61327fae61e71a519b3f905d5b254818b30cb5b01ce7b971ca02b",
+    "contents": {
+      "ICD": {
+        "api_version": "1.1.354",
+        "library_arch": "64",
+        "library_path": "/usr/lib/libvulkan_dzn.so"
+      },
+      "file_format_version": "1.0.1"
+    }
+  },
+  "patchedSourceSha256": {
+    "src/microsoft/vulkan/dzn_device.c": "e59f111e969c5c87ec70c91804292f570e3ed7e8061d90f7f1839bf704007566",
+    "src/microsoft/vulkan/dzn_imported_memory_fd.h": "03155a0ea2ba1f9f2b42a20342340060b7ed9a10461a2ab0551293ed50e2271c",
+    "src/microsoft/vulkan/dzn_wddm_native_gpu_buffer.h": "eaccd5e42e6dec7394852c81d98e3eb3cb86a6928001107c4ccc977156fd8b4d",
+    "src/microsoft/vulkan/dzn_wddm_native_gpu_buffer_admission.h": "e343bf4ac26aede95eab783c155996033b5ab17998d9087405fa0be4cbb077d6",
+    "src/microsoft/vulkan/meson.build": "e954106c1b7516eaa9e12bdb8f676f3b6ef3ac88acc0228d1f638e41403cc8eb",
+    "include/vulkan/vulkan_core.h": "55c06a17793bb1a9d752aa0906116fff9d1fb74f5dd3896777b92f124c9637aa",
+    "src/microsoft/vulkan/dzn_wsi.c": "f31a98248744b0cb772e66b2c2d9f67c6dfc6c15905c416765b00a2e49a34366"
+  },
+  "recipeManifestSha256": "a3698d18632bcb2bf8734b637ea2ba973502175b241d773f941068936b42ee7a",
+  "waylandDependencyVersions": {
+    "wayland-client": "1.26.0",
+    "wayland-protocols": "1.47"
+  },
+  "evidenceArtifact": {
+    "id": 13495974488,
+    "bytes": 26072,
+    "zipSha256": "6565c628e43d97b8eb7076f1c104e8ba90bef305a69ea0357f3593721721fa0e"
+  },
+  "componentArtifact": {
+    "id": 13496049058,
+    "bytes": 9850620,
+    "zipSha256": "f68f2bef54a1a53bbca54d1d9922a3a349b68c4a694c6c8aba885e6318e1612d"
+  },
+  "runtimeLoaded": false,
+  "gpuWorkloadRun": false,
+  "vmLaunched": false,
+  "driverOrDisplaySafetyVerified": false,
+  "waylandGpuPresentationImplemented": false,
+  "apiConformanceVerified": false,
+  "performanceAcceptanceVerified": false,
+  "dailyUseAccepted": false
+}

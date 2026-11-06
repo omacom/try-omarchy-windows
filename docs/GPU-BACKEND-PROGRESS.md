@@ -7,8 +7,10 @@ graphics runtime.
 **Upstream and driver update — November 6, 2026:** the development branch is
 synced through upstream `5c7ad83`, with all four checks for merge `5e0f33d`
 successful. Graphics UMDs matching the user's updated NVIDIA installation are
-privately staged. A separate Mesa 26.2.6 source port is prepared, with new builds
-pending approval. No new guest image or hardware validation is claimed;
+privately staged. Mesa 26.2.6 Dozen compiles and passes seven recipe and eleven
+ICD/file controls remotely. The graphics job stopped before compilation on a
+patch-format error; its prepared fix needs a new approved run. The overall new
+candidate workflow failed. No new guest image or hardware validation is claimed;
 counts remain **4/8, 0/4, 3/3**.
 [Exact update state and remaining steps](GRAPHICS-DRIVER-UPDATE-2026-11-06.md).
 

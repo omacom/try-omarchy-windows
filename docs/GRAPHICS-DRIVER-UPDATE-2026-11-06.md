@@ -23,10 +23,15 @@ physical NVIDIA device.
 
 A separate [Mesa 26.2.6 source recipe](../experimental/windows-native-gpu/mesa/recipes/26.2.6/README.md)
 is prepared from the official release and ports all eleven existing patches.
-It preserves newer upstream fence/residency/reclaim behavior. Its new full-source
-builds and CPU rejection/fence controls have not run yet. The existing 26.0.8
-recipe and historical evidence remain intact. This source update does not
-silently replace a private guest runtime or reinterpret old test results.
+It preserves newer upstream fence/residency/reclaim behavior. The first remote
+batch at `5a33343` compiled the full Dozen profile and passed seven recipe and
+eleven ICD/file controls. Its graphics profile stopped before compilation on a
+malformed EOF diff hunk. That packaging fix is prepared, with a new approved run
+still required. The graphics fence controls have not run. The overall batch's
+candidate workflow failed; the successful Dozen job is recorded separately.
+[Exact receipt](evidence/mesa-2626-dozen-source-build-2026-11-06.json).
+The existing 26.0.8 recipe and historical evidence remain intact. This source
+update does not silently replace a private guest runtime or reinterpret old tests.
 
 Remaining steps are an approved remote build, review of any ABI/dependency
 changes, the failure-regression matrix on this version, a separately approved

@@ -8,7 +8,7 @@
   "profiles": {
     "graphics": {
       "patchFile": "graphics.patch",
-      "patchSha256": "a5e750deca4c0e2f8665482fe43f179a300519ec65ddc776eeca8f0830358ce9",
+      "patchSha256": "10ea3de6779d6874f8f8e785f561b0f8db4af4241b21f4750f1886b33e02e10c",
       "files": {
         "src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c": {
           "originalSha256": "6ad6f13a7881c64b877e16496f243073ed42fb10a10dc9a98aaba2331b94edbf",
