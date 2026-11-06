@@ -48,9 +48,7 @@ var (
 	curtainCapturing atomic.Bool
 	curtainBoot      time.Time
 	curtainStatus    string
-	// The same look after the curtain lifted, for watchDesktop.
-	desktopPainted   atomic.Int32
-	desktopBoot      time.Time
+	// When watchDesktop last looked at the window after the curtain lifted.
 	desktopCheckedAt time.Time
 )
 
@@ -198,9 +196,6 @@ func curtainTick(primary uintptr) {
 	}
 	now := time.Now()
 	if reason := times.liftReason(now, curtainPainted.Load() >= 2); reason != "" {
-		if curtainPainted.Load() >= 2 {
-			desktopSeen.Store(true)
-		}
 		liftCurtain(reason)
 		return
 	}
@@ -223,10 +218,14 @@ func curtainTick(primary uintptr) {
 	if primary != 0 && times.checkPaint() && curtainCapturing.CompareAndSwap(false, true) {
 		go func() {
 			defer curtainCapturing.Store(false)
-			if windowShowsDesktop(primary) {
+			painted := windowShowsDesktop(primary)
+			if painted {
 				curtainPainted.Add(1)
 			} else {
 				curtainPainted.Store(0)
+			}
+			if desktopShown.look(time.Now(), painted) {
+				desktopSeen.Store(true)
 			}
 			wakeTitleEnforcer()
 		}()
@@ -234,20 +233,25 @@ func curtainTick(primary uintptr) {
 }
 
 // watchDesktop keeps looking at a shown window every few seconds until it
-// shows the desktop once in this boot. A minimized or hidden window is not
-// looked at.
+// has kept showing the desktop for desktopSteadyWait in this boot. A
+// minimized or hidden window is not looked at.
 func watchDesktop(primary uintptr) {
 	times := curtainTimes()
-	if !times.boot.Equal(desktopBoot) {
-		desktopBoot = times.boot
-		desktopPainted.Store(0)
+	if desktopSeen.Load() {
+		return
 	}
-	if desktopSeen.Load() || primary == 0 || !times.checkPaint() || time.Since(desktopCheckedAt) < desktopCheckInterval {
+	// A hidden window is left out of the window list, so its time off
+	// screen must not count toward the streak either.
+	if primary == 0 {
+		desktopShown.reset()
+		return
+	}
+	if !times.checkPaint() || time.Since(desktopCheckedAt) < desktopCheckInterval {
 		return
 	}
 	visible, _, _ := procIsWindowVisible.Call(primary)
 	if iconic, _, _ := procIsIconic.Call(primary); iconic != 0 || visible == 0 {
-		desktopPainted.Store(0)
+		desktopShown.reset()
 		return
 	}
 	if !curtainCapturing.CompareAndSwap(false, true) {
@@ -258,9 +262,7 @@ func watchDesktop(primary uintptr) {
 		defer curtainCapturing.Store(false)
 		painted := windowShowsDesktop(primary)
 		desktopLooks.Add(1)
-		if !painted {
-			desktopPainted.Store(0)
-		} else if desktopPainted.Add(1) >= 2 {
+		if desktopShown.look(time.Now(), painted) {
 			desktopSeen.Store(true)
 		}
 	}()

@@ -32,7 +32,7 @@ Try Omarchy checks for updates when it starts. Release metadata is signed with a
 
 For the full guest OS update, open **Update > Omarchy** inside the guest after updating the launcher. Existing files and the writable guest disk are preserved; launcher rollback does not roll back guest package transactions. See [updating an existing guest](GUEST-UPGRADES.md).
 
-Already have WINQ-EMU at `C:\WINQ-EMU`, or stock QEMU from the old bootstrap? The app can use that runtime instead of downloading another one.
+Already have WINQ-EMU at `C:\WINQ-EMU`? The app uses it instead of downloading another runtime. Stock QEMU from the old bootstrap is only used if the bundled runtime can't be downloaded.
 
 ## Essential keys
 
