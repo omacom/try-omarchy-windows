@@ -147,7 +147,7 @@
   "settings.apps.add": "Add Windows app...",
   "settings.apps.remove": "Remove selected",
   "settings.apps.save_help": "Save to apply. Entries appear in Omarchy shortly after it starts or while it runs. Launching an app reveals Windows; use the tray icon to return to Omarchy.",
-  "settings.files.help": "Only file types listed here can open. The app runs on Windows, outside the guest. Omarchy can ask to open any file of an allowed type in the shared folder. The opened app handles the file contents.",
+  "settings.files.help": "Omarchy can ask Windows to open any file of these types in the shared folder. It opens as if you double-clicked it in File Explorer, with no download warning, so only allow types you trust from the VM.",
   "settings.files.type": "File type",
   "settings.files.opener": "Open with",
   "settings.files.default_app": "Default Windows app",
