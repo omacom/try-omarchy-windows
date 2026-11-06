@@ -9,9 +9,15 @@ The [first remote batch](https://github.com/7Wdev/try-omarchy-windows/actions/ru
 compiled the complete Dozen profile and passed seven recipe and eleven ICD/file
 controls at commit `5a33343`. The graphics profile stopped during patch dry-run:
 the generated diff omitted a marker for an upstream file without a final newline.
-The corrected graphics diff still needs a new approved build. The overall run
-failed; no graphics build or fence-control result is claimed for it.
+That first overall run failed before graphics compilation or fence execution.
 [Dozen receipt and explicit limits](../../../../../docs/evidence/mesa-2626-dozen-source-build-2026-11-06.json).
+The corrected batch at `f95e3b5` compiled all five graphics libraries and passed
+seven recipe, twenty actual-fence CPU and fourteen loader-alias cases. It then
+failed the strict 26.0.8 ABI baseline comparison for `libgallium-26.2.6.so`.
+No accepted graphics archive was produced. [Exact scope and failure](../../../../../docs/evidence/mesa-2626-graphics-abi-gate-2026-11-06.json).
+A prepared diagnostic now saves symbol/type/binding/version observations before
+the unchanged acceptance gate; a new remote batch requires approval. Expected
+hashes are not updated automatically to match an observed new library.
 This is not an installed guest update or a usable desktop. It contains no NVIDIA
 binary, guest disk, host driver installer or GPU test.
 

@@ -95,6 +95,7 @@ jobs:
           if-no-files-found: ignore
           path: |
             ${{ runner.temp }}/mesa-${{ matrix.profile }}-source-build.json
+            ${{ runner.temp }}/mesa-${{ matrix.profile }}-source-build-abi-observations.json
             ${{ runner.temp }}/mesa-${{ matrix.profile }}-recipe-controls/*.log
             ${{ runner.temp }}/mesa-${{ matrix.profile }}-recipe-controls/result.json
             ${{ runner.temp }}/mesa-${{ matrix.profile }}-build/meson-logs/meson-log.txt

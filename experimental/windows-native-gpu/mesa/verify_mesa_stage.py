@@ -20,7 +20,7 @@ def check(condition, message):
         raise ValueError(message)
 
 
-def inspect_elf(path):
+def inspect_elf(path, include_exports=False):
     with path.open('rb') as f:
         elf = ELFFile(f)
         check(elf.elfclass == 64 and elf.little_endian and
@@ -66,10 +66,13 @@ def inspect_elf(path):
             elif tag.entry.d_tag == 'DT_RPATH':
                 runpaths.append(tag.rpath)
         encoded = json.dumps(exports, sort_keys=True, separators=(',', ':')).encode()
-        return dict(sha256=digest(path), bytes=path.stat().st_size, soname=soname,
-                    neededLibraries=needed, runpaths=runpaths, apiExportCount=len(exports),
-                    apiExportAbiSha256=hashlib.sha256(encoded).hexdigest(),
-                    syntheticAbsoluteVersionNodes=version_nodes)
+        result = dict(sha256=digest(path), bytes=path.stat().st_size, soname=soname,
+                      neededLibraries=needed, runpaths=runpaths, apiExportCount=len(exports),
+                      apiExportAbiSha256=hashlib.sha256(encoded).hexdigest(),
+                      syntheticAbsoluteVersionNodes=version_nodes)
+        if include_exports:
+            result['apiExports'] = exports
+        return result
 
 
 def verify_aliases(stage, aliases):
@@ -140,11 +143,33 @@ def main():
     links = verify_aliases(stage, contract['libraryAliases'])
     for relative in contract['requiredFiles']:
         check((stage / relative).is_file(), 'Required staged development file missing: ' + relative)
+    observations = {}
+    if args.recipe:
+        # Preserve actual ABI metadata even when the strict historical baseline
+        # rejects a new release. This report is evidence for review, not an
+        # accepted component or an instruction to update expected hashes.
+        for relative in contract['libraries']:
+            path = (stage / relative).resolve(strict=True)
+            check(path.is_relative_to(stage), 'Library escapes staging root')
+            observations[relative] = inspect_elf(path, include_exports=True)
+        report = dict(schema=1, headCommit=os.environ.get('SOURCE_HEAD_COMMIT'),
+                      sourceCommit=os.environ.get('SOURCE_COMMIT'),
+                      mesaVersion=contract['mesaVersion'],
+                      baselineMesaVersion=contract['abiComparisonBaselineMesaVersion'],
+                      stageContractSha256=digest(recipe / 'stage-contract.json'),
+                      recipeManifestSha256=digest(recipe / 'recipe.json'),
+                      observedLibraries=observations, expectedLibraries=contract['libraries'],
+                      inspectionOnly=True, binaryInterfaceComparisonPassed=False,
+                      componentAccepted=False, runtimeLoaded=False,
+                      gpuWorkloadRun=False, vmLaunched=False, dailyUseAccepted=False)
+        args.output.with_name(args.output.stem + '-abi-observations.json').write_text(
+            json.dumps(report, indent=2) + '\n', encoding='utf-8', newline='\n')
     libraries = {}
     for relative, wanted in contract['libraries'].items():
         path = (stage / relative).resolve(strict=True)
         check(path.is_relative_to(stage), 'Library escapes staging root')
-        actual = inspect_elf(path)
+        actual = ({k: v for k, v in observations[relative].items() if k != 'apiExports'}
+                  if observations else inspect_elf(path))
         check(actual['soname'] == wanted['soname'], 'SONAME differs: ' + relative)
         check(not actual['runpaths'], 'Runtime build search path retained: ' + relative)
         check(all('/' not in name and '\\' not in name and ':' not in name for name in actual['neededLibraries']),

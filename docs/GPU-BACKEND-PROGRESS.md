@@ -8,9 +8,11 @@ graphics runtime.
 synced through upstream `5c7ad83`, with all four checks for merge `5e0f33d`
 successful. Graphics UMDs matching the user's updated NVIDIA installation are
 privately staged. Mesa 26.2.6 Dozen compiles and passes seven recipe and eleven
-ICD/file controls remotely. The graphics job stopped before compilation on a
-patch-format error; its prepared fix needs a new approved run. The overall new
-candidate workflow failed. No new guest image or hardware validation is claimed;
+ICD/file controls remotely. The corrected graphics job compiles all five
+libraries and passes twenty actual-fence CPU plus fourteen loader-alias controls,
+then stops at the strict `libgallium` ABI comparison. Exact symbol changes need
+review before acceptance; the candidate workflow remains failed. No new guest
+image or hardware validation is claimed;
 counts remain **4/8, 0/4, 3/3**.
 [Exact update state and remaining steps](GRAPHICS-DRIVER-UPDATE-2026-11-06.md).
 

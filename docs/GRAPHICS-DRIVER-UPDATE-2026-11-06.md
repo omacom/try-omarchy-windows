@@ -26,15 +26,20 @@ is prepared from the official release and ports all eleven existing patches.
 It preserves newer upstream fence/residency/reclaim behavior. The first remote
 batch at `5a33343` compiled the full Dozen profile and passed seven recipe and
 eleven ICD/file controls. Its graphics profile stopped before compilation on a
-malformed EOF diff hunk. That packaging fix is prepared, with a new approved run
-still required. The graphics fence controls have not run. The overall batch's
-candidate workflow failed; the successful Dozen job is recorded separately.
+malformed EOF diff hunk. That first candidate workflow failed; the successful
+Dozen job is recorded separately.
 [Exact receipt](evidence/mesa-2626-dozen-source-build-2026-11-06.json).
+The corrected batch at `f95e3b5` compiled the full five-library graphics graph
+and passed seven recipe, twenty actual-fence CPU and fourteen loader-alias
+controls. It stopped at the strict `libgallium` API/ABI baseline gate. The Dozen
+job passed again. Exact symbol changes still need inspection; a prepared
+observation report preserves the gate and needs a new approved remote batch.
+[Graphics result and remaining acceptance](evidence/mesa-2626-graphics-abi-gate-2026-11-06.json).
 The existing 26.0.8 recipe and historical evidence remain intact. This source
 update does not silently replace a private guest runtime or reinterpret old tests.
 
-Remaining steps are an approved remote build, review of any ABI/dependency
-changes, the failure-regression matrix on this version, a separately approved
+Remaining steps are review of the exact ABI/dependency changes, a successful
+accepted graphics build, the failure-regression matrix on this version, a separately approved
 data-only guest-image assembly, then separately approved hardware integration.
 The host driver update invalidates assumptions about the previous hardware
 baseline; it does not prove that the display incident cannot recur.
