@@ -94,28 +94,36 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ['source', 'build', 'stage', 'output']:
         parser.add_argument('--' + name, required=True, type=Path)
+    parser.add_argument('--recipe', type=Path,
+                        help='Versioned recipe; omitted keeps the historical 26.0.8 contract')
     args = parser.parse_args()
     here = Path(__file__).resolve().parent
     source, build, stage = [getattr(args, n).resolve(strict=True) for n in ['source', 'build', 'stage']]
-    contract = json.loads((here / 'stage-contract.json').read_text(encoding='utf-8'))
+    recipe = args.recipe.resolve(strict=True) if args.recipe else here
+    contract = json.loads((recipe / 'stage-contract.json').read_text(encoding='utf-8'))
     options = {r['name']: r['value'] for r in json.loads((build / 'meson-info/intro-buildoptions.json').read_text(encoding='utf-8'))}
     check(options['prefix'] == '/usr' and options['libdir'] == 'lib', 'Unexpected installation prefix')
     check(options['gallium-drivers'] == ['d3d12'] and 'wayland' in options['platforms'], 'Wrong desktop build profile')
     check(options['build-tests'] is False and options['vulkan-drivers'] == [] and options['gallium-d3d12-video'] == 'disabled', 'Unexpected graphics test or API profile')
     check((source / 'VERSION').read_text(encoding='utf-8').strip() == contract['mesaVersion'], 'Wrong Mesa source version')
-    expected = {}
-    for name in ['fence-fd-patch.json', 'native-sync-patch.json', 'native-image-patch.json',
-                 'native-render-patch.json', 'native-presentation-patch.json',
-                 'upload-failure-patch.json', 'constbuf-failure-patch.json']:
-        manifest = json.loads((here / name).read_text(encoding='utf-8'))
-        expected.update({n: r['patchedSha256'] for n, r in manifest['files'].items()})
-    sources = {}
-    for relative, wanted in expected.items():
-        path = (source / relative).resolve(strict=True)
-        check(path.is_relative_to(source), 'Source path escapes supplied tree')
-        actual = digest(path)
-        check(actual == wanted, 'Patched source hash differs: ' + relative)
-        sources[relative] = actual
+    if args.recipe:
+        from apply_mesa_recipe import verify_patched
+        manifest, sources = verify_patched(source, recipe, 'graphics')
+        check(manifest['mesaVersion'] == contract['mesaVersion'], 'Recipe/contract version differs')
+    else:
+        expected = {}
+        for name in ['fence-fd-patch.json', 'native-sync-patch.json', 'native-image-patch.json',
+                     'native-render-patch.json', 'native-presentation-patch.json',
+                     'upload-failure-patch.json', 'constbuf-failure-patch.json']:
+            manifest = json.loads((here / name).read_text(encoding='utf-8'))
+            expected.update({n: r['patchedSha256'] for n, r in manifest['files'].items()})
+        sources = {}
+        for relative, wanted in expected.items():
+            path = (source / relative).resolve(strict=True)
+            check(path.is_relative_to(source), 'Source path escapes supplied tree')
+            actual = digest(path)
+            check(actual == wanted, 'Patched source hash differs: ' + relative)
+            sources[relative] = actual
     generated = {}
     for relative, wanted in contract['generatedWaylandFiles'].items():
         actual = digest(build / relative)
@@ -156,6 +164,9 @@ def main():
                   runtimeLoaded=False, gpuWorkloadRun=False, vmLaunched=False,
                   hardwareIntegrationTested=False, quickshellCrashResolutionVerified=False,
                   performanceAcceptanceVerified=False, dailyUseAccepted=False)
+    if args.recipe:
+        result.update(recipeManifestSha256=digest(recipe / 'recipe.json'),
+                      abiComparisonBaselineMesaVersion=contract['abiComparisonBaselineMesaVersion'])
     args.output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8', newline='\n')
     print(json.dumps(result, indent=2))
 

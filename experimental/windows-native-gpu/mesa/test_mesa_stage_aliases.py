@@ -32,12 +32,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--stage', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--recipe', type=Path,
+                        help='Versioned layout contract; omitted uses the historical contract')
     args = parser.parse_args()
     source = args.stage.resolve(strict=True)
     out = args.output.resolve()
     check(not out.is_relative_to(source), 'Test output must be outside the supplied staging tree')
     here = Path(__file__).resolve().parent
-    contract = json.loads((here / 'stage-contract.json').read_text(encoding='utf-8'))
+    recipe = args.recipe.resolve(strict=True) if args.recipe else here
+    contract = json.loads((recipe / 'stage-contract.json').read_text(encoding='utf-8'))
     aliases = contract['libraryAliases']
     check(set(aliases) == set(LINKS), 'Loader alias names differ from the required EGL/GBM/GLES2 names')
     out.mkdir(parents=True, exist_ok=False)

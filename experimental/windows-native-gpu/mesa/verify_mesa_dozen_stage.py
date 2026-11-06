@@ -62,11 +62,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('source', 'build', 'stage', 'output'):
         parser.add_argument('--' + name, required=True, type=Path)
+    parser.add_argument('--recipe', type=Path,
+                        help='Versioned recipe; omitted preserves the 26.0.8 contract')
     args = parser.parse_args()
     source, build, stage = [getattr(args, n).resolve(strict=True)
                             for n in ('source', 'build', 'stage')]
     here = Path(__file__).resolve().parent
-    check((source / 'VERSION').read_text(encoding='utf-8').strip() == '26.0.8',
+    version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+    recipe = args.recipe.resolve(strict=True) if args.recipe else None
+    mesa_version = json.loads((recipe / 'recipe.json').read_text(encoding='utf-8'))['mesaVersion'] if recipe else '26.0.8'
+    check(version == mesa_version,
           'Wrong Mesa source version')
     options = {r['name']: r['value'] for r in json.loads(
         (build / 'meson-info/intro-buildoptions.json').read_text(encoding='utf-8'))}
@@ -81,21 +86,36 @@ def main():
     for name, expected in required.items():
         check(options.get(name) == expected, 'Unexpected Dozen build option: ' + name)
     expected_sources, patches = {}, {}
-    for manifest_name, patch_name in MANIFESTS:
-        manifest = json.loads((here / manifest_name).read_text(encoding='utf-8'))
-        actual = digest(here / patch_name)
-        check(actual == manifest['patchSha256'], 'Dozen recipe patch hash differs')
-        patches[patch_name] = actual
-        expected_sources.update({n: r['patchedSha256'] for n, r in manifest['files'].items()})
-    sources = {}
-    for relative, expected in expected_sources.items():
-        actual = digest(inside(source, relative))
-        check(actual == expected, 'Patched Dozen source differs: ' + relative)
-        sources[relative] = actual
+    if recipe:
+        from apply_mesa_recipe import verify_patched
+        manifest, sources = verify_patched(source, recipe, 'dozen')
+        profile = manifest['profiles']['dozen']
+        patches[profile['patchFile']] = profile['patchSha256']
+    else:
+        for manifest_name, patch_name in MANIFESTS:
+            manifest = json.loads((here / manifest_name).read_text(encoding='utf-8'))
+            actual = digest(here / patch_name)
+            check(actual == manifest['patchSha256'], 'Dozen recipe patch hash differs')
+            patches[patch_name] = actual
+            expected_sources.update({n: r['patchedSha256'] for n, r in manifest['files'].items()})
+        sources = {}
+        for relative, expected in expected_sources.items():
+            actual = digest(inside(source, relative))
+            check(actual == expected, 'Patched Dozen source differs: ' + relative)
+            sources[relative] = actual
     header = (source / 'include/vulkan/vulkan_core.h').read_text(encoding='utf-8')
     version = re.search(r'^#define\s+VK_HEADER_VERSION\s+(\d+)\s*$', header, re.MULTILINE)
     check(version is not None, 'Pinned Vulkan header version missing')
-    api_version = '1.1.' + version.group(1)
+    if recipe:
+        # Mesa intentionally advertises a conservative loader API version.
+        # Do not replace it with DZN_API_VERSION or a conformance claim.
+        meson_source = (source / 'src/microsoft/vulkan/meson.build').read_text(encoding='utf-8')
+        versions = set(re.findall(r"'--api-version',\s*'(\d+\.\d+)'", meson_source))
+        check(len(versions) == 1, 'Pinned Dozen ICD API generation version is ambiguous')
+        api_prefix = versions.pop() + '.'
+    else:
+        api_prefix = '1.1.'
+    api_version = api_prefix + version.group(1)
     icd = verify_icd(stage, api_version)
     dependencies = {r['name']: r.get('version') for r in json.loads(
         (build / 'meson-info/intro-dependencies.json').read_text(encoding='utf-8'))}
@@ -104,7 +124,7 @@ def main():
     files = {p.relative_to(stage).as_posix(): digest(inside(stage, p.relative_to(stage).as_posix()))
              for p in stage.rglob('*') if p.is_file() and not p.is_symlink()}
     result = dict(schema=1, sourceCommit=os.environ.get('SOURCE_COMMIT'),
-                  headCommit=os.environ.get('SOURCE_HEAD_COMMIT'), mesaVersion='26.0.8',
+                  headCommit=os.environ.get('SOURCE_HEAD_COMMIT'), mesaVersion=mesa_version,
                   buildOptions=required, patchSha256=patches, patchedSourceSha256=sources,
                   wsiSourceSha256=digest(inside(source, 'src/microsoft/vulkan/dzn_wsi.c')),
                   waylandDependencyVersions={n: dependencies[n] for n in
@@ -115,6 +135,8 @@ def main():
                   waylandGpuPresentationImplemented=False, apiConformanceVerified=False,
                   driverOrDisplaySafetyVerified=False, performanceAcceptanceVerified=False,
                   standaloneRuntimePackage=False, dailyUseAccepted=False)
+    if recipe:
+        result['recipeManifestSha256'] = digest(recipe / 'recipe.json')
     args.output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8', newline='\n')
     print(json.dumps(result, indent=2))
 

@@ -1,0 +1,42 @@
+# November 6 source and graphics-driver update
+
+The development branch includes upstream master through
+`5c7ad83a09241847c27fa1657b3af286cce2f5ed`. Merge
+`5e0f33de1999f68cdf3c9125fe4eda03898fb1b6` passed the general, Mesa source,
+native PR and native push CI runs. This resolves the missing upstream commits
+observed during this sync. Future upstream commits still need their own sync.
+The graphics backend and official Windows keyboard/mouse routing were preserved;
+master was not changed. The upstream shared-file feature defaults to no approvals.
+
+The user updated the Windows NVIDIA driver. Static service-file metadata now
+reports **32.0.16.2114**. Matching `libnvwgf2umx.so` and
+`libnvidia-gpucomp.so` have been copied to private staging, with hashes and the
+new DriverStore package name recorded privately. No graphics library was loaded
+and the actively loaded driver version was not queried. These two graphics
+libraries are not yet assembled into a new guest image. Other NVIDIA APIs and
+runtime dependencies still need their own integration and validation.
+
+This backend uses Windows-provided Linux graphics UMDs with the experimental
+D3D12 bridge. Installing a standard Linux NVIDIA kernel driver in the guest
+would not implement this path; it does not currently have a passed-through
+physical NVIDIA device.
+
+A separate [Mesa 26.2.6 source recipe](../experimental/windows-native-gpu/mesa/recipes/26.2.6/README.md)
+is prepared from the official release and ports all eleven existing patches.
+It preserves newer upstream fence/residency/reclaim behavior. Its new full-source
+builds and CPU rejection/fence controls have not run yet. The existing 26.0.8
+recipe and historical evidence remain intact. This source update does not
+silently replace a private guest runtime or reinterpret old test results.
+
+Remaining steps are an approved remote build, review of any ABI/dependency
+changes, the failure-regression matrix on this version, a separately approved
+data-only guest-image assembly, then separately approved hardware integration.
+The host driver update invalidates assumptions about the previous hardware
+baseline; it does not prove that the display incident cannot recur.
+
+Readiness remains **backend 4/8, desktop 0/4, diagnostic apps 3/3**. Normal session
+flow, preserved end-to-end Windows input, responsive browsing and multiple
+windows through 4K, sustained sessions, bounded resources, cleanup/recovery and
+near-native performance remain unverified. CUDA, complete OpenGL/Vulkan support,
+video acceleration, DLSS and hardware ray tracing remain requirements. No
+daily-use or stable-backend notification is warranted.

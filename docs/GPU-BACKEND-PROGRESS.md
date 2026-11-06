@@ -1,8 +1,16 @@
 # NVIDIA backend progress
 
-Updated **2026-11-05**. This page tracks the experimental QEMU/WHPX Windows-native
+Updated **2026-11-06**. This page tracks the experimental QEMU/WHPX Windows-native
 NVIDIA backend. The released Try Omarchy launcher continues using the upstream
 graphics runtime.
+
+**Upstream and driver update — November 6, 2026:** the development branch is
+synced through upstream `5c7ad83`, with all four checks for merge `5e0f33d`
+successful. Graphics UMDs matching the user's updated NVIDIA installation are
+privately staged. A separate Mesa 26.2.6 source port is prepared, with new builds
+pending approval. No new guest image or hardware validation is claimed;
+counts remain **4/8, 0/4, 3/3**.
+[Exact update state and remaining steps](GRAPHICS-DRIVER-UPDATE-2026-11-06.md).
 
 **Guarded guest candidate preparation - November 5, 2026:** a data-only updater
 is defined to place the compiled Mesa guards into a fresh normal-root image,
