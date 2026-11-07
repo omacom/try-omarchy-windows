@@ -1,0 +1,328 @@
+From 44b45c216f778cbcb442a84989d8b71bbbfbe463 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Fri, 6 Nov 2026 19:20:00 -0500
+Subject: [PATCH] Let the default terminal setting choose the terminal
+
+The image put a Foot-only xdg-terminal-exec in /usr/local/bin, ahead of the
+packaged one on PATH. Super+Return, the Omarchy menu and the default terminal
+check mark all went through it, so choosing another terminal never applied
+(#385). The packaged xdg-terminal-exec already follows Omarchy's list, which
+starts with Foot, and Omarchy's foot.desktop carries the app id, title and
+directory arguments the shim used to translate.
+
+Stop shipping the shim. Catch-up removes it from existing disks when it is
+still the unchanged copy, and compatibility revision 66 delivers that.
+---
+ .../usr/local/lib/try-omarchy/catch-up        | 15 ++++++++++
+ guest/scripts/finalize-rootfs.sh              |  4 ++-
+ .../fixtures/retired-xdg-terminal-exec}       |  0
+ guest/tests/test_aquamarine_contract.py       |  2 +-
+ guest/tests/test_battery_details.py           |  2 +-
+ guest/tests/test_clipboard_pull.py            |  2 +-
+ guest/tests/test_compositor_health.py         |  2 +-
+ guest/tests/test_guest_qol.py                 |  2 +-
+ guest/tests/test_live_update.py               |  2 +-
+ guest/tests/test_native_nightlight.py         |  2 +-
+ guest/tests/test_notification_privacy.py      |  2 +-
+ guest/tests/test_overlay_scripts.py           | 28 ++++++++++++++++++-
+ guest/tests/test_qt612_palette.py             |  2 +-
+ guest/tests/test_snapper_guest.py             |  2 +-
+ guest/tests/test_url_schemes.py               |  2 +-
+ guest/tests/test_windows_volume_sync.py       |  2 +-
+ guest/tests/verify.py                         |  2 +-
+ 17 files changed, 58 insertions(+), 15 deletions(-)
+ rename guest/{factory-overlay/usr/local/bin/xdg-terminal-exec => tests/fixtures/retired-xdg-terminal-exec} (100%)
+ mode change 100755 => 100644
+
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+index 1ebe48a..efeabe2 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+@@ -12,6 +12,8 @@
+ #     once per user, keeping the original file beside it
+ #   - make SSH accept only keys for the quick-start account, whose password
+ #     is public, once per disk
++#   - remove the Foot-only xdg-terminal-exec an older image put in
++#     /usr/local/bin, when it is still our unchanged copy
+ # Runs once per integration revision, before the display manager.
+ set -euo pipefail
+ 
+@@ -25,6 +27,7 @@ pinch_fragment=${TRY_OMARCHY_PINCH_FRAGMENT:-/usr/share/try-omarchy/skel-fragmen
+ homes=${TRY_OMARCHY_HOMES:-/home}
+ quick_start_sshd=${TRY_OMARCHY_QUICK_START_SSHD:-/usr/share/try-omarchy/quick-start-sshd.conf}
+ sshd_config_dir=${TRY_OMARCHY_SSHD_CONFIG_DIR:-/etc/ssh/sshd_config.d}
++terminal_shim=${TRY_OMARCHY_TERMINAL_SHIM:-/usr/local/bin/xdg-terminal-exec}
+ 
+ revision=$(cut -d: -f1 "$revision_file" 2>/dev/null || echo 0)
+ marker="$state_dir/catch-up-revision"
+@@ -210,6 +213,17 @@ secure_quick_start_ssh() {
+   echo "made SSH accept only keys for the quick-start account"
+ }
+ 
++remove_terminal_shim() {
++  # Images before revision 66 shipped a Foot-only xdg-terminal-exec that
++  # shadowed the packaged one, so Omarchy's default terminal setting never
++  # applied. Remove only our unchanged copy; an edited one is the user's.
++  local shipped=9c78611e9212023fa6ed3252ccf8fdfbbfe7b6c10ee6c255a237088ad13b8126
++  [[ -f $terminal_shim && ! -L $terminal_shim ]] || return 0
++  [[ $(sha256sum "$terminal_shim" | cut -d' ' -f1) == "$shipped" ]] || return 0
++  rm -f -- "$terminal_shim"
++  echo "removed the Foot-only xdg-terminal-exec so the default terminal setting applies"
++}
++
+ legacy_pinch_comment="-- Try Omarchy's host pinch device carries gestures only."
+ legacy_pinch_load='dofile("/usr/share/try-omarchy/pinch-input.lua")'
+ 
+@@ -222,5 +236,6 @@ for home in "$homes"/*; do
+   load_pinch_rules "$home" || true
+ done
+ secure_quick_start_ssh || true
++remove_terminal_shim || true
+ printf '%s\n' "$revision" >"$marker"
+ exit 0
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 6f01d2f..664d5b9 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -253,7 +253,9 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 63 reports a slow compositor as busy during package updates.
+ # Revision 64 offers alpha dmabuf formats to clients on the QEMU display.
+ # Revision 65 offers Hangul in untouched fcitx5 profiles on Korean Windows.
+-compat_revision=65
++# Revision 66 removes the Foot-only xdg-terminal-exec so the default terminal
++# setting applies.
++compat_revision=66
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/factory-overlay/usr/local/bin/xdg-terminal-exec b/guest/tests/fixtures/retired-xdg-terminal-exec
+old mode 100755
+new mode 100644
+similarity index 100%
+rename from guest/factory-overlay/usr/local/bin/xdg-terminal-exec
+rename to guest/tests/fixtures/retired-xdg-terminal-exec
+diff --git a/guest/tests/test_aquamarine_contract.py b/guest/tests/test_aquamarine_contract.py
+index 7a23f76..ddd3ed2 100644
+--- a/guest/tests/test_aquamarine_contract.py
++++ b/guest/tests/test_aquamarine_contract.py
+@@ -76,7 +76,7 @@ class AquamarineContractTests(unittest.TestCase):
+         runtime = (GUEST / 'scripts/register-omarchy-runtime.sh').read_text()
+         self.assertIn('depend = aquamarine>={version}', runtime)
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=65', finalizer)
++        self.assertIn('compat_revision=66', finalizer)
+         self.assertIn('cp /usr/share/try-omarchy/repo/*.pkg.tar.zst', finalizer)
+         self.assertIn('usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua', finalizer)
+         repo = (GUEST / 'scripts/register-local-repository.sh').read_text()
+diff --git a/guest/tests/test_battery_details.py b/guest/tests/test_battery_details.py
+index 67f161f..3fcd41c 100644
+--- a/guest/tests/test_battery_details.py
++++ b/guest/tests/test_battery_details.py
+@@ -204,7 +204,7 @@ class BatteryDetailsFlowTests(unittest.TestCase):
+     def test_compatibility_delivery_and_dkms_version(self):
+         overlay = GUEST / "factory-overlay"
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=65", finalize)
++        self.assertIn("compat_revision=66", finalize)
+         self.assertIn("usr/src/try-omarchy-battery-1.1.0", finalize)
+         self.assertIn("usr/local/lib/try-omarchy/update-battery-dkms", finalize)
+         self.assertIn('PACKAGE_VERSION="1.1.0"', (MODULE_SOURCE.parent / "dkms.conf").read_text())
+diff --git a/guest/tests/test_clipboard_pull.py b/guest/tests/test_clipboard_pull.py
+index da7cba6..73d7b04 100644
+--- a/guest/tests/test_clipboard_pull.py
++++ b/guest/tests/test_clipboard_pull.py
+@@ -71,4 +71,4 @@ class ClipboardPullTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn('usr/local/bin/clipboard-bridge', paths)
+-        self.assertIn('compat_revision=65', finalizer)
++        self.assertIn('compat_revision=66', finalizer)
+diff --git a/guest/tests/test_compositor_health.py b/guest/tests/test_compositor_health.py
+index 7be07fa..a18115c 100644
+--- a/guest/tests/test_compositor_health.py
++++ b/guest/tests/test_compositor_health.py
+@@ -55,7 +55,7 @@ class CompositorHealthTests(unittest.TestCase):
+ 
+     def test_existing_disks_receive_health_files(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=65', finalizer)
++        self.assertIn('compat_revision=66', finalizer)
+         for name in ['agent', 'compositor-health']:
+             self.assertIn('  usr/local/lib/try-omarchy/' + name, finalizer)
+         self.assertTrue(HELPER.stat().st_mode & 0o111)
+diff --git a/guest/tests/test_guest_qol.py b/guest/tests/test_guest_qol.py
+index b105329..00f9245 100644
+--- a/guest/tests/test_guest_qol.py
++++ b/guest/tests/test_guest_qol.py
+@@ -222,7 +222,7 @@ class GuestQolTests(unittest.TestCase):
+     def test_compatibility_delivers_guarded_payload_once_per_revision(self):
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalize.split("compat_paths=(", 1)[1].split(")", 1)[0]
+-        self.assertIn("compat_revision=65", finalize)
++        self.assertIn("compat_revision=66", finalize)
+         for path in ("usr/local/bin/omarchy-native-screensaver-text", "usr/local/lib/try-omarchy/install-guest-qol", "usr/share/try-omarchy/guest-qol", "usr/local/bin/omarchy-windows-audio-bridge"):
+             self.assertIn(path, paths)
+         self.assertNotIn("etc/fonts/conf.d/30-try-omarchy.conf", paths)
+diff --git a/guest/tests/test_live_update.py b/guest/tests/test_live_update.py
+index 48e20ec..df50a34 100644
+--- a/guest/tests/test_live_update.py
++++ b/guest/tests/test_live_update.py
+@@ -176,7 +176,7 @@ class LiveUpdateTests(unittest.TestCase):
+ 
+     def test_delivery_and_best_effort_hook(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=65', finalizer)
++        self.assertIn('compat_revision=66', finalizer)
+         for path in ['usr/local/lib/try-omarchy/live-update', 'etc/pacman.d/hooks/00-try-omarchy-live-update.hook', 'etc/pacman.d/hooks/zz-try-omarchy-live-update.hook']:
+             self.assertIn(path, finalizer)
+         pre = (GUEST / 'factory-overlay/etc/pacman.d/hooks/00-try-omarchy-live-update.hook').read_text()
+diff --git a/guest/tests/test_native_nightlight.py b/guest/tests/test_native_nightlight.py
+index a7062b3..484b4e8 100644
+--- a/guest/tests/test_native_nightlight.py
++++ b/guest/tests/test_native_nightlight.py
+@@ -214,5 +214,5 @@ class PersistentNightlightTests(unittest.TestCase):
+         catch_up = (self.overlay / 'usr/local/lib/try-omarchy/catch-up').read_text()
+         for path in ['usr/local/bin/omarchy-native-nightlight', 'usr/local/share/try-omarchy/nightlight.frag', 'usr/local/lib/try-omarchy/install-nightlight', 'usr/share/try-omarchy/nightlight']:
+             self.assertIn(path, finalizer)
+-        self.assertIn('compat_revision=65', finalizer)
++        self.assertIn('compat_revision=66', finalizer)
+         self.assertIn('previous_revision < 55', catch_up)
+diff --git a/guest/tests/test_notification_privacy.py b/guest/tests/test_notification_privacy.py
+index ec73334..3628154 100644
+--- a/guest/tests/test_notification_privacy.py
++++ b/guest/tests/test_notification_privacy.py
+@@ -116,7 +116,7 @@ for (const state of [null, {screensaverStateKnown:false}, {screensaverStateKnown
+     def test_compatibility_overlay_and_catch_up_revision(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         catch_up = (GUEST / 'factory-overlay/usr/local/lib/try-omarchy/catch-up').read_text()
+-        self.assertIn('compat_revision=65', finalizer)
++        self.assertIn('compat_revision=66', finalizer)
+         self.assertIn('usr/share/try-omarchy/notifications', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-notifications', finalizer)
+         self.assertIn('previous_revision < 52', catch_up)
+diff --git a/guest/tests/test_overlay_scripts.py b/guest/tests/test_overlay_scripts.py
+index 774bfa9..a2922fa 100644
+--- a/guest/tests/test_overlay_scripts.py
++++ b/guest/tests/test_overlay_scripts.py
+@@ -34,6 +34,7 @@ QUICK_START_SSHD = OVERLAY / "usr/share/try-omarchy/quick-start-sshd.conf"
+ EXPORT = OVERLAY / "usr/local/bin/try-omarchy-export"
+ FCITX5_PROFILE = Path(__file__).resolve().parents[1] / "fragments/fcitx5-profile.ini"
+ FCITX5_SAVED_PROFILE = Path(__file__).resolve().parent / "fixtures/fcitx5/profile-saved-by-fcitx5"
++RETIRED_TERMINAL_SHIM = Path(__file__).resolve().parent / "fixtures/retired-xdg-terminal-exec"
+ 
+ def generated_key(directory: Path) -> str:
+     """A real key: the guest validates the blob with ssh-keygen, so a made-up
+@@ -650,6 +651,7 @@ class CatchUpTests(OverlayCase):
+         self.omarchy_version = self.share / "version"
+         self.omarchy_version.write_text("4.0.3\n")
+         self.state = self.root / "state"
++        self.terminal_shim = self.root / "usr-local-bin/xdg-terminal-exec"
+ 
+     def run_catch_up(self) -> subprocess.CompletedProcess:
+         return self.run_script(CATCH_UP, TRY_OMARCHY_COMPAT_VERSION=str(self.version), TRY_OMARCHY_STATE_DIR=str(self.state),
+@@ -658,7 +660,8 @@ class CatchUpTests(OverlayCase):
+                                TRY_OMARCHY_OMARCHY_VERSION=str(self.omarchy_version),
+                                TRY_OMARCHY_PINCH_FRAGMENT=str(PINCH_FRAGMENT),
+                                TRY_OMARCHY_QUICK_START_SSHD=str(QUICK_START_SSHD),
+-                               TRY_OMARCHY_SSHD_CONFIG_DIR=str(self.root / "sshd_config.d"))
++                               TRY_OMARCHY_SSHD_CONFIG_DIR=str(self.root / "sshd_config.d"),
++                               TRY_OMARCHY_TERMINAL_SHIM=str(self.terminal_shim))
+ 
+     def seed_toggles(self) -> None:
+         for name in ("flags", "window-no-gaps", "single-window-aspect-ratio"):
+@@ -721,6 +724,29 @@ class CatchUpTests(OverlayCase):
+         self.assertEqual(self.run_catch_up().returncode, 0)
+         self.assertEqual(monitors.read_text(), custom)
+ 
++    def test_revision_66_removes_only_the_unchanged_foot_terminal_shim(self) -> None:
++        self.terminal_shim.parent.mkdir(parents=True)
++        self.terminal_shim.write_bytes(RETIRED_TERMINAL_SHIM.read_bytes())
++        self.terminal_shim.chmod(0o755)
++        self.state.mkdir()
++        (self.state / "catch-up-revision").write_text("65\n")
++        self.version.write_text("66:7.2.3-arch1\n")
++        result = self.run_catch_up()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertFalse(self.terminal_shim.exists())
++        self.assertEqual((self.state / "catch-up-revision").read_text(), "66\n")
++        # A shim the user edited is theirs to keep.
++        edited = RETIRED_TERMINAL_SHIM.read_text().replace("/usr/bin/foot", "/usr/bin/alacritty")
++        self.terminal_shim.write_text(edited)
++        (self.state / "catch-up-revision").write_text("65\n")
++        self.assertEqual(self.run_catch_up().returncode, 0)
++        self.assertEqual(self.terminal_shim.read_text(), edited)
++
++    def test_image_no_longer_ships_the_foot_terminal_shim(self) -> None:
++        # The packaged xdg-terminal-exec follows Omarchy's default terminal
++        # setting; a copy in /usr/local/bin would shadow it.
++        self.assertFalse((OVERLAY / "usr/local/bin/xdg-terminal-exec").exists())
++
+     def test_quick_start_disk_gets_key_only_ssh_once(self) -> None:
+         dropin = self.root / "sshd_config.d/90-try-omarchy-quick-start.conf"
+         self.state.mkdir(parents=True)
+diff --git a/guest/tests/test_qt612_palette.py b/guest/tests/test_qt612_palette.py
+index 9a88e2b..0172fef 100644
+--- a/guest/tests/test_qt612_palette.py
++++ b/guest/tests/test_qt612_palette.py
+@@ -166,7 +166,7 @@ class Qt612PaletteTests(unittest.TestCase):
+     def test_compatibility_delivery_runs_after_older_repairs_and_before_login(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+-        self.assertIn('compat_revision=65', finalizer)
++        self.assertIn('compat_revision=66', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-qt612-palette', paths)
+         self.assertIn('usr/share/try-omarchy/qt612-palette', paths)
+         self.assertEqual(self.build_spec['upstream']['packageRelease'], 11)
+diff --git a/guest/tests/test_snapper_guest.py b/guest/tests/test_snapper_guest.py
+index c354d04..6f25a89 100644
+--- a/guest/tests/test_snapper_guest.py
++++ b/guest/tests/test_snapper_guest.py
+@@ -44,5 +44,5 @@ class GuestSnapperTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn(TARGET, paths)
+-        self.assertIn('compat_revision=65', finalizer)
++        self.assertIn('compat_revision=66', finalizer)
+         self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 11)
+diff --git a/guest/tests/test_url_schemes.py b/guest/tests/test_url_schemes.py
+index 157c8c7..0f9538a 100644
+--- a/guest/tests/test_url_schemes.py
++++ b/guest/tests/test_url_schemes.py
+@@ -398,7 +398,7 @@ class DeliveryTests(unittest.TestCase):
+     def test_revision_62_delivers_the_link_helper(self) -> None:
+         finalizer = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalizer.split("compat_paths=(", 1)[1].split(")", 1)[0].split()
+-        self.assertIn("compat_revision=65", finalizer)
++        self.assertIn("compat_revision=66", finalizer)
+         self.assertIn("# Revision 62 opens links from Windows for approved URL schemes.", finalizer)
+         for path in ("usr/local/lib/try-omarchy/url-schemes", "usr/local/lib/try-omarchy/agent"):
+             self.assertIn(path, paths)
+diff --git a/guest/tests/test_windows_volume_sync.py b/guest/tests/test_windows_volume_sync.py
+index f24fe78..e51644a 100644
+--- a/guest/tests/test_windows_volume_sync.py
++++ b/guest/tests/test_windows_volume_sync.py
+@@ -285,7 +285,7 @@ class VolumeSyncTests(unittest.TestCase):
+ 
+     def test_revision_delivers_bridge_to_existing_disks(self):
+         finalize = (Path(__file__).resolve().parents[1] / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=65", finalize)
++        self.assertIn("compat_revision=66", finalize)
+         self.assertIn("usr/local/bin/omarchy-windows-audio-bridge", finalize)
+ 
+ 
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 8fc67ec..0a27d05 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -324,7 +324,7 @@ def main() -> None:
+         "system services run without watchdogs, which fire after Windows sleeps",
+     )
+     check(
+-        "compat_revision=65" in finalize_rootfs
++        "compat_revision=66" in finalize_rootfs
+         and "usr/local/bin/mpv" in compat_paths
+         and "usr/share/dkms/modules_to_force_install/try-omarchy" in compat_paths
+         and "usr/local/lib/try-omarchy/try-omarchy-import.pyz" in compat_paths
+-- 
+2.56.0
+
