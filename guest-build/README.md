@@ -10,6 +10,14 @@ scripts/release/build-guest.sh --contract-only
 scripts/release/build-guest.sh --output /path/to/artifacts
 ```
 
+Patch 0155 lets Omarchy's default terminal setting choose the terminal (#385).
+The image used to put a Foot-only `xdg-terminal-exec` in `/usr/local/bin`,
+ahead of the packaged one, so Super+Return and the Omarchy menu always opened
+Foot. The packaged tool already starts with Foot in Omarchy's list, and
+Omarchy's `foot.desktop` maps the app id, title and directory arguments.
+Catch-up removes the shim from existing disks when it is still the unchanged
+copy, delivered by compatibility revision 66.
+
 Patch 0153 offers Hangul instead of Chewing on Korean Windows. The guest ships
 fcitx5-hangul, and when the launcher passes `tryomarchy.locale=ko_KR`,
 `apply-host-locale` switches fcitx5 profiles that are still the image default
