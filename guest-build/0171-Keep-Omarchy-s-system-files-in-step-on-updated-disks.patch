@@ -1,4 +1,4 @@
-From 4608377b05a363af3d0dc063b50430fc67a69089 Mon Sep 17 00:00:00 2001
+From e68bf4367202783f524d3b15d126a72206c9b8aa Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Sun, 8 Nov 2026 11:22:55 -0500
 Subject: [PATCH] Keep Omarchy's system files in step on updated disks
@@ -10,28 +10,36 @@ fallback and the previous fcitx5 unit. The runtime package now runs a sync
 after every install and upgrade that copies its own versions into place
 wherever no package owns the target, and refreshes /etc/fastfetch only while
 it is a copy Omarchy shipped.
+It reloads systemd when units change, and the image build stops if Omarchy
+ships a fastfetch layout the sync does not know.
 ---
- guest/scripts/materialize-omarchy.sh          |   5 +
+ guest/scripts/materialize-omarchy.sh          |  11 ++
  guest/scripts/register-omarchy-runtime.sh     |   6 +
  guest/scripts/runtime-ownership.install       |  21 ++-
- guest/scripts/sync-omarchy-system-files       |  89 ++++++++++++
- guest/tests/test_runtime_package.py           |  18 +++
- guest/tests/test_sync_omarchy_system_files.py | 134 ++++++++++++++++++
- 6 files changed, 272 insertions(+), 1 deletion(-)
+ guest/scripts/sync-omarchy-system-files       | 110 ++++++++++++
+ guest/tests/test_runtime_package.py           |  18 ++
+ guest/tests/test_sync_omarchy_system_files.py | 167 ++++++++++++++++++
+ 6 files changed, 332 insertions(+), 1 deletion(-)
  create mode 100755 guest/scripts/sync-omarchy-system-files
  create mode 100644 guest/tests/test_sync_omarchy_system_files.py
 
 diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
-index b691ce9..83a1fe5 100755
+index b691ce9..9f9acf8 100755
 --- a/guest/scripts/materialize-omarchy.sh
 +++ b/guest/scripts/materialize-omarchy.sh
-@@ -295,6 +295,11 @@ install_file 0644 "$source_dir/default/wayland-sessions/omarchy.desktop" "$root/
+@@ -295,6 +295,17 @@ install_file 0644 "$source_dir/default/wayland-sessions/omarchy.desktop" "$root/
  install_file 0644 "$source_dir/default/fonts/omarchy/omarchy.ttf" "$root/usr/share/fonts/omarchy/omarchy.ttf"
  install_file 0644 "$source_dir/etc/profile.d/omarchy.sh" "$root/etc/profile.d/omarchy.sh"
  install_file 0644 "$source_dir/etc/fastfetch/config.jsonc" "$root/etc/fastfetch/config.jsonc"
 +# The runtime package carries the sync that keeps the unowned copies above in
 +# step with it on existing disks, plus the /etc source it needs (etc/ is not
 +# under /usr/share/omarchy). Fresh images register those paths as installed.
++# The sync replaces /etc/fastfetch/config.jsonc only while it is a layout it
++# knows Omarchy shipped, so a layout missing from its list would be kept on
++# updated disks as if an administrator had edited it.
++fastfetch_digest=$(sha256sum "$source_dir/etc/fastfetch/config.jsonc" | cut -d' ' -f1)
++grep -qxF "  $fastfetch_digest" "$guest_dir/scripts/sync-omarchy-system-files" ||
++  fail "add Omarchy's fastfetch layout $fastfetch_digest to sync-omarchy-system-files"
 +install_file 0755 "$guest_dir/scripts/sync-omarchy-system-files" "$root/usr/lib/try-omarchy/sync-omarchy-system-files"
 +install_file 0644 "$source_dir/etc/fastfetch/config.jsonc" "$root/usr/lib/try-omarchy/omarchy-etc/fastfetch/config.jsonc"
  
@@ -92,10 +100,10 @@ index d590175..adf47a6 100644
 +}
 diff --git a/guest/scripts/sync-omarchy-system-files b/guest/scripts/sync-omarchy-system-files
 new file mode 100755
-index 0000000..200131a
+index 0000000..196d0c9
 --- /dev/null
 +++ b/guest/scripts/sync-omarchy-system-files
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,110 @@
 +#!/bin/bash
 +# Bring Omarchy's files outside /usr/share/omarchy up to the runtime package
 +# that was just installed. The image places them where Omarchy's own package
@@ -113,7 +121,8 @@ index 0000000..200131a
 +omarchy=$root/usr/share/omarchy/default
 +etc_copies=$root/usr/lib/try-omarchy/omarchy-etc
 +
-+# Every /etc/fastfetch/config.jsonc Omarchy has shipped.
++# Every /etc/fastfetch/config.jsonc Omarchy has shipped. The image build fails
++# when the layout it ships is missing here, so add each new one.
 +fastfetch_shipped=(
 +  00a6fbf9af83cfa5bdb9cd37bc0746bb42e99672fb7cc4d76a92778de720c2b4
 +  1a0a085e7a80036f415148da21f772e99898de7e70768ec7b7613f8cc620700c
@@ -126,6 +135,7 @@ index 0000000..200131a
 +
 +failed=0
 +fonts_changed=0
++units_changed=0
 +
 +# Scriptlets run with pacman's root as /, so the system path is the query.
 +owned() {
@@ -154,12 +164,22 @@ index 0000000..200131a
 +  echo "Updated $path"
 +}
 +
++# Omarchy's unit names have no newlines. Listing first lets a failed listing
++# be reported, and needs no /dev/fd, which a chrooted build may not have.
 +place_tree() {
-+  local from=$1 to=$2 relative
++  local from=$1 to=$2 relative list
 +  [[ -d $from ]] || return 0
-+  while IFS= read -r -d '' relative; do
-+    place "$from/$relative" "$to/$relative" || true
-+  done < <(cd "$from" && find . -type f -printf '%P\0' | sort -z)
++  if ! list=$(cd -- "$from" && find . -type f -printf '%P\n' | sort); then
++    echo "Could not list $from" >&2
++    failed=1
++    return 0
++  fi
++  while IFS= read -r relative; do
++    [[ -n $relative ]] || continue
++    if place "$from/$relative" "$to/$relative"; then
++      units_changed=1
++    fi
++  done <<<"$list"
 +}
 +
 +if place "$omarchy/fonts/omarchy/omarchy.ttf" /usr/share/fonts/omarchy/omarchy.ttf; then
@@ -182,6 +202,15 @@ index 0000000..200131a
 +
 +if ((fonts_changed)) && [[ -z $root ]] && command -v fc-cache >/dev/null; then
 +  fc-cache -s >/dev/null 2>&1 || true
++fi
++
++# systemd's own pacman hooks only fire for files a package lists, so reload
++# the system and user managers here. Arch's hook script skips a chroot or a
++# root that is not booted, as at image build time.
++hook=/usr/share/libalpm/scripts/systemd-hook
++if ((units_changed)) && [[ -z $root && -x $hook ]]; then
++  "$hook" daemon-reload-system || echo "Could not reload systemd" >&2
++  "$hook" daemon-reload-user || echo "Could not reload user services" >&2
 +fi
 +
 +exit "$failed"
@@ -225,10 +254,10 @@ index 519966a..e0fcab6 100644
          result = self.run_builder()
 diff --git a/guest/tests/test_sync_omarchy_system_files.py b/guest/tests/test_sync_omarchy_system_files.py
 new file mode 100644
-index 0000000..597a587
+index 0000000..416e22f
 --- /dev/null
 +++ b/guest/tests/test_sync_omarchy_system_files.py
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,167 @@
 +"""The runtime keeps Omarchy's unowned system files in step on existing disks."""
 +import os
 +from pathlib import Path
@@ -353,6 +382,39 @@ index 0000000..597a587
 +        result = self.run_sync()
 +        self.assertEqual(result.returncode, 0, result.stderr)
 +        self.assertEqual(fastfetch.read_text(), 'fastfetch 4.5\n')
++
++    def test_unit_names_with_spaces_are_placed(self):
++        self.write(self.default / 'systemd/user/omarchy two words.service', 'spaced\n')
++        result = self.run_sync()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(self.text('/usr/lib/systemd/user/omarchy two words.service'), 'spaced\n')
++
++    @unittest.skipIf(os.geteuid() == 0, 'root reads unreadable directories')
++    def test_a_unit_folder_that_cannot_be_listed_is_reported(self):
++        units = self.default / 'systemd/user'
++        units.chmod(0)
++        self.addCleanup(units.chmod, 0o755)
++        result = self.run_sync()
++        self.assertEqual(result.returncode, 1)
++        self.assertIn('Could not list', result.stderr)
++        # Everything else still syncs.
++        self.assertEqual(self.text('/usr/share/fonts/omarchy/omarchy.ttf'), 'font 4.5\n')
++
++    def test_managers_reload_only_on_a_live_system_after_unit_changes(self):
++        script = SYNC.read_text()
++        block = script[script.index('hook=/usr/share/libalpm/scripts/systemd-hook'):]
++        self.assertIn('if ((units_changed)) && [[ -z $root && -x $hook ]]; then', block)
++        self.assertIn('"$hook" daemon-reload-system', block)
++        self.assertIn('"$hook" daemon-reload-user', block)
++
++    def test_build_refuses_a_fastfetch_layout_missing_from_the_list(self):
++        materialize = (SYNC.parent / 'materialize-omarchy.sh').read_text()
++        guard = materialize.index('fastfetch_digest=$(sha256sum "$source_dir/etc/fastfetch/config.jsonc"')
++        self.assertLess(guard, materialize.index('"$root/usr/lib/try-omarchy/omarchy-etc/fastfetch/config.jsonc"'))
++        self.assertIn('grep -qxF "  $fastfetch_digest" "$guest_dir/scripts/sync-omarchy-system-files"', materialize)
++        # The guard matches the list's two-space lines exactly.
++        lines = [line for line in SYNC.read_text().splitlines() if line.strip() == OMARCHY_4_0_4_FASTFETCH]
++        self.assertEqual(lines, ['  ' + OMARCHY_4_0_4_FASTFETCH])
 +
 +    def test_shipped_fastfetch_hashes_are_well_formed(self):
 +        hashes = [line.strip() for line in SYNC.read_text().splitlines()
