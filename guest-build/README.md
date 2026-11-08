@@ -10,6 +10,14 @@ scripts/release/build-guest.sh --contract-only
 scripts/release/build-guest.sh --output /path/to/artifacts
 ```
 
+Patch 0156 mutes Hyprland's sound for every terminal bell (#384). Hyprland
+0.57 plays one for each bell, and Foot rings it on missed Tab completions and
+Backspace at an empty prompt. Each sound opens the Windows audio device; where
+that fails, the VM stalls. It backports Omarchy's `bell_sound = "none"`
+(basecamp/omarchy c019850d), set only on Hyprland 0.57 and later because 0.56
+rejects the option. `default/` is now a backported tree. Runtime `4.0.4-12`
+brings it to existing disks with their next **Update > Omarchy**.
+
 Patch 0155 lets Omarchy's default terminal setting choose the terminal (#385).
 The image used to put a Foot-only `xdg-terminal-exec` in `/usr/local/bin`,
 ahead of the packaged one, so Super+Return and the Omarchy menu always opened
