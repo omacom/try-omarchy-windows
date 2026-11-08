@@ -1,0 +1,209 @@
+From 4c5f06eb018f4e0b85f71b6335ad19ef9a66f828 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 7 Nov 2026 19:39:39 -0500
+Subject: [PATCH] Mute Hyprland's sound for every terminal bell
+
+Hyprland 0.57 plays a sound for each xdg-system-bell ring, and Foot rings it
+on a missed Tab completion, Backspace at an empty prompt and other routine
+keys. Each sound opens the Windows audio device through QEMU. Where that open
+fails, the VM stalls and the launcher reports the desktop as unresponsive
+(#384).
+
+Backport Omarchy's fix (basecamp/omarchy c019850d), which sets bell_sound to
+none. Hyprland 0.56 rejects the unknown option, so set it only on 0.57 and
+later. The change is in default/, which is now listed as a backported tree.
+Runtime 4.0.4-12 brings it to existing disks with the next Update > Omarchy.
+---
+ .../patches/omarchy/mute-terminal-bell.patch  | 14 ++++++
+ guest/spec.json                               | 20 ++++++--
+ guest/tests/test_notification_privacy.py      |  2 +-
+ guest/tests/test_qt612_palette.py             |  2 +-
+ guest/tests/test_snapper_guest.py             |  2 +-
+ guest/tests/test_terminal_bell.py             | 47 +++++++++++++++++++
+ guest/tests/verify.py                         |  5 +-
+ 7 files changed, 84 insertions(+), 8 deletions(-)
+ create mode 100644 guest/patches/omarchy/mute-terminal-bell.patch
+ create mode 100644 guest/tests/test_terminal_bell.py
+
+diff --git a/guest/patches/omarchy/mute-terminal-bell.patch b/guest/patches/omarchy/mute-terminal-bell.patch
+new file mode 100644
+index 0000000..592cb85
+--- /dev/null
++++ b/guest/patches/omarchy/mute-terminal-bell.patch
+@@ -0,0 +1,14 @@
++--- a/default/hypr/looknfeel.lua
+++++ b/default/hypr/looknfeel.lua
++@@ -124,3 +124,11 @@
++     hide_special_on_workspace_change = true,
++   },
++ })
+++
+++-- Hyprland 0.57 plays a sound for every terminal bell (tab-completion misses,
+++-- TUI alerts). Mute it, as Omarchy does upstream; older Hyprland releases
+++-- reject the unknown option, so only set it where it exists.
+++local hyprland_major, hyprland_minor = hl.version():match("^(%d+)%.(%d+)")
+++if hyprland_major and (tonumber(hyprland_major) > 0 or tonumber(hyprland_minor) >= 57) then
+++  hl.config({ misc = { bell_sound = "none" } })
+++end
+diff --git a/guest/spec.json b/guest/spec.json
+index f74999a..9261ff6 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -30,7 +30,7 @@
+     "versionFile": "4.0.0.alpha",
+     "channel": "quattro",
+     "license": "MIT",
+-    "packageRelease": 11,
++    "packageRelease": 12,
+     "integrationDepends": [
+       "fcitx5",
+       "fcitx5-chewing",
+@@ -116,13 +116,13 @@
+     "verbatimRuntimeTrees": [
+       "applications",
+       "config",
+-      "default",
+       "migrations"
+     ],
+     "backportedRuntimeTrees": [
+       "shell",
+       "install",
+-      "bin"
++      "bin",
++      "default"
+     ],
+     "backports": [
+       {
+@@ -569,6 +569,20 @@
+             "afterSha256": "b0bb7b418cced7331953615b4d6cec49fecaed65a573ce09da5cbe9f49eb41b1"
+           }
+         ]
++      },
++      {
++        "id": "mute-terminal-bell",
++        "description": "Mute Hyprland 0.57's sound for every terminal bell, which opens the Windows audio device on each Tab or Backspace.",
++        "reference": "https://github.com/basecamp/omarchy/commit/c019850d7aef4ade679829d78223cd2eb1ecdac2",
++        "patch": "patches/omarchy/mute-terminal-bell.patch",
++        "patchSha256": "c798560e76bba4764a9ce00d81d12cd366eed6b433319ca094afc5b1c6ccef0b",
++        "targets": [
++          {
++            "path": "default/hypr/looknfeel.lua",
++            "beforeSha256": "d257ea9864abb9cac124083bef88374659e759144a3d2028ec9486e578978804",
++            "afterSha256": "2bc0bc64b243f63b43c9e4261c013ac79a22346cf33ab4bc070dca5675063f49"
++          }
++        ]
+       }
+     ],
+     "requiredPaths": [
+diff --git a/guest/tests/test_notification_privacy.py b/guest/tests/test_notification_privacy.py
+index 3628154..17959f0 100644
+--- a/guest/tests/test_notification_privacy.py
++++ b/guest/tests/test_notification_privacy.py
+@@ -120,4 +120,4 @@ for (const state of [null, {screensaverStateKnown:false}, {screensaverStateKnown
+         self.assertIn('usr/share/try-omarchy/notifications', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-notifications', finalizer)
+         self.assertIn('previous_revision < 52', catch_up)
+-        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 11)
++        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 12)
+diff --git a/guest/tests/test_qt612_palette.py b/guest/tests/test_qt612_palette.py
+index 0172fef..33e218a 100644
+--- a/guest/tests/test_qt612_palette.py
++++ b/guest/tests/test_qt612_palette.py
+@@ -169,7 +169,7 @@ class Qt612PaletteTests(unittest.TestCase):
+         self.assertIn('compat_revision=66', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-qt612-palette', paths)
+         self.assertIn('usr/share/try-omarchy/qt612-palette', paths)
+-        self.assertEqual(self.build_spec['upstream']['packageRelease'], 11)
++        self.assertEqual(self.build_spec['upstream']['packageRelease'], 12)
+         service = (OVERLAY / 'etc/systemd/system/try-omarchy-catch-up.service').read_text()
+         self.assertIn('Before=display-manager.service', service)
+         catch_up = OVERLAY / 'usr/local/lib/try-omarchy/catch-up'
+diff --git a/guest/tests/test_snapper_guest.py b/guest/tests/test_snapper_guest.py
+index 6f25a89..5bb26c9 100644
+--- a/guest/tests/test_snapper_guest.py
++++ b/guest/tests/test_snapper_guest.py
+@@ -45,4 +45,4 @@ class GuestSnapperTests(unittest.TestCase):
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn(TARGET, paths)
+         self.assertIn('compat_revision=66', finalizer)
+-        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 11)
++        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 12)
+diff --git a/guest/tests/test_terminal_bell.py b/guest/tests/test_terminal_bell.py
+new file mode 100644
+index 0000000..8c44bd9
+--- /dev/null
++++ b/guest/tests/test_terminal_bell.py
+@@ -0,0 +1,47 @@
++"""Hyprland 0.57 plays a sound for every terminal bell; the guest mutes it."""
++import json
++from pathlib import Path
++import shutil
++import subprocess
++import unittest
++
++GUEST = Path(__file__).resolve().parents[1]
++PATCH = GUEST / 'patches/omarchy/mute-terminal-bell.patch'
++
++
++def added_lua() -> str:
++    lines = PATCH.read_text().splitlines()
++    return '\n'.join(line[1:] for line in lines if line.startswith('+') and not line.startswith('+++'))
++
++
++class TerminalBellTests(unittest.TestCase):
++    def test_backport_is_recorded_after_the_existing_ones(self):
++        spec = json.loads((GUEST / 'spec.json').read_text())
++        backports = spec['authenticity']['backports']
++        self.assertEqual(backports[-1]['id'], 'mute-terminal-bell')
++        self.assertEqual([target['path'] for target in backports[-1]['targets']], ['default/hypr/looknfeel.lua'])
++        self.assertIn('default', spec['authenticity']['backportedRuntimeTrees'])
++        self.assertNotIn('default', spec['authenticity']['verbatimRuntimeTrees'])
++
++    @unittest.skipUnless(shutil.which('lua'), 'lua is not installed')
++    def test_bell_is_muted_only_where_hyprland_knows_the_option(self):
++        harness = '''
++local calls = {}
++hl = { version = function() return VERSION end, config = function(t) calls[#calls + 1] = t end }
++CHUNK
++local muted = false
++for _, call in ipairs(calls) do
++  if call.misc and call.misc.bell_sound == "none" then muted = true end
++end
++io.write(muted and "muted" or "unchanged", " ", #calls)
++'''
++        for version, expected in (('0.56.2', 'unchanged 0'), ('0.57.0', 'muted 1'),
++                                  ('0.57.1', 'muted 1'), ('0.60.0', 'muted 1'), ('1.0.0', 'muted 1')):
++            source = harness.replace('VERSION', repr(version)).replace('CHUNK', added_lua())
++            result = subprocess.run(['lua', '-'], input=source, text=True, capture_output=True)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            self.assertEqual(result.stdout, expected, version)
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 0a27d05..21f7e01 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -59,7 +59,8 @@ def main() -> None:
+     backported_trees = authenticity["backportedRuntimeTrees"]
+     check(
+         "shell" not in verbatim_trees
+-        and backported_trees == ["shell", "install", "bin"]
++        and backported_trees == ["shell", "install", "bin", "default"]
++        and "default" not in verbatim_trees
+         and "install" not in verbatim_trees
+         and not set(verbatim_trees) & set(backported_trees),
+         "patched runtime trees are separated from verbatim upstream trees",
+@@ -67,7 +68,7 @@ def main() -> None:
+     backports = authenticity["backports"]
+     check(
+         [backport.get("id") for backport in backports]
+-        == ["notification-hover-close", "notification-screen-privacy", "setup-host-timezone", "clock-timezone-refresh", "screensaver-terminal-fit", "update-free-space-message", "first-run-update-notification", "windows-power-profile", "virtio-nightlight", "qt612-palette"],
++        == ["notification-hover-close", "notification-screen-privacy", "setup-host-timezone", "clock-timezone-refresh", "screensaver-terminal-fit", "update-free-space-message", "first-run-update-notification", "windows-power-profile", "virtio-nightlight", "qt612-palette", "mute-terminal-bell"],
+         "Omarchy backports are explicitly ordered and identified",
+     )
+     for backport in backports:
+-- 
+2.56.0
+
