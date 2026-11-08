@@ -30,5 +30,16 @@ int kmt_bridge_open(const wchar_t *unix_lib_path, int trace);
 /* The bridge function for a "D3DKMTxxx" name, or NULL. */
 void *kmt_bridge_lookup(const char *d3dkmt_name);
 void kmt_bridge_report(void);
+/*
+ * Display devices backed by the dxg adapters (kmt_display.c): wrappers for
+ * user32's EnumDisplayDevicesA/W by name, and the D3DKMT calls that map a
+ * DC or GDI display name to an adapter.
+ */
+void *kmt_display_resolve(const char *user32_name);
+int32_t __attribute__((stdcall)) kmt_display_open_from_hdc(void *args);
+int32_t __attribute__((stdcall)) kmt_display_open_from_name(void *args);
+/* Like kmt_bridge_lookup, but never NULL for a D3DKMT name: unbridged
+ * functions get a logging STATUS_NOT_SUPPORTED stub. */
+void *kmt_bridge_resolve(const char *d3dkmt_name);
 
 #endif
