@@ -446,8 +446,13 @@ static bool dxgdmafence_signaled(struct dma_fence *fence)
 	syncpoint = to_syncpoint(fence);
 	if (syncpoint == 0)
 		return true;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+	return __dma_fence_is_later(fence, syncpoint->fence_value,
+				    fence->seqno);
+#else
 	return __dma_fence_is_later(syncpoint->fence_value, fence->seqno,
 				    fence->ops);
+#endif
 }
 
 static bool dxgdmafence_enable_signaling(struct dma_fence *fence)
@@ -455,6 +460,7 @@ static bool dxgdmafence_enable_signaling(struct dma_fence *fence)
 	return true;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 17, 0)
 static void dxgdmafence_value_str(struct dma_fence *fence,
 				  char *str, int size)
 {
@@ -469,6 +475,7 @@ static void dxgdmafence_timeline_value_str(struct dma_fence *fence,
 	syncpoint = to_syncpoint(fence);
 	snprintf(str, size, "%lld", syncpoint->fence_value);
 }
+#endif
 
 static const struct dma_fence_ops dxgdmafence_ops = {
 	.get_driver_name = dxgdmafence_get_driver_name,
@@ -476,6 +483,8 @@ static const struct dma_fence_ops dxgdmafence_ops = {
 	.enable_signaling = dxgdmafence_enable_signaling,
 	.signaled = dxgdmafence_signaled,
 	.release = dxgdmafence_release,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 17, 0)
 	.fence_value_str = dxgdmafence_value_str,
 	.timeline_value_str = dxgdmafence_timeline_value_str,
+#endif
 };

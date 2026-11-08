@@ -12,7 +12,9 @@
  */
 
 #include <linux/module.h>
+#ifndef DXG_VIRTIO
 #include <linux/hyperv.h>
+#endif
 #include <linux/pagemap.h>
 #include <linux/eventfd.h>
 
@@ -21,15 +23,19 @@
 #undef dev_fmt
 #define dev_fmt(fmt)	"dxgk: " fmt
 
-int dxgadapter_set_vmbus(struct dxgadapter *adapter, struct hv_device *hdev)
+int dxgadapter_set_vmbus(struct dxgadapter *adapter,
+			 struct dxg_transport *hdev)
 {
 	int ret;
 
+#ifndef DXG_VIRTIO
+	/* virtio-dxg sets the luid from the device config at creation */
 	guid_to_luid(&hdev->channel->offermsg.offer.if_instance,
 		     &adapter->luid);
 	DXG_TRACE("%x:%x %p %pUb",
 		adapter->luid.b, adapter->luid.a, hdev->channel,
 		&hdev->channel->offermsg.offer.if_instance);
+#endif
 
 	ret = dxgvmbuschannel_init(&adapter->channel, hdev);
 	if (ret)
@@ -927,11 +933,13 @@ void dxgallocation_destroy(struct dxgallocation *alloc)
 					       alloc->owner.device,
 					       &args, &alloc->alloc_handle);
 	}
+#ifndef DXG_VIRTIO
 	if (alloc->gpadl.gpadl_handle) {
 		DXG_TRACE("Teardown gpadl %d", alloc->gpadl.gpadl_handle);
 		vmbus_teardown_gpadl(dxgglobal_get_vmbus(), &alloc->gpadl);
 		alloc->gpadl.gpadl_handle = 0;
 	}
+#endif
 	if (alloc->priv_drv_data)
 		vfree(alloc->priv_drv_data);
 	if (alloc->cpu_address_mapped)

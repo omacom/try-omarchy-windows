@@ -15,12 +15,17 @@
 #include <linux/completion.h>
 #include <linux/slab.h>
 #include <linux/eventfd.h>
+#ifndef DXG_VIRTIO
 #include <linux/hyperv.h>
+#endif
 #include <linux/mman.h>
 #include <linux/delay.h>
 #include <linux/pagemap.h>
 #include "dxgkrnl.h"
 #include "dxgvmbus.h"
+#ifdef DXG_VIRTIO
+#include "virtio_dxg.h"
+#endif
 
 #pragma GCC diagnostic ignored "-Warray-bounds"
 
@@ -228,6 +233,22 @@ int ntstatus2int(struct ntstatus status)
 	}
 }
 
+#ifdef DXG_VIRTIO
+int dxgvmbuschannel_init(struct dxgvmbuschannel *ch, struct dxgvirtio *hdev)
+{
+	ch->hdev = hdev;
+	ch->channel = hdev;
+	spin_lock_init(&ch->packet_list_mutex);
+	INIT_LIST_HEAD(&ch->packet_list_head);
+	atomic64_set(&ch->packet_request_id, 0);
+	return 0;
+}
+
+void dxgvmbuschannel_destroy(struct dxgvmbuschannel *ch)
+{
+	ch->channel = NULL;
+}
+#else
 int dxgvmbuschannel_init(struct dxgvmbuschannel *ch, struct hv_device *hdev)
 {
 	int ret;
@@ -273,6 +294,7 @@ void dxgvmbuschannel_destroy(struct dxgvmbuschannel *ch)
 		ch->channel = NULL;
 	}
 }
+#endif
 
 static void command_vm_to_host_init1(struct dxgkvmb_command_vm_to_host *command,
 				     enum dxgkvmb_commandtype_global type)
@@ -317,37 +339,39 @@ static void signal_guest_event(struct dxgkvmb_command_host_to_vm *packet,
 	dxgglobal_signal_host_event(command->event);
 }
 
+/* Handles a host-initiated packet. Safe in interrupt context. */
+void dxgvmb_process_host_packet(struct dxgkvmb_command_host_to_vm *packet,
+				u32 packet_length)
+{
+	if (packet_length < sizeof(struct dxgkvmb_command_host_to_vm)) {
+		DXG_ERR("Invalid global packet");
+		return;
+	}
+	DXG_TRACE("global packet %d", packet->command_type);
+	switch (packet->command_type) {
+	case DXGK_VMBCOMMAND_SETGUESTDATA:
+		set_guest_data(packet, packet_length);
+		break;
+	case DXGK_VMBCOMMAND_SIGNALGUESTEVENT:
+	case DXGK_VMBCOMMAND_SIGNALGUESTEVENTPASSIVE:
+		signal_guest_event(packet, packet_length);
+		break;
+	case DXGK_VMBCOMMAND_SENDWNFNOTIFICATION:
+		break;
+	default:
+		DXG_ERR("unexpected host message %d", packet->command_type);
+	}
+}
+
+#ifndef DXG_VIRTIO
 static void process_inband_packet(struct dxgvmbuschannel *channel,
 				  struct vmpacket_descriptor *desc)
 {
-	u32 packet_length = hv_pkt_datalen(desc);
-	struct dxgkvmb_command_host_to_vm *packet;
-
-	if (channel->adapter == NULL) {
-		if (packet_length < sizeof(struct dxgkvmb_command_host_to_vm)) {
-			DXG_ERR("Invalid global packet");
-		} else {
-			packet = hv_pkt_data(desc);
-			DXG_TRACE("global packet %d",
-				packet->command_type);
-			switch (packet->command_type) {
-			case DXGK_VMBCOMMAND_SETGUESTDATA:
-				set_guest_data(packet, packet_length);
-				break;
-			case DXGK_VMBCOMMAND_SIGNALGUESTEVENT:
-			case DXGK_VMBCOMMAND_SIGNALGUESTEVENTPASSIVE:
-				signal_guest_event(packet, packet_length);
-				break;
-			case DXGK_VMBCOMMAND_SENDWNFNOTIFICATION:
-				break;
-			default:
-				DXG_ERR("unexpected host message %d",
-					packet->command_type);
-			}
-		}
-	} else {
+	if (channel->adapter == NULL)
+		dxgvmb_process_host_packet(hv_pkt_data(desc),
+					   hv_pkt_datalen(desc));
+	else
 		DXG_ERR("Unexpected packet for adapter channel");
-	}
 }
 
 static void process_completion_packet(struct dxgvmbuschannel *channel,
@@ -410,6 +434,51 @@ void dxgvmbuschannel_receive(void *ctx)
 	}
 }
 
+#endif /* !DXG_VIRTIO */
+
+#ifdef DXG_VIRTIO
+static u32 dxgvirtio_channel_kind(struct dxgvmbuschannel *channel)
+{
+	return channel->adapter ? VIRTIO_DXG_CHANNEL_ADAPTER :
+				  VIRTIO_DXG_CHANNEL_GLOBAL;
+}
+
+int dxgvmb_send_sync_msg(struct dxgvmbuschannel *channel,
+			 void *command,
+			 u32 cmd_size,
+			 void *result,
+			 u32 result_size)
+{
+	if (cmd_size > DXG_MAX_VM_BUS_PACKET_SIZE ||
+	    result_size > DXG_MAX_VM_BUS_PACKET_SIZE) {
+		DXG_ERR("%s invalid data size", __func__);
+		return -EINVAL;
+	}
+	if (!channel->channel)
+		return -ENODEV;
+	return dxgvirtio_send(channel->channel,
+			      dxgvirtio_channel_kind(channel), command,
+			      cmd_size, result, result_size, false);
+}
+
+int dxgvmb_send_async_msg(struct dxgvmbuschannel *channel,
+			  void *command,
+			  u32 cmd_size)
+{
+	if (cmd_size > DXG_MAX_VM_BUS_PACKET_SIZE) {
+		DXG_ERR("%s invalid data size", __func__);
+		return -EINVAL;
+	}
+	if (channel->adapter) {
+		DXG_ERR("Async message sent to the adapter channel");
+		return -EINVAL;
+	}
+	if (!channel->channel)
+		return -ENODEV;
+	return dxgvirtio_send(channel->channel, VIRTIO_DXG_CHANNEL_GLOBAL,
+			      command, cmd_size, NULL, 0, true);
+}
+#else
 int dxgvmb_send_sync_msg(struct dxgvmbuschannel *channel,
 			 void *command,
 			 u32 cmd_size,
@@ -531,6 +600,7 @@ int dxgvmb_send_async_msg(struct dxgvmbuschannel *channel,
 
 	return ret;
 }
+#endif /* DXG_VIRTIO */
 
 static int
 dxgvmb_send_sync_msg_ntstatus(struct dxgvmbuschannel *channel,
@@ -689,7 +759,7 @@ int dxgvmb_send_create_process(struct dxgprocess *process)
 	command->process_id = process->pid;
 	command->linux_process = 1;
 	s[0] = 0;
-	__get_task_comm(s, WIN_MAX_PATH, current);
+	strscpy_pad(s, current->comm, WIN_MAX_PATH);
 	for (i = 0; i < WIN_MAX_PATH; i++) {
 		command->process_name[i] = s[i];
 		if (s[i] == 0)
@@ -1497,14 +1567,23 @@ int create_existing_sysmem(struct dxgdevice *device,
 			goto cleanup;
 		set_store_command = (void *)msg.msg;
 
+#ifdef DXG_VIRTIO
+		/* No GPADLs on virtio; the host must map guest pages. */
+		ret = -EOPNOTSUPP;
+		goto cleanup;
+#endif
 		kmem = vmap(dxgalloc->pages, npages, VM_MAP, PAGE_KERNEL);
 		if (kmem == NULL) {
 			DXG_ERR("vmap failed");
 			ret = -ENOMEM;
 			goto cleanup;
 		}
+#ifndef DXG_VIRTIO
 		ret1 = vmbus_establish_gpadl(dxgglobal_get_vmbus(), kmem,
 					alloc_size, &dxgalloc->gpadl);
+#else
+		ret1 = -EOPNOTSUPP;
+#endif
 		if (ret1) {
 			DXG_ERR("establish_gpadl failed: %d", ret1);
 			ret = -ENOMEM;

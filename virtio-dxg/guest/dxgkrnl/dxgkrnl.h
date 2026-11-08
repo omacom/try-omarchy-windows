@@ -25,9 +25,31 @@
 #include <linux/gfp.h>
 #include <linux/miscdevice.h>
 #include <linux/pci.h>
+#ifdef DXG_VIRTIO
+/*
+ * The virtio transport replaces VMBus. GPADLs never exist: the host maps
+ * guest pages itself (map_guest_pages_enabled) or the request fails.
+ */
+struct dxgvirtio;
+struct vmbus_gpadl {
+	u32 gpadl_handle;
+};
+#define dxg_transport dxgvirtio
+#else
 #include <linux/hyperv.h>
+#define dxg_transport hv_device
+#endif
 #include <uapi/misc/d3dkmthk.h>
 #include <linux/version.h>
+#include <linux/eventfd.h>
+#include <linux/vmalloc.h>
+
+/* eventfd_signal() lost its count argument in Linux 6.8. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 8, 0)
+#define dxg_eventfd_signal(ctx) eventfd_signal(ctx)
+#else
+#define dxg_eventfd_signal(ctx) eventfd_signal(ctx, 1)
+#endif
 #include "misc.h"
 #include "hmgr.h"
 #include <uapi/misc/d3dkmthk.h>
@@ -50,8 +72,10 @@ struct dxghwqueue;
 struct dxgdriver {
 	struct dxgglobal	*dxgglobal;
 	struct device		*dxgdev;
+#ifndef DXG_VIRTIO
 	struct pci_driver	pci_drv;
 	struct hv_driver	vmbus_drv;
+#endif
 };
 extern struct dxgdriver dxgdrv;
 
@@ -91,8 +115,12 @@ enum dxgobjectstate {
 };
 
 struct dxgvmbuschannel {
+#ifdef DXG_VIRTIO
+	struct dxgvirtio	*channel;
+#else
 	struct vmbus_channel	*channel;
-	struct hv_device	*hdev;
+#endif
+	struct dxg_transport	*hdev;
 	struct dxgadapter	*adapter;
 	spinlock_t		packet_list_mutex;
 	struct list_head	packet_list_head;
@@ -100,7 +128,7 @@ struct dxgvmbuschannel {
 	atomic64_t		packet_request_id;
 };
 
-int dxgvmbuschannel_init(struct dxgvmbuschannel *ch, struct hv_device *hdev);
+int dxgvmbuschannel_init(struct dxgvmbuschannel *ch, struct dxg_transport *hdev);
 void dxgvmbuschannel_destroy(struct dxgvmbuschannel *ch);
 void dxgvmbuschannel_receive(void *ctx);
 
@@ -217,7 +245,7 @@ struct dxgsyncobject {
 struct dxgvgpuchannel {
 	struct list_head	vgpu_ch_list_entry;
 	struct winluid		adapter_luid;
-	struct hv_device	*hdev;
+	struct dxg_transport	*hdev;
 };
 
 /*
@@ -281,7 +309,7 @@ void dxgsyncobject_release(struct kref *refcount);
 struct dxgglobal {
 	struct dxgdriver	*drvdata;
 	struct dxgvmbuschannel	channel;
-	struct hv_device	*hdev;
+	struct dxg_transport	*hdev;
 	u32			num_adapters;
 	u32			vmbus_ver;	/* Interface version */
 	atomic_t		device_state_counter;
@@ -330,12 +358,14 @@ static inline struct dxgglobal *dxggbl(void)
 }
 
 int dxgglobal_create_adapter(struct pci_dev *dev, guid_t *guid,
-			     struct winluid host_vgpu_luid);
+			     struct winluid host_vgpu_luid, bool compute_only);
 void dxgglobal_acquire_adapter_list_lock(enum dxglockstate state);
 void dxgglobal_release_adapter_list_lock(enum dxglockstate state);
 int dxgglobal_init_global_channel(void);
 void dxgglobal_destroy_global_channel(void);
+#ifndef DXG_VIRTIO
 struct vmbus_channel *dxgglobal_get_vmbus(void);
+#endif
 struct dxgvmbuschannel *dxgglobal_get_dxgvmbuschannel(void);
 void dxgglobal_acquire_process_adapter_lock(void);
 void dxgglobal_release_process_adapter_lock(void);
@@ -471,7 +501,7 @@ struct dxgadapter {
 	/* This lock protects shared resource and syncobject lists */
 	struct rw_semaphore	shared_resource_list_lock;
 	struct pci_dev		*pci_dev;
-	struct hv_device	*hv_dev;
+	struct dxg_transport	*hv_dev;
 	struct dxgvmbuschannel	channel;
 	struct d3dkmthandle	host_handle;
 	enum dxgadapter_state	adapter_state;
@@ -484,7 +514,8 @@ struct dxgadapter {
 	bool			stopping_adapter;
 };
 
-int dxgadapter_set_vmbus(struct dxgadapter *adapter, struct hv_device *hdev);
+int dxgadapter_set_vmbus(struct dxgadapter *adapter,
+			 struct dxg_transport *hdev);
 bool dxgadapter_is_active(struct dxgadapter *adapter);
 void dxgadapter_start(struct dxgadapter *adapter);
 void dxgadapter_stop(struct dxgadapter *adapter);
@@ -1001,6 +1032,18 @@ int dxgvmb_send_query_statistics(struct d3dkmthandle host_process_handle,
 int dxgvmb_send_async_msg(struct dxgvmbuschannel *channel,
 			  void *command,
 			  u32 cmd_size);
+struct dxgkvmb_command_host_to_vm;
+void dxgvmb_process_host_packet(struct dxgkvmb_command_host_to_vm *packet,
+				u32 packet_length);
+#ifdef DXG_VIRTIO
+int dxgvirtio_register(void);
+void dxgvirtio_unregister(void);
+int dxgvirtio_send(struct dxgvirtio *dv, u32 channel, const void *command,
+		   u32 cmd_size, void *result, u32 result_size, bool async);
+int dxgvirtio_get_iospace(struct dxgvirtio *dv, u64 *base, u64 *size);
+void dxgglobal_start_adapters(void);
+void dxgglobal_remove_transport(struct dxgvirtio *dv, guid_t *adapter_guid);
+#endif
 int dxgvmb_send_share_object_with_host(struct dxgprocess *process,
 				struct d3dkmt_shareobjectwithhost *args);
 int dxgvmb_send_invalidate_cache(struct dxgprocess *process,
@@ -1028,7 +1071,7 @@ void dxgk_validate_ioctls(void);
 
 #else
 
-#define DXG_TRACE(...)
+#define DXG_TRACE(...) do { } while (0)
 #define DXG_ERR(fmt, ...) do {					\
 	dev_err(DXGDEV, "%s: " fmt, __func__, ##__VA_ARGS__);	\
 } while (0)

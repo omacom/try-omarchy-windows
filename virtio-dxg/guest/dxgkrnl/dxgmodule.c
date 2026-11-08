@@ -13,7 +13,9 @@
 
 #include <linux/module.h>
 #include <linux/eventfd.h>
+#ifndef DXG_VIRTIO
 #include <linux/hyperv.h>
+#endif
 #include <linux/pci.h>
 #include "dxgkrnl.h"
 #include "dxgsyncfile.h"
@@ -32,10 +34,12 @@
  * Interface from dxgglobal
  */
 
+#ifndef DXG_VIRTIO
 struct vmbus_channel *dxgglobal_get_vmbus(void)
 {
 	return dxggbl()->channel.channel;
 }
+#endif
 
 struct dxgvmbuschannel *dxgglobal_get_dxgvmbuschannel(void)
 {
@@ -88,6 +92,7 @@ void dxgglobal_release_adapter_list_lock(enum dxglockstate state)
  * Returns a pointer to dxgadapter object, which corresponds to the given PCI
  * device, or NULL.
  */
+#ifndef DXG_VIRTIO
 static struct dxgadapter *find_pci_adapter(struct pci_dev *dev)
 {
 	struct dxgadapter *entry;
@@ -107,6 +112,7 @@ static struct dxgadapter *find_pci_adapter(struct pci_dev *dev)
 	dxgglobal_release_adapter_list_lock(DXGLOCK_EXCL);
 	return adapter;
 }
+#endif
 
 /*
  * Returns a pointer to dxgadapter object, which has the givel LUID
@@ -175,7 +181,7 @@ void signal_host_cpu_event(struct dxghostevent *eventhdr)
 	}
 	if (event->cpu_event) {
 		DXG_TRACE("signal cpu event");
-		eventfd_signal(event->cpu_event, 1);
+		dxg_eventfd_signal(event->cpu_event);
 		if (event->destroy_after_signal)
 			eventfd_ctx_put(event->cpu_event);
 	} else {
@@ -261,7 +267,7 @@ void dxgglobal_release_process_adapter_lock(void)
  * VM bus channel and the adapter VM bus channel are created.
  */
 int dxgglobal_create_adapter(struct pci_dev *dev, guid_t *guid,
-			     struct winluid host_vgpu_luid)
+			     struct winluid host_vgpu_luid, bool compute_only)
 {
 	struct dxgadapter *adapter;
 	int ret = 0;
@@ -275,8 +281,7 @@ int dxgglobal_create_adapter(struct pci_dev *dev, guid_t *guid,
 
 	adapter->adapter_state = DXGADAPTER_STATE_WAITING_VMBUS;
 	adapter->host_vgpu_luid = host_vgpu_luid;
-	if (dev->device == PCI_DEVICE_ID_COMPUTE_ACCELERATOR)
-		adapter->compute_only = true;
+	adapter->compute_only = compute_only;
 	kref_init(&adapter->adapter_kref);
 	init_rwsem(&adapter->core_lock);
 	mutex_init(&adapter->device_creation_lock);
@@ -305,7 +310,7 @@ cleanup:
 /*
  * Attempts to start dxgadapter objects, which are not active yet.
  */
-static void dxgglobal_start_adapters(void)
+void dxgglobal_start_adapters(void)
 {
 	struct dxgadapter *adapter;
 	struct dxgglobal *dxgglobal = dxggbl();
@@ -488,6 +493,7 @@ struct dxgk_vmbus_hostcaps {
 	};
 };
 
+#ifndef DXG_VIRTIO
 /*
  * A helper function to read PCI config space.
  */
@@ -582,7 +588,8 @@ read_channel_id:
 	DXG_TRACE("Host luid: %x-%x", vgpu_luid.b, vgpu_luid.a);
 
 	/* Create new virtual GPU adapter */
-	ret = dxgglobal_create_adapter(dev, &guid, vgpu_luid);
+	ret = dxgglobal_create_adapter(dev, &guid, vgpu_luid,
+			dev->device == PCI_DEVICE_ID_COMPUTE_ACCELERATOR);
 	if (ret)
 		goto cleanup;
 
@@ -637,11 +644,49 @@ static struct pci_device_id dxg_pci_id_table[] = {
 	},
 	{ 0 }
 };
+#endif /* !DXG_VIRTIO */
 
 /*
  * Interface with the VM bus driver
  */
 
+#ifdef DXG_VIRTIO
+static int dxgglobal_getiospace(struct dxgglobal *dxgglobal)
+{
+	int ret;
+
+	ret = dxgvirtio_get_iospace(dxgglobal->hdev,
+				    &dxgglobal->mmiospace_base,
+				    &dxgglobal->mmiospace_size);
+	if (ret)
+		DXG_ERR("no IO space: %d", ret);
+	return ret;
+}
+
+/*
+ * Removes the adapter that a virtio-dxg device provided. The device itself
+ * is torn down by the caller.
+ */
+void dxgglobal_remove_transport(struct dxgvirtio *dv, guid_t *adapter_guid)
+{
+	struct dxgglobal *dxgglobal = dxggbl();
+	struct dxgadapter *adapter;
+	struct winluid luid;
+
+	guid_to_luid(adapter_guid, &luid);
+	adapter = find_adapter(&luid);
+	if (!adapter)
+		return;
+
+	dxgglobal_acquire_adapter_list_lock(DXGLOCK_EXCL);
+	list_del(&adapter->adapter_list_entry);
+	dxgglobal->num_adapters--;
+	dxgglobal_release_adapter_list_lock(DXGLOCK_EXCL);
+
+	dxgadapter_stop(adapter);
+	kref_put(&adapter->adapter_kref, dxgadapter_release);
+}
+#else
 static int dxgglobal_getiospace(struct dxgglobal *dxgglobal)
 {
 	/* Get mmio space for the global channel */
@@ -674,6 +719,7 @@ static int dxgglobal_getiospace(struct dxgglobal *dxgglobal)
 
 	return 0;
 }
+#endif
 
 int dxgglobal_init_global_channel(void)
 {
@@ -699,7 +745,9 @@ int dxgglobal_init_global_channel(void)
 		goto error;
 	}
 
+#ifndef DXG_VIRTIO
 	hv_set_drvdata(dxgglobal->hdev, dxgglobal);
+#endif
 
 error:
 	return ret;
@@ -713,22 +761,27 @@ void dxgglobal_destroy_global_channel(void)
 
 	dxgglobal->global_channel_initialized = false;
 
+#ifndef DXG_VIRTIO
 	if (dxgglobal->mem) {
 		vmbus_free_mmio(dxgglobal->mmiospace_base,
 				dxgglobal->mmiospace_size);
 		dxgglobal->mem = NULL;
 	}
+#endif
 
 	dxgvmbuschannel_destroy(&dxgglobal->channel);
 
 	if (dxgglobal->hdev) {
+#ifndef DXG_VIRTIO
 		hv_set_drvdata(dxgglobal->hdev, NULL);
+#endif
 		dxgglobal->hdev = NULL;
 	}
 
 	up_write(&dxgglobal->channel_lock);
 }
 
+#ifndef DXG_VIRTIO
 static void dxgglobal_stop_adapter_vmbus(struct hv_device *hdev)
 {
 	struct dxgadapter *adapter = NULL;
@@ -838,11 +891,15 @@ static void dxg_remove_vmbus(struct hv_device *hdev)
 
 MODULE_DEVICE_TABLE(vmbus, dxg_vmbus_id_table);
 MODULE_DEVICE_TABLE(pci, dxg_pci_id_table);
+#endif /* !DXG_VIRTIO */
 
 /*
  * Global driver data
  */
 
+#ifdef DXG_VIRTIO
+struct dxgdriver dxgdrv;
+#else
 struct dxgdriver dxgdrv = {
 	.vmbus_drv.name = KBUILD_MODNAME,
 	.vmbus_drv.id_table = dxg_vmbus_id_table,
@@ -856,6 +913,7 @@ struct dxgdriver dxgdrv = {
 	.pci_drv.probe = dxg_pci_probe_device,
 	.pci_drv.remove = dxg_pci_remove_device
 };
+#endif
 
 static struct dxgglobal *dxgglobal_create(void)
 {
@@ -893,11 +951,16 @@ static void dxgglobal_destroy(struct dxgglobal *dxgglobal)
 		dxgglobal_destroy_global_channel();
 		mutex_unlock(&dxgglobal->device_mutex);
 
+#ifdef DXG_VIRTIO
+		if (dxgglobal->vmbus_registered)
+			dxgvirtio_unregister();
+#else
 		if (dxgglobal->vmbus_registered)
 			vmbus_driver_unregister(&dxgdrv.vmbus_drv);
 
 		if (dxgglobal->pci_registered)
 			pci_unregister_driver(&dxgdrv.pci_drv);
+#endif
 
 		if (dxgglobal->misc_registered)
 			misc_deregister(&dxgglobal->dxgdevice);
@@ -935,6 +998,14 @@ static int __init dxg_drv_init(void)
 	dxgdrv.dxgdev = dxgglobal->dxgdevice.this_device;
 	dxgdrv.dxgglobal = dxgglobal;
 
+#ifdef DXG_VIRTIO
+	ret = dxgvirtio_register();
+	if (ret) {
+		DXG_ERR("register_virtio_driver failed: %d", ret);
+		goto error;
+	}
+	dxgglobal->vmbus_registered = true;
+#else
 	ret = vmbus_driver_register(&dxgdrv.vmbus_drv);
 	if (ret) {
 		DXG_ERR("vmbus_driver_register failed: %d", ret);
@@ -948,6 +1019,7 @@ static int __init dxg_drv_init(void)
 		goto error;
 	}
 	dxgglobal->pci_registered = true;
+#endif
 
 	return 0;
 
