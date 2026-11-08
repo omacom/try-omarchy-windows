@@ -569,6 +569,39 @@ static void test_executor(void)
 		CHECK(run(h, sizeof(*c), 4).status == VIRTIO_DXG_ERR_INVALID);
 	}
 
+	/* Teardown stays linear: 20,000 allocations in one process. */
+	{
+		uint32_t p3 = create_process(h, 300), d3 = create_device(h, p3);
+		LARGE_INTEGER start, end, freq;
+		uint32_t n;
+
+		for (n = 0; n < 20000; n++) {
+			uint32_t size = sizeof(struct dxgkvmb_command_createallocation) +
+				sizeof(struct dxgkvmb_command_createallocation_allocinfo);
+			struct dxgkvmb_command_createallocation *c = msg(size);
+
+			vgpu(c, DXGK_VMBCOMMAND_CREATEALLOCATION, p3);
+			c->device.v = d3;
+			c->alloc_count = 1;
+			run(h, size, sizeof(struct dxgkvmb_command_createallocation_return));
+		}
+		CHECK(h->objects.live > 20000);
+		QueryPerformanceFrequency(&freq);
+		QueryPerformanceCounter(&start);
+		{
+			struct dxgkvmb_command_destroyprocess *c = msg(sizeof(*c));
+
+			global(c, DXGK_VMBCOMMAND_DESTROYPROCESS, p3);
+			run(h, sizeof(*c), 4);
+		}
+		QueryPerformanceCounter(&end);
+		CHECK((end.QuadPart - start.QuadPart) * 1000 / freq.QuadPart < 500);
+		CHECK(!dxghost_obj_find(h, d3));
+		printf("teardown of 20000 allocations: %lld ms\n",
+		       (long long)((end.QuadPart - start.QuadPart) * 1000 /
+				   freq.QuadPart));
+	}
+
 	dxghost_destroy(h);
 }
 

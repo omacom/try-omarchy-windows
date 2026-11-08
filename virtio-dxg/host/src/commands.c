@@ -196,6 +196,9 @@ static void forget(struct dxghost *h, uint32_t handle)
 		dxghost_fence_unmap(h, o->gpa);
 	o->gpa = 0;
 	dxghost_obj_remove(h, handle);
+	/* Allocations have no children; avoid a table scan per allocation. */
+	if (o->type == OBJ_ALLOCATION)
+		return;
 	for (i = 0; i < t->capacity; i++) {
 		struct dxghost_obj *child = &t->slots[i];
 
@@ -247,49 +250,68 @@ static void cmd_create_process(struct dxghost_msg *m)
 	r->hprocess.v = token;	/* 0 tells the guest the host is out of room */
 }
 
+/*
+ * Snapshot of a process's live handles of one kind (or all, type 0). Other
+ * processes' lanes may grow the table while the lock is dropped, so callers
+ * work from the snapshot, not the table. Lock held.
+ */
+static uint32_t *snapshot(struct dxghost *h, uint32_t process, uint8_t type,
+			  uint8_t *types, uint32_t *count)
+{
+	struct dxghost_objtab *t = &h->objects;
+	uint32_t *handles = malloc((t->live + 1) * sizeof(*handles));
+	uint32_t i, n = 0;
+
+	for (i = 0; handles && i < t->capacity; i++) {
+		struct dxghost_obj *o = &t->slots[i];
+
+		if (o->state == 1 && o->process == process &&
+		    (!type || o->type == type)) {
+			if (types)
+				types[n] = o->type;
+			handles[n++] = o->handle;
+		}
+	}
+	*count = n;
+	return handles;
+}
+
 void dxghost_destroy_process_objects(struct dxghost *h, uint32_t process)
 {
-	struct dxghost_objtab *t;
-	uint32_t i;
+	uint32_t *handles, count, i;
+	uint8_t *types;
 
 	/* Devices first: dxgkrnl destroys their children with them. */
 	LOCK(h);
-	t = &h->objects;
-	for (i = 0; i < t->capacity; i++) {
-		struct dxghost_obj *o = &t->slots[i];
-		uint32_t handle = o->handle;
+	handles = snapshot(h, process, OBJ_DEVICE, NULL, &count);
+	for (i = 0; handles && i < count; i++)
+		forget(h, handles[i]);
+	UNLOCK(h);
+	for (i = 0; handles && i < count; i++) {
+		struct d3dkmt_destroydevice d = {0};
 
-		if (o->state != 1 || o->process != process ||
-		    o->type != OBJ_DEVICE)
-			continue;
-		forget(h, handle);
-		UNLOCK(h);
-		{
-			struct d3dkmt_destroydevice d = {0};
-
-			d.device.v = handle;
-			h->kmt.DestroyDevice(&d);
-		}
-		LOCK(h);
+		d.device.v = handles[i];
+		h->kmt.DestroyDevice(&d);
 	}
-	/* Then device-less sync objects. */
-	for (i = 0; i < t->capacity; i++) {
-		struct dxghost_obj *o = &t->slots[i];
-		uint32_t handle = o->handle;
+	free(handles);
 
-		if (o->state != 1 || o->process != process)
-			continue;
-		forget(h, handle);
-		if (o->type == OBJ_SYNC && h->kmt.DestroySynchronizationObject) {
+	/* Then what remains: device-less sync objects. */
+	LOCK(h);
+	types = malloc(h->objects.live + 1);
+	handles = types ? snapshot(h, process, 0, types, &count) : NULL;
+	for (i = 0; handles && i < count; i++)
+		forget(h, handles[i]);
+	UNLOCK(h);
+	for (i = 0; handles && i < count; i++) {
+		if (types[i] == OBJ_SYNC && h->kmt.DestroySynchronizationObject) {
 			struct d3dkmt_destroysynchronizationobject d = {0};
 
-			d.sync_object.v = handle;
-			UNLOCK(h);
+			d.sync_object.v = handles[i];
 			h->kmt.DestroySynchronizationObject(&d);
-			LOCK(h);
 		}
 	}
-	UNLOCK(h);
+	free(handles);
+	free(types);
 	va_remove(h, process, 0, UINT64_MAX);
 }
 
