@@ -1041,6 +1041,7 @@ void dxgvirtio_unregister(void);
 int dxgvirtio_send(struct dxgvirtio *dv, u32 channel, const void *command,
 		   u32 cmd_size, void *result, u32 result_size, bool async);
 int dxgvirtio_get_iospace(struct dxgvirtio *dv, u64 *base, u64 *size);
+int dxgvmb_ntstatus_to_errno(u32 status);
 void dxgglobal_start_adapters(void);
 void dxgglobal_remove_transport(struct dxgvirtio *dv, guid_t *adapter_guid);
 #endif

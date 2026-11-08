@@ -1,0 +1,269 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * dxghost lifecycle, request framing and dispatch.
+ */
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "host.h"
+
+void dxghost_logf(struct dxghost *h, const char *format, ...)
+{
+	char line[512];
+	va_list ap;
+
+	if (!h->vmm.log)
+		return;
+	va_start(ap, format);
+	vsnprintf(line, sizeof(line), format, ap);
+	va_end(ap);
+	h->vmm.log(h->vmm.opaque, line);
+}
+
+void dxghost_signal_guest_event(struct dxghost *h, uint32_t process,
+				uint64_t guest_event)
+{
+	struct dxgkvmb_command_signalguestevent packet;
+
+	memset(&packet, 0, sizeof(packet));
+	packet.hdr.process.v = process;
+	packet.hdr.channel_type = DXGKVMB_HOST_TO_VM;
+	packet.hdr.command_type = DXGK_VMBCOMMAND_SIGNALGUESTEVENT;
+	packet.event = guest_event;
+	h->vmm.event(h->vmm.opaque, &packet, sizeof(packet));
+}
+
+/* Picks the adapter to expose: the configured LUID, else the first NVIDIA. */
+static int find_adapter(struct dxghost *h)
+{
+	struct d3dkmt_adapterinfo adapters[16];
+	struct {
+		u32 num_adapters;
+		u32 reserved;
+		u64 adapters;
+	} enumerate = {16, 0, (u64)(uintptr_t)adapters};
+	uint32_t i;
+	int found = -1;
+
+	if (h->config.adapter_luid_low || h->config.adapter_luid_high) {
+		h->luid.LowPart = h->config.adapter_luid_low;
+		h->luid.HighPart = h->config.adapter_luid_high;
+		return 0;
+	}
+	if (!h->kmt.EnumAdapters2 || h->kmt.EnumAdapters2(&enumerate) < 0)
+		return -1;
+	for (i = 0; i < enumerate.num_adapters && i < 16; i++) {
+		struct dxghost_device_ids ids = {0};
+		struct d3dkmt_queryadapterinfo query = {0};
+		struct d3dkmt_closeadapter close = {0};
+
+		query.adapter = adapters[i].adapter_handle;
+		query.type = DXGHOST_QAI_PHYSICALADAPTERDEVICEIDS;
+		query.private_data = (u64)(uintptr_t)&ids;
+		query.private_data_size = sizeof(ids);
+		if (found < 0 && h->kmt.QueryAdapterInfo(&query) >= 0 &&
+		    ids.vendor_id == 0x10de) {
+			h->luid.LowPart = adapters[i].adapter_luid.a;
+			h->luid.HighPart = (LONG)adapters[i].adapter_luid.b;
+			found = 0;
+		}
+		close.adapter_handle = adapters[i].adapter_handle;
+		h->kmt.CloseAdapter(&close);
+	}
+	return found;
+}
+
+int dxghost_create(const struct dxghost_config *config,
+		   const struct dxghost_vmm *vmm, struct dxghost **out)
+{
+	struct dxghost *h;
+
+	*out = NULL;
+	if (!vmm || !vmm->map || !vmm->unmap || !vmm->event)
+		return -1;
+	h = calloc(1, sizeof(*h));
+	if (!h)
+		return -1;
+	h->config = *config;
+	h->vmm = *vmm;
+	InitializeSRWLock(&h->lock);
+	InitializeSRWLock(&h->wait_lock);
+	h->next_proc = 1;
+	if (config->kmt)
+		h->kmt = *config->kmt;
+	else if (dxghost_kmt_load(&h->kmt))
+		goto fail;
+	if (!h->kmt.OpenAdapterFromLuid || !h->kmt.CreateDevice) {
+		dxghost_logf(h, "D3DKMT is unavailable");
+		goto fail;
+	}
+	if (find_adapter(h)) {
+		dxghost_logf(h, "no adapter LUID configured");
+		goto fail;
+	}
+	*out = h;
+	return 0;
+fail:
+	free(h);
+	return -1;
+}
+
+void dxghost_reset(struct dxghost *h)
+{
+	uint32_t i;
+
+	AcquireSRWLockExclusive(&h->lock);
+	for (i = 0; i < h->proc_count; i++) {
+		if (!h->procs[i].live)
+			continue;
+		ReleaseSRWLockExclusive(&h->lock);
+		dxghost_destroy_process_objects(h, h->procs[i].token);
+		AcquireSRWLockExclusive(&h->lock);
+		h->procs[i].live = false;
+	}
+	h->proc_count = 0;
+	if (h->adapter && h->kmt.CloseAdapter) {
+		struct d3dkmt_closeadapter close = {0};
+
+		close.adapter_handle.v = h->adapter;
+		h->kmt.CloseAdapter(&close);
+	}
+	h->adapter = 0;
+	h->adapter_refs = 0;
+	while (h->fence_page_count) {
+		struct dxghost_fence_page *p = &h->fence_pages[0];
+
+		p->refs = 1;
+		dxghost_fence_unmap(h, p->gpa);
+	}
+	dxghost_objtab_free(&h->objects);
+	dxghost_io_reset(h, 0, 0);
+	ReleaseSRWLockExclusive(&h->lock);
+}
+
+void dxghost_destroy(struct dxghost *h)
+{
+	if (!h)
+		return;
+	InterlockedExchange(&h->closing, 1);
+	dxghost_waits_close(h);
+	dxghost_reset(h);
+	free(h->vas);
+	free(h->io_free);
+	free(h->fence_pages);
+	free(h->procs);
+	free(h);
+}
+
+void dxghost_device_config(struct dxghost *h, struct virtio_dxg_config *c)
+{
+	memset(c, 0, sizeof(*c));
+	c->vmbus_version = DXGHOST_INTERFACE_VERSION;
+	c->host_caps = 0;	/* guest page mapping: not yet */
+	c->flags = 0;
+	c->vgpu_luid_low = h->luid.LowPart;
+	c->vgpu_luid_high = (uint32_t)h->luid.HighPart;
+	memcpy(c->adapter_guid, h->config.adapter_guid,
+	       sizeof(c->adapter_guid));
+	c->max_message = VIRTIO_DXG_MAX_MESSAGE;
+	c->event_size = VIRTIO_DXG_EVENT_SIZE;
+}
+
+/* Locates the dxgkvmb command inside a message with its extended header. */
+static const uint8_t *command_of(const void *message, uint32_t size,
+				 uint32_t *cmd_size)
+{
+	const struct dxgvmb_ext_header *ext = message;
+
+	if (size < sizeof(*ext) + sizeof(struct dxgkvmb_command_vgpu_to_host))
+		return NULL;
+	if (ext->command_offset < sizeof(*ext) ||
+	    ext->command_offset > size - sizeof(struct dxgkvmb_command_vgpu_to_host))
+		return NULL;
+	*cmd_size = size - ext->command_offset;
+	return (const uint8_t *)message + ext->command_offset;
+}
+
+uint32_t dxghost_lane(const void *message, uint32_t size)
+{
+	uint32_t cmd_size;
+	const uint8_t *cmd = command_of(message, size, &cmd_size);
+
+	if (!cmd)
+		return 0;
+	return ((const struct dxgkvmb_command_vgpu_to_host *)cmd)->process.v;
+}
+
+static bool process_live(struct dxghost *h, uint32_t token)
+{
+	uint32_t i;
+	bool live = false;
+
+	AcquireSRWLockShared(&h->lock);
+	for (i = 0; i < h->proc_count; i++) {
+		if (h->procs[i].token == token && h->procs[i].live) {
+			live = true;
+			break;
+		}
+	}
+	ReleaseSRWLockShared(&h->lock);
+	return live;
+}
+
+void dxghost_execute(struct dxghost *h, uint32_t channel,
+		     const void *message, uint32_t size, void *result,
+		     uint32_t result_capacity, struct virtio_dxg_resp *resp)
+{
+	struct dxghost_msg m;
+	const struct dxgkvmb_command_vgpu_to_host *vgpu;
+	uint32_t channel_type, type;
+
+	memset(resp, 0, sizeof(*resp));
+	memset(&m, 0, sizeof(m));
+	m.h = h;
+	m.res = result;
+	m.res_cap = result ? result_capacity : 0;
+	m.cmd = command_of(message, size, &m.cmd_size);
+	if (!m.cmd || (channel != VIRTIO_DXG_CHANNEL_GLOBAL &&
+		       channel != VIRTIO_DXG_CHANNEL_ADAPTER)) {
+		resp->status = VIRTIO_DXG_ERR_INVALID;
+		return;
+	}
+	if (m.res_cap)
+		memset(m.res, 0, m.res_cap);
+
+	/*
+	 * Both header kinds keep the channel type in the low byte at offset
+	 * 12. With async messages enabled, adapter commands travel on the
+	 * global channel, so the header decides, not the virtqueue.
+	 */
+	vgpu = (const void *)m.cmd;
+	memcpy(&channel_type, m.cmd + 12, sizeof(channel_type));
+	channel_type &= 0xff;
+	type = vgpu->command_type;
+	m.process = vgpu->process.v;
+
+	if (channel_type == DXGKVMB_VM_TO_HOST) {
+		if (type != DXGK_VMBCOMMAND_CREATEPROCESS &&
+		    type != DXGK_VMBCOMMAND_SETIOSPACEREGION &&
+		    type != DXGK_VMBCOMMAND_DESTROYNTSHAREDOBJECT &&
+		    type != DXGK_VMBCOMMAND_ISFEATUREENABLED_GLOBAL &&
+		    !process_live(h, m.process)) {
+			resp->status = VIRTIO_DXG_ERR_INVALID;
+			return;
+		}
+		dxghost_exec_global(&m, type);
+	} else if (channel_type == DXGKVMB_VGPU_TO_HOST) {
+		if (m.process && !process_live(h, m.process)) {
+			resp->status = VIRTIO_DXG_ERR_INVALID;
+			return;
+		}
+		dxghost_exec_vgpu(&m, type);
+	} else {
+		m.status = VIRTIO_DXG_ERR_INVALID;
+	}
+	resp->status = m.status;
+	resp->size = m.res_len;
+	resp->ntstatus = (uint32_t)m.ntstatus;
+}

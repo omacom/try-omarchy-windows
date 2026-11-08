@@ -90,10 +90,18 @@ struct virtio_dxg_req {
 #define VIRTIO_DXG_ERR_UNSUPPORTED	2	/* unknown command */
 #define VIRTIO_DXG_ERR_DEVICE		3	/* host backend failed */
 #define VIRTIO_DXG_ERR_OVERFLOW		4	/* reply larger than result_size */
+/*
+ * The command failed with resp.ntstatus. Used for replies that have no
+ * NTSTATUS slot of their own (Escape returns only private data); the
+ * result bytes are still delivered.
+ */
+#define VIRTIO_DXG_ERR_NTSTATUS		5
 
 struct virtio_dxg_resp {
 	VIRTIO_DXG_LE32 status;		/* VIRTIO_DXG_* */
 	VIRTIO_DXG_LE32 size;		/* result bytes written */
+	VIRTIO_DXG_LE32 ntstatus;	/* with VIRTIO_DXG_ERR_NTSTATUS */
+	VIRTIO_DXG_LE32 reserved;
 };
 
 /*

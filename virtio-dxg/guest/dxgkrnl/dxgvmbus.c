@@ -194,6 +194,16 @@ static void command_vgpu_to_host_init2(struct dxgkvmb_command_vgpu_to_host
 	command->channel_type	= DXGKVMB_VGPU_TO_HOST;
 }
 
+#ifdef DXG_VIRTIO
+int dxgvmb_ntstatus_to_errno(u32 status)
+{
+	struct ntstatus s = {.v = (int)status};
+	int ret = ntstatus2int(s);
+
+	return ret < 0 ? ret : -EIO;
+}
+#endif
+
 int ntstatus2int(struct ntstatus status)
 {
 	if (NT_SUCCESS(status))
@@ -640,6 +650,10 @@ int dxg_unmap_iospace(void *va, u32 size)
 	 * When an app calls exit(), dxgkrnl is called to close the device
 	 * with current->mm equal to NULL.
 	 */
+#ifdef DXG_VIRTIO
+	/* Fence mappings point into their page; see dxg_map_iospace(). */
+	va = (void *)((unsigned long)va & PAGE_MASK);
+#endif
 	if (current->mm) {
 		ret = vm_munmap((unsigned long)va, size);
 		if (ret) {
@@ -656,6 +670,17 @@ static u8 *dxg_map_iospace(u64 iospace_address, u32 size,
 	struct vm_area_struct *vma;
 	unsigned long va;
 	int ret = 0;
+#ifdef DXG_VIRTIO
+	/*
+	 * A user-mode host shares fence pages between fences, so it returns
+	 * the fence's exact address. Map its page and point into it.
+	 */
+	u32 in_page = offset_in_page(iospace_address);
+
+	iospace_address -= in_page;
+	if (in_page && in_page + sizeof(u64) > size)
+		return NULL;
+#endif
 
 	DXG_TRACE("Mapping io space: %llx %x %lx",
 		iospace_address, size, protection);
@@ -695,7 +720,11 @@ static u8 *dxg_map_iospace(u64 iospace_address, u32 size,
 		return NULL;
 	}
 	DXG_TRACE("Mapped VA: %lx", va);
+#ifdef DXG_VIRTIO
+	return (u8 *)va + in_page;
+#else
 	return (u8 *) va;
+#endif
 }
 
 /*
@@ -3194,7 +3223,12 @@ int dxgvmb_send_lock2(struct dxgprocess *process,
 {
 	int ret;
 	struct dxgkvmb_command_lock2 *command;
+#ifdef DXG_VIRTIO
+	struct dxgkvmb_command_lock2_return_virtio result_ext = { };
 	struct dxgkvmb_command_lock2_return result = { };
+#else
+	struct dxgkvmb_command_lock2_return result = { };
+#endif
 	struct dxgallocation *alloc = NULL;
 	struct dxgvmbusmsg msg = {.hdr = NULL};
 
@@ -3207,8 +3241,14 @@ int dxgvmb_send_lock2(struct dxgprocess *process,
 				   DXGK_VMBCOMMAND_LOCK2, process->host_handle);
 	command->args = *args;
 
+#ifdef DXG_VIRTIO
+	ret = dxgvmb_send_sync_msg(msg.channel, msg.hdr, msg.size,
+				   &result_ext, sizeof(result_ext));
+	result = result_ext.base;
+#else
 	ret = dxgvmb_send_sync_msg(msg.channel, msg.hdr, msg.size,
 				   &result, sizeof(result));
+#endif
 	if (ret < 0)
 		goto cleanup;
 
@@ -3231,6 +3271,13 @@ int dxgvmb_send_lock2(struct dxgprocess *process,
 		} else {
 			u64 offset = (u64)result.cpu_visible_buffer_offset;
 
+#ifdef DXG_VIRTIO
+			if (alloc->num_pages == 0)
+				alloc->num_pages =
+					result_ext.mapped_size >> PAGE_SHIFT;
+			alloc->cached = !!(result_ext.flags &
+					   DXGK_VIRTIO_LOCK2_CACHED);
+#endif
 			args->data = dxg_map_iospace(offset,
 					alloc->num_pages << PAGE_SHIFT,
 					PROT_READ | PROT_WRITE, alloc->cached);

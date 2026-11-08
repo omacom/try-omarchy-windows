@@ -739,6 +739,22 @@ struct dxgkvmb_command_lock2_return {
 	void				*cpu_visible_buffer_offset;
 };
 
+#ifdef DXG_VIRTIO
+/*
+ * virtio-dxg: a user-mode host cannot learn allocation sizes or caching at
+ * creation (allocation_size and allocation_flags are 0). It reports what it
+ * mapped at Lock2 instead. The guest must map with the same caching: a
+ * cached mapping of a non-snooped host page would hide writes from the GPU.
+ */
+#define DXGK_VIRTIO_LOCK2_CACHED	(1u << 0)
+struct dxgkvmb_command_lock2_return_virtio {
+	struct dxgkvmb_command_lock2_return base;
+	u64				mapped_size;
+	u32				flags;		/* DXGK_VIRTIO_LOCK2_* */
+	u32				reserved;
+};
+#endif
+
 struct dxgkvmb_command_unlock2 {
 	struct dxgkvmb_command_vgpu_to_host hdr;
 	struct d3dkmt_unlock2		args;

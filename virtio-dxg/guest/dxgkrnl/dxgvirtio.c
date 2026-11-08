@@ -254,6 +254,13 @@ int dxgvirtio_send(struct dxgvirtio *dv, u32 channel, const void *command,
 		DXG_ERR("wait_for_completion failed: %d", ret);
 		goto out;
 	}
+	if (le32_to_cpu(req->resp.status) == VIRTIO_DXG_ERR_NTSTATUS) {
+		/* Deliver the result (e.g. escape output) with the error. */
+		ret = dxgvmb_ntstatus_to_errno(le32_to_cpu(req->resp.ntstatus));
+		if (result_size)
+			memcpy(result, (u8 *)req->buf + cmd_size, result_size);
+		goto out;
+	}
 	ret = dxgvirtio_status(le32_to_cpu(req->resp.status));
 	if (ret == 0 && le32_to_cpu(req->resp.size) < result_size) {
 		DXG_TRACE("short reply %u, expected %u",
