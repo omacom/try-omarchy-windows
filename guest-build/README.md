@@ -13,10 +13,14 @@ scripts/release/build-guest.sh --output /path/to/artifacts
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME
-15. Arch's 0.16.0 had replaced the patched 0.15.1 build on updated disks, so
-the cursor could go back to being drawn inside desktop frames. Runtime
-`4.0.4-13` requires `aquamarine>=0.16.0-1.1`, so the next **Update > Omarchy**
-installs the rebuild, and compatibility revision 67 delivers it.
+15, for new images. Arch's 0.16.0 had replaced the patched 0.15.1 build on
+updated disks, so the cursor could go back to being drawn inside desktop
+frames. Compatibility revision 67 offers the rebuild in the local repository.
+Patch 0159 makes runtime `4.0.4-13` require Arch's `aquamarine>=0.16.0-1`
+rather than the rebuild. pacman upgrades from the first repository that has
+the package, so on a disk with the 0.15.1 rebuild a rebuild-only minimum could
+not be met once Arch moved, and Update > Omarchy failed. Existing disks take
+Arch's release; getting the rebuild onto them needs an explicit install step.
 
 Patch 0156 mutes Hyprland's sound for every terminal bell (#384). Hyprland
 0.57 plays one for each bell, and Foot rings it on missed Tab completions and
