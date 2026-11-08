@@ -81,6 +81,9 @@ static int SDL_GetNumAudioDevices(int rec) {
 static const char *SDL_GetAudioDeviceName(int index, int rec) {
     assert(rec == 1); return "Microphone";
 }
+static bool sdl_default_endpoint_missing(int rec) {
+    assert(rec == 1); return false;
+}
 static SDL_AudioDeviceID SDL_OpenAudioDevice(const char *name, int rec,
         SDL_AudioSpec *req, SDL_AudioSpec *obt, int changes) {
     /* Preflight must avoid opening an empty inventory. */
@@ -204,7 +207,7 @@ int main(int argc, char **argv) {
         }
         assert(opens == 1);
         advance(10); consume(&sdl, 0);
-        assert(opens == 2 && failures == 2 && !sdl.devid);
+        assert(opens == 2 && failures == 1 && !sdl.devid); /* reported once */
         assert(sdl.next_route_check == host_us + 10 * G_USEC_PER_SEC);
         fail_open = false;
         advance(10000); consume(&sdl, 0);
@@ -229,15 +232,16 @@ int main(int argc, char **argv) {
         assert(g_file_set_contents(input, "bWlzc2luZw==\n", -1, NULL));
         fail_open = true;
         failed_open_us = 8 * G_USEC_PER_SEC;
+        /* An unlisted selection goes straight to the default: one open. */
         advance(250); consume(&sdl, 0);
-        assert(opens == 3 && failures == 1 && sdl.devid == 17);
+        assert(opens == 2 && failures == 1 && sdl.devid == 17);
         assert(sdl.next_route_check == host_us + 10 * G_USEC_PER_SEC);
-        advance(9999); consume(&sdl, 0); assert(opens == 3);
-        advance(1); consume(&sdl, 0); assert(opens == 5 && failures == 2);
+        advance(9999); consume(&sdl, 0); assert(opens == 2);
+        advance(1); consume(&sdl, 0); assert(opens == 3 && failures == 1);
         fail_open = false;
         failed_open_us = 0;
         advance(10000); consume(&sdl, 0);
-        assert(opens == 7 && sdl.devid == 17 && !sdl.route_matches);
+        assert(opens == 4 && sdl.devid == 17 && !sdl.route_matches);
         assert(sdl.next_route_check == host_us + 250 * 1000);
         assert(g_remove(input) == 0);
         assert(g_rmdir(directory) == 0);
@@ -248,14 +252,14 @@ int main(int argc, char **argv) {
 
     /* No host mic: no WASAPI open, and capture periods advance at 48 kHz. */
     sdl_enable_in(&sdl.hw, true);
-    assert(sdl.enabled && !sdl.devid && opens == 0 && enumerations == 2);
+    assert(sdl.enabled && !sdl.devid && opens == 0 && enumerations == 1);
     assert(consume(&sdl, 0) == 0);
     for (int i = 0; i < 50; i++) {
         advance(10);
         assert(consume(&sdl, 0) == 1920);
         assert(consume(&sdl, 0) == 0); /* no clock advance, no extra samples */
     }
-    assert(enumerations == 2 && opens == 0);
+    assert(enumerations == 1 && opens == 0);
     int before = enumerations;
     for (int i = 0; i < 10; i++) {
         sdl_enable_in(&sdl.hw, false);
@@ -266,7 +270,7 @@ int main(int argc, char **argv) {
     /* Enumeration errors also avoid an open; later active hotplug recovers. */
     capture_count = -1;
     advance(500); consume(&sdl, 0);
-    assert(opens == 0 && enumerations == before + 2);
+    assert(opens == 0 && enumerations == before + 1);
     capture_count = 1;
     advance(1000); consume(&sdl, 0);
     assert(opens == 1 && sdl.devid == 17 && status == SDL_AUDIO_PLAYING);
