@@ -12,9 +12,11 @@ pacman-key --lsign-key 40DFB630FF42BCFFB047046CF0134EE680CAC571
 # Docker kernel cannot enforce pacman's Landlock downloader. Signatures and
 # the container boundary stay enabled; this does not alter the guest config.
 pacman --disable-sandbox -Syu --noconfirm
+# The shell's own runtime from the guest package list: Qt image formats decode
+# the .webp theme backgrounds and ImageMagick measures them for the picker.
 pacman --disable-sandbox -S --needed --noconfirm quickshell qt6-base qt6-declarative qt6-wayland \
-  qt6-svg qt6-multimedia sway inotify-tools dbus mesa git python jq fontconfig \
-  ttf-jetbrains-mono-nerd pipewire wireplumber
+  qt6-svg qt6-multimedia qt6-imageformats imagemagick sway inotify-tools dbus mesa git python \
+  jq fontconfig ttf-jetbrains-mono-nerd pipewire wireplumber
 pacman -Q > /results/packages.txt
 cp /etc/pacman.conf /results/pacman.conf
 cp "$guest/spec.json" /results/build-spec.json
@@ -25,20 +27,6 @@ mkdir -p /tmp/root/etc/skel/.config/nvim
 "$guest/scripts/materialize-omarchy.sh" --root /tmp/root --source /tmp/omarchy-source
 python3 "$guest/scripts/apply-omarchy-backports.py" --root /tmp/root --spec "$guest/spec.json"
 cp -a /tmp/root/usr/bin/. /usr/bin/
-if [[ ${UNFIXED_PALETTE:-false} == true ]]; then
-  # The real tree is produced above. This proof reverses only the palette fix,
-  # verifying every restored preimage against the guest's backport registry.
-  git -C /tmp/root/usr/share/omarchy apply --no-index --reverse "$guest/patches/omarchy/qt612-palette.patch"
-  python3 - "$guest/spec.json" <<'PY'
-import hashlib, json, pathlib, sys
-spec = json.loads(pathlib.Path(sys.argv[1]).read_text())
-backport = next(b for b in spec['authenticity']['backports'] if b['id'] == 'qt612-palette')
-for target in backport['targets']:
-    path = pathlib.Path('/tmp/root/usr/share/omarchy') / target['path']
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == target['beforeSha256'], path
-print('Verified unfixed palette preimages')
-PY
-fi
 find /tmp/root/usr/share/omarchy/shell -type f -print0 | sort -z | \
   xargs -0 sha256sum > /results/shell-sha256.txt
 useradd --create-home canary

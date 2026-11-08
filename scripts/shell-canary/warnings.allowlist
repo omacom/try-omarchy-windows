@@ -8,3 +8,13 @@ WARN quickshell.service.polkit.listener: failed to create subject for listener: 
 WARN quickshell.service.polkit: failed to register listener on path "/org/omarchy/PolkitAgent"
 # The probe uses Sway's layer-shell support, with no Hyprland session.
 WARN: \$HYPRLAND_INSTANCE_SIGNATURE is unset\. Cannot connect to hyprland\.
+WARN quickshell\.hyprland\.ipc: Error making request: QLocalSocket::ServerNotFoundError
+WARN: The active compositor does not support hyprland_global_shortcuts_v1\.
+WARN: GlobalShortcut will not work\.
+# The guest has no power-profiles-daemon (Windows manages power), nor a system bus here.
+WARN quickshell\.service\.powerprofiles: Could not connect to DBus\. PowerProfiles services will not work\.
+# The canary home has no applied theme; Omarchy's installer writes it on a real disk.
+WARN scene: QML FileView at .*/ImagePicker\.qml\[[0-9:]+\]: Read of /home/canary/\.local/state/omarchy/current/theme\.name failed: File does not exist\.
+# Omarchy's quickshell build notes plugin folders whose names are not QML module
+# names. Real Omarchy 4.5 prints the same; the plugins still load.
+WARN quickshell\.qmlscanner: Module path contains invalid characters for a module name: +"/plugins/[a-z/-]+"
