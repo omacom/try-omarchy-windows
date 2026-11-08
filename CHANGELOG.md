@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.14.0 - 2026-11-08
+
+- With GPU rendering on Hyprland 0.57, notifications and other transparent
+  layers no longer cover the Omarchy window in black. The launcher brings the
+  fix to existing installs whose display profile is still the default (#379,
+  #358).
+- GPU rendering counts as working only once the desktop stays on screen for 15
+  seconds. A wallpaper that shows for a moment and then turns black now gets
+  the two-minute prompt to switch to CPU rendering (#377, #358).
+- CPU rendering always uses the bundled runtime, never a separately installed
+  QEMU (#380).
+- When Windows has no working playback device, a sound in Omarchy no longer
+  freezes the VM for eight seconds at a time. Runtime r26 checks for the device
+  before opening it (#389, #384).
+- Hyprland 0.57's sound for every terminal bell is muted, so missed Tab
+  completions no longer chime. Existing installs get it with their next
+  **Update > Omarchy** (#388, #384).
+- Super+Return and the Omarchy menu open the terminal chosen in Omarchy's
+  default terminal setting instead of always opening Foot (#386, #385).
+- On Korean Windows, Omarchy offers Hangul input instead of Chewing. Existing
+  installs get it with their next **Update > Omarchy** (#376).
+- Settings > Apps can list file types that Omarchy may open in Windows apps.
+  Opening them from Omarchy arrives in a later update (#381, #375).
+- The blank-window prompt is translated into Korean, and the remaining
+  Simplified Chinese messages are translated (#372, #373).
+
 ## v0.13.0 - 2026-10-25
 
 - With GPU rendering on Intel graphics, opening menus or the Hyprland
