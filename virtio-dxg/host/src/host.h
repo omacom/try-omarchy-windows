@@ -115,6 +115,9 @@ struct dxghost {
 
 	SRWLOCK wait_lock;
 	struct dxghost_wait *waits;
+	/* Completed waits kept for reuse: no event or thread-pool object is
+	 * created per CPU wait once the pool is warm. */
+	struct dxghost_wait *wait_pool;
 	volatile LONG closing;
 };
 

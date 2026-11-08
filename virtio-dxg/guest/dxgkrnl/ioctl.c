@@ -3465,6 +3465,61 @@ cleanup:
 	return ret;
 }
 
+#ifdef DXG_VIRTIO
+/*
+ * True when every monitored fence of a CPU wait (any one of them with
+ * wait_any) has already reached its value, read from the fence page this
+ * process has mapped. The wait then needs no host round trip. Anything
+ * else (other object types, unmapped pages, a fault) takes the normal
+ * path, which reports errors as before.
+ */
+static bool dxg_fences_reached(struct dxgprocess *process,
+	const struct d3dkmt_waitforsynchronizationobjectfromcpu *args)
+{
+	struct d3dkmthandle handles[D3DDDI_MAX_OBJECT_WAITED_ON];
+	u64 values[D3DDDI_MAX_OBJECT_WAITED_ON];
+	u64 __user *pages[D3DDDI_MAX_OBJECT_WAITED_ON];
+	u32 i, n = args->object_count;
+	bool reached = true;
+
+	if (n > D3DDDI_MAX_OBJECT_WAITED_ON ||
+	    copy_from_user(handles, (void __user *)args->objects,
+			   n * sizeof(handles[0])) ||
+	    copy_from_user(values, (void __user *)args->fence_values,
+			   n * sizeof(values[0])))
+		return false;
+	hmgrtable_lock(&process->handle_table, DXGLOCK_SHARED);
+	for (i = 0; i < n; i++) {
+		struct dxgsyncobject *syncobj = hmgrtable_get_object_by_type(
+			&process->handle_table, HMGRENTRY_TYPE_DXGSYNCOBJECT,
+			handles[i]);
+
+		if (!syncobj || !syncobj->monitored_fence ||
+		    !syncobj->mapped_address) {
+			reached = false;
+			break;
+		}
+		pages[i] = (u64 __user *)syncobj->mapped_address;
+	}
+	hmgrtable_unlock(&process->handle_table, DXGLOCK_SHARED);
+	if (!reached)
+		return false;
+	for (i = 0; i < n; i++) {
+		u64 value;
+
+		if (get_user(value, pages[i]))
+			return false;
+		if (value >= values[i]) {
+			if (args->flags.wait_any)
+				return true;
+		} else if (!args->flags.wait_any) {
+			return false;
+		}
+	}
+	return !args->flags.wait_any;
+}
+#endif
+
 static int
 dxgkio_wait_sync_object_cpu(struct dxgprocess *process, void *__user inargs)
 {
@@ -3491,6 +3546,22 @@ dxgkio_wait_sync_object_cpu(struct dxgprocess *process, void *__user inargs)
 		ret = -EINVAL;
 		goto cleanup;
 	}
+
+#ifdef DXG_VIRTIO
+	if (dxg_fences_reached(process, &args)) {
+		if (args.async_event) {
+			event = eventfd_ctx_fdget((int)args.async_event);
+			if (IS_ERR(event)) {
+				event = NULL;
+				ret = -EINVAL;
+				goto cleanup;
+			}
+			dxg_eventfd_signal(event);
+		}
+		ret = 0;
+		goto cleanup;
+	}
+#endif
 
 	if (args.async_event) {
 		async_host_event = kzalloc(sizeof(*async_host_event),

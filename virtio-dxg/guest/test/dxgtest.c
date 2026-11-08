@@ -8,9 +8,11 @@
  * Runs the same against WSL2's dxgkrnl (the reference) and the VM's
  * virtio-dxg. Static, so it runs from a bare initramfs:
  *
- *   gcc -static -O2 -I../include -o dxgtest dxgtest.c
+ *   gcc -static -O2 -pthread -I../include -o dxgtest dxgtest.c
  */
 #include <errno.h>
+#include <pthread.h>
+#include <semaphore.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -29,7 +31,7 @@
 #define MONITORED_FENCE 5
 
 static int dxg;
-static int failures;
+static volatile int failures;
 
 #define CHECK(what, call)						\
 	({								\
@@ -102,6 +104,45 @@ static void describe(struct d3dkmthandle adapter, struct winluid luid)
 	}
 }
 
+struct waiter {
+	struct d3dkmthandle device, fence;
+	volatile __u64 value;
+	volatile double signalled, woken;
+	volatile int status;
+	sem_t go, done;
+};
+
+static void *waiter_main(void *opaque)
+{
+	struct waiter *w = opaque;
+
+	for (;;) {
+		struct d3dkmt_waitforsynchronizationobjectfromcpu wait = { 0 };
+		__u64 value;
+
+		sem_wait(&w->go);
+		value = w->value;
+		if (!value)
+			return NULL;
+		wait.device = w->device;
+		wait.object_count = 1;
+		wait.objects = (__u64)(uintptr_t)&w->fence;
+		wait.fence_values = (__u64)(uintptr_t)&value;
+		w->status = CHECK("blocked wait from CPU",
+				  ioctl(dxg, LX_DXWAITFORSYNCHRONIZATIONOBJECTFROMCPU,
+					&wait));
+		w->woken = now_us();
+		sem_post(&w->done);
+	}
+}
+
+static int by_value(const void *a, const void *b)
+{
+	double x = *(const double *)a, y = *(const double *)b;
+
+	return x < y ? -1 : x > y;
+}
+
 /* Device, monitored fence, CPU signal and wait, on one adapter. */
 static void exercise(struct winluid luid)
 {
@@ -167,6 +208,45 @@ static void exercise(struct winluid luid)
 		printf("  200 CPU signal+wait round trips, best %.1f us; fence "
 		       "page reads %llu\n", best,
 		       fence_page ? (unsigned long long)*fence_page : 0ull);
+	}
+
+	/* A thread already blocked in a wait, woken by a signal: the path a
+	 * GPU fence completion takes to a waiting application thread. */
+	{
+		struct waiter wt = { .device = cd.device,
+				     .fence = cs.sync_object };
+		pthread_t thread;
+		double wake[100];
+		int n = 0;
+
+		sem_init(&wt.go, 0, 0);
+		sem_init(&wt.done, 0, 0);
+		pthread_create(&thread, NULL, waiter_main, &wt);
+		for (i = 1; i <= 100; i++) {
+			struct timespec settle = { 0, 300 * 1000 };
+
+			wt.value = 200 + i;
+			sem_post(&wt.go);
+			nanosleep(&settle, NULL);	/* let it block */
+			value = wt.value;
+			wt.signalled = now_us();
+			if (CHECK("signal from CPU",
+				  ioctl(dxg, LX_DXSIGNALSYNCHRONIZATIONOBJECTFROMCPU,
+					&sig)) < 0)
+				break;
+			sem_wait(&wt.done);
+			if (wt.status < 0)
+				break;
+			wake[n++] = wt.woken - wt.signalled;
+		}
+		wt.value = 0;
+		sem_post(&wt.go);
+		pthread_join(thread, NULL);
+		if (n) {
+			qsort(wake, n, sizeof(wake[0]), by_value);
+			printf("  %d blocked waits woken by a signal: median %.1f "
+			       "us, best %.1f us\n", n, wake[n / 2], wake[0]);
+		}
 	}
 
 	ds.sync_object = cs.sync_object;

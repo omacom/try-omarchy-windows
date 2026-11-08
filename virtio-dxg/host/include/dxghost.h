@@ -79,6 +79,14 @@ void dxghost_device_config(struct dxghost *host,
 uint32_t dxghost_lane(const void *message, uint32_t size);
 
 /*
+ * True for requests that never block the calling thread: signals,
+ * submissions, GPU waits, CPU waits that complete through a guest event,
+ * device state. A VMM may execute these on the thread that received them
+ * (in order with the rest of their lane), saving a thread wakeup each way.
+ */
+bool dxghost_nonblocking(const void *message, uint32_t size);
+
+/*
  * Executes one control request and fills the virtio reply. result may be
  * NULL when result_capacity is 0 (async requests). Thread safe.
  */

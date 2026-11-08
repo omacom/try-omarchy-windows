@@ -7,8 +7,11 @@
  * pass through QEMU as data.
  *
  * Requests run on lane threads, one ordered lane per guest process (hashed),
- * so a slow call in one guest process never stalls another, and the vCPU
- * that kicked the queue returns to the guest immediately.
+ * so a slow call in one guest process never stalls another. Requests that
+ * cannot block (signals, submissions, GPU waits, event-completed CPU waits)
+ * run directly on the vCPU thread that kicked the queue when their lane is
+ * idle: no thread wakeup to start them, none to complete them. Host events
+ * (fence waits completing) are delivered by the thread that observed them.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -68,7 +71,8 @@ struct VirtIODxgState {
     QTAILQ_HEAD(, DxgMapping) mappings;
     QemuMutex event_lock;
     QSIMPLEQ_HEAD(, DxgEvent) events;
-    QEMUBH *event_bh;
+    /* Reply buffer of inline requests; they run under the BQL. */
+    uint8_t *inline_result;
 };
 
 /* --- dxghost callbacks ------------------------------------------------- */
@@ -147,6 +151,13 @@ static void dxg_unmap(void *opaque, uint64_t gpa, uint64_t size)
     }
 }
 
+static void dxg_flush_events(VirtIODxg *d);
+
+/*
+ * Delivered right away by the calling thread (a host thread-pool thread
+ * when a fence wait completes), not through the main loop: one thread
+ * wakeup less between the GPU signalling a fence and the guest waking up.
+ */
 static void dxg_event(void *opaque, const void *packet, uint32_t size)
 {
     VirtIODxg *d = opaque;
@@ -157,7 +168,13 @@ static void dxg_event(void *opaque, const void *packet, uint32_t size)
     qemu_mutex_lock(&d->state->event_lock);
     QSIMPLEQ_INSERT_TAIL(&d->state->events, e, next);
     qemu_mutex_unlock(&d->state->event_lock);
-    qemu_bh_schedule(d->state->event_bh);
+    if (bql_locked()) {
+        dxg_flush_events(d);
+    } else {
+        bql_lock();
+        dxg_flush_events(d);
+        bql_unlock();
+    }
 }
 
 static void dxg_log(void *opaque, const char *message)
@@ -166,10 +183,9 @@ static void dxg_log(void *opaque, const char *message)
     warn_report("virtio-dxg: %s", message);
 }
 
-/* Moves queued host events into guest buffers. Main loop, BQL held. */
-static void dxg_flush_events(void *opaque)
+/* Moves queued host events into guest buffers. BQL held. */
+static void dxg_flush_events(VirtIODxg *d)
 {
-    VirtIODxg *d = opaque;
     VirtIODevice *vdev = VIRTIO_DEVICE(d);
     bool notify = false;
 
@@ -213,13 +229,12 @@ static void dxg_handle_event(VirtIODevice *vdev, VirtQueue *vq)
 
 /* --- Control queue ----------------------------------------------------- */
 
-static void dxg_complete(VirtIODxg *d, DxgRequest *r, uint8_t *result,
-                         const struct virtio_dxg_resp *resp)
+/* Returns a request to the guest; BQL held. The caller notifies. */
+static void dxg_finish(VirtIODxg *d, DxgRequest *r, uint8_t *result,
+                       const struct virtio_dxg_resp *resp)
 {
-    VirtIODevice *vdev = VIRTIO_DEVICE(d);
     size_t written = 0;
 
-    bql_lock();
     if (!r->async) {
         struct virtio_dxg_resp out = {
             .status = cpu_to_le32(resp->status),
@@ -235,7 +250,14 @@ static void dxg_complete(VirtIODxg *d, DxgRequest *r, uint8_t *result,
         }
     }
     virtqueue_push(d->ctrl_vq, r->elem, written);
-    virtio_notify(vdev, d->ctrl_vq);
+}
+
+static void dxg_complete(VirtIODxg *d, DxgRequest *r, uint8_t *result,
+                         const struct virtio_dxg_resp *resp)
+{
+    bql_lock();
+    dxg_finish(d, r, result, resp);
+    virtio_notify(VIRTIO_DEVICE(d), d->ctrl_vq);
     bql_unlock();
 }
 
@@ -290,7 +312,7 @@ static void dxg_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
 {
     VirtIODxg *d = VIRTIO_DXG(vdev);
     VirtQueueElement *elem;
-    bool failed = false;
+    bool notify = false;
 
     while ((elem = virtqueue_pop(vq, sizeof(VirtQueueElement)))) {
         struct virtio_dxg_req hdr;
@@ -301,7 +323,7 @@ static void dxg_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
         if (iov_to_buf(elem->out_sg, elem->out_num, 0, &hdr, sizeof(hdr)) !=
             sizeof(hdr)) {
             dxg_fail(d, elem, VIRTIO_DXG_ERR_INVALID);
-            failed = true;
+            notify = true;
             continue;
         }
         r = g_new0(DxgRequest, 1);
@@ -316,7 +338,7 @@ static void dxg_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
              in_size < sizeof(struct virtio_dxg_resp) + r->result_size)) {
             g_free(r);
             dxg_fail(d, elem, VIRTIO_DXG_ERR_INVALID);
-            failed = true;
+            notify = true;
             continue;
         }
         r->message = g_malloc(r->size);
@@ -325,18 +347,34 @@ static void dxg_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
             g_free(r->message);
             g_free(r);
             dxg_fail(d, elem, VIRTIO_DXG_ERR_INVALID);
-            failed = true;
+            notify = true;
             continue;
         }
         lane = &d->state->lanes[dxghost_lane(r->message, r->size) %
                                 DXG_LANES];
         qemu_mutex_lock(&lane->lock);
+        if (!lane->busy && QSIMPLEQ_EMPTY(&lane->queue) &&
+            dxghost_nonblocking(r->message, r->size)) {
+            struct virtio_dxg_resp resp;
+
+            /* The lane lock keeps this lane's next requests behind it. */
+            dxghost_execute(d->host, r->channel, r->message, r->size,
+                            r->async ? NULL : d->state->inline_result,
+                            r->result_size, &resp);
+            qemu_mutex_unlock(&lane->lock);
+            dxg_finish(d, r, d->state->inline_result, &resp);
+            g_free(r->elem);
+            g_free(r->message);
+            g_free(r);
+            notify = true;
+            continue;
+        }
         QSIMPLEQ_INSERT_TAIL(&lane->queue, r, next);
         lane->busy = true;
         qemu_cond_signal(&lane->cond);
         qemu_mutex_unlock(&lane->lock);
     }
-    if (failed) {
+    if (notify) {
         virtio_notify(vdev, vq);
     }
 }
@@ -400,7 +438,14 @@ static void dxg_reset(VirtIODevice *vdev)
     DxgEvent *e;
 
     dxg_drain(d);
-    dxghost_reset(d->host);  /* unmaps every view through dxg_unmap */
+    /*
+     * Without the BQL: resetting waits for in-flight host event callbacks,
+     * which take it to deliver, and unmaps views through dxg_unmap, which
+     * takes it itself.
+     */
+    bql_unlock();
+    dxghost_reset(d->host);
+    bql_lock();
     qemu_mutex_lock(&d->state->event_lock);
     while ((e = QSIMPLEQ_FIRST(&d->state->events))) {
         QSIMPLEQ_REMOVE_HEAD(&d->state->events, next);
@@ -446,7 +491,7 @@ static void dxg_realize(DeviceState *dev, Error **errp)
     QTAILQ_INIT(&d->state->mappings);
     QSIMPLEQ_INIT(&d->state->events);
     qemu_mutex_init(&d->state->event_lock);
-    d->state->event_bh = qemu_bh_new(dxg_flush_events, d);
+    d->state->inline_result = g_malloc(VIRTIO_DXG_MAX_MESSAGE);
     memory_region_init(&d->iospace, OBJECT(d), "virtio-dxg-iospace",
                        d->iospace_size);
 
@@ -484,8 +529,10 @@ static void dxg_unrealize(DeviceState *dev)
         qemu_cond_destroy(&lane->cond);
         qemu_mutex_destroy(&lane->lock);
     }
+    bql_unlock();  /* as in dxg_reset */
     dxghost_destroy(d->host);
-    qemu_bh_delete(d->state->event_bh);
+    bql_lock();
+    g_free(d->state->inline_result);
     qemu_mutex_destroy(&d->state->event_lock);
     g_free(d->state);
     virtio_delete_queue(d->ctrl_vq);

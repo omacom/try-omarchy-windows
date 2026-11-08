@@ -195,6 +195,31 @@ uint32_t dxghost_lane(const void *message, uint32_t size)
 	return ((const struct dxgkvmb_command_vgpu_to_host *)cmd)->process.v;
 }
 
+bool dxghost_nonblocking(const void *message, uint32_t size)
+{
+	uint32_t cmd_size;
+	const uint8_t *cmd = command_of(message, size, &cmd_size);
+	const struct dxgkvmb_command_vgpu_to_host *hdr = (const void *)cmd;
+
+	if (!cmd || hdr->channel_type != DXGKVMB_VGPU_TO_HOST)
+		return false;
+	switch (hdr->command_type) {
+	case DXGK_VMBCOMMAND_SIGNALSYNCOBJECT:
+	case DXGK_VMBCOMMAND_WAITFORSYNCOBJECTFROMGPU:
+	case DXGK_VMBCOMMAND_SUBMITCOMMAND:
+	case DXGK_VMBCOMMAND_SUBMITCOMMANDTOHWQUEUE:
+	case DXGK_VMBCOMMAND_GETDEVICESTATE:
+		return true;
+	case DXGK_VMBCOMMAND_WAITFORSYNCOBJECTFROMCPU:
+		/* Without a guest event the host call blocks until done. */
+		return cmd_size >= sizeof(struct dxgkvmb_command_waitforsyncobjectfromcpu) &&
+		       ((const struct dxgkvmb_command_waitforsyncobjectfromcpu *)
+			cmd)->guest_event_pointer != 0;
+	default:
+		return false;
+	}
+}
+
 static bool process_live(struct dxghost *h, uint32_t token)
 {
 	uint32_t i;

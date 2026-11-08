@@ -1428,9 +1428,24 @@ static void cmd_signal_sync(struct dxghost_msg *m)
 	reply_ntstatus(m, status);
 }
 
+static void wait_free(struct dxghost_wait *w)
+{
+	CloseThreadpoolWait(w->tp);
+	CloseHandle(w->event);
+	free(w);
+}
+
+/*
+ * Moves fired waits to the pool (all: cancels and frees every wait and the
+ * pool). A fired wait's callback has finished its work; waiting for it
+ * only covers its last instructions.
+ */
+#define WAIT_POOL_MAX 64
+
 static void wait_reap(struct dxghost *h, bool all)
 {
 	struct dxghost_wait **link, *w;
+	unsigned pooled = 0;
 
 	AcquireSRWLockExclusive(&h->wait_lock);
 	link = &h->waits;
@@ -1444,13 +1459,55 @@ static void wait_reap(struct dxghost *h, bool all)
 		if (all)
 			SetThreadpoolWait(w->tp, NULL, NULL);
 		WaitForThreadpoolWaitCallbacks(w->tp, all);
-		CloseThreadpoolWait(w->tp);
-		CloseHandle(w->event);
-		free(w);
 		AcquireSRWLockExclusive(&h->wait_lock);
+		if (!all && pooled < WAIT_POOL_MAX) {
+			ResetEvent(w->event);
+			InterlockedExchange(&w->fired, 0);
+			w->next = h->wait_pool;
+			h->wait_pool = w;
+			pooled++;
+		} else {
+			ReleaseSRWLockExclusive(&h->wait_lock);
+			wait_free(w);
+			AcquireSRWLockExclusive(&h->wait_lock);
+		}
 		link = &h->waits;
 	}
+	if (all) {
+		while ((w = h->wait_pool) != NULL) {
+			h->wait_pool = w->next;
+			wait_free(w);
+		}
+	}
 	ReleaseSRWLockExclusive(&h->wait_lock);
+}
+
+static VOID CALLBACK wait_done(PTP_CALLBACK_INSTANCE instance, PVOID context,
+			       PTP_WAIT tp, TP_WAIT_RESULT result);
+
+static struct dxghost_wait *wait_get(struct dxghost *h)
+{
+	struct dxghost_wait *w;
+
+	AcquireSRWLockExclusive(&h->wait_lock);
+	w = h->wait_pool;
+	if (w)
+		h->wait_pool = w->next;
+	ReleaseSRWLockExclusive(&h->wait_lock);
+	if (w)
+		return w;
+	w = calloc(1, sizeof(*w));
+	if (!w)
+		return NULL;
+	w->event = CreateEventW(NULL, TRUE, FALSE, NULL);
+	w->tp = w->event ? CreateThreadpoolWait(wait_done, w, NULL) : NULL;
+	if (!w->tp) {
+		if (w->event)
+			CloseHandle(w->event);
+		free(w);
+		return NULL;
+	}
+	return w;
 }
 
 void dxghost_waits_close(struct dxghost *h)
@@ -1503,7 +1560,7 @@ static void cmd_wait_cpu(struct dxghost_msg *m)
 	}
 
 	wait_reap(h, false);
-	w = calloc(1, sizeof(*w));
+	w = wait_get(h);
 	if (!w) {
 		reply_ntstatus(m, DXG_STATUS_NO_MEMORY);
 		return;
@@ -1511,21 +1568,10 @@ static void cmd_wait_cpu(struct dxghost_msg *m)
 	w->h = h;
 	w->process = m->process;
 	w->guest_event = c->guest_event_pointer;
-	w->event = CreateEventW(NULL, TRUE, FALSE, NULL);
-	w->tp = w->event ? CreateThreadpoolWait(wait_done, w, NULL) : NULL;
-	if (!w->tp) {
-		if (w->event)
-			CloseHandle(w->event);
-		free(w);
-		reply_ntstatus(m, DXG_STATUS_NO_MEMORY);
-		return;
-	}
 	a.async_event = (u64)(uintptr_t)w->event;
 	status = h->kmt.WaitForSynchronizationObjectFromCpu(&a);
 	if (status < 0) {
-		CloseThreadpoolWait(w->tp);
-		CloseHandle(w->event);
-		free(w);
+		wait_free(w);
 		reply_ntstatus(m, status);
 		return;
 	}
