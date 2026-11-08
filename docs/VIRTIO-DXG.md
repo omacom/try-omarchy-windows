@@ -193,13 +193,14 @@ real thing.
 | Piece | State |
 | --- | --- |
 | Wire contract `protocol/virtio_dxg.h` | Done |
-| Guest: `dxgkrnl` over virtio (`guest/`) | Done. Builds against the installed guest kernel `7.2.9-arch1-1`, no warnings in new code at `W=1`. Not yet loaded in a VM. |
-| Host: `dxghost` executor (`host/`) | Done for 50 commands. Unit tested against a fake driver; struct layouts proven identical to the Windows SDK and between GCC and MSVC. Not yet run against the real driver. |
-| QEMU device `virtio-dxg-pci` (`qemu/`) | Written, **not yet compiled**; needs the winq-emu build (MSYS2/CI). |
+| Guest: `dxgkrnl` over virtio (`guest/`) | **Running in the Omarchy VM** (kernel `7.2.9-arch1-1`), loaded by the development boot hook. |
+| Host: `dxghost` executor (`host/`) | **Running against NVIDIA's driver** inside QEMU: CUDA, D3D12, OpenGL, Vulkan (Wine) and the whole desktop. |
+| QEMU device `virtio-dxg-pci` (`qemu/`) | **Built** (development build and the full winq-emu runtime via `qemu/build-runtime.sh`). |
 | NVIDIA Windows Vulkan driver in Linux (`wine/`) | **Working in the Omarchy VM over virtio-dxg** (and on WSL2's `/dev/dxg`): device creation, guest-side shader compile, compute verified, 96–97% GPU-bound like native. Every D3DKMT call the driver makes succeeds. Prototype hooks; to become a Wine/Proton patch. |
 | Whole path in the real guest | The user's Omarchy disk booted read-only (QEMU snapshot), `dxgkrnl_virtio` loaded by an initramfs hook (`guest/test/mkdevinitramfs.py`), NVIDIA's driver store shared read-only over 9p. |
 | Launcher option, guest image staging | Not started |
-| Desktop presentation (zero-copy scanout) | Not started |
+| Whole desktop on the GPU (Hyprland, shell, Xwayland, apps) | **Working**, stage 1: rendered on NVIDIA through Mesa d3d12 with KMS mirrors (`guest/mesa/`), presented by copying each frame into the virtio-gpu scanout buffer. |
+| Desktop presentation (zero-copy scanout) | Next: host-side link of mirrors to their D3D12 resources. |
 
 Not offered yet, with exact replies: cross-process sharing (NT handles,
 `OPENRESOURCE`), existing-sysmem allocations (`VK_EXT_external_memory_host`),
@@ -229,6 +230,33 @@ Fence wake-up, measured with `guest/test/dxgtest`:
 | --- | --- | --- |
 | Blocked wait woken by a signal, median | 45.9 µs | 33.2 µs |
 | Signal + wait round trip, best | 30.1 µs | 29.9 µs |
+
+### The desktop on the GPU
+
+Boot argument `virtio_dxg.desktop=1` runs the user's Omarchy session on the
+host GPU. Hyprland, quickshell and Xwayland load NVIDIA's D3D12 driver
+(`libnvwgf2umx.so`) through Mesa's d3d12 Gallium driver, built with
+virtio-dxg's KMS-mirror patch ([guest/mesa](../virtio-dxg/guest/mesa/README.md)).
+Clients take Mesa's software winsys, as under WSLg: they render on d3d12 and
+hand the compositor `wl_shm` buffers.
+
+Verified in the VM (snapshot boot of the user's disk):
+- wallpaper, bar, terminal and Chromium on screen, composited on NVIDIA;
+- `gbmtest`: GPU frame in the scanout buffer at `glFlush`, about 3 ms at
+  1280×800;
+- six rounds of opening and closing 18 windows with GPU tests in between:
+  the compositor stayed up, QEMU stayed responsive, and no driver events were
+  logged on the host.
+
+That run also found a QEMU use-after-free. An IO-space view's memory region
+was freed while flatviews pending RCU destruction still pointed at it; a
+desktop maps and unmaps views fast enough to hit it within seconds. Views are
+now QOM objects that own their region, so the last flatview frees them, the
+same pattern virtio-gpu uses for blob mappings.
+
+Open on this path: Chromium's GPU process still falls back to software (its
+sandbox does not admit `/dev/dxg`); the per-frame mirror copy goes away with
+the host-side link; Vulkan clients (Dozen) and VA-API in apps are untested.
 
 ## Next milestones
 

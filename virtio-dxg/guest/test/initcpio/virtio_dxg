@@ -38,17 +38,56 @@ run_latehook() {
     # virtio_dxg.desktop=1: the whole session renders on the host GPU.
     # Mesa's software path (which CPU mode already uses for Hyprland and
     # its apps) then runs its d3d12 driver, i.e. NVIDIA's D3D12 driver
-    # over /dev/dxg, instead of llvmpipe; VA-API decodes on it too.
+    # over /dev/dxg, instead of llvmpipe; VA-API decodes and Dozen runs
+    # Vulkan on it too. The compositor needs virtio-dxg's Mesa build (KMS
+    # mirrors for scanout, guest/mesa/), unpacked from the development share.
     case " $(cat /proc/cmdline) " in
     *" virtio_dxg.desktop=1 "*)
         printf '%s\n' /usr/lib/wsl/lib /usr/lib/wsl/core \
             >/new_root/etc/ld.so.conf.d/virtio-dxg.conf
         chroot /new_root /usr/bin/ldconfig
         mkdir -p /new_root/etc/environment.d
-        printf '%s\n' GALLIUM_DRIVER=d3d12 \
+        env=/new_root/etc/environment.d/90-virtio-dxg.conf
+        # Clients take Mesa's software winsys (wl_shm buffers) with d3d12
+        # rendering, as under WSLg; the compositor renders on d3d12 into
+        # KMS-mirrored scanout buffers.
+        printf '%s\n' GALLIUM_DRIVER=d3d12 LIBGL_ALWAYS_SOFTWARE=1 \
             MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA LIBVA_DRIVER_NAME=d3d12 \
-            >/new_root/etc/environment.d/90-virtio-dxg.conf
+            >"$env"
+        m=/opt/virtio-dxg-mesa
+        tarball=/mnt/vdxgshare/out/mesa-virtio-dxg.tar
+        if [ -f "/new_root$tarball" ]; then
+            mkdir -p "/new_root$m"
+            chroot /new_root /usr/bin/tar -xf "$tarball" -C "$m"
+            chroot /new_root /usr/bin/sed -i "s|/usr/lib/libvulkan_dzn.so|$m/lib/libvulkan_dzn.so|" \
+                "$m/share/vulkan/icd.d/dzn_icd.x86_64.json"
+            printf '%s\n' "LD_LIBRARY_PATH=$m/lib" \
+                "LIBGL_DRIVERS_PATH=$m/lib/dri" "GBM_BACKENDS_PATH=$m/lib/gbm" \
+                "LIBVA_DRIVERS_PATH=$m/lib/dri" \
+                "VK_DRIVER_FILES=$m/share/vulkan/icd.d/dzn_icd.x86_64.json" \
+                >>"$env"
+            echo ":: virtio-dxg: Mesa $(cat "/new_root$m/lib/virtio-dxg-mesa-version")"
+        fi
         echo ":: virtio-dxg: desktop renders through d3d12"
+        ;;
+    esac
+    # virtio_dxg.root=1: run vdxgshare/root.sh as root once the network is
+    # up (development boots of a snapshot disk only; output in out/root.log).
+    case " $(cat /proc/cmdline) " in
+    *" virtio_dxg.root=1 "*)
+        cat >/new_root/etc/systemd/system/virtio-dxg-root.service <<'EOF'
+[Unit]
+Description=virtio-dxg development root script
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/bin/bash /mnt/vdxgshare/root.sh >/mnt/vdxgshare/out/root.log 2>&1'
+EOF
+        mkdir -p /new_root/etc/systemd/system/multi-user.target.wants
+        ln -sf ../virtio-dxg-root.service \
+            /new_root/etc/systemd/system/multi-user.target.wants/
         ;;
     esac
     # The account the launcher's per-boot SSH authorizes (same rule as its

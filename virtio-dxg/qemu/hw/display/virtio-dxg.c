@@ -53,12 +53,22 @@ typedef struct DxgLane {
     bool quit;
 } DxgLane;
 
-typedef struct DxgMapping {
+/*
+ * A host view mapped into the IO-space BAR. Its own QOM object owns the
+ * region, so the flatviews that still reference the region after it is
+ * removed (until their RCU destruction) keep it alive, and QOM frees it
+ * after the last one, as virtio-gpu does for blob mappings.
+ */
+#define TYPE_VIRTIO_DXG_VIEW "virtio-dxg-view"
+OBJECT_DECLARE_SIMPLE_TYPE(DxgMapping, VIRTIO_DXG_VIEW)
+
+struct DxgMapping {
+    Object parent_obj;
     MemoryRegion mr;
     uint64_t offset;
     uint64_t size;
     QTAILQ_ENTRY(DxgMapping) next;
-} DxgMapping;
+};
 
 typedef struct DxgEvent {
     uint32_t size;
@@ -86,12 +96,6 @@ static uint64_t dxg_iospace_gpa(VirtIODxg *d)
     return addr == PCI_BAR_UNMAPPED ? 0 : addr;
 }
 
-/* QOM frees a view once the last flatview reference is gone. */
-static void dxg_mapping_free(void *obj)
-{
-    g_free(container_of(MEMORY_REGION(obj), DxgMapping, mr));
-}
-
 static int dxg_map(void *opaque, uint64_t gpa, void *hva, uint64_t size,
                    bool writable)
 {
@@ -112,12 +116,13 @@ static int dxg_map(void *opaque, uint64_t gpa, void *hva, uint64_t size,
         }
         return -1;
     }
-    m = g_new0(DxgMapping, 1);
+    m = VIRTIO_DXG_VIEW(object_new(TYPE_VIRTIO_DXG_VIEW));
     m->offset = gpa - base;
     m->size = size;
-    name = g_strdup_printf("virtio-dxg-view-%" PRIx64, m->offset);
-    memory_region_init_ram_ptr(&m->mr, OBJECT(d), name, size, hva);
-    OBJECT(&m->mr)->free = dxg_mapping_free;
+    name = g_strdup_printf("view-%" PRIx64, m->offset);
+    object_property_add_child(OBJECT(d), name, OBJECT(m));
+    object_unref(OBJECT(m));            /* the device's child reference */
+    memory_region_init_ram_ptr(&m->mr, OBJECT(m), "mr", size, hva);
     memory_region_set_readonly(&m->mr, !writable);
     memory_region_add_subregion(&d->iospace, m->offset, &m->mr);
     QTAILQ_INSERT_TAIL(&d->state->mappings, m, next);
@@ -142,7 +147,7 @@ static void dxg_unmap(void *opaque, uint64_t gpa, uint64_t size)
         if (m->offset == offset && m->size == size) {
             QTAILQ_REMOVE(&d->state->mappings, m, next);
             memory_region_del_subregion(&d->iospace, &m->mr);
-            object_unparent(OBJECT(&m->mr));  /* frees via dxg_mapping_free */
+            object_unparent(OBJECT(m));   /* freed after the last flatview */
             break;
         }
     }
@@ -569,6 +574,12 @@ static void dxg_class_init(ObjectClass *klass, const void *data)
     vdc->reset = dxg_reset;
 }
 
+static const TypeInfo dxg_view_info = {
+    .name = TYPE_VIRTIO_DXG_VIEW,
+    .parent = TYPE_OBJECT,
+    .instance_size = sizeof(DxgMapping),
+};
+
 static const TypeInfo dxg_info = {
     .name = TYPE_VIRTIO_DXG,
     .parent = TYPE_VIRTIO_DEVICE,
@@ -636,6 +647,7 @@ static const VirtioPCIDeviceTypeInfo dxg_pci_info = {
 
 static void dxg_register_types(void)
 {
+    type_register_static(&dxg_view_info);
     type_register_static(&dxg_info);
     virtio_pci_types_register(&dxg_pci_info);
 }
