@@ -113,6 +113,8 @@ int dxghost_create(const struct dxghost_config *config,
 		dxghost_logf(h, "no adapter LUID configured");
 		goto fail;
 	}
+	/* Development: DXGHOST_TRACE logs every command and its result. */
+	h->trace = getenv("DXGHOST_TRACE") != NULL;
 	dxghost_logf(h, "host GPU ready");
 	*out = h;
 	return 0;
@@ -311,4 +313,15 @@ void dxghost_execute(struct dxghost *h, uint32_t channel,
 	resp->status = m.status;
 	resp->size = m.res_len;
 	resp->ntstatus = (uint32_t)m.ntstatus;
+	if (h->trace) {
+		uint32_t first = 0;
+
+		if (m.res_len >= 4)
+			memcpy(&first, m.res, 4);
+		dxghost_logf(h, "%s %u: status %u ntstatus 0x%08x reply %u "
+			     "bytes, first word 0x%08x",
+			     channel_type == DXGKVMB_VM_TO_HOST ? "global" :
+			     "adapter", type, m.status, (unsigned)m.ntstatus,
+			     m.res_len, first);
+	}
 }

@@ -2,7 +2,22 @@
 # mkinitcpio late hook for virtio-dxg development boots (added by
 # mkdevinitramfs.py; never part of a shipped image). Runs as root before
 # the real root starts: loads the guest module, which stays loaded after
-# switch_root, and mounts the development shares the VM was started with.
+# switch_root, and mounts the shares the VM was started with:
+#
+#   wsllib      System32\lxss\lib (NVIDIA's dxgkrnl user-mode libraries)
+#   wslcore     Program Files\WSL\lib (libdxcore, libd3d12)
+#   wsldrivers  the DriverStore FileRepository, read-only, as under WSL2
+#   vdxgshare   development files and results
+#   vdxgdrivers NVIDIA's driver folder (Wine's DriverStore path)
+
+mount_share() {
+    mkdir -p "/new_root$2"
+    # cache=mmap: Wine maps DLL images and ld.so maps libraries from these.
+    if mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576,cache=mmap \
+            "$1" "/new_root$2" 2>/dev/null; then
+        echo ":: virtio-dxg: mounted $1 on $2"
+    fi
+}
 
 run_latehook() {
     if insmod /virtio-dxg/dxgkrnl_virtio.ko; then
@@ -15,14 +30,11 @@ run_latehook() {
     echo 1 >/proc/sys/vm/overcommit_memory
     modprobe -q 9pnet_virtio
     modprobe -q 9p
-    for tag in vdxgshare vdxgdrivers; do
-        mkdir -p "/new_root/mnt/$tag"
-        # cache=mmap: Wine maps DLL images from these files.
-        if mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576,cache=mmap \
-                "$tag" "/new_root/mnt/$tag" 2>/dev/null; then
-            echo ":: virtio-dxg: mounted $tag"
-        fi
-    done
+    mount_share wsllib /usr/lib/wsl/lib
+    mount_share wslcore /usr/lib/wsl/core
+    mount_share wsldrivers /usr/lib/wsl/drivers
+    mount_share vdxgshare /mnt/vdxgshare
+    mount_share vdxgdrivers /mnt/vdxgdrivers
     # The account the launcher's per-boot SSH authorizes (same rule as its
     # request-sshd), so the host test knows whom to log in as.
     if [ -d /new_root/mnt/vdxgshare/out ]; then

@@ -727,6 +727,131 @@ static u8 *dxg_map_iospace(u64 iospace_address, u32 size,
 #endif
 }
 
+#ifdef DXG_VIRTIO
+/*
+ * Existing sysmem allocations. Under Hyper-V the host kernel maps the
+ * guest's own pages for the GPU; a user-mode host cannot, and D3DKMT takes
+ * one contiguous host buffer. So the host provides that buffer and exposes
+ * it in the IO space, and the guest moves the user range onto it: the data
+ * is copied in and the range is remapped at the same address, so the
+ * application keeps its pointer while the GPU reads and writes the same
+ * memory. Destroying the allocation moves the range back to ordinary
+ * memory first.
+ */
+static int dxg_map_iospace_at(unsigned long va, u64 iospace_address,
+			      u64 size, unsigned long protection, bool cached)
+{
+	struct vm_area_struct *vma;
+	unsigned long got;
+	int ret = -ENOMEM;
+
+	if (size > U32_MAX ||
+	    check_iospace_address(iospace_address, (u32)size) < 0)
+		return -EINVAL;
+	got = vm_mmap(NULL, va, size, protection,
+		      MAP_SHARED | MAP_ANONYMOUS | MAP_FIXED, 0);
+	if (got != va)
+		return -ENOMEM;
+	mmap_read_lock(current->mm);
+	vma = find_vma(current->mm, va);
+	if (vma && vma->vm_start == va && vma->vm_end == va + size) {
+		pgprot_t prot = vma->vm_page_prot;
+
+		if (!cached)
+			prot = pgprot_writecombine(prot);
+		vma->vm_pgoff = iospace_address >> PAGE_SHIFT;
+		ret = io_remap_pfn_range(vma, va, vma->vm_pgoff, size, prot);
+	}
+	mmap_read_unlock(current->mm);
+	return ret;
+}
+
+static int dxg_migrate_sysmem(struct dxgdevice *device,
+			      struct dxgkvmb_command_allocinfo_return *host_alloc,
+			      struct dxgallocation *alloc, const void *sysmem)
+{
+	struct dxgkvmb_command_lock2_return_virtio result = { };
+	struct dxgkvmb_command_lock2 *command;
+	struct dxgvmbusmsg msg = {.hdr = NULL};
+	unsigned long va = (unsigned long)sysmem;
+	/* 0: the host backs it with driver memory; Lock2 tells the size. */
+	u64 size = PAGE_ALIGN(host_alloc->allocation_size);
+	void *kmem;
+	u64 gpa;
+	int ret;
+
+	if (!PAGE_ALIGNED(va) || !current->mm)
+		return -EINVAL;
+	ret = init_message(&msg, device->adapter, device->process,
+			   sizeof(*command));
+	if (ret)
+		return ret;
+	command = (void *)msg.msg;
+	command_vgpu_to_host_init2(&command->hdr, DXGK_VMBCOMMAND_LOCK2,
+				   device->process->host_handle);
+	command->args.device = device->handle;
+	command->args.allocation = host_alloc->allocation;
+	ret = dxgvmb_send_sync_msg(msg.channel, msg.hdr, msg.size,
+				   &result, sizeof(result));
+	free_message(&msg);
+	if (ret < 0)
+		return ret;
+	ret = ntstatus2int(result.base.status);
+	if (ret < 0)
+		return ret;
+	gpa = (u64)(uintptr_t)result.base.cpu_visible_buffer_offset;
+	if (!size)
+		size = result.mapped_size;
+	if (!size || result.mapped_size < size) {
+		DXG_ERR("existing sysmem: host maps %llx of %llx bytes",
+			result.mapped_size, size);
+		return -EINVAL;
+	}
+	kmem = memremap(gpa, size, MEMREMAP_WB);
+	if (!kmem)
+		return -ENOMEM;
+	ret = copy_from_user(kmem, sysmem, size) ? -EFAULT : 0;
+	memunmap(kmem);
+	if (ret)
+		return ret;
+	ret = dxg_map_iospace_at(va, gpa, size, PROT_READ | PROT_WRITE,
+				 result.flags & DXGK_VIRTIO_LOCK2_CACHED);
+	if (ret) {
+		DXG_ERR("existing sysmem: remapping %lx failed: %d", va, ret);
+		return ret;
+	}
+	alloc->cpu_address = (void *)sysmem;
+	alloc->num_pages = size >> PAGE_SHIFT;
+	alloc->migrated_gpa = gpa;
+	alloc->migrated_size = size;
+	alloc->migrated_mm = current->mm;
+	return 0;
+}
+
+void dxg_unmigrate_sysmem(struct dxgallocation *alloc)
+{
+	unsigned long va = (unsigned long)alloc->cpu_address;
+	u64 size = alloc->migrated_size;
+	void *kmem;
+
+	if (!size)
+		return;
+	alloc->migrated_size = 0;
+	alloc->cpu_address = NULL;
+	/* An exiting process has no address space left to restore. */
+	if (!current->mm || current->mm != alloc->migrated_mm)
+		return;
+	kmem = memremap(alloc->migrated_gpa, size, MEMREMAP_WB);
+	if (!kmem)
+		return;
+	if (vm_mmap(NULL, va, size, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, 0) == va &&
+	    copy_to_user((void __user *)va, kmem, size))
+		DXG_ERR("existing sysmem: restoring %lx failed", va);
+	memunmap(kmem);
+}
+#endif
+
 /*
  * Global messages to the host
  */
@@ -1567,6 +1692,9 @@ int create_existing_sysmem(struct dxgdevice *device,
 
 	DXG_TRACE("Alloc size: %lld", alloc_size);
 
+#ifdef DXG_VIRTIO
+	return dxg_migrate_sysmem(device, host_alloc, dxgalloc, sysmem);
+#endif
 	dxgalloc->cpu_address = (void *)sysmem;
 
 	dxgalloc->pages = vzalloc(npages * sizeof(void *));

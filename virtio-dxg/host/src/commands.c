@@ -218,6 +218,22 @@ static void forget(struct dxghost *h, uint32_t handle)
 		notify_close(o->notify);
 		o->notify = NULL;
 	}
+	if (o->sysmem) {
+		if (h->sysmem_free_count == h->sysmem_free_capacity) {
+			uint32_t n = h->sysmem_free_capacity ?
+				     h->sysmem_free_capacity * 2 : 16;
+			void **p = realloc(h->sysmem_free, n * sizeof(*p));
+
+			if (p) {
+				h->sysmem_free = p;
+				h->sysmem_free_capacity = n;
+			}
+		}
+		/* Leaked rather than freed under the driver's lock. */
+		if (h->sysmem_free_count < h->sysmem_free_capacity)
+			h->sysmem_free[h->sysmem_free_count++] = o->sysmem;
+		o->sysmem = NULL;
+	}
 	dxghost_obj_remove(h, handle);
 	/* Allocations have no children; avoid a table scan per allocation. */
 	if (o->type == OBJ_ALLOCATION)
@@ -336,6 +352,7 @@ void dxghost_destroy_process_objects(struct dxghost *h, uint32_t process)
 	free(handles);
 	free(types);
 	va_remove(h, process, 0, UINT64_MAX);
+	dxghost_sysmem_release(h);
 }
 
 static void cmd_destroy_process(struct dxghost_msg *m)
@@ -419,11 +436,23 @@ void dxghost_exec_global(struct dxghost_msg *m, uint32_t type)
 	case DXGK_VMBCOMMAND_ISFEATUREENABLED_GLOBAL:
 		cmd_feature_global(m);
 		break;
-	case DXGK_VMBCOMMAND_CREATENTSHAREDOBJECT:
-		/* Cross-process sharing is not offered yet: handle 0. */
-		reply(m, sizeof(struct d3dkmthandle));
+	case DXGK_VMBCOMMAND_CREATENTSHAREDOBJECT: {
+		/*
+		 * The NT-handle stand-in for a global name is the name itself;
+		 * opening it from another guest process is not offered yet.
+		 */
+		const struct dxgkvmb_command_createntsharedobject *c =
+			(const void *)m->cmd;
+		struct d3dkmthandle *r = m->cmd_size >= sizeof(*c) ?
+			reply(m, sizeof(*r)) : NULL;
+
+		if (r)
+			*r = c->object;
 		break;
+	}
 	case DXGK_VMBCOMMAND_DESTROYNTSHAREDOBJECT:
+		reply_ntstatus(m, DXG_STATUS_SUCCESS);
+		break;
 	case DXGK_VMBCOMMAND_OPENSYNCOBJECT:
 	case DXGK_VMBCOMMAND_SHAREOBJECTWITHHOST:
 		/* Every reply here begins with an NTSTATUS. */
@@ -487,6 +516,25 @@ static void cmd_close_adapter(struct dxghost_msg *m)
 	UNLOCK(h);
 }
 
+/* Development: hex dump of private data with DXGHOST_TRACE. */
+static void trace_hex(struct dxghost *h, const char *what, const void *data,
+		      uint32_t size)
+{
+	const uint8_t *d = data;
+	char line[80];
+	uint32_t k, len = 0;
+
+	if (!h->trace || !d)
+		return;
+	for (k = 0; k < size && k < 4096; k++) {
+		len += snprintf(line + len, sizeof(line) - len, "%02x", d[k]);
+		if (k % 32 == 31 || k + 1 == size) {
+			dxghost_logf(h, "  %s %04x: %s", what, k & ~31u, line);
+			len = 0;
+		}
+	}
+}
+
 static int32_t query(struct dxghost *h, uint32_t type, void *data,
 		     uint32_t size)
 {
@@ -539,7 +587,59 @@ static void cmd_internal_adapter_info(struct dxghost_msg *m)
  * The Windows UMD path names a .dll; the guest needs the Linux build that
  * NVIDIA ships beside it: nvwgf2umx.dll -> libnvwgf2umx.so.
  */
-static void adapt_umd_name(struct dxghost *h, u8 *data, uint32_t size)
+/*
+ * The Linux user-mode driver a vGPU host reports: the adapter's
+ * UserModeDriverNameWsl registry value, which NVIDIA's INF sets to its
+ * dxgkrnl build of the D3D12 driver (libnvwgf2umx.so). Read once through
+ * D3DKMT; 0 when the driver has none.
+ */
+#define QAI_QUERYREGISTRY	48
+
+static uint32_t wsl_umd_path(struct dxghost *h, u16 *out, uint32_t max)
+{
+	static const char value[] = "UserModeDriverNameWsl";
+	static const uint32_t types[] = { 7 /* REG_MULTI_SZ */, 1 /* REG_SZ */ };
+	u8 buffer[552 + 1040];
+	uint32_t t, i, len = 0;
+
+	for (t = 0; t < 2 && !len; t++) {
+		uint32_t status, out_size;
+
+		uint32_t adapter_key = 1;	/* D3DDDI_QUERYREGISTRY_ADAPTERKEY */
+
+		memset(buffer, 0, sizeof(buffer));
+		/* D3DDDI_QUERYREGISTRY_INFO: adapter key, no flags. */
+		memcpy(buffer, &adapter_key, 4);
+		for (i = 0; value[i]; i++)
+			((u16 *)(buffer + 8))[i] = (u16)value[i];
+		int32_t nt;
+
+		memcpy(buffer + 528, &types[t], 4);
+		nt = query(h, QAI_QUERYREGISTRY, buffer, sizeof(buffer));
+		memcpy(&out_size, buffer + 536, 4);
+		memcpy(&status, buffer + 540, 4);
+		if (h->trace)
+			dxghost_logf(h, "UserModeDriverNameWsl (type %u): ntstatus "
+				     "0x%08x, status %u, %u bytes", types[t],
+				     (unsigned)nt, status, out_size);
+		if (nt < 0)
+			continue;
+		if (status != 0 || out_size < 4)
+			continue;
+		for (len = 0; len + 1 < max && 544 + 2 * (len + 1) <= sizeof(buffer);
+		     len++) {
+			memcpy(&out[len], buffer + 544 + 2 * len, 2);
+			if (!out[len])
+				break;
+		}
+	}
+	return len;
+}
+
+#define KMTUMDVERSION_DX12	3
+
+/* Returns false when the guest must get "not supported" instead. */
+static bool adapt_umd_name(struct dxghost *h, u8 *data, uint32_t size)
 {
 	u16 *path = (u16 *)(data + sizeof(u32));
 	const uint32_t max = 260;
@@ -547,14 +647,29 @@ static void adapt_umd_name(struct dxghost *h, u8 *data, uint32_t size)
 	char name[128];
 
 	if (size < sizeof(u32) + max * sizeof(u16))
-		return;
+		return true;
+	if (!h->config.linux_umd_name) {
+		u16 wsl[260];
+		uint32_t version, n = wsl_umd_path(h, wsl, 260);
+
+		memcpy(&version, data, sizeof(version));
+		if (n) {
+			/* Only D3D12 has a Linux driver; D3D9-11 do not exist
+			 * there, as under WSL2. */
+			if (version != KMTUMDVERSION_DX12)
+				return false;
+			memset(path, 0, max * sizeof(u16));
+			memcpy(path, wsl, n * sizeof(u16));
+			return true;
+		}
+	}
 	while (len < max && path[len]) {
 		if (path[len] == '\\' || path[len] == '/')
 			base = len + 1;
 		len++;
 	}
 	if (len == max)
-		return;
+		return true;
 	if (h->config.linux_umd_name) {
 		snprintf(name, sizeof(name), "%s", h->config.linux_umd_name);
 	} else {
@@ -572,6 +687,7 @@ static void adapt_umd_name(struct dxghost *h, u8 *data, uint32_t size)
 		path[base + i] = (u16)name[i];
 	for (; base + i < max; i++)
 		path[base + i] = 0;
+	return true;
 }
 
 /*
@@ -623,8 +739,30 @@ static void cmd_query_adapter_info(struct dxghost_msg *m)
 	out = (u8 *)(status + 1);
 	memcpy(out, in, size);	/* queries can carry input data */
 	status->v = query(m->h, c->query_type, out, size);
-	if (status->v >= 0 && c->query_type == DXGHOST_QAI_UMDRIVERNAME)
-		adapt_umd_name(m->h, out, size);
+	if (c->query_type == 48 && size >= 548 && m->h->trace) {
+		/* D3DDDI_QUERYREGISTRY_INFO: type, flags, name[260], value
+		 * type, adapter, output size, status, data. */
+		char name[128];
+		uint32_t qtype, rstatus, i;
+
+		memcpy(&qtype, out, 4);
+		memcpy(&rstatus, out + 540, 4);
+		for (i = 0; i < sizeof(name) - 1; i++) {
+			uint16_t ch;
+
+			memcpy(&ch, out + 8 + 2 * i, 2);
+			if (!ch)
+				break;
+			name[i] = ch < 128 ? (char)ch : '?';
+		}
+		name[i] = 0;
+		dxghost_logf(m->h, "registry query %u '%s': ntstatus 0x%08x, "
+			     "status %u", qtype, name, (unsigned)status->v,
+			     rstatus);
+	}
+	if (status->v >= 0 && c->query_type == DXGHOST_QAI_UMDRIVERNAME &&
+	    !adapt_umd_name(m->h, out, size))
+		status->v = DXG_STATUS_INVALID_PARAMETER;
 	if (status->v >= 0 && c->query_type == DXGHOST_QAI_UMDRIVERPRIVATE)
 		adapt_private_data(out, size);
 }
@@ -680,6 +818,7 @@ static void cmd_destroy_device(struct dxghost_msg *m)
 	forget_locked(h, c->device.v);
 	d.device = c->device;
 	reply_ntstatus(m, h->kmt.DestroyDevice(&d));
+	dxghost_sysmem_release(h);
 }
 
 static void cmd_create_context(struct dxghost_msg *m)
@@ -722,6 +861,13 @@ static void cmd_create_context(struct dxghost_msg *m)
 	a.priv_drv_data = size ? (u64)(uintptr_t)r->priv_drv_data : 0;
 	a.priv_drv_data_size = size;
 	a.client_hint = c->client_hint;
+	if (h->trace) {
+		dxghost_logf(h, "CreateContextVirtual node %u engines 0x%x flags "
+			     "0x%x hint %u, %u bytes", c->node_ordinal,
+			     c->engine_affinity, *(const uint32_t *)&c->flags,
+			     (unsigned)c->client_hint, size);
+		trace_hex(h, "ctx", r->priv_drv_data, size);
+	}
 	{
 		int32_t status = h->kmt.CreateContextVirtual(&a);
 
@@ -825,6 +971,292 @@ static void cmd_destroy_paging_queue(struct dxghost_msg *m)
 
 /* --- Allocations ------------------------------------------------------ */
 
+/*
+ * Existing-sysmem allocations. D3DKMT wants one contiguous buffer in this
+ * process, and only the kernel driver knows how large the allocation is.
+ * Each one gets a fresh committed region; the driver probes and locks
+ * exactly the allocation's pages, so the resident prefix of the region is
+ * its size. The rest is decommitted, and the guest moves its range onto
+ * the region (see dxg_migrate_sysmem in the guest).
+ */
+void dxghost_sysmem_release(struct dxghost *h)
+{
+	void **list;
+	uint32_t n, i;
+
+	LOCK(h);
+	list = h->sysmem_free;
+	n = h->sysmem_free_count;
+	h->sysmem_free = NULL;
+	h->sysmem_free_count = h->sysmem_free_capacity = 0;
+	UNLOCK(h);
+	for (i = 0; i < n; i++)
+		VirtualFree(list[i], 0, MEM_RELEASE);
+	free(list);
+}
+
+typedef struct {
+	PVOID VirtualAddress;
+	ULONG_PTR Attributes;	/* bit 0: Valid */
+} working_set_ex;
+
+static uint64_t resident_prefix(const u8 *base, uint64_t size)
+{
+	static BOOL(WINAPI *query)(HANDLE, PVOID, DWORD);
+	working_set_ex info[256];
+	uint64_t pages = size / PAGE_4K, done = 0;
+
+	if (!query)
+		query = (BOOL(WINAPI *)(HANDLE, PVOID, DWORD))(void *)
+			GetProcAddress(GetModuleHandleW(L"kernel32.dll"),
+				       "K32QueryWorkingSetEx");
+	if (!query)
+		return 0;
+	while (done < pages) {
+		uint64_t n = pages - done < 256 ? pages - done : 256, k;
+
+		for (k = 0; k < n; k++)
+			info[k].VirtualAddress = (PVOID)(base + (done + k) * PAGE_4K);
+		if (!query(GetCurrentProcess(), info,
+			   (DWORD)(n * sizeof(info[0]))))
+			return done * PAGE_4K;
+		for (k = 0; k < n; k++)
+			if (!(info[k].Attributes & 1))
+				return (done + k) * PAGE_4K;
+		done += n;
+	}
+	return size;
+}
+
+/*
+ * NVIDIA's GPU-PV user-mode driver describes pinned (existing sysmem)
+ * memory as pages a vGPU host supplies later. Its native Windows driver
+ * describes the same memory as a cross-adapter standard allocation of type
+ * ExistingHeap with an explicit size, which a native caller can create.
+ * The private data (586 bytes, 'NVDA' header) differs only where that
+ * description lives: the size in 64 KiB units at 0xD0 is present in both;
+ * native also sets 0x10000 | units at 0xC4 and 1 at byte 0x23. Returns the
+ * size in bytes, or 0 when the data is not that layout.
+ */
+#define NV_SYSMEM_PRIV_SIZE	586u
+
+static uint64_t nv_sysmem_size(const u8 *priv, uint32_t size)
+{
+	uint32_t magic, length, units;
+
+	if (size != NV_SYSMEM_PRIV_SIZE)
+		return 0;
+	memcpy(&magic, priv, 4);
+	memcpy(&length, priv + 8, 4);
+	memcpy(&units, priv + 0xd0, 4);
+	if (magic != NVDA_PRIVATE_MAGIC || length != NV_SYSMEM_PRIV_SIZE ||
+	    !units || units > (1u << 20))
+		return 0;
+	return (uint64_t)units << 16;
+}
+
+/*
+ * Driver-internal system memory (queue rings, for instance): natively a
+ * plain allocation whose pSystemMem is set, without the ExistingSysMem
+ * flag, private data unchanged.
+ */
+static int32_t create_nv_plain_sysmem(struct dxghost *h,
+				      struct d3dkmt_createallocation *a,
+				      struct d3dddi_allocationinfo2 *a2,
+				      void **regions, uint64_t *sizes)
+{
+	struct d3dkmt_createallocation n = *a;
+	uint64_t size;
+	int32_t status;
+
+	if (a->alloc_count != 1 || a->priv_drv_data_size)
+		return DXG_STATUS_NOT_SUPPORTED;
+	size = nv_sysmem_size((const u8 *)(uintptr_t)a2[0].priv_drv_data,
+			      a2[0].priv_drv_data_size);
+	if (!size)
+		return DXG_STATUS_NOT_SUPPORTED;
+	regions[0] = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT,
+				  PAGE_READWRITE);
+	if (!regions[0])
+		return DXG_STATUS_NO_MEMORY;
+	n.flags.existing_sysmem = 0;
+	a2[0].sysmem = (u64)(uintptr_t)regions[0];
+	status = h->kmt.CreateAllocation2(&n);
+	dxghost_logf(h, "existing sysmem as plain system memory of %llu "
+		     "bytes: 0x%08x", (unsigned long long)size, (unsigned)status);
+	if (status < 0) {
+		VirtualFree(regions[0], 0, MEM_RELEASE);
+		regions[0] = NULL;
+		a2[0].sysmem = 0;
+		return status;
+	}
+	a->resource = n.resource;
+	a->global_share = n.global_share;
+	sizes[0] = size;
+	return status;
+}
+
+static uint64_t nv_sysmem_native(u8 *priv, uint32_t size)
+{
+	uint32_t magic, length, units, descriptor;
+
+	if (size != NV_SYSMEM_PRIV_SIZE)
+		return 0;
+	memcpy(&magic, priv, 4);
+	memcpy(&length, priv + 8, 4);
+	memcpy(&units, priv + 0xd0, 4);
+	if (magic != NVDA_PRIVATE_MAGIC || length != NV_SYSMEM_PRIV_SIZE ||
+	    !units || units > (1u << 20))
+		return 0;
+	descriptor = 0x10000u | units;
+	memcpy(priv + 0xc4, &descriptor, 4);
+	priv[0x23] = 1;
+	return (uint64_t)units << 16;
+}
+
+static int32_t create_nv_native_sysmem(struct dxghost *h,
+				       struct d3dkmt_createallocation *a,
+				       struct d3dddi_allocationinfo2 *a2,
+				       void **regions, uint64_t *sizes)
+{
+	struct d3dkmt_createstandardallocation sa;
+	struct d3dkmt_createallocation n = *a;
+	uint8_t backup[NV_SYSMEM_PRIV_SIZE];
+	u8 *priv = (u8 *)(uintptr_t)a2[0].priv_drv_data;
+	uint64_t size;
+	int32_t status;
+
+	if (a->alloc_count != 1 || a->priv_drv_data_size ||
+	    a2[0].priv_drv_data_size != NV_SYSMEM_PRIV_SIZE)
+		return DXG_STATUS_NOT_SUPPORTED;
+	memcpy(backup, priv, sizeof(backup));
+	size = nv_sysmem_native(priv, a2[0].priv_drv_data_size);
+	if (!size)
+		return DXG_STATUS_NOT_SUPPORTED;
+	regions[0] = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT,
+				  PAGE_READWRITE);
+	if (!regions[0]) {
+		memcpy(priv, backup, sizeof(backup));
+		return DXG_STATUS_NO_MEMORY;
+	}
+	memset(&sa, 0, sizeof(sa));
+	sa.type = 1;	/* D3DKMT_STANDARDALLOCATIONTYPE_EXISTINGHEAP */
+	sa.existing_heap_data.size = size;
+	n.flags.create_shared = 1;
+	n.flags.cross_adapter = 1;
+	n.flags.standard_allocation = 1;
+	n.standard_allocation = (u64)(uintptr_t)&sa;
+	n.priv_drv_data_size = 0;
+	a2[0].sysmem = (u64)(uintptr_t)regions[0];
+	status = h->kmt.CreateAllocation2(&n);
+	dxghost_logf(h, "existing sysmem as a native heap of %llu bytes: "
+		     "0x%08x", (unsigned long long)size, (unsigned)status);
+	if (status < 0) {
+		VirtualFree(regions[0], 0, MEM_RELEASE);
+		regions[0] = NULL;
+		memcpy(priv, backup, sizeof(backup));
+		a2[0].sysmem = 0;
+		return status;
+	}
+	a->resource = n.resource;
+	a->global_share = n.global_share;
+	sizes[0] = size;
+	return status;
+}
+
+static int32_t create_with_sysmem(struct dxghost *h,
+				  struct d3dkmt_createallocation *a,
+				  struct d3dddi_allocationinfo2 *a2,
+				  uint32_t count, void **regions,
+				  uint64_t *sizes)
+{
+	static const uint64_t tries[] = { 64ull << 20, 512ull << 20,
+					  4ull << 30, 32ull << 30 };
+	int32_t status = DXG_STATUS_NO_MEMORY;
+	uint32_t t, i;
+
+	if (h->trace) {
+		char line[400];
+		uint32_t n, k, len = 0;
+
+		dxghost_logf(h, "existing sysmem request: flags 0x%x, %u "
+			     "allocation(s), runtime %u, global %u bytes",
+			     *(const uint32_t *)&a->flags, count,
+			     a->private_runtime_data_size, a->priv_drv_data_size);
+		for (i = 0; i < count; i++) {
+			const u8 *d = (const u8 *)(uintptr_t)a2[i].priv_drv_data;
+
+			n = a2[i].priv_drv_data_size;
+			for (k = 0, len = 0; k < n && k < 320; k++) {
+				len += snprintf(line + len, sizeof(line) - len,
+						"%02x", d[k]);
+				if (k % 32 == 31 || k + 1 == n || k == 319) {
+					dxghost_logf(h, "  [%u] %u: %s", i, n, line);
+					len = 0;
+				}
+			}
+		}
+	}
+	status = create_nv_plain_sysmem(h, a, a2, regions, sizes);
+	if (status >= 0)
+		return status;
+	status = create_nv_native_sysmem(h, a, a2, regions, sizes);
+	if (status >= 0)
+		return status;
+	/*
+	 * Otherwise: the driver allocates CPU-visible system memory
+	 * itself. Lock2 then exposes it and gives its size, and the guest
+	 * moves its range onto it. NVIDIA's GPU-PV private data describes
+	 * guest-provided pages, which a native caller cannot pass.
+	 */
+	a->flags.existing_sysmem = 0;
+	for (i = 0; i < count; i++) {
+		a2[i].sysmem = 0;
+		regions[i] = NULL;
+		sizes[i] = 0;
+	}
+	status = h->kmt.CreateAllocation2(a);
+	dxghost_logf(h, "existing sysmem as driver-allocated memory: 0x%08x",
+		     (unsigned)status);
+	if (status >= 0)
+		return status;
+	a->flags.existing_sysmem = 1;
+
+	for (t = 0; t < sizeof(tries) / sizeof(tries[0]); t++) {
+		for (i = 0; i < count; i++) {
+			regions[i] = VirtualAlloc(NULL, tries[t],
+						  MEM_RESERVE | MEM_COMMIT,
+						  PAGE_READWRITE);
+			if (!regions[i])
+				break;
+			a2[i].sysmem = (u64)(uintptr_t)regions[i];
+		}
+		if (i == count)
+			status = h->kmt.CreateAllocation2(a);
+		if (i == count && status >= 0) {
+			for (i = 0; i < count; i++) {
+				sizes[i] = resident_prefix(regions[i], tries[t]);
+				if (!sizes[i])
+					sizes[i] = tries[t];
+				else if (sizes[i] < tries[t])
+					VirtualFree((u8 *)regions[i] + sizes[i],
+						    tries[t] - sizes[i],
+						    MEM_DECOMMIT);
+				dxghost_logf(h, "existing sysmem allocation: "
+					     "%llu bytes (region %llu)",
+					     (unsigned long long)sizes[i],
+					     (unsigned long long)tries[t]);
+			}
+			return status;
+		}
+		while (i--)
+			VirtualFree(regions[i], 0, MEM_RELEASE);
+		dxghost_logf(h, "existing sysmem with %llu-byte regions: 0x%08x",
+			     (unsigned long long)tries[t], (unsigned)status);
+	}
+	return status;
+}
+
 static void cmd_create_allocation(struct dxghost_msg *m)
 {
 	COMMAND(dxgkvmb_command_createallocation);
@@ -839,10 +1271,17 @@ static void cmd_create_allocation(struct dxghost_msg *m)
 	const u8 *runtime, *global;
 	u8 *out_priv;
 
+	void *regions[D3DKMT_CREATEALLOCATION_MAX];
+	uint64_t sizes[D3DKMT_CREATEALLOCATION_MAX];
+
 	if (!count || count > D3DKMT_CREATEALLOCATION_MAX ||
-	    c->flags.existing_sysmem || c->flags.standard_allocation ||
-	    c->flags.existing_section) {
+	    c->flags.standard_allocation || c->flags.existing_section) {
 		/* Existing-memory allocations need guest page mapping. */
+		dxghost_logf(h, "CreateAllocation refused: %u allocation(s), "
+			     "existing sysmem %u, standard %u, existing "
+			     "section %u", count, c->flags.existing_sysmem,
+			     c->flags.standard_allocation,
+			     c->flags.existing_section);
 		m->status = count ? VIRTIO_DXG_ERR_NTSTATUS :
 				    VIRTIO_DXG_ERR_INVALID;
 		m->ntstatus = DXG_STATUS_NOT_SUPPORTED;
@@ -904,7 +1343,9 @@ static void cmd_create_allocation(struct dxghost_msg *m)
 	a.flags = c->flags;
 	a.private_runtime_resource_handle = c->private_runtime_resource_handle;
 
-	m->ntstatus = h->kmt.CreateAllocation2(&a);
+	m->ntstatus = c->flags.existing_sysmem ?
+		create_with_sysmem(h, &a, a2, count, regions, sizes) :
+		h->kmt.CreateAllocation2(&a);
 	if (m->ntstatus < 0) {
 		free(a2);
 		fail_ntstatus(m, m->ntstatus);
@@ -924,6 +1365,14 @@ static void cmd_create_allocation(struct dxghost_msg *m)
 				a.resource.v;
 		ri[i].allocation = a2[i].allocation;
 		ri[i].priv_drv_data_size = info[i].priv_drv_data_size;
+		if (c->flags.existing_sysmem) {
+			struct dxghost_obj *o =
+				dxghost_obj_find(h, a2[i].allocation.v);
+
+			ri[i].allocation_size = sizes[i];
+			if (o)
+				o->sysmem = regions[i];
+		}
 		/*
 		 * Size and caching are reported at Lock2: user mode cannot
 		 * read the KMD's allocation description.
@@ -933,6 +1382,9 @@ static void cmd_create_allocation(struct dxghost_msg *m)
 	r->flags = c->flags;
 	r->resource = a.resource;
 	r->global_share = a.global_share;
+	/* As for shared sync objects: the host handle is the global name. */
+	if (c->flags.create_shared && !r->global_share.v)
+		r->global_share = a.resource.v ? a.resource : a2[0].allocation;
 	free(a2);
 }
 
@@ -967,6 +1419,7 @@ static void cmd_destroy_allocation(struct dxghost_msg *m)
 	d.alloc_count = c->alloc_count;
 	d.flags = c->flags;
 	reply_ntstatus(m, h->kmt.DestroyAllocation2(&d));
+	dxghost_sysmem_release(h);
 }
 
 static void cmd_lock2(struct dxghost_msg *m)
@@ -1143,7 +1596,20 @@ static void cmd_reserve_gpu_va(struct dxghost_msg *m)
 	 * A fixed base may not land inside the VMM's own reservations, which
 	 * share this process's GPU address space.
 	 */
-	status = h->kmt.ReserveGpuVirtualAddress(&a);
+	{
+		struct d3dddi_reservegpuvirtualaddress want = a;
+
+		status = h->kmt.ReserveGpuVirtualAddress(&a);
+		if (status < 0)
+			dxghost_logf(h, "ReserveGpuVirtualAddress(base 0x%llx, "
+				     "range 0x%llx-0x%llx, size 0x%llx, process "
+				     "0x%x): 0x%08x",
+				     (unsigned long long)want.base_address,
+				     (unsigned long long)want.minimum_address,
+				     (unsigned long long)want.maximum_address,
+				     (unsigned long long)want.size, m->process,
+				     (unsigned)status);
+	}
 	fail_ntstatus(m, status);
 	if (status < 0)
 		return;
@@ -1359,9 +1825,16 @@ static void cmd_create_hwqueue(struct dxghost_msg *m)
 	a.flags = c->flags;
 	a.priv_drv_data_size = size;
 	a.priv_drv_data = size ? (u64)(uintptr_t)r->priv_drv_data : 0;
+	if (h->trace) {
+		dxghost_logf(h, "CreateHwQueue flags 0x%x, %u bytes",
+			     *(const uint32_t *)&c->flags, size);
+		trace_hex(h, "hwq", r->priv_drv_data, size);
+	}
 	r->status.v = h->kmt.CreateHwQueue(&a);
-	if (r->status.v < 0)
+	if (r->status.v < 0) {
+		dxghost_logf(h, "CreateHwQueue: 0x%08x", (unsigned)r->status.v);
 		return;
+	}
 	LOCK(h);
 	gpa = dxghost_fence_map(h, (void *)(uintptr_t)a.queue_progress_fence_cpu_va);
 	if (gpa && !dxghost_obj_add(h, a.queue.v, OBJ_HWQUEUE, m->process,
@@ -1528,7 +2001,15 @@ static void cmd_create_sync(struct dxghost_msg *m)
 		if (notify)
 			SetThreadpoolWait(notify->tp, notify->event, NULL);
 		r->sync_object = a.sync_object;
+		/*
+		 * Shared objects need a global handle in the guest. With NT
+		 * security sharing D3DKMT returns none; every guest process
+		 * lives in this one host process, so the object's own handle
+		 * serves as the global name.
+		 */
 		r->global_sync_object = a.info.shared_handle;
+		if (a.info.flags.shared && !r->global_sync_object.v)
+			r->global_sync_object = a.sync_object;
 		r->fence_gpu_va = gpu_va;
 		r->fence_storage_address = gpa;
 		r->fence_storage_offset = (u32)(gpa & (PAGE_4K - 1));

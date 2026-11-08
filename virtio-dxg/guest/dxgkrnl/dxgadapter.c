@@ -887,6 +887,9 @@ struct dxgallocation *dxgallocation_create(struct dxgprocess *process)
 
 void dxgallocation_stop(struct dxgallocation *alloc)
 {
+#ifdef DXG_VIRTIO
+	dxg_unmigrate_sysmem(alloc);
+#endif
 	if (alloc->pages) {
 		unpin_user_pages(alloc->pages, alloc->num_pages);
 		vfree(alloc->pages);

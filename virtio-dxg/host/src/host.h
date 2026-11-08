@@ -40,6 +40,8 @@ struct dxghost_obj {
 	uint64_t size;
 	/* CPU notification sync objects: the host event forwarding signals. */
 	struct dxghost_notify *notify;
+	/* Existing-sysmem allocations: the host memory backing them. */
+	void *sysmem;
 };
 
 struct dxghost_objtab {
@@ -117,6 +119,10 @@ struct dxghost {
 	uint32_t va_count;
 	uint32_t va_capacity;
 
+	bool trace;
+	/* Existing-sysmem backing freed once the driver has let go (lock). */
+	void **sysmem_free;
+	uint32_t sysmem_free_count, sysmem_free_capacity;
 	SRWLOCK wait_lock;
 	struct dxghost_wait *waits;
 	/* Completed waits kept for reuse: no event or thread-pool object is
@@ -171,6 +177,7 @@ struct dxghost_msg {
 void dxghost_exec_global(struct dxghost_msg *m, uint32_t type);
 void dxghost_exec_vgpu(struct dxghost_msg *m, uint32_t type);
 void dxghost_destroy_process_objects(struct dxghost *h, uint32_t process);
+void dxghost_sysmem_release(struct dxghost *h);
 void dxghost_waits_close(struct dxghost *h);
 
 #endif /* DXGHOST_HOST_H */

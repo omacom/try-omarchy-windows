@@ -788,10 +788,22 @@ struct dxgallocation {
 	void				*cpu_address;
 	/* Describes pages for the existing sysmem allocation */
 	struct page			**pages;
+#ifdef DXG_VIRTIO
+	/*
+	 * Existing sysmem allocations: the user range at cpu_address now maps
+	 * host memory in the IO space (migrated_size bytes at migrated_gpa).
+	 */
+	u64				migrated_gpa;
+	u64				migrated_size;
+	struct mm_struct		*migrated_mm;
+#endif
 };
 
 struct dxgallocation *dxgallocation_create(struct dxgprocess *process);
 void dxgallocation_stop(struct dxgallocation *a);
+#ifdef DXG_VIRTIO
+void dxg_unmigrate_sysmem(struct dxgallocation *alloc);
+#endif
 void dxgallocation_destroy(struct dxgallocation *a);
 void dxgallocation_free_handle(struct dxgallocation *a);
 

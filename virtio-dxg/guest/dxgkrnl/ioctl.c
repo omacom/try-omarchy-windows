@@ -1965,6 +1965,22 @@ dxgkio_destroy_allocation(struct dxgprocess *process, void *__user inargs)
 		mutex_lock(&resource->resource_mutex);
 	}
 
+#ifdef DXG_VIRTIO
+	/* The host frees migrated memory: move it back first. */
+	if (args.alloc_count) {
+		for (i = 0; i < args.alloc_count; i++)
+			if (allocs[i])
+				dxg_unmigrate_sysmem(allocs[i]);
+	} else if (resource) {
+		struct dxgallocation *alloc;
+
+		dxgdevice_acquire_alloc_list_lock_shared(device);
+		list_for_each_entry(alloc, &resource->alloc_list_head,
+				    alloc_list_entry)
+			dxg_unmigrate_sysmem(alloc);
+		dxgdevice_release_alloc_list_lock_shared(device);
+	}
+#endif
 	ret = dxgvmb_send_destroy_allocation(process, device, &args,
 					     alloc_handles);
 
