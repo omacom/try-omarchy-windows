@@ -11,6 +11,12 @@ import time
 
 
 FIXTURES = Path(__file__).resolve().parent / 'guest-upgrade'
+# Omarchy 4.5 packages the guest ships, which its migrations or the runtime's
+# dependencies bring to existing disks, and the ones the image leaves out.
+ADDED_PACKAGES = ('omasnap', 'disktree-bin', 'vi', 'xorg-xsetroot')
+OMITTED_PACKAGES = ('owe', 'owe-lockfeed', 'monologue', 'hype', 'gliff', 'signed',
+                    'omarchy-hyprland-titlebars', 'fcitx5-mozc', 'fcitx5-chinese-addons',
+                    'fcitx5-table-extra', 'superwhisper-bin', 'omarchy-power-profiles-daemon')
 
 
 def boot(artifacts, disk, phase, log, environment, timeout):
@@ -116,7 +122,12 @@ def main():
         parser.error('QEMU paths must not contain commas')
     specs = [json.loads((p / 'build-spec.json').read_text()) for p in (baseline, candidate)]
     environment = {'BASELINE_RUNTIME': runtime(specs[0]), 'CANDIDATE_RUNTIME': runtime(specs[1]),
-                   'CANDIDATE_VERSION': specs[1]['upstream']['version']}
+                   'CANDIDATE_VERSION': specs[1]['upstream']['version'],
+                   'CANDIDATE_ADDED_PACKAGES': ' '.join(ADDED_PACKAGES),
+                   'CANDIDATE_OMITTED_PACKAGES': ' '.join(OMITTED_PACKAGES)}
+    supply_chain = specs[1].get('supplyChain', {})
+    if 'mise' in supply_chain:
+        environment['CANDIDATE_MISE'] = supply_chain['mise']['version']
     work.mkdir(parents=True, exist_ok=False)
     disk = work / 'persistent.ext4'
     subprocess.run(['cp', '--reflink=auto', '--sparse=always', str(baseline / 'rootfs.ext4'), str(disk)], check=True)

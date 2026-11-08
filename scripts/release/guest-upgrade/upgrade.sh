@@ -45,8 +45,19 @@ for package in $runtime_dependencies; do
   pacman -Q "$package" >/dev/null
 done
 pacman -Qq | sort > /tmp/packages-after
-comm -23 <(sort "$HOME/upgrade-packages-before.txt") /tmp/packages-after > /tmp/packages-missing
-[[ ! -s /tmp/packages-missing ]]
+# Every package survives except the ones Omarchy's own migrations retire:
+# Omarchy 4.5 replaces Tensaku with Omasnap and dua-cli with Disktree.
+comm -23 <(sort "$HOME/upgrade-packages-before.txt") /tmp/packages-after |
+  { grep -vxF -e tensaku -e dua-cli || true; } > /tmp/packages-missing
+[[ ! -s /tmp/packages-missing ]] || { cat /tmp/packages-missing; exit 1; }
+for package in ${CANDIDATE_ADDED_PACKAGES:-}; do
+  pacman -Q "$package"
+done
+# The image leaves these out, so the update must not bring them either.
+for package in ${CANDIDATE_OMITTED_PACKAGES:-}; do
+  if pacman -Q "$package" 2>/dev/null; then exit 1; fi
+done
+[[ -z ${CANDIDATE_MISE:-} || $(pacman -Q try-omarchy-mise) == "try-omarchy-mise $CANDIDATE_MISE-1" ]]
 sudo pacman -Dk
 sha256sum -c "$HOME/upgrade-nvim.sha256"
 [[ $(readlink /usr/bin/omarchy-nvim-refresh) == "$(cat "$HOME/upgrade-nvim-link")" ]]
@@ -61,6 +72,8 @@ expected_theme_link="../../../../.local/state/omarchy/current/theme/neovim.lua"
 [[ $(readlink /etc/skel/.config/nvim/lua/plugins/theme.lua) == "$expected_theme_link" ]]
 [[ $(readlink "$HOME/.config/nvim/lua/plugins/theme.lua") == "$expected_theme_link" ]]
 omarchy-migrate
+# Every migration completed, including the ones the guest makes inert.
+if omarchy-migrate --pending; then exit 1; fi
 sha256sum -c "$HOME/upgrade-preserve.sha256"
 # Revision 34 loads the pinch device rules once, keeps the personal override,
 # and leaves the pre-upgrade file beside it unless the skeleton already had them.
@@ -81,4 +94,6 @@ sudo python3 /mnt/host/pinch-udev.py
 # later disks create the account with the rule and have no record.
 cmp /etc/ssh/sshd_config.d/90-try-omarchy-quick-start.conf /usr/share/try-omarchy/quick-start-sshd.conf
 sha256sum "$input" > "$HOME/upgrade-input-after.sha256"
+systemctl --failed --no-pager
+df -h /
 sync
