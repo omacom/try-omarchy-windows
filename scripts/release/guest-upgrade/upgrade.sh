@@ -58,6 +58,10 @@ for package in ${CANDIDATE_OMITTED_PACKAGES:-}; do
   if pacman -Q "$package" 2>/dev/null; then exit 1; fi
 done
 [[ -z ${CANDIDATE_MISE:-} || $(pacman -Q try-omarchy-mise) == "try-omarchy-mise $CANDIDATE_MISE-1" ]]
+# Omarchy's migration puts its repository first, as fresh images ship it, so
+# the disk runs Omarchy's quickshell build rather than Arch's.
+[[ $(awk -F'[][]' '/^\[/ && $2 != "options" {print $2; exit}' /etc/pacman.conf) == omarchy ]]
+[[ $(pacman -Q quickshell | cut -d' ' -f2) == "$(pacman -Sl omarchy | awk '$2 == "quickshell" {print $3}')" ]]
 sudo pacman -Dk
 sha256sum -c "$HOME/upgrade-nvim.sha256"
 [[ $(readlink /usr/bin/omarchy-nvim-refresh) == "$(cat "$HOME/upgrade-nvim-link")" ]]

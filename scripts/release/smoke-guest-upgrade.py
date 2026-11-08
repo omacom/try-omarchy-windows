@@ -13,7 +13,7 @@ import time
 FIXTURES = Path(__file__).resolve().parent / 'guest-upgrade'
 # Omarchy 4.5 packages the guest ships, which its migrations or the runtime's
 # dependencies bring to existing disks, and the ones the image leaves out.
-ADDED_PACKAGES = ('omasnap', 'disktree-bin', 'vi', 'xorg-xsetroot')
+ADDED_PACKAGES = ('omasnap', 'disktree-bin', 'vi', 'xorg-xsetroot', 'qt6-imageformats')
 OMITTED_PACKAGES = ('owe', 'owe-lockfeed', 'monologue', 'hype', 'gliff', 'signed',
                     'omarchy-hyprland-titlebars', 'fcitx5-mozc', 'fcitx5-chinese-addons',
                     'fcitx5-table-extra', 'superwhisper-bin', 'omarchy-power-profiles-daemon')
