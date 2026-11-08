@@ -1,0 +1,139 @@
+From c061a0f953077e6215ea9b4d4a4f1b9b1d0d29d9 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sun, 8 Nov 2026 10:46:44 -0500
+Subject: [PATCH] Use Omarchy's repository order and add Qt image formats
+
+Omarchy 4.5 moves its own repository above Arch's (migration 1791403252) so
+its quickshell build wins; that build supports the OmarchyLoadPatch pragma
+the 4.5 shell starts with. The guest skipped the migration to protect the
+patched aquamarine, but Omarchy's repository carries no aquamarine or
+Hyprland: quickshell is the only package it serves newer than Arch. Let the
+migration run on existing disks and give fresh images the same order.
+
+Omarchy 4.5's base packages include qt6-imageformats, which the lock screen
+needs to show its .webp theme backgrounds. Ship it, and require it from the
+runtime package so existing disks get it on Update > Omarchy.
+---
+ guest/packages.txt                     |  1 +
+ guest/pacman-x86_64.conf               | 11 ++++++-----
+ guest/scripts/materialize-omarchy.sh   |  5 -----
+ guest/spec.json                        |  1 +
+ guest/tests/test_omarchy_migrations.py | 16 +++++++++++++---
+ 5 files changed, 21 insertions(+), 13 deletions(-)
+
+diff --git a/guest/packages.txt b/guest/packages.txt
+index cc726cc..375168b 100644
+--- a/guest/packages.txt
++++ b/guest/packages.txt
+@@ -75,6 +75,7 @@ python-gobject
+ qrencode
+ qt6-base
+ qt6-declarative
++qt6-imageformats
+ qt6-multimedia
+ qt6-svg
+ qt6-wayland
+diff --git a/guest/pacman-x86_64.conf b/guest/pacman-x86_64.conf
+index d86ef38..facfdeb 100644
+--- a/guest/pacman-x86_64.conf
++++ b/guest/pacman-x86_64.conf
+@@ -1,6 +1,7 @@
+ # Architecture companion to the pinned Quattro pacman configuration.
+-# Official Arch core/extra/multilib plus Omarchy's signed stable repository,
+-# which serves x86_64 binaries keyed by $arch.
++# Omarchy's signed stable repository, which serves x86_64 binaries keyed by
++# $arch, ahead of official Arch core/extra/multilib, as Omarchy 4.5 orders it.
++# Its builds then win where both carry a package (quickshell).
+ [options]
+ Color
+ ILoveCandy
+@@ -17,6 +18,9 @@ DownloadUser = alpm
+ SigLevel = Required DatabaseOptional
+ LocalFileSigLevel = Optional
+ 
++[omarchy]
++Server = https://pkgs.omarchy.org/stable/$arch
++
+ [core]
+ Include = /etc/pacman.d/mirrorlist
+ 
+@@ -25,6 +29,3 @@ Include = /etc/pacman.d/mirrorlist
+ 
+ [multilib]
+ Include = /etc/pacman.d/mirrorlist
+-
+-[omarchy]
+-Server = https://pkgs.omarchy.org/stable/$arch
+diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
+index 94b1e3f..6ca5723 100755
+--- a/guest/scripts/materialize-omarchy.sh
++++ b/guest/scripts/materialize-omarchy.sh
+@@ -148,11 +148,6 @@ skip_migration() {
+ # it supplies, with matching modules, and the guest's linux package stays held.
+ skip_migration 1789325478 290c3652b45be05f27ebe5ab7b3de519c952dabe2fb3ebdc4d83d885defe53ba \
+   "Keep the kernel the Try Omarchy launcher supplies; this guest has no bootloader"
+-# Moving [omarchy] above core and extra would let its builds replace the guest's
+-# locked, patched aquamarine (hardware cursor) and leave fresh and updated disks
+-# with different repository orders. Update > Omarchy already upgrades packages.
+-skip_migration 1791403252 fb380a285eca3a1f7e38cf3cc88c523f2cf93c6559486ec8bb17302f923aa0e6 \
+-  "Keep the Try Omarchy package repository order"
+ # The guest leaves out the BBR, swap and ARP sysctl files: the VM's network and
+ # memory are managed by the host. Without them these would only ask for a reboot.
+ skip_migration 1789294350 e969fcd056d4e3f80fb08b53695c8282430af5d62b6acfd31407687cfc72ae13 \
+diff --git a/guest/spec.json b/guest/spec.json
+index 0d054ec..9081899 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -51,6 +51,7 @@
+       "polkit",
+       "python",
+       "python-gobject",
++      "qt6-imageformats",
+       "socat",
+       "vi",
+       "wl-clipboard",
+diff --git a/guest/tests/test_omarchy_migrations.py b/guest/tests/test_omarchy_migrations.py
+index 212e81c..0e32078 100644
+--- a/guest/tests/test_omarchy_migrations.py
++++ b/guest/tests/test_omarchy_migrations.py
+@@ -24,6 +24,16 @@ def skipped():
+     return re.findall(r'^skip_migration (\d+) ([0-9a-f]{64}) \\\n  "([^"]+)"$', MATERIALIZE, re.M)
+ 
+ 
++class RepositoryOrderTests(unittest.TestCase):
++    def test_fresh_images_use_the_order_omarchy_migrates_to(self):
++        # Migration 1791403252 moves [omarchy] above Arch on existing disks, so
++        # its quickshell build wins; fresh images must start in that order.
++        config = (GUEST / 'pacman-x86_64.conf').read_text()
++        sections = re.findall(r'^\[([^]]+)\]$', config, re.M)
++        self.assertEqual(sections, ['options', 'omarchy', 'core', 'extra', 'multilib'])
++        self.assertNotIn('1791403252', [name for name, _, _ in skipped()])
++
++
+ class SkippedMigrationTests(unittest.TestCase):
+     def run_skip(self, root, *args):
+         script = 'set -euo pipefail\nfail() { echo "$*" >&2; exit 1; }\nomarchy_root=$1\nshift\n'
+@@ -35,7 +45,7 @@ class SkippedMigrationTests(unittest.TestCase):
+         entries = skipped()
+         self.assertEqual(
+             [name for name, _, _ in entries],
+-            ['1789325478', '1791403252', '1789294350', '1791147791', '1789764927',
++            ['1789325478', '1789294350', '1791147791', '1789764927',
+              '1790539857', '1790542069', '1791403310', '1791542175', '1791708587'])
+         with tempfile.TemporaryDirectory() as temporary:
+             root = Path(temporary)
+@@ -55,9 +65,9 @@ class SkippedMigrationTests(unittest.TestCase):
+         with tempfile.TemporaryDirectory() as temporary:
+             root = Path(temporary)
+             (root / 'migrations').mkdir()
+-            migration = root / 'migrations/1791403252.sh'
++            migration = root / 'migrations/1789294350.sh'
+             migration.write_text('echo "changed upstream"\n')
+-            result = self.run_skip(root, '1791403252', digest(b'reviewed\n'), 'Keep it')
++            result = self.run_skip(root, '1789294350', digest(b'reviewed\n'), 'Keep it')
+             self.assertNotEqual(result.returncode, 0)
+             self.assertIn('changed; review it', result.stderr)
+             self.assertEqual(migration.read_text(), 'echo "changed upstream"\n')
+-- 
+2.56.0
+
