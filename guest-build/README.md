@@ -10,6 +10,17 @@ scripts/release/build-guest.sh --contract-only
 scripts/release/build-guest.sh --output /path/to/artifacts
 ```
 
+Patch 0159 lets **Update > Omarchy** reach the aquamarine rebuild. pacman takes
+an upgrade from the first repository that has the package, and Arch comes
+before the guest's local repository, so a disk with the 0.15.1 rebuild picked
+Arch's 0.16.0-1, which cannot meet runtime `4.0.4-13`'s
+`aquamarine>=0.16.0-1.1`, and the update stopped with `cannot resolve`. The
+conflict handler delivered with the night light payload now retries naming
+`try-omarchy/aquamarine`, taking over the unowned night light files first if
+they stop it. Patch 0160 lets catch-up finish on early preview disks
+that have no DKMS; the battery step stopped it there. Patch 0161 raises the
+compatibility revision to 68 so existing disks get the handler before login.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME

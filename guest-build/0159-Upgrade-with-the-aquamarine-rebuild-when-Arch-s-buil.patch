@@ -1,0 +1,339 @@
+From a02f6b1614563606c99bb007bbb2774c6b91cb24 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sun, 8 Nov 2026 01:03:23 -0500
+Subject: [PATCH] Upgrade with the aquamarine rebuild when Arch's build blocks
+ the runtime
+
+pacman takes an upgrade from the first repository that has the package,
+and Arch comes before the guest's local repository. A disk with the
+0.15.1 rebuild picks Arch's aquamarine 0.16.0-1, which cannot meet
+runtime 4.0.4-13's aquamarine>=0.16.0-1.1, and Update stops. The night
+light payload now brings a conflict handler that retries naming
+try-omarchy/aquamarine. If unowned files stop that retry, such as the
+night light files catch-up delivered, it takes them over as before and
+names the rebuild again.
+---
+ .../usr/local/lib/try-omarchy/catch-up        |  5 +-
+ ...omarchy-update-system-pkgs-when-conflicted | 31 ++++++
+ .../try-omarchy/nightlight/manifest.json      |  5 +-
+ .../local-rebuild-upgrade.patch               | 48 ++++++++++
+ guest/tests/test_aquamarine_upgrade.py        | 30 +++++-
+ guest/tests/test_local_rebuild_upgrade.py     | 96 +++++++++++++++++++
+ guest/tests/test_native_nightlight.py         |  4 +-
+ 7 files changed, 212 insertions(+), 7 deletions(-)
+ create mode 100644 guest/tests/fixtures/nightlight-upgrades/local-rebuild-upgrade.patch
+ create mode 100644 guest/tests/test_local_rebuild_upgrade.py
+
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+index efeabe2..e2abff1 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+@@ -48,9 +48,10 @@ if [[ -x $battery_installer ]] && { [[ ! $previous_revision =~ ^[0-9]+$ ]] || ((
+ fi
+ 
+ # Upgrade reviewed night-light defaults and their package-conflict recovery,
+-# preserving custom commands and services.
++# preserving custom commands and services. Revision 68 teaches the recovery to
++# name the aquamarine rebuild, which disks with the 0.15.1 rebuild need.
+ nightlight_installer=${TRY_OMARCHY_NIGHTLIGHT_INSTALLER:-/usr/local/lib/try-omarchy/install-nightlight}
+-if [[ -x $nightlight_installer ]] && { [[ ! $previous_revision =~ ^[0-9]+$ ]] || (( previous_revision < 55 )); }; then
++if [[ -x $nightlight_installer ]] && { [[ ! $previous_revision =~ ^[0-9]+$ ]] || (( previous_revision < 68 )); }; then
+   "$nightlight_installer" --homes "$homes"
+ fi
+ 
+diff --git a/guest/factory-overlay/usr/share/try-omarchy/nightlight/bin_omarchy-update-system-pkgs-when-conflicted b/guest/factory-overlay/usr/share/try-omarchy/nightlight/bin_omarchy-update-system-pkgs-when-conflicted
+index d78952c..8e7f30b 100644
+--- a/guest/factory-overlay/usr/share/try-omarchy/nightlight/bin_omarchy-update-system-pkgs-when-conflicted
++++ b/guest/factory-overlay/usr/share/try-omarchy/nightlight/bin_omarchy-update-system-pkgs-when-conflicted
+@@ -81,6 +81,30 @@ if grep -q 'unresolvable package conflicts detected' "$errors"; then
+   exit 0
+ fi
+ 
++rebuild=()
++# The guest's local repository rebuilds aquamarine under its Arch name for the
++# hardware cursor, and the runtime asks for that build. pacman upgrades a
++# package from the first repository that has it, and Arch comes first, so when
++# Arch and the rebuild move to a new release together the minimum cannot be
++# met. Name the rebuild for this one upgrade. Whenever Arch is ahead of the
++# rebuild the minimum is met, this never runs, and Arch's package wins.
++# pacman colors its warnings even in the report, so the colors come off first.
++if sed 's/\x1b\[[0-9;]*m//g' "$errors" | grep -qxP 'warning: cannot resolve "aquamarine>=[^"]+", a dependency of "try-omarchy-runtime"'; then
++  echo -e "\e[33m\nUpgrading with the Try Omarchy build of aquamarine:\e[0m"
++  retry=$(mktemp)
++  if sudo env LC_ALL=C OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm --overwrite '/usr/share/omarchy/*' try-omarchy/aquamarine 2>"$retry"; then
++    cat "$retry" >&2
++    rm -f "$retry"
++    exit 0
++  fi
++  cat "$retry" >&2
++  # Files pacman doesn't own can still stop it; the cleanup below reads this
++  # report instead, and the last retry names the rebuild again.
++  cat "$retry" >"$errors"
++  rm -f "$retry"
++  rebuild=(try-omarchy/aquamarine)
++fi
++
+ # Paths one of these packages installs that pacman doesn't own. Moving them out
+ # of the way is what lets the upgrade through, and works on a leftover directory
+ # as well as a file.
+@@ -109,6 +133,13 @@ for path in "${leftovers[@]}"; do
+ done
+ echo
+ 
++if ((${#rebuild[@]})); then
++  if sudo env LC_ALL=C OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm --overwrite '/usr/share/omarchy/*' "${rebuild[@]}"; then
++    moved=()
++    exit 0
++  fi
++  exit 1
++fi
+ if OMARCHY_UPDATE_RETRY=1 omarchy-update-system-pkgs; then
+   moved=()
+   exit 0
+diff --git a/guest/factory-overlay/usr/share/try-omarchy/nightlight/manifest.json b/guest/factory-overlay/usr/share/try-omarchy/nightlight/manifest.json
+index cf9c5ee..2679b9c 100644
+--- a/guest/factory-overlay/usr/share/try-omarchy/nightlight/manifest.json
++++ b/guest/factory-overlay/usr/share/try-omarchy/nightlight/manifest.json
+@@ -21,9 +21,10 @@
+     "path": "usr/bin/omarchy-update-system-pkgs-when-conflicted",
+     "asset": "bin_omarchy-update-system-pkgs-when-conflicted",
+     "beforeSha256": [
+-      "dae1379216754e372f749ce4a4f3232b20225d08e2d0784d7607bba113ebbc62"
++      "dae1379216754e372f749ce4a4f3232b20225d08e2d0784d7607bba113ebbc62",
++      "496a4d7e07a3af365d5f6669c348452fa6303c1db9950095bc2b259e66d2537a"
+     ],
+-    "afterSha256": "496a4d7e07a3af365d5f6669c348452fa6303c1db9950095bc2b259e66d2537a",
++    "afterSha256": "222af820511bcdd6711c605914d8baea7f9123a319cfdfa445a124eac7bc2b31",
+     "mode": 493
+   }
+ ]
+diff --git a/guest/tests/fixtures/nightlight-upgrades/local-rebuild-upgrade.patch b/guest/tests/fixtures/nightlight-upgrades/local-rebuild-upgrade.patch
+new file mode 100644
+index 0000000..c1e5990
+--- /dev/null
++++ b/guest/tests/fixtures/nightlight-upgrades/local-rebuild-upgrade.patch
+@@ -0,0 +1,48 @@
++diff --git a/bin/omarchy-update-system-pkgs-when-conflicted b/bin/omarchy-update-system-pkgs-when-conflicted
++--- a/bin/omarchy-update-system-pkgs-when-conflicted
+++++ b/bin/omarchy-update-system-pkgs-when-conflicted
++@@ -81,6 +81,30 @@ if grep -q 'unresolvable package conflicts detected' "$errors"; then
++   exit 0
++ fi
++ 
+++rebuild=()
+++# The guest's local repository rebuilds aquamarine under its Arch name for the
+++# hardware cursor, and the runtime asks for that build. pacman upgrades a
+++# package from the first repository that has it, and Arch comes first, so when
+++# Arch and the rebuild move to a new release together the minimum cannot be
+++# met. Name the rebuild for this one upgrade. Whenever Arch is ahead of the
+++# rebuild the minimum is met, this never runs, and Arch's package wins.
+++# pacman colors its warnings even in the report, so the colors come off first.
+++if sed 's/\x1b\[[0-9;]*m//g' "$errors" | grep -qxP 'warning: cannot resolve "aquamarine>=[^"]+", a dependency of "try-omarchy-runtime"'; then
+++  echo -e "\e[33m\nUpgrading with the Try Omarchy build of aquamarine:\e[0m"
+++  retry=$(mktemp)
+++  if sudo env LC_ALL=C OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm --overwrite '/usr/share/omarchy/*' try-omarchy/aquamarine 2>"$retry"; then
+++    cat "$retry" >&2
+++    rm -f "$retry"
+++    exit 0
+++  fi
+++  cat "$retry" >&2
+++  # Files pacman doesn't own can still stop it; the cleanup below reads this
+++  # report instead, and the last retry names the rebuild again.
+++  cat "$retry" >"$errors"
+++  rm -f "$retry"
+++  rebuild=(try-omarchy/aquamarine)
+++fi
+++
++ # Paths one of these packages installs that pacman doesn't own. Moving them out
++ # of the way is what lets the upgrade through, and works on a leftover directory
++ # as well as a file.
++@@ -109,6 +133,13 @@ for path in "${leftovers[@]}"; do
++ done
++ echo
++ 
+++if ((${#rebuild[@]})); then
+++  if sudo env LC_ALL=C OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm --overwrite '/usr/share/omarchy/*' "${rebuild[@]}"; then
+++    moved=()
+++    exit 0
+++  fi
+++  exit 1
+++fi
++ if OMARCHY_UPDATE_RETRY=1 omarchy-update-system-pkgs; then
++   moved=()
++   exit 0
+diff --git a/guest/tests/test_aquamarine_upgrade.py b/guest/tests/test_aquamarine_upgrade.py
+index e30acf0..34afd04 100644
+--- a/guest/tests/test_aquamarine_upgrade.py
++++ b/guest/tests/test_aquamarine_upgrade.py
+@@ -59,7 +59,7 @@ Server = file://{self.local}
+     def install(self, *packages):
+         self.pacman('-U', '--noscriptlet', *(str(p) for p in packages))
+ 
+-    def package(self, repository, name, version, abi=None, consumer=False, runtime=False):
++    def package(self, repository, name, version, abi=None, consumer=False, runtime=False, minimum='0.15.1-1.1'):
+         stage = self.base / f'{name}-{version}'
+         stage.mkdir()
+         info = [f'pkgname = {name}', f'pkgver = {version}', 'pkgdesc = transaction fixture', 'arch = x86_64', 'size = 1']
+@@ -77,7 +77,7 @@ Server = file://{self.local}
+             lib = stage / f'usr/lib/libaquamarine.so.{abi}'; lib.parent.mkdir(parents=True)
+             self.library(lib, abi)
+         if runtime:
+-            info.append('depend = aquamarine>=0.15.1-1.1')
++            info.append(f'depend = aquamarine>={minimum}')
+         (stage / '.PKGINFO').write_text('\n'.join(info) + '\n')
+         archive = repository / f'{name}-{version}-x86_64.pkg.tar.gz'
+         with tarfile.open(archive, 'w:gz') as tar:
+@@ -128,3 +128,29 @@ Server = file://{self.local}
+         self.package(self.remote, 'hyprland', '2-1', 15, consumer=True)
+         self.repositories(); self.pacman('-Su')
+         self.assert_version('0.16.0-1', 15)
++
++
++    def test_rebuild_moves_to_the_new_soname_with_hyprland_and_the_runtime(self):
++        # The Omarchy 4.5.0 image re-pins the rebuild on Arch's next release:
++        # Arch offers aquamarine 0.16.0-1 with a new SONAME and a Hyprland
++        # built against it, the local repository offers 0.16.0-1.1 and a
++        # runtime that requires it. pacman takes Arch's upgrade first, so the
++        # plain upgrade fails with the warning the conflict handler looks for,
++        # and its retry naming the rebuild moves all three together.
++        self.pacman('-Su'); self.assert_version('0.15.1-1.1')
++        self.pacman('-D', '--asdeps', 'aquamarine')
++        self.package(self.remote, 'aquamarine', '0.16.0-1', 15)
++        self.package(self.remote, 'hyprland', '2-1', 15, consumer=True)
++        self.package(self.local, 'aquamarine', '0.16.0-1.1', 15)
++        self.package(self.local, 'try-omarchy-runtime', '4.5.0-1', runtime=True, minimum='0.16.0-1.1')
++        self.repositories()
++        plain = subprocess.run(['pacman', '--noconfirm', '--config', str(self.config), '--root', str(self.root),
++                                '--dbpath', str(self.root / 'var/lib/pacman'), '-Su'],
++                               text=True, capture_output=True, env=dict(os.environ, LC_ALL='C'))
++        self.assertNotEqual(plain.returncode, 0)
++        self.assertIn('warning: cannot resolve "aquamarine>=0.16.0-1.1", a dependency of "try-omarchy-runtime"\n', plain.stderr)
++        self.pacman('-Su', 'try-omarchy/aquamarine')
++        self.assert_version('0.16.0-1.1', 15)
++        self.assertIn('Installed as a dependency', self.pacman('-Qi', 'aquamarine'))
++        self.assertEqual(self.pacman('-Q', 'try-omarchy-runtime').strip(), 'try-omarchy-runtime 4.5.0-1')
++        self.assertFalse((self.root / 'usr/lib/libaquamarine.so.14').exists())
+diff --git a/guest/tests/test_local_rebuild_upgrade.py b/guest/tests/test_local_rebuild_upgrade.py
+new file mode 100644
+index 0000000..b236865
+--- /dev/null
++++ b/guest/tests/test_local_rebuild_upgrade.py
+@@ -0,0 +1,96 @@
++"""The update's conflict handler names the aquamarine rebuild only when it must."""
++import os
++from pathlib import Path
++import subprocess
++import tempfile
++import unittest
++
++GUEST = Path(__file__).resolve().parents[1]
++# The handler disks receive through the night light payload before they update.
++LEGACY = GUEST / 'factory-overlay/usr/share/try-omarchy/nightlight/bin_omarchy-update-system-pkgs-when-conflicted'
++MISSING = 'warning: cannot resolve "aquamarine>=0.16.0-1.1", a dependency of "try-omarchy-runtime"'
++
++
++class LocalRebuildUpgradeTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temp.cleanup)
++        self.root = Path(self.temp.name)
++        self.bin = self.root / 'bin'
++        self.bin.mkdir()
++        self.log = self.root / 'calls'
++        record = 'printf "%s\\n" "$(basename "$0") $*" >>"$CALLS"\n'
++        self.fake('sudo', record + 'exec "$@"')
++        self.fake('pacman', record + '[[ $1 == -Qo ]] && exit 1\nexit "${PACMAN_STATUS:-0}"')
++        self.fake('omarchy-update-pacman', record + 'exec pacman "$@"')
++        self.fake('omarchy-update-system-pkgs', record + 'exit 0')
++        self.fake('omarchy-lifecycle-dispatch', 'exit 0')
++        self.handlers = {'4.0.4': LEGACY}
++
++    def fake(self, name, body):
++        command = self.bin / name
++        command.write_text('#!/bin/bash\n' + body + '\n')
++        command.chmod(0o755)
++
++    def run_handler(self, handler, rows, **env):
++        report = self.root / 'errors'
++        report.write_text('\n'.join(rows) + '\n')
++        self.log.unlink(missing_ok=True)
++        environment = dict(os.environ, PATH=f'{self.bin}:{os.environ["PATH"]}', OMARCHY_UPDATE_CONFLICT='1',
++                           OMARCHY_REPLACED_DIR=str(self.root / 'replaced'), CALLS=str(self.log), **env)
++        result = subprocess.run(['bash', str(handler), str(report)], env=environment,
++                                capture_output=True, text=True, timeout=5)
++        calls = self.log.read_text().splitlines() if self.log.exists() else []
++        return result, [call for call in calls if call.startswith('pacman ')]
++
++    def test_unmet_runtime_minimum_retries_with_the_rebuild(self):
++        for name, handler in self.handlers.items():
++            with self.subTest(handler=name):
++                result, calls = self.run_handler(handler, [MISSING, 'error: failed to prepare transaction (could not satisfy dependencies)'])
++                self.assertEqual(result.returncode, 0, result.stderr)
++                self.assertEqual(calls, ["pacman -Syu --noconfirm --overwrite /usr/share/omarchy/* try-omarchy/aquamarine"])
++                # pacman colors the warning prefix even when stderr is a file.
++                colored = MISSING.replace('warning: ', '\x1b[1;33mwarning: \x1b[0m')
++                result, calls = self.run_handler(handler, [colored])
++                self.assertEqual(result.returncode, 0, result.stderr)
++                self.assertEqual(calls, ["pacman -Syu --noconfirm --overwrite /usr/share/omarchy/* try-omarchy/aquamarine"])
++                result, calls = self.run_handler(handler, [MISSING], PACMAN_STATUS='1')
++                self.assertNotEqual(result.returncode, 0)
++                self.assertEqual(len(calls), 1)
++
++    def test_files_the_retry_trips_on_are_adopted_and_the_rebuild_named_again(self):
++        # The first named retry stops on the night-light files catch-up delivered.
++        # sudo runs these fakes, so nothing on this machine moves.
++        conflict = ('try-omarchy-runtime: /usr/local/bin/omarchy-native-nightlight exists in filesystem\n'
++                    'try-omarchy-runtime: /usr/local/share/try-omarchy/nightlight.frag exists in filesystem\n')
++        count, report = self.root / 'syu', self.root / 'conflict'
++        report.write_text(conflict)
++        self.fake('pacman', 'printf "%s\\n" "$(basename "$0") $*" >>"$CALLS"\n[[ $1 == -Qo ]] && exit 1\n'
++                  f'n=$(($(cat {count} 2>/dev/null || echo 0) + 1)); echo $n >{count}\n'
++                  f'if ((n == 1)); then cat {report} >&2; exit 1; fi\nexit 0')
++        for name in ('mv', 'mkdir'):
++            self.fake(name, 'printf "%s\\n" "$(basename "$0") $*" >>"$CALLS"')
++        for name, handler in self.handlers.items():
++            with self.subTest(handler=name):
++                count.unlink(missing_ok=True)
++                result, calls = self.run_handler(handler, [MISSING])
++                self.assertEqual(result.returncode, 0, result.stderr)
++                retry = "pacman -Syu --noconfirm --overwrite /usr/share/omarchy/* try-omarchy/aquamarine"
++                self.assertEqual([call for call in calls if '-Syu' in call], [retry, retry])
++                moves = [call for call in self.log.read_text().splitlines() if call.startswith('mv ')]
++                self.assertEqual(len(moves), 2, moves)
++                self.assertNotIn('omarchy-update-system-pkgs', self.log.read_text())
++
++    def test_other_failures_never_name_the_rebuild(self):
++        for name, handler in self.handlers.items():
++            for rows in (['warning: cannot resolve "aquamarine>=0.16.0-1.1", a dependency of "hyprland"'],
++                         ['warning: cannot resolve "libaquamarine.so=16-64", a dependency of "try-omarchy-runtime"'],
++                         ['error: failed to prepare transaction (could not satisfy dependencies)']):
++                with self.subTest(handler=name, rows=rows):
++                    result, calls = self.run_handler(handler, rows)
++                    self.assertNotEqual(result.returncode, 0)
++                    self.assertFalse(any('try-omarchy/aquamarine' in call for call in calls), calls)
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/guest/tests/test_native_nightlight.py b/guest/tests/test_native_nightlight.py
+index 57be74b..0e0f9ce 100644
+--- a/guest/tests/test_native_nightlight.py
++++ b/guest/tests/test_native_nightlight.py
+@@ -184,6 +184,8 @@ class PersistentNightlightTests(unittest.TestCase):
+         stage = self.root / 'patched'
+         shutil.copytree(GUEST / 'tests/fixtures/nightlight', stage)
+         subprocess.run(['git', 'apply', '--no-index', str(GUEST / 'patches/omarchy/virtio-nightlight.patch')], cwd=stage, check=True)
++        # Revision 68 adds the aquamarine rebuild retry to the delivered handler.
++        subprocess.run(['git', 'apply', '--no-index', str(GUEST / 'tests/fixtures/nightlight-upgrades/local-rebuild-upgrade.patch')], cwd=stage, check=True)
+         for hook in self.hooks:
+             relative = hook['path'].removeprefix('usr/share/omarchy/').removeprefix('usr/')
+             self.assertEqual((stage / relative).read_bytes(), (self.payload / hook['asset']).read_bytes())
+@@ -215,4 +217,4 @@ class PersistentNightlightTests(unittest.TestCase):
+         for path in ['usr/local/bin/omarchy-native-nightlight', 'usr/local/share/try-omarchy/nightlight.frag', 'usr/local/lib/try-omarchy/install-nightlight', 'usr/share/try-omarchy/nightlight']:
+             self.assertIn(path, finalizer)
+         self.assertIn('compat_revision=67', finalizer)
+-        self.assertIn('previous_revision < 55', catch_up)
++        self.assertIn('previous_revision < 68', catch_up)
+-- 
+2.56.0
+

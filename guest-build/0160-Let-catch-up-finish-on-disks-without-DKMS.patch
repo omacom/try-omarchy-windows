@@ -1,0 +1,74 @@
+From 9bf0101fab722d207b202be594ad66bc8185a536 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sun, 8 Nov 2026 00:57:28 -0500
+Subject: [PATCH] Let catch-up finish on disks without DKMS
+
+Early preview images have no DKMS, so the battery step stopped catch-up with dkms: command not found and no later repair ran on those disks, including the update handler they need for Omarchy 4.5. Skip the DKMS registration when it is missing and keep the delivered module.
+---
+ .../local/lib/try-omarchy/update-battery-dkms |  8 ++++++-
+ guest/tests/test_battery_details.py           | 24 +++++++++++++++++++
+ 2 files changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/update-battery-dkms b/guest/factory-overlay/usr/local/lib/try-omarchy/update-battery-dkms
+index e038194..54846d3 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/update-battery-dkms
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/update-battery-dkms
+@@ -15,13 +15,19 @@ restore_module() {
+   depmod -a
+ }
+ trap 'restore_module; rm -rf "$backup"' EXIT
+-if [[ -d "$root"/var/lib/dkms/try-omarchy-battery/1.0.0 ]]; then
++# Early preview images have no DKMS, so there is no registration to move. The
++# delivered module keeps working, and the DKMS package hook finds the new
++# source if Update > Omarchy installs DKMS later.
++has_dkms=0
++command -v dkms >/dev/null && has_dkms=1
++if ((has_dkms)) && [[ -d "$root"/var/lib/dkms/try-omarchy-battery/1.0.0 ]]; then
+   dkms remove -m try-omarchy-battery -v 1.0.0 --all
+ fi
+ # Old source must not be picked up again by the DKMS package hook.
+ rm -rf -- "$root/usr/src/try-omarchy-battery-1.0.0"
+ restore_module
+ trap 'rm -rf "$backup"' EXIT
++((has_dkms)) || exit 0
+ if [[ ! -e "$root"/var/lib/dkms/try-omarchy-battery/1.1.0/source ]]; then
+   dkms add -m try-omarchy-battery -v 1.1.0
+ fi
+diff --git a/guest/tests/test_battery_details.py b/guest/tests/test_battery_details.py
+index 5fb69e5..8dbe373 100644
+--- a/guest/tests/test_battery_details.py
++++ b/guest/tests/test_battery_details.py
+@@ -251,6 +251,30 @@ class BatteryDKMSUpgradeTests(unittest.TestCase):
+                 self.assertEqual("add -m try-omarchy-battery -v 1.1.0" in log, not fail_remove)
+                 self.assertEqual("install -m try-omarchy-battery -v 1.1.0 -k test" in log, headers and not fail_remove)
+ 
++    def test_images_without_dkms_keep_the_delivered_module(self):
++        helper = GUEST / "factory-overlay/usr/local/lib/try-omarchy/update-battery-dkms"
++        with tempfile.TemporaryDirectory() as directory:
++            root = Path(directory)
++            tools = root / "bin"
++            tools.mkdir()
++            # Only the commands the helper needs, so a host DKMS stays out of reach.
++            for name in ("bash", "cp", "mktemp", "rm", "install", "dirname"):
++                (tools / name).symlink_to(shutil.which(name))
++            module = root / "usr/lib/modules/test/updates/dkms/try_omarchy_battery.ko"
++            module.parent.mkdir(parents=True)
++            module.write_text("launcher module")
++            old = root / "usr/src/try-omarchy-battery-1.0.0"
++            old.mkdir(parents=True)
++            calls = root / "calls"
++            for name, body in (("uname", "echo test"), ("modinfo", f"echo '{module}'"), ("depmod", f"echo depmod >>'{calls}'")):
++                (tools / name).write_text("#!/bin/bash\n" + body + "\n")
++                (tools / name).chmod(0o755)
++            result = subprocess.run(["bash", str(helper)], env=dict(os.environ, PATH=str(tools), TRY_OMARCHY_BATTERY_ROOT=str(root)),
++                                    capture_output=True, text=True)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            self.assertEqual(module.read_text(), "launcher module")
++            self.assertFalse(old.exists())
++
+     def test_catchup_retries_failure_and_runs_once(self):
+         helper = GUEST / "factory-overlay/usr/local/lib/try-omarchy/catch-up"
+         with tempfile.TemporaryDirectory() as directory:
+-- 
+2.56.0
+
