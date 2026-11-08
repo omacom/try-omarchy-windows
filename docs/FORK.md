@@ -12,6 +12,10 @@ retained; long-run stability is open. The released launcher continues using the
 upstream graphics runtime; supported device integration, normal launcher/input,
 sustained use and near-native performance remain unfinished.
 
+The current backend design is [virtio-dxg](VIRTIO-DXG.md): Microsoft's
+`dxgkrnl` over virtio in the guest and a D3DKMT executor in QEMU, replacing
+the experiment's userspace interposer while reusing its hardware findings.
+
 ## Upstream updates
 
 `Sync fork with upstream` runs daily at 06:17 UTC and can be dispatched manually.
