@@ -197,3 +197,26 @@ the socket count grew again. The larger sets take about 96 KB of main-loop
 stack, well inside QEMU's 2 MB thread stacks. `test-fd-setsize.py` binds 100
 loopback sockets and checks that `select()` reports the last one ready with the
 pinned size, and misses it with Winsock's default.
+
+`0025-fail-fast-on-missing-sdl-audio-endpoints.patch` keeps a missing Windows
+audio endpoint from freezing the VM. SDL's WASAPI backend retries a missing
+endpoint for eight seconds inside `SDL_OpenAudioDevice`, which runs on QEMU's
+main loop. Each guest sound, such as Hyprland 0.57's terminal bell, stopped
+the display, input, QMP and slirp for that long, and the launcher reported the
+VM as unresponsive (#384). Before opening, QEMU now checks SDL's inventory in
+both directions and asks Windows directly whether a default endpoint exists.
+A missing default, or an empty inventory, fails at once and is checked again on
+the next route poll. A selected device that left the inventory goes straight to
+the default. Playback now backs off after a failed open like capture does: ten
+seconds with listed endpoints, one second without, across route polls and
+stream starts, and a successful open clears it. Each outage is reported once.
+On the reporter's kind of failure, a Windows VM without a default playback
+device, the check answers in about 1 ms where SDL took 8 s.
+
+`test-sdl-playback.py` compiles the playback start and route functions with
+mocked endpoints and a fake clock: immediate reopen after a normal sound, no
+repeat of a slow failed open across polls and repeated sounds, recovery, a
+missing default, empty-inventory hotplug and a failed live route change.
+`test-sdl-audio.py` and `test-sdl-capture.py` cover the open preflight and
+single reports. An endpoint removed after the check can still enter SDL's
+wait once; the backoff keeps it from repeating.

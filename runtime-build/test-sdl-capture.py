@@ -81,6 +81,9 @@ static int SDL_GetNumAudioDevices(int rec) {
 static const char *SDL_GetAudioDeviceName(int index, int rec) {
     assert(rec == 1); return "Microphone";
 }
+static bool sdl_default_endpoint_missing(int rec) {
+    assert(rec == 1); return false;
+}
 static SDL_AudioDeviceID SDL_OpenAudioDevice(const char *name, int rec,
         SDL_AudioSpec *req, SDL_AudioSpec *obt, int changes) {
     /* Preflight must avoid opening an empty inventory. */
@@ -204,7 +207,7 @@ int main(int argc, char **argv) {
         }
         assert(opens == 1);
         advance(10); consume(&sdl, 0);
-        assert(opens == 2 && failures == 2 && !sdl.devid);
+        assert(opens == 2 && failures == 1 && !sdl.devid); /* reported once */
         assert(sdl.next_route_check == host_us + 10 * G_USEC_PER_SEC);
         fail_open = false;
         advance(10000); consume(&sdl, 0);
@@ -229,15 +232,16 @@ int main(int argc, char **argv) {
         assert(g_file_set_contents(input, "bWlzc2luZw==\n", -1, NULL));
         fail_open = true;
         failed_open_us = 8 * G_USEC_PER_SEC;
+        /* An unlisted selection goes straight to the default: one open. */
         advance(250); consume(&sdl, 0);
-        assert(opens == 3 && failures == 1 && sdl.devid == 17);
+        assert(opens == 2 && failures == 1 && sdl.devid == 17);
         assert(sdl.next_route_check == host_us + 10 * G_USEC_PER_SEC);
-        advance(9999); consume(&sdl, 0); assert(opens == 3);
-        advance(1); consume(&sdl, 0); assert(opens == 5 && failures == 2);
+        advance(9999); consume(&sdl, 0); assert(opens == 2);
+        advance(1); consume(&sdl, 0); assert(opens == 3 && failures == 1);
         fail_open = false;
         failed_open_us = 0;
         advance(10000); consume(&sdl, 0);
-        assert(opens == 7 && sdl.devid == 17 && !sdl.route_matches);
+        assert(opens == 4 && sdl.devid == 17 && !sdl.route_matches);
         assert(sdl.next_route_check == host_us + 250 * 1000);
         assert(g_remove(input) == 0);
         assert(g_rmdir(directory) == 0);

@@ -121,6 +121,7 @@ python "$recipe/test-sdl-cursor.py" "$qemu_source"
 python "$recipe/test-sdl-context.py" "$qemu_source/ui/sdl2.c"
 python "$recipe/test-sdl-audio.py" "$qemu_source/audio/sdlaudio.c"
 python "$recipe/test-sdl-capture.py" "$qemu_source"
+python "$recipe/test-sdl-playback.py" "$qemu_source/audio/sdlaudio.c"
 python "$recipe/test-windows-pinch.py"
 python "$qemu_source/scripts/qapi-gen.py" -o "$work/qapi-validation" -b "$qemu_source/qapi/qapi-schema.json"
 
