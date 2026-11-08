@@ -113,6 +113,18 @@ builder digests, Arch version, SONAME and provide. Use the new Arch version plus
 revision, and repeat contract, real pacman transaction and image build/boot
 checks. The build fails if source, build-tool pins, metadata or SONAME drift.
 
+Compatibility revision 68 moves existing disks to Omarchy 4.5.0. The next
+**Update > Omarchy** installs runtime `4.5.0-14`, mise 2026.10.25 and the new
+desktop packages (Omasnap, Disktree, vi, xorg-xsetroot), then runs Omarchy's
+migrations. Those replace Tensaku with Omasnap and dua-cli with Disktree, and
+turn earlier mise wrappers into lazy shims. Migrations for apps the image leaves
+out (OWE, Hype, Monologue, Signed, Gliff, floating titlebars, Mozc and the
+Chinese add-ons), the repository reorder, the kernel switch and the BBR and ARP
+sysctls print a message and change nothing, so updated and fresh disks have the
+same packages. Omarchy 4.5 also removes orphaned packages without asking during
+the update; packages the guest needs are explicit or runtime dependencies, so
+they are not orphans.
+
 If repository publication fails, inspect:
 
 ```sh

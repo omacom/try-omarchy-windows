@@ -10,6 +10,42 @@ scripts/release/build-guest.sh --contract-only
 scripts/release/build-guest.sh --output /path/to/artifacts
 ```
 
+Patches 0160 to 0167 move the guest to Omarchy 4.5.0 (omacom/omarchy
+`v4.5.0`, ac2690cd). It is not a descendant of the 4.0.4 quattro commit, so
+every backport was checked against it again. Hover-close and the Qt 6.12
+palette are upstream now and are dropped; notification privacy, the host time
+zone (fed through the setup form's new preset slot), first-run update urgency,
+the Windows power profile and the virtio night light are re-ported; the clock,
+screensaver, free-space message and bell mute rebase. Existing disks run 4.5's
+new migrations on **Update > Omarchy**, while fresh users have them marked done,
+so `materialize-omarchy.sh` makes the ones that install apps the image leaves
+out, reorder the package repositories (which would let `[omarchy]` replace the
+patched aquamarine) or apply sysctl files the guest does not ship print a
+message instead. Each is guarded by its reviewed digest, so an upstream change
+stops the build. The input-method migration keeps its shortcut defaults but
+does not add Mozc or the Chinese add-ons. The kernel reboot check now matches
+4.5's indented line. The image ships 4.5's XKB option (its keyboard defaults
+need it), the language and sudo-timeout sudoers rules, the mise tool and agent
+account declarations and the shell keep-alive drop-in, and replaces Osaka Jade
+with Jade Horse and Starship as upstream did. The 4.0.x repair payloads in the
+factory overlay still serve disks on the old runtime; their tests read a frozen
+copy of the 4.0.4 backport registry in `tests/fixtures/omarchy-4.0.4`.
+
+Patch 0161 leaves the 82 MiB of theme intro videos out. They play only through
+OWE, which the image does not ship, and with them the compressed disk passed
+GitHub's 2 GiB asset limit. Patch 0162 pins mise 2026.10.25: 4.5 builds its lazy
+tool shims with `mise reshim --system`, which 2026.8.11 rejects. Patch 0163 ships
+Omasnap (screenshots), Disktree (Disk Usage), vi, xorg-xsetroot and the Qt and
+ffmpeg pieces 4.5 adds, in place of Tensaku and dua-cli; the runtime depends on
+the four desktop packages so existing disks get them. Optional apps, OWE,
+floating titlebars, extra input methods and power profiles stay out. Patch 0164
+refreshes the package lock for those packages. Patch 0165 lets catch-up finish
+on early preview disks that have no DKMS; the battery step stopped it there, so
+no later repair ran. Patch 0166 keeps a stopped build from deleting the host's
+device nodes: pacstrap mounts the kernel's devtmpfs inside the staged root, and
+cleanup used to `rm -rf` through it. Patch 0167 raises the compatibility revision
+to 68. Runtime `4.5.0-14` carries it all.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME

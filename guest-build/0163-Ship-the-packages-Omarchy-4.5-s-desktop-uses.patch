@@ -1,0 +1,127 @@
+From 4ca54db590452915b149a3d19cc4126d55a1810c Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sun, 8 Nov 2026 00:11:53 -0500
+Subject: [PATCH] Ship the packages Omarchy 4.5's desktop uses
+
+Screenshots now open in Omasnap, Disk Usage is Disktree, and 4.5 adds vi,
+xorg-xsetroot for the XWayland root cursor and the Qt and ffmpeg pieces
+for building Omarchy-style apps. Add them in place of Tensaku and dua-cli,
+which 4.5's migrations remove. The runtime also depends on the four new
+desktop packages, so Update > Omarchy brings them to existing disks.
+
+Leave out the optional apps, OWE video backgrounds, floating titlebars,
+the extra input methods and power profiles; their migrations are inert.
+---
+ guest/packages.txt | 17 +++++++++++++++--
+ guest/spec.json    |  4 ++++
+ 2 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/guest/packages.txt b/guest/packages.txt
+index 2ed0731..cc726cc 100644
+--- a/guest/packages.txt
++++ b/guest/packages.txt
+@@ -10,7 +10,7 @@ clang
+ coreutils
+ dbus
+ desktop-file-utils
+-dua-cli
++disktree-bin
+ e2fsprogs
+ eza
+ fastfetch
+@@ -20,6 +20,7 @@ fcitx5-gtk
+ fcitx5-hangul
+ fcitx5-qt
+ fd
++ffmpeg
+ fontconfig
+ foot
+ fzf
+@@ -59,6 +60,7 @@ omacalc
+ omacut
+ omarchy-keyring
+ omarchy-nvim
++omasnap
+ omawrite
+ pacman-contrib
+ pamixer
+@@ -71,6 +73,10 @@ polkit
+ python
+ python-gobject
+ qrencode
++qt6-base
++qt6-declarative
++qt6-multimedia
++qt6-svg
+ qt6-wayland
+ quickshell
+ ripgrep
+@@ -83,7 +89,6 @@ starship
+ sudo
+ systemd
+ systemd-resolvconf
+-tensaku
+ tesseract
+ tesseract-data-eng
+ tmux
+@@ -93,6 +98,7 @@ udiskie
+ unzip
+ uwsm
+ v4l2loopback-dkms
++vi
+ vulkan-swrast
+ vulkan-virtio
+ wayland
+@@ -105,6 +111,7 @@ xdg-desktop-portal-hyprland
+ xdg-terminal-exec
+ xdg-user-dirs
+ xdg-utils
++xorg-xsetroot
+ xorg-xwayland
+ yay
+ zbar
+@@ -112,6 +119,12 @@ zoxide
+ zram-generator
+ zstd
+ 
++# Omarchy 4.5 base packages left out of this VM image: optional apps (hype,
++# monologue, signed, gliff, superwhisper-bin, kdenlive, obs-studio, xournalpp),
++# video backgrounds (owe), floating titlebars (omarchy-hyprland-titlebars),
++# extra input methods (fcitx5-mozc, fcitx5-chinese-addons, fcitx5-table-extra)
++# and power profiles (Windows manages power). Their migrations are inert.
++
+ # Locked build tools for the managed aquamarine rebuild
+ cmake
+ hyprwayland-scanner
+diff --git a/guest/spec.json b/guest/spec.json
+index 5aee2be..0d054ec 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -32,6 +32,7 @@
+     "license": "MIT",
+     "packageRelease": 14,
+     "integrationDepends": [
++      "disktree-bin",
+       "fcitx5",
+       "fcitx5-chewing",
+       "fcitx5-gtk",
+@@ -45,13 +46,16 @@
+       "libpulse",
+       "man-db",
+       "noto-fonts-cjk",
++      "omasnap",
+       "openssl",
+       "polkit",
+       "python",
+       "python-gobject",
+       "socat",
++      "vi",
+       "wl-clipboard",
+       "xdg-user-dirs",
++      "xorg-xsetroot",
+       "zstd"
+     ]
+   },
+-- 
+2.56.0
+
