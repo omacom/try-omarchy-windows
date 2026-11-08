@@ -1,0 +1,76 @@
+From 8901c310fb686d0d7675e7c9dccb667eaf82c158 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sun, 8 Nov 2026 11:22:55 -0500
+Subject: [PATCH] Keep Omarchy's animations and transparency in the guest
+
+Omarchy 4.5 starts new users in a VM with animations off and opaque windows.
+Fresh Try Omarchy users run that first-install step but existing disks never
+do, so the two would look different. Keep Omarchy's own look for both; the
+Appearance menu still turns them off for anyone who wants it.
+---
+ guest/scripts/materialize-omarchy.sh   |  9 +++++++++
+ guest/tests/test_omarchy_migrations.py | 28 ++++++++++++++++++++++++++
+ 2 files changed, 37 insertions(+)
+
+diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
+index 6ca5723..b691ce9 100755
+--- a/guest/scripts/materialize-omarchy.sh
++++ b/guest/scripts/materialize-omarchy.sh
+@@ -181,6 +181,15 @@ echo "Configure shared input-method defaults and free desktop shortcuts"
+ omarchy-input-method configure --defaults
+ MIGRATION
+ 
++# Omarchy 4.5 starts new users in a VM with animations off and opaque windows,
++# for CPU rendering. Existing disks never run that first-install step, so the
++# two would differ; Try Omarchy keeps Omarchy's own look for both. The
++# Appearance menu still turns them off for anyone who wants that.
++vm_appearance="$omarchy_root/install/user/hardware/vm-no-animations.sh"
++[[ -f $vm_appearance && $(sha256sum "$vm_appearance" | cut -d' ' -f1) == 4e7a3085e298992a070639b92f7333ebe204b9adb29957008e6330a5de9ddeb3 ]] ||
++  fail "Omarchy's VM appearance step changed; review it before replacing it: $vm_appearance"
++printf '%s\n' 'echo "Keep Omarchy'"'"'s animations and transparency"' >"$vm_appearance"
++
+ # The guest disk is ext4 and has neither Snapper nor a Limine bootloader.
+ # Keep the upstream migration runner intact, but make this bare-metal setup
+ # step inert, including when a future migration or setup command sources it.
+diff --git a/guest/tests/test_omarchy_migrations.py b/guest/tests/test_omarchy_migrations.py
+index 0e32078..3b22808 100644
+--- a/guest/tests/test_omarchy_migrations.py
++++ b/guest/tests/test_omarchy_migrations.py
+@@ -93,6 +93,34 @@ class SkippedMigrationTests(unittest.TestCase):
+         self.assertNotIn('omarchy-pkg-add', block)
+         self.assertIn('b5dc5a2ef3ea113896c0a0bb9569228ebb1bd93f856fe13a8e24346c7b9bfed6', MATERIALIZE)
+ 
++    def test_vm_appearance_step_keeps_omarchys_look(self):
++        # Fresh users run install/user/all.sh, existing disks never do, so the
++        # VM step must not turn off animations or transparency for one of them.
++        block = MATERIALIZE.split('vm_appearance="$omarchy_root/install/user/hardware/vm-no-animations.sh"', 1)[1]
++        block = block.split('\n\n', 1)[0]
++        self.assertIn('4e7a3085e298992a070639b92f7333ebe204b9adb29957008e6330a5de9ddeb3', block)
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            step = root / 'install/user/hardware/vm-no-animations.sh'
++            step.parent.mkdir(parents=True)
++            step.write_text('changed upstream\n')
++            script = 'set -euo pipefail\nfail() { echo "$*" >&2; exit 1; }\nomarchy_root=$1\n'
++            script += 'vm_appearance="$omarchy_root/install/user/hardware/vm-no-animations.sh"\n' + block + '\n'
++            changed = subprocess.run(['bash', '-c', script, 'step', str(root)],
++                                     text=True, capture_output=True, timeout=10)
++            self.assertNotEqual(changed.returncode, 0)
++            self.assertIn('changed; review it', changed.stderr)
++            self.assertEqual(step.read_text(), 'changed upstream\n')
++            # The reviewed step is replaced by a script that only prints.
++            replace = [line for line in block.splitlines() if line.startswith('printf ')]
++            self.assertEqual(len(replace), 1)
++            subprocess.run(['bash', '-c', 'vm_appearance=$1\n' + replace[0], 'step', str(step)],
++                           check=True, timeout=10)
++            ran = subprocess.run(['bash', '-euo', 'pipefail', str(step)],
++                                 text=True, capture_output=True, timeout=10)
++            self.assertEqual(ran.returncode, 0, ran.stderr)
++            self.assertEqual(ran.stdout, "Keep Omarchy's animations and transparency\n")
++
+     def test_kernel_reboot_check_is_disabled_on_the_indented_line(self):
+         # The shape of Omarchy 4.5's omarchy-update-restart around the check.
+         restart = '''if [[ $mode != "--services-only" ]]; then
+-- 
+2.56.0
+

@@ -1,0 +1,368 @@
+From 4608377b05a363af3d0dc063b50430fc67a69089 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sun, 8 Nov 2026 11:22:55 -0500
+Subject: [PATCH] Keep Omarchy's system files in step on updated disks
+
+The image installs Omarchy's icon font, fontconfig rules and user units where
+Omarchy's package would, but no package owns them, so Update > Omarchy left
+an existing disk with 4.0.4's copies: missing 4.5 icons, older CJK font
+fallback and the previous fcitx5 unit. The runtime package now runs a sync
+after every install and upgrade that copies its own versions into place
+wherever no package owns the target, and refreshes /etc/fastfetch only while
+it is a copy Omarchy shipped.
+---
+ guest/scripts/materialize-omarchy.sh          |   5 +
+ guest/scripts/register-omarchy-runtime.sh     |   6 +
+ guest/scripts/runtime-ownership.install       |  21 ++-
+ guest/scripts/sync-omarchy-system-files       |  89 ++++++++++++
+ guest/tests/test_runtime_package.py           |  18 +++
+ guest/tests/test_sync_omarchy_system_files.py | 134 ++++++++++++++++++
+ 6 files changed, 272 insertions(+), 1 deletion(-)
+ create mode 100755 guest/scripts/sync-omarchy-system-files
+ create mode 100644 guest/tests/test_sync_omarchy_system_files.py
+
+diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
+index b691ce9..83a1fe5 100755
+--- a/guest/scripts/materialize-omarchy.sh
++++ b/guest/scripts/materialize-omarchy.sh
+@@ -295,6 +295,11 @@ install_file 0644 "$source_dir/default/wayland-sessions/omarchy.desktop" "$root/
+ install_file 0644 "$source_dir/default/fonts/omarchy/omarchy.ttf" "$root/usr/share/fonts/omarchy/omarchy.ttf"
+ install_file 0644 "$source_dir/etc/profile.d/omarchy.sh" "$root/etc/profile.d/omarchy.sh"
+ install_file 0644 "$source_dir/etc/fastfetch/config.jsonc" "$root/etc/fastfetch/config.jsonc"
++# The runtime package carries the sync that keeps the unowned copies above in
++# step with it on existing disks, plus the /etc source it needs (etc/ is not
++# under /usr/share/omarchy). Fresh images register those paths as installed.
++install_file 0755 "$guest_dir/scripts/sync-omarchy-system-files" "$root/usr/lib/try-omarchy/sync-omarchy-system-files"
++install_file 0644 "$source_dir/etc/fastfetch/config.jsonc" "$root/usr/lib/try-omarchy/omarchy-etc/fastfetch/config.jsonc"
+ 
+ # These upstream system defaults are needed by menu actions and security
+ # fixes even though this guest does not run the bare-metal installer.
+diff --git a/guest/scripts/register-omarchy-runtime.sh b/guest/scripts/register-omarchy-runtime.sh
+index a6df4b3..895349c 100755
+--- a/guest/scripts/register-omarchy-runtime.sh
++++ b/guest/scripts/register-omarchy-runtime.sh
+@@ -115,6 +115,12 @@ for command in "${runtime_commands[@]}"; do
+   cp -a "$root/usr/bin/$name" "$stage/usr/bin/$name"
+ done
+ 
++# The sync the package's install script runs, and its /etc source copy.
++[[ -x $root/usr/lib/try-omarchy/sync-omarchy-system-files ]] || fail "missing Omarchy system file sync"
++[[ -f $root/usr/lib/try-omarchy/omarchy-etc/fastfetch/config.jsonc ]] || fail "missing Omarchy fastfetch source"
++install -Dm755 "$root/usr/lib/try-omarchy/sync-omarchy-system-files" "$stage/usr/lib/try-omarchy/sync-omarchy-system-files"
++install -Dm644 "$root/usr/lib/try-omarchy/omarchy-etc/fastfetch/config.jsonc" "$stage/usr/lib/try-omarchy/omarchy-etc/fastfetch/config.jsonc"
++
+ # Keep the shader backend with the runtime command across package upgrades.
+ install -Dm755 "$root/usr/local/bin/omarchy-native-nightlight" "$stage/usr/local/bin/omarchy-native-nightlight"
+ install -Dm644 "$root/usr/local/share/try-omarchy/nightlight.frag" "$stage/usr/local/share/try-omarchy/nightlight.frag"
+diff --git a/guest/scripts/runtime-ownership.install b/guest/scripts/runtime-ownership.install
+index d590175..adf47a6 100644
+--- a/guest/scripts/runtime-ownership.install
++++ b/guest/scripts/runtime-ownership.install
+@@ -26,7 +26,7 @@ pre_upgrade() {
+   done
+ }
+ 
+-post_upgrade() {
++restore_helpers() {
+   local state=/var/lib/try-omarchy/runtime-ownership-recovery name path
+   [[ -e $state || -L $state ]] || return 0
+   [[ ! -L $state && -d $state && $(stat -c %u:%a "$state") == 0:700 ]] || return 1
+@@ -43,3 +43,22 @@ post_upgrade() {
+   done
+   rmdir "$state" 2>/dev/null || true
+ }
++
++# Omarchy's files outside /usr/share/omarchy (icon font, fontconfig rules, user
++# units) belong to no package, so follow this runtime's copies explicitly.
++sync_system_files() {
++  local sync=/usr/lib/try-omarchy/sync-omarchy-system-files
++  [[ -x $sync ]] || return 0
++  "$sync"
++}
++
++post_install() {
++  sync_system_files
++}
++
++post_upgrade() {
++  local status=0
++  restore_helpers || status=$?
++  sync_system_files || status=1
++  return "$status"
++}
+diff --git a/guest/scripts/sync-omarchy-system-files b/guest/scripts/sync-omarchy-system-files
+new file mode 100755
+index 0000000..200131a
+--- /dev/null
++++ b/guest/scripts/sync-omarchy-system-files
+@@ -0,0 +1,89 @@
++#!/bin/bash
++# Bring Omarchy's files outside /usr/share/omarchy up to the runtime package
++# that was just installed. The image places them where Omarchy's own package
++# would, but no package owns them, so a runtime update alone leaves an existing
++# disk with the previous release's icon font, fontconfig rules and user units
++# while a fresh image has the new ones. The runtime package runs this after
++# every install and upgrade, so both end up with the same files.
++#
++# A target is replaced only when no package owns it, so a file another package
++# installed is never touched. /etc/fastfetch/config.jsonc is replaced only while
++# it is a copy Omarchy shipped, which keeps an administrator's edits.
++set -uo pipefail
++
++root=${TRY_OMARCHY_SYNC_ROOT:-}
++omarchy=$root/usr/share/omarchy/default
++etc_copies=$root/usr/lib/try-omarchy/omarchy-etc
++
++# Every /etc/fastfetch/config.jsonc Omarchy has shipped.
++fastfetch_shipped=(
++  00a6fbf9af83cfa5bdb9cd37bc0746bb42e99672fb7cc4d76a92778de720c2b4
++  1a0a085e7a80036f415148da21f772e99898de7e70768ec7b7613f8cc620700c
++  26e144d380fc91357d6d602f5eff3dae21eaad08c960ff360d76c227706ce484
++  31c3f90562f3986894f1c3dd5d0be53a203cf6b474236010e45840d6c6dc65cf
++  596f9c3ac3543d15023abc112f338fb9a8b8fa1198457bacda2b540c429c3dba
++  69170ab32697f6c6fba0ac3f8d34a03cd8929984894acef92475aef19a2094e3
++  9c69d06d17929742344be0d42d3dde67556f0f189625de39c0ab7ba16c30b45c
++)
++
++failed=0
++fonts_changed=0
++
++# Scriptlets run with pacman's root as /, so the system path is the query.
++owned() {
++  pacman -Qqo -- "$1" &>/dev/null
++}
++
++# Copy one file into place. Returns 0 when the target changed.
++place() {
++  local from=$1 path=$2 target=$root$2 next
++  [[ -f $from && ! -L $from ]] || return 1
++  # Leave links, directories and anything else that is not a plain file alone.
++  if [[ -L $target || (-e $target && ! -f $target) ]]; then
++    return 1
++  fi
++  if [[ -f $target ]] && cmp -s -- "$from" "$target"; then
++    return 1
++  fi
++  owned "$path" && return 1
++  next=$(dirname "$target")/.$(basename "$target").try-omarchy-new
++  if ! install -D -m 0644 -- "$from" "$next" || ! mv -fT -- "$next" "$target"; then
++    rm -f -- "$next"
++    echo "Could not update $path" >&2
++    failed=1
++    return 1
++  fi
++  echo "Updated $path"
++}
++
++place_tree() {
++  local from=$1 to=$2 relative
++  [[ -d $from ]] || return 0
++  while IFS= read -r -d '' relative; do
++    place "$from/$relative" "$to/$relative" || true
++  done < <(cd "$from" && find . -type f -printf '%P\0' | sort -z)
++}
++
++if place "$omarchy/fonts/omarchy/omarchy.ttf" /usr/share/fonts/omarchy/omarchy.ttf; then
++  fonts_changed=1
++fi
++if place "$omarchy/fontconfig/conf.avail/50-omarchy.conf" /usr/share/fontconfig/conf.avail/50-omarchy.conf; then
++  fonts_changed=1
++fi
++place_tree "$omarchy/systemd/user" /usr/lib/systemd/user
++place_tree "$omarchy/systemd/user@.service.d" /usr/lib/systemd/system/user@.service.d
++
++fastfetch=$root/etc/fastfetch/config.jsonc
++if [[ -f $etc_copies/fastfetch/config.jsonc ]]; then
++  current=""
++  [[ ! -f $fastfetch || -L $fastfetch ]] || current=$(sha256sum -- "$fastfetch" | cut -d' ' -f1)
++  if [[ ! -e $fastfetch && ! -L $fastfetch ]] || printf '%s\n' "${fastfetch_shipped[@]}" | grep -qxF -- "$current"; then
++    place "$etc_copies/fastfetch/config.jsonc" /etc/fastfetch/config.jsonc || true
++  fi
++fi
++
++if ((fonts_changed)) && [[ -z $root ]] && command -v fc-cache >/dev/null; then
++  fc-cache -s >/dev/null 2>&1 || true
++fi
++
++exit "$failed"
+diff --git a/guest/tests/test_runtime_package.py b/guest/tests/test_runtime_package.py
+index 519966a..e0fcab6 100644
+--- a/guest/tests/test_runtime_package.py
++++ b/guest/tests/test_runtime_package.py
+@@ -34,6 +34,13 @@ class RuntimePackageTests(unittest.TestCase):
+             asset = self.root / relative
+             asset.parent.mkdir(parents=True, exist_ok=True)
+             asset.write_text('night-light fixture')
++        sync = self.root / 'usr/lib/try-omarchy/sync-omarchy-system-files'
++        sync.parent.mkdir(parents=True, exist_ok=True)
++        sync.write_text('#!/bin/bash\nexit 0\n')
++        sync.chmod(0o755)
++        fastfetch = self.root / 'usr/lib/try-omarchy/omarchy-etc/fastfetch/config.jsonc'
++        fastfetch.parent.mkdir(parents=True, exist_ok=True)
++        fastfetch.write_text('{}\n')
+         self.spec = self.base / 'spec.json'
+         self.spec.write_text(json.dumps({'upstream': {'version': '4.0.3', 'packageRelease': 4,
+             'repository': 'https://example.invalid/omarchy', 'commit': 'a' * 40},
+@@ -75,8 +82,19 @@ exit 0''')
+             self.assertIn('usr/bin/omarchy-version', names)
+             self.assertNotIn('usr/bin/omarchy-nvim-setup', names)
+             self.assertNotIn('usr/bin/omarchy-neighbor', names)
++            sync = archive.getmember('usr/lib/try-omarchy/sync-omarchy-system-files')
++            self.assertEqual(sync.mode & 0o777, 0o755)
++            fastfetch = archive.getmember('usr/lib/try-omarchy/omarchy-etc/fastfetch/config.jsonc')
++            self.assertEqual(fastfetch.mode & 0o777, 0o644)
+         self.assertTrue((self.root / 'usr/bin/omarchy-nvim-setup').exists())
+ 
++    def test_missing_system_file_sync_fails_before_registration(self):
++        (self.root / 'usr/lib/try-omarchy/sync-omarchy-system-files').unlink()
++        result = self.run_builder()
++        self.assertNotEqual(result.returncode, 0)
++        self.assertIn('missing Omarchy system file sync', result.stderr)
++        self.assertFalse(self.capture.exists())
++
+     def test_missing_materialized_command_fails_before_registration(self):
+         (self.root / 'usr/bin/omarchy').unlink()
+         result = self.run_builder()
+diff --git a/guest/tests/test_sync_omarchy_system_files.py b/guest/tests/test_sync_omarchy_system_files.py
+new file mode 100644
+index 0000000..597a587
+--- /dev/null
++++ b/guest/tests/test_sync_omarchy_system_files.py
+@@ -0,0 +1,134 @@
++"""The runtime keeps Omarchy's unowned system files in step on existing disks."""
++import os
++from pathlib import Path
++import subprocess
++import tempfile
++import unittest
++
++SYNC = Path(__file__).resolve().parents[1] / 'scripts/sync-omarchy-system-files'
++OMARCHY_4_0_4_FASTFETCH = '31c3f90562f3986894f1c3dd5d0be53a203cf6b474236010e45840d6c6dc65cf'
++
++
++class SyncOmarchySystemFilesTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temp.cleanup)
++        base = Path(self.temp.name)
++        self.root = base / 'root'
++        self.default = self.root / 'usr/share/omarchy/default'
++        self.write(self.default / 'fonts/omarchy/omarchy.ttf', 'font 4.5\n')
++        self.write(self.default / 'fontconfig/conf.avail/50-omarchy.conf', 'rules 4.5\n')
++        self.write(self.default / 'systemd/user/omarchy-fcitx5.service', 'unit 4.5\n')
++        self.write(self.default / 'systemd/user/wireplumber.service.d/10-omarchy-camera-access.conf', 'drop-in\n')
++        self.write(self.default / 'systemd/user@.service.d/faster-shutdown.conf', 'shutdown\n')
++        self.write(self.root / 'usr/lib/try-omarchy/omarchy-etc/fastfetch/config.jsonc', 'fastfetch 4.5\n')
++        # The previous release's unowned copies on an existing disk.
++        self.write(self.root / 'usr/share/fonts/omarchy/omarchy.ttf', 'font 4.0.4\n')
++        self.write(self.root / 'usr/share/fontconfig/conf.avail/50-omarchy.conf', 'rules 4.0.4\n')
++        self.write(self.root / 'usr/lib/systemd/user/omarchy-fcitx5.service', 'unit 4.0.4\n')
++        self.write(self.root / 'usr/lib/systemd/user/omarchy-windows-audio-bridge.service', 'guest unit\n')
++        self.write(self.root / 'usr/lib/systemd/system/user@.service.d/faster-shutdown.conf', 'shutdown\n')
++        self.bin = base / 'bin'
++        self.bin.mkdir()
++        self.owned = base / 'owned'
++        self.owned.write_text('')
++        self.queries = base / 'queries'
++        # Fake ownership: -Qqo succeeds only for system paths listed in OWNED.
++        self.fake('pacman', '[[ $1 == -Qqo && $2 == -- ]] || exit 2\n'
++                  'printf "%s\\n" "$3" >>"$QUERIES"\n'
++                  'grep -qxF -- "$3" "$OWNED"')
++
++    def write(self, path, text):
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text(text)
++
++    def fake(self, name, body):
++        path = self.bin / name
++        path.write_text('#!/bin/bash\n' + body + '\n')
++        path.chmod(0o755)
++
++    def run_sync(self):
++        environment = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
++                           TRY_OMARCHY_SYNC_ROOT=str(self.root), OWNED=str(self.owned),
++                           QUERIES=str(self.queries))
++        return subprocess.run(['bash', str(SYNC)], env=environment, text=True,
++                              capture_output=True, timeout=30)
++
++    def text(self, path):
++        return (self.root / path.lstrip('/')).read_text()
++
++    def test_updates_unowned_copies_and_adds_new_units(self):
++        result = self.run_sync()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(self.text('/usr/share/fonts/omarchy/omarchy.ttf'), 'font 4.5\n')
++        self.assertEqual(self.text('/usr/share/fontconfig/conf.avail/50-omarchy.conf'), 'rules 4.5\n')
++        self.assertEqual(self.text('/usr/lib/systemd/user/omarchy-fcitx5.service'), 'unit 4.5\n')
++        self.assertEqual(self.text('/usr/lib/systemd/user/wireplumber.service.d/10-omarchy-camera-access.conf'),
++                         'drop-in\n')
++        # Files Omarchy does not ship are left alone, and nothing is left behind.
++        self.assertEqual(self.text('/usr/lib/systemd/user/omarchy-windows-audio-bridge.service'), 'guest unit\n')
++        self.assertEqual([p for p in self.root.rglob('.*try-omarchy-new')], [])
++        mode = (self.root / 'usr/share/fonts/omarchy/omarchy.ttf').stat().st_mode & 0o777
++        self.assertEqual(mode, 0o644)
++        self.assertIn('Updated /usr/share/fonts/omarchy/omarchy.ttf', result.stdout)
++
++    def test_second_run_changes_nothing_and_queries_nothing(self):
++        self.assertEqual(self.run_sync().returncode, 0)
++        self.queries.write_text('')
++        result = self.run_sync()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(result.stdout, '')
++        # Identical files are settled without asking pacman.
++        self.assertEqual(self.queries.read_text(), '')
++
++    def test_never_replaces_a_file_another_package_owns(self):
++        self.owned.write_text('/usr/share/fonts/omarchy/omarchy.ttf\n'
++                              '/usr/lib/systemd/user/omarchy-fcitx5.service\n')
++        result = self.run_sync()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(self.text('/usr/share/fonts/omarchy/omarchy.ttf'), 'font 4.0.4\n')
++        self.assertEqual(self.text('/usr/lib/systemd/user/omarchy-fcitx5.service'), 'unit 4.0.4\n')
++        self.assertEqual(self.text('/usr/share/fontconfig/conf.avail/50-omarchy.conf'), 'rules 4.5\n')
++
++    def test_leaves_links_and_directories_in_place(self):
++        font = self.root / 'usr/share/fonts/omarchy/omarchy.ttf'
++        font.unlink()
++        font.symlink_to('/elsewhere/omarchy.ttf')
++        unit = self.root / 'usr/lib/systemd/user/omarchy-fcitx5.service'
++        unit.unlink()
++        unit.mkdir()
++        result = self.run_sync()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertTrue(font.is_symlink())
++        self.assertTrue(unit.is_dir())
++
++    def test_fastfetch_replaced_only_while_it_is_a_shipped_copy(self):
++        fastfetch = self.root / 'etc/fastfetch/config.jsonc'
++        # Missing: installed.
++        result = self.run_sync()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(fastfetch.read_text(), 'fastfetch 4.5\n')
++        # Edited by an administrator: kept.
++        fastfetch.write_text('my own layout\n')
++        self.assertEqual(self.run_sync().returncode, 0)
++        self.assertEqual(fastfetch.read_text(), 'my own layout\n')
++
++    def test_fastfetch_from_omarchy_4_0_4_is_updated(self):
++        self.assertIn(OMARCHY_4_0_4_FASTFETCH, SYNC.read_text())
++        # Write bytes whose hash is in the shipped list by stubbing sha256sum.
++        fastfetch = self.root / 'etc/fastfetch/config.jsonc'
++        self.write(fastfetch, 'omarchy 4.0.4 fastfetch\n')
++        self.fake('sha256sum', f'echo "{OMARCHY_4_0_4_FASTFETCH}  $2"')
++        result = self.run_sync()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(fastfetch.read_text(), 'fastfetch 4.5\n')
++
++    def test_shipped_fastfetch_hashes_are_well_formed(self):
++        hashes = [line.strip() for line in SYNC.read_text().splitlines()
++                  if len(line.strip()) == 64 and all(c in '0123456789abcdef' for c in line.strip())]
++        self.assertEqual(len(hashes), 7)
++        self.assertEqual(len(set(hashes)), 7)
++
++
++if __name__ == '__main__':
++    unittest.main()
+-- 
+2.56.0
+
