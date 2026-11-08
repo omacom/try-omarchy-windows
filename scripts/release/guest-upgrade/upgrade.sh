@@ -62,6 +62,21 @@ done
 # the disk runs Omarchy's quickshell build rather than Arch's.
 [[ $(awk -F'[][]' '/^\[/ && $2 != "options" {print $2; exit}' /etc/pacman.conf) == omarchy ]]
 [[ $(pacman -Q quickshell | cut -d' ' -f2) == "$(pacman -Sl omarchy | awk '$2 == "quickshell" {print $3}')" ]]
+# Omarchy's files outside /usr/share/omarchy follow the runtime, as on a fresh
+# image: the icon font, fontconfig rules, user units and the fastfetch default.
+cmp /usr/share/omarchy/default/fonts/omarchy/omarchy.ttf /usr/share/fonts/omarchy/omarchy.ttf
+cmp /usr/share/omarchy/default/fontconfig/conf.avail/50-omarchy.conf /usr/share/fontconfig/conf.avail/50-omarchy.conf
+units=0
+while IFS= read -r -d '' unit; do
+  cmp "/usr/share/omarchy/default/systemd/user/$unit" "/usr/lib/systemd/user/$unit"
+  units=$((units + 1))
+done < <(cd /usr/share/omarchy/default/systemd/user && find . -type f -printf '%P\0')
+((units > 0))
+cmp /usr/lib/try-omarchy/omarchy-etc/fastfetch/config.jsonc /etc/fastfetch/config.jsonc
+# Omarchy's look carries over: the update adds none of 4.5's VM appearance flags.
+for flag in no-animations window-opaque; do
+  [[ ! -e $HOME/.local/state/omarchy/toggles/hypr/$flag.lua ]]
+done
 sudo pacman -Dk
 sha256sum -c "$HOME/upgrade-nvim.sha256"
 [[ $(readlink /usr/bin/omarchy-nvim-refresh) == "$(cat "$HOME/upgrade-nvim-link")" ]]
@@ -98,6 +113,16 @@ sudo python3 /mnt/host/pinch-udev.py
 # later disks create the account with the rule and have no record.
 cmp /etc/ssh/sshd_config.d/90-try-omarchy-quick-start.conf /usr/share/try-omarchy/quick-start-sshd.conf
 sha256sum "$input" > "$HOME/upgrade-input-after.sha256"
+# The second update runs Omarchy 4.5's own update flow, which also removes
+# orphaned packages without asking. Nothing the disk had may go.
+pacman -Qq | sort > /tmp/packages-before-second-update
+GUM_CONFIRM_TIMEOUT=1s omarchy-update -y > /tmp/second-update.log 2>&1 || { cat /tmp/second-update.log; exit 1; }
+if grep -q "command failed to execute correctly" /tmp/second-update.log; then cat /tmp/second-update.log; exit 1; fi
+pacman -Qq | sort > /tmp/packages-after-second-update
+comm -23 /tmp/packages-before-second-update /tmp/packages-after-second-update > /tmp/packages-removed-second-update
+[[ ! -s /tmp/packages-removed-second-update ]] || { cat /tmp/packages-removed-second-update; exit 1; }
+if omarchy-migrate --pending; then exit 1; fi
+sha256sum -c "$HOME/upgrade-preserve.sha256"
 systemctl --failed --no-pager
 df -h /
 sync
