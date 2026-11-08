@@ -19,7 +19,7 @@
 #include "qemu/main-loop.h"
 #include "qemu/error-report.h"
 #include "qapi/error.h"
-#include "hw/qdev-properties.h"
+#include "hw/core/qdev-properties.h"
 #include "hw/pci/pci.h"
 #include "hw/virtio/virtio.h"
 #include "hw/virtio/virtio-pci.h"

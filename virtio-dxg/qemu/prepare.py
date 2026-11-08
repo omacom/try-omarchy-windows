@@ -65,6 +65,19 @@ def main():
     text = meson.read_text()
     if MARKER not in text:
         meson.write_text(text + MESON, newline="\n")
+
+    # virtio core names devices by ID from a table and asserts the ID is in
+    # it; virtio-dxg's ID is past the last standard one.
+    virtio = qemu / "hw/virtio/virtio.c"
+    text = virtio.read_text()
+    entry = '    [62 /* VIRTIO_ID_DXG */] = "virtio-dxg",\n'
+    if entry not in text:
+        anchor = '    [VIRTIO_ID_SPI] = "virtio-spi"\n};'
+        if anchor not in text:
+            sys.exit("hw/virtio/virtio.c: device name table not found")
+        text = text.replace(anchor, '    [VIRTIO_ID_SPI] = "virtio-spi",\n'
+                            + entry + '};')
+        virtio.write_text(text, newline="\n")
     print(f"virtio-dxg added to {qemu}")
 
 
