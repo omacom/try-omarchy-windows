@@ -155,6 +155,18 @@ int main(void) {
     assert(sdl_open(&req, &obt, 0, NULL, &matched) == 0);
     assert(failures == 2);
     fail_default = false;
+
+    /* A listed selection that fails must not fall back into SDL's wait
+     * when Windows has no default either. */
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 17);
+    available_name = "missing";
+    default_missing = true;
+    warnings = 0;
+    int before = opens;
+    assert(sdl_open(&req, &obt, 0, "missing", &matched) == 0 && !matched);
+    assert(opens == before + 1 && !strcmp(last_name, "missing"));
+    assert(warnings == 2); /* selection fell back, default unavailable */
+    default_missing = false;
     remove(output);
     g_rmdir(directory);
     return 0;

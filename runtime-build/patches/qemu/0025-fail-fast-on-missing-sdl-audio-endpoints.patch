@@ -56,7 +56,7 @@
      bool route_matches;
      bool enabled;
  } SDLVoiceOut;
-@@ -233,6 +275,11 @@
+@@ -233,6 +275,25 @@
      return true;
  }
  
@@ -64,15 +64,27 @@
 + * which can wait for seconds, rather than failing in the quick checks.
 + */
 +static bool sdl_open_reached_sdl[2];
++/* Report each outage once until that direction opens again. */
++static bool sdl_missing_reported[2], sdl_failure_reported[2];
++
++#ifdef _WIN32
++static void sdl_report_default_missing(int rec)
++{
++    if (!sdl_missing_reported[rec]) {
++        warn_report("The Windows default %s device is unavailable; "
++                    "checking again without blocking",
++                    rec ? "recording" : "playback");
++        sdl_missing_reported[rec] = true;
++    }
++}
++#endif
 +
  /* Keep the working default open while a selected endpoint is absent. */
  static bool sdl_named_device_available(const char *name, int rec)
  {
-@@ -257,14 +304,44 @@
-                                   int rec, const char *device_name,
+@@ -258,13 +319,37 @@
                                    bool *route_matches)
  {
-+    static bool missing_reported[2], failure_reported[2];
      SDL_AudioDeviceID devid;
 +    bool fell_back = false;
 +
@@ -89,11 +101,11 @@
       */
 -    if (rec && SDL_GetNumAudioDevices(rec) <= 0) {
 +    if (SDL_GetNumAudioDevices(rec) <= 0) {
-         *route_matches = false;
-+        if (!rec && !missing_reported[rec]) {
++        *route_matches = false;
++        if (!rec && !sdl_missing_reported[rec]) {
 +            warn_report("No Windows playback device is available; "
 +                        "checking again without blocking");
-+            missing_reported[rec] = true;
++            sdl_missing_reported[rec] = true;
 +        }
 +        return 0;
 +    }
@@ -107,17 +119,12 @@
 +        fell_back = true;
 +    }
 +    if (!device_name && sdl_default_endpoint_missing(rec)) {
-+        *route_matches = false;
-+        if (!missing_reported[rec]) {
-+            warn_report("The Windows default %s device is unavailable; "
-+                        "checking again without blocking",
-+                        rec ? "recording" : "playback");
-+            missing_reported[rec] = true;
-+        }
+         *route_matches = false;
++        sdl_report_default_missing(rec);
          return 0;
      }
  #else
-@@ -284,8 +361,9 @@
+@@ -284,21 +369,34 @@
      }
  #endif
  
@@ -128,23 +135,34 @@
      if (!devid && device_name) {
          warn_report(
                  "Requested SDL %s device disappeared; using system default",
-@@ -297,8 +375,13 @@
+                 rec ? "recording" : "playback");
+         SDL_ClearError();
++#ifdef _WIN32
++        if (sdl_default_endpoint_missing(rec)) {
++            *route_matches = false;
++            sdl_report_default_missing(rec);
++            return 0;
++        }
++#endif
+         devid = SDL_OpenAudioDevice(NULL, rec, req, obt, 0);
+         if (devid) {
+             *route_matches = false;
          }
      }
      if (!devid) {
 -        error_report("SDL_OpenAudioDevice for %s failed: %s",
 -                   rec ? "recording" : "playback", SDL_GetError());
-+        if (!failure_reported[rec]) {
++        if (!sdl_failure_reported[rec]) {
 +            error_report("SDL_OpenAudioDevice for %s failed: %s",
 +                       rec ? "recording" : "playback", SDL_GetError());
-+            failure_reported[rec] = true;
++            sdl_failure_reported[rec] = true;
 +        }
 +    } else {
-+        missing_reported[rec] = failure_reported[rec] = false;
++        sdl_missing_reported[rec] = sdl_failure_reported[rec] = false;
      }
  
  #ifndef _WIN32
-@@ -451,6 +534,34 @@
+@@ -451,6 +549,34 @@
      return true;
  }
  
@@ -179,7 +197,7 @@
  static void sdl_refresh_route_Out(SDLVoiceOut *sdl)
  {
      g_autofree char *requested = NULL;
-@@ -462,7 +573,7 @@
+@@ -462,7 +588,7 @@
  
      if (!sdl->devid) {
          if (sdl->enabled && sdl_route_check_due(&sdl->next_route_check) &&
@@ -188,7 +206,7 @@
              SDL_PauseAudioDevice(sdl->devid, 0);
          }
          return;
-@@ -483,11 +594,16 @@
+@@ -483,11 +609,16 @@
           !sdl_named_device_available(requested, 0))) {
          return;
      }
@@ -205,7 +223,7 @@
      if (!sdl_audio_specs_match(&sdl->reopen_spec, &obtained)) {
          warn_report(
                  "Requested SDL playback route has an incompatible format");
-@@ -570,11 +686,12 @@
+@@ -570,11 +701,12 @@
  }
  
  /* SDL's cached inventory check is cheap; an attempted WASAPI open may block.
@@ -220,7 +238,7 @@
  
      sdl->next_route_check = g_get_monotonic_time() + seconds * G_USEC_PER_SEC;
  }
-@@ -703,6 +820,7 @@
+@@ -703,6 +835,7 @@
      sdl_close_out(sdl);
      g_clear_pointer(&sdl->device_name, g_free);
      sdl->next_route_check = 0;
@@ -228,7 +246,7 @@
  }
  
  static int sdl_init_out(HWVoiceOut *hw, struct audsettings *as)
-@@ -765,7 +883,7 @@
+@@ -765,7 +898,7 @@
          sdl_release_out(sdl);
          return;
      }

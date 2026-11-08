@@ -207,7 +207,8 @@ VM as unresponsive (#384). Before opening, QEMU now checks SDL's inventory in
 both directions and asks Windows directly whether a default endpoint exists.
 A missing default, or an empty inventory, fails at once and is checked again on
 the next route poll. A selected device that left the inventory goes straight to
-the default. Playback now backs off after a failed open like capture does,
+the default, and a selected device that fails to open only falls back to the
+default when Windows has one. Playback now backs off after a failed open like capture does,
 across route polls and stream starts: ten seconds after an open that reached
 SDL, one second after the quick checks found no endpoint. A successful open
 clears it. A missing endpoint and an SDL open failure are each reported once
@@ -219,6 +220,9 @@ device, the check answers in about 1 ms where SDL took 8 s.
 mocked endpoints and a fake clock: immediate reopen after a normal sound, no
 repeat of a slow failed open across polls and repeated sounds, recovery, a
 missing default, empty-inventory hotplug and a failed live route change.
-`test-sdl-audio.py` and `test-sdl-capture.py` cover the open preflight and
-single reports. An endpoint removed after the check can still enter SDL's
+`test-sdl-endpoint.py` compiles the Windows endpoint check against mocked COM
+calls: the enumerator and interface GUIDs, the console role, present and
+missing defaults, other errors, COM and loader failures, and released objects.
+`test-sdl-audio.py` and `test-sdl-capture.py` cover the open preflight, the
+fallback and single reports. An endpoint removed after the check can still enter SDL's
 wait once; the backoff keeps it from repeating.
