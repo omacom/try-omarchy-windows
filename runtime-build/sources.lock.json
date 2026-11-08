@@ -105,6 +105,10 @@
       {
         "file": "patches/qemu/0024-raise-windows-fd-setsize-for-slirp.patch",
         "sha256": "ba94ed3e314c9388aeba6e888747d92e797f1c98c9c546b4ed71a76f10163059"
+      },
+      {
+        "file": "patches/qemu/0025-fail-fast-on-missing-sdl-audio-endpoints.patch",
+        "sha256": "523fb8cc79554c6fa479ba4a52147834df458b1e5993bbd88bbc9f1d7ff399e8"
       }
     ]
   },
