@@ -207,9 +207,11 @@ VM as unresponsive (#384). Before opening, QEMU now checks SDL's inventory in
 both directions and asks Windows directly whether a default endpoint exists.
 A missing default, or an empty inventory, fails at once and is checked again on
 the next route poll. A selected device that left the inventory goes straight to
-the default. Playback now backs off after a failed open like capture does: ten
-seconds with listed endpoints, one second without, across route polls and
-stream starts, and a successful open clears it. Each outage is reported once.
+the default. Playback now backs off after a failed open like capture does,
+across route polls and stream starts: ten seconds after an open that reached
+SDL, one second after the quick checks found no endpoint. A successful open
+clears it. A missing endpoint and an SDL open failure are each reported once
+until that direction opens again.
 On the reporter's kind of failure, a Windows VM without a default playback
 device, the check answers in about 1 ms where SDL took 8 s.
 

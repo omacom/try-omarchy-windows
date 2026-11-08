@@ -134,12 +134,16 @@ int main(void) {
     assert(opens == 6 && sdl.devid == 17);
     sdl_enable_out(&sdl.hw, false);
 
-    /* A missing default endpoint fails without SDL and backs off too. */
+    /* A missing default fails without SDL and is checked again each second. */
     default_missing = true;
+    sdl_enable_out(&sdl.hw, true);
+    assert(opens == 6 && !sdl.devid);
+    assert(sdl.next_open_attempt == host_us + G_USEC_PER_SEC);
+    sdl_enable_out(&sdl.hw, false);
     for (int i = 0; i < 100; i++) { chime(&sdl, 100); }
     assert(opens == 6 && !sdl.devid);
     default_missing = false;
-    chime(&sdl, 10000);
+    chime(&sdl, 1000);
     assert(opens == 7);
 
     /* No playback devices: one-second checks keep hotplug responsive. */

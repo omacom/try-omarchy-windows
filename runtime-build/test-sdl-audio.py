@@ -135,15 +135,20 @@ int main(void) {
     default_missing = true;
     assert(sdl_open(&req, &obt, 0, NULL, &matched) == 0);
     assert(opens == 5 && warnings == 2);
+    /* A missing endpoint does not hide a different open failure. */
     default_missing = false;
-    /* One report per outage, whatever its cause: start a new outage. */
-    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 17 && opens == 6);
+    fail_default = true;
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 0);
+    assert(opens == 6 && warnings == 2 && failures == 1);
+    fail_default = false;
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 17 && opens == 7);
 
     /* Other open failures are reported once until an open succeeds. */
     fail_default = true;
+    failures = 0;
     assert(sdl_open(&req, &obt, 0, NULL, &matched) == 0);
     assert(sdl_open(&req, &obt, 0, NULL, &matched) == 0);
-    assert(opens == 8 && failures == 1);
+    assert(opens == 9 && failures == 1);
     fail_default = false;
     assert(sdl_open(&req, &obt, 0, NULL, &matched) == 17);
     fail_default = true;

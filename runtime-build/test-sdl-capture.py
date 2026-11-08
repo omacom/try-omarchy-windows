@@ -252,14 +252,14 @@ int main(int argc, char **argv) {
 
     /* No host mic: no WASAPI open, and capture periods advance at 48 kHz. */
     sdl_enable_in(&sdl.hw, true);
-    assert(sdl.enabled && !sdl.devid && opens == 0 && enumerations == 2);
+    assert(sdl.enabled && !sdl.devid && opens == 0 && enumerations == 1);
     assert(consume(&sdl, 0) == 0);
     for (int i = 0; i < 50; i++) {
         advance(10);
         assert(consume(&sdl, 0) == 1920);
         assert(consume(&sdl, 0) == 0); /* no clock advance, no extra samples */
     }
-    assert(enumerations == 2 && opens == 0);
+    assert(enumerations == 1 && opens == 0);
     int before = enumerations;
     for (int i = 0; i < 10; i++) {
         sdl_enable_in(&sdl.hw, false);
@@ -270,7 +270,7 @@ int main(int argc, char **argv) {
     /* Enumeration errors also avoid an open; later active hotplug recovers. */
     capture_count = -1;
     advance(500); consume(&sdl, 0);
-    assert(opens == 0 && enumerations == before + 2);
+    assert(opens == 0 && enumerations == before + 1);
     capture_count = 1;
     advance(1000); consume(&sdl, 0);
     assert(opens == 1 && sdl.devid == 17 && status == SDL_AUDIO_PLAYING);

@@ -108,7 +108,7 @@
       },
       {
         "file": "patches/qemu/0025-fail-fast-on-missing-sdl-audio-endpoints.patch",
-        "sha256": "f37ed5682d52e92d2181af49cddfc044f614dc64c19b100df0706c514a5159ec"
+        "sha256": "b52a6ad3c2be6dffcf4f65650f295fde52fe383fc3546c224681801901e02dd1"
       }
     ]
   },
