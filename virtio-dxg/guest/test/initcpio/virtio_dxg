@@ -35,6 +35,22 @@ run_latehook() {
     mount_share wsldrivers /usr/lib/wsl/drivers
     mount_share vdxgshare /mnt/vdxgshare
     mount_share vdxgdrivers /mnt/vdxgdrivers
+    # virtio_dxg.desktop=1: the whole session renders on the host GPU.
+    # Mesa's software path (which CPU mode already uses for Hyprland and
+    # its apps) then runs its d3d12 driver, i.e. NVIDIA's D3D12 driver
+    # over /dev/dxg, instead of llvmpipe; VA-API decodes on it too.
+    case " $(cat /proc/cmdline) " in
+    *" virtio_dxg.desktop=1 "*)
+        printf '%s\n' /usr/lib/wsl/lib /usr/lib/wsl/core \
+            >/new_root/etc/ld.so.conf.d/virtio-dxg.conf
+        chroot /new_root /usr/bin/ldconfig
+        mkdir -p /new_root/etc/environment.d
+        printf '%s\n' GALLIUM_DRIVER=d3d12 \
+            MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA LIBVA_DRIVER_NAME=d3d12 \
+            >/new_root/etc/environment.d/90-virtio-dxg.conf
+        echo ":: virtio-dxg: desktop renders through d3d12"
+        ;;
+    esac
     # The account the launcher's per-boot SSH authorizes (same rule as its
     # request-sshd), so the host test knows whom to log in as.
     if [ -d /new_root/mnt/vdxgshare/out ]; then
