@@ -3196,7 +3196,10 @@ int dxgvmb_send_wait_sync_object_gpu(struct dxgprocess *process,
 	command->context = context;
 	command->object_count = object_count;
 	command->legacy_fence_object = legacy_fence;
-	current_pos = (u8 *) command->fence_values;
+	/* From the command base: FORTIFY sees fence_values as a 0-byte field. */
+	current_pos = (u8 *)command +
+		offsetof(struct dxgkvmb_command_waitforsyncobjectfromgpu,
+			 fence_values);
 	memcpy(current_pos, fences, fence_size);
 	current_pos += fence_size;
 	memcpy(current_pos, objects, object_size);

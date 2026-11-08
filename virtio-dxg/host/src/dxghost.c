@@ -19,6 +19,17 @@ void dxghost_logf(struct dxghost *h, const char *format, ...)
 	vsnprintf(line, sizeof(line), format, ap);
 	va_end(ap);
 	h->vmm.log(h->vmm.opaque, line);
+	{
+		/* Development: DXGHOST_LOG names a file that gets every line,
+		 * flushed, so nothing is lost when the VMM is killed. */
+		const char *path = getenv("DXGHOST_LOG");
+		FILE *f = path ? fopen(path, "a") : NULL;
+
+		if (f) {
+			fprintf(f, "%s\n", line);
+			fclose(f);
+		}
+	}
 }
 
 void dxghost_signal_guest_event(struct dxghost *h, uint32_t process,
@@ -102,6 +113,7 @@ int dxghost_create(const struct dxghost_config *config,
 		dxghost_logf(h, "no adapter LUID configured");
 		goto fail;
 	}
+	dxghost_logf(h, "host GPU ready");
 	*out = h;
 	return 0;
 fail:
@@ -252,6 +264,8 @@ void dxghost_execute(struct dxghost *h, uint32_t channel,
 	m.cmd = command_of(message, size, &m.cmd_size);
 	if (!m.cmd || (channel != VIRTIO_DXG_CHANNEL_GLOBAL &&
 		       channel != VIRTIO_DXG_CHANNEL_ADAPTER)) {
+		dxghost_logf(h, "malformed request: %u bytes on channel %u",
+			     size, channel);
 		resp->status = VIRTIO_DXG_ERR_INVALID;
 		return;
 	}
@@ -275,17 +289,23 @@ void dxghost_execute(struct dxghost *h, uint32_t channel,
 		    type != DXGK_VMBCOMMAND_DESTROYNTSHAREDOBJECT &&
 		    type != DXGK_VMBCOMMAND_ISFEATUREENABLED_GLOBAL &&
 		    !process_live(h, m.process)) {
+			dxghost_logf(h, "global command %u from unknown "
+				     "process 0x%x", type, m.process);
 			resp->status = VIRTIO_DXG_ERR_INVALID;
 			return;
 		}
 		dxghost_exec_global(&m, type);
 	} else if (channel_type == DXGKVMB_VGPU_TO_HOST) {
 		if (m.process && !process_live(h, m.process)) {
+			dxghost_logf(h, "adapter command %u from unknown "
+				     "process 0x%x", type, m.process);
 			resp->status = VIRTIO_DXG_ERR_INVALID;
 			return;
 		}
 		dxghost_exec_vgpu(&m, type);
 	} else {
+		dxghost_logf(h, "command %u on unknown channel type %u", type,
+			     channel_type);
 		m.status = VIRTIO_DXG_ERR_INVALID;
 	}
 	resp->status = m.status;

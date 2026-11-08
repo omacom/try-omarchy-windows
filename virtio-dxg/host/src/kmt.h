@@ -46,6 +46,7 @@ typedef int32_t(DXGHOST_KMT_CALL *dxghost_kmt_share_fn)(
 	X(CreateSynchronizationObject2)				\
 	X(DestroySynchronizationObject)				\
 	X(SignalSynchronizationObjectFromCpu)			\
+	X(SignalSynchronizationObject2)				\
 	X(SignalSynchronizationObjectFromGpu2)			\
 	X(WaitForSynchronizationObjectFromCpu)			\
 	X(WaitForSynchronizationObjectFromGpu)			\

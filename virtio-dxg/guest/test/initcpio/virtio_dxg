@@ -1,0 +1,33 @@
+#!/usr/bin/ash
+# mkinitcpio late hook for virtio-dxg development boots (added by
+# mkdevinitramfs.py; never part of a shipped image). Runs as root before
+# the real root starts: loads the guest module, which stays loaded after
+# switch_root, and mounts the development shares the VM was started with.
+
+run_latehook() {
+    if insmod /virtio-dxg/dxgkrnl_virtio.ko; then
+        echo ":: virtio-dxg: dxgkrnl_virtio loaded"
+    else
+        echo ":: virtio-dxg: loading dxgkrnl_virtio failed" >&2
+    fi
+    # Wine 11 makes one 32 GiB address-space reservation that the default
+    # overcommit heuristic refuses in an 8 GiB guest.
+    echo 1 >/proc/sys/vm/overcommit_memory
+    modprobe -q 9pnet_virtio
+    modprobe -q 9p
+    for tag in vdxgshare vdxgdrivers; do
+        mkdir -p "/new_root/mnt/$tag"
+        # cache=mmap: Wine maps DLL images from these files.
+        if mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576,cache=mmap \
+                "$tag" "/new_root/mnt/$tag" 2>/dev/null; then
+            echo ":: virtio-dxg: mounted $tag"
+        fi
+    done
+    # The account the launcher's per-boot SSH authorizes (same rule as its
+    # request-sshd), so the host test knows whom to log in as.
+    if [ -d /new_root/mnt/vdxgshare/out ]; then
+        awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /nologin|false/ {
+            print $1; exit }' /new_root/etc/passwd \
+            >/new_root/mnt/vdxgshare/out/account
+    fi
+}

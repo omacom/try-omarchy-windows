@@ -23,6 +23,8 @@ enum dxghost_obj_type {
 	OBJ_HWQUEUE,
 };
 
+struct dxghost_notify;
+
 struct dxghost_obj {
 	uint32_t handle;
 	uint8_t type;
@@ -36,6 +38,8 @@ struct dxghost_obj {
 	void *hva;
 	uint64_t gpa;
 	uint64_t size;
+	/* CPU notification sync objects: the host event forwarding signals. */
+	struct dxghost_notify *notify;
 };
 
 struct dxghost_objtab {
@@ -142,6 +146,11 @@ uint64_t dxghost_fence_map(struct dxghost *h, void *fence_hva);
 void dxghost_fence_unmap(struct dxghost *h, uint64_t fence_gpa);
 
 /* dxghost.c */
+#if defined(__MINGW32__)
+__attribute__((format(gnu_printf, 2, 3)))
+#elif defined(__GNUC__)
+__attribute__((format(printf, 2, 3)))
+#endif
 void dxghost_logf(struct dxghost *h, const char *format, ...);
 void dxghost_signal_guest_event(struct dxghost *h, uint32_t process,
 				uint64_t guest_event);

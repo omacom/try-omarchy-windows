@@ -25,6 +25,23 @@
 #define COMMAND(type)							\
 	const struct type *c = (const void *)m->cmd;			\
 	if (m->cmd_size < sizeof(*c)) {					\
+		dxghost_logf(m->h, #type ": %u bytes, need %u",		\
+			     m->cmd_size, (unsigned)sizeof(*c));	\
+		m->status = VIRTIO_DXG_ERR_INVALID;			\
+		return;							\
+	}
+
+/*
+ * Commands ending in a variable array declared [1] are as long as their
+ * array: with an empty one (no private data, no allocations) the guest
+ * sends fewer than sizeof bytes. The array is read through tail().
+ */
+#define COMMAND_VAR(type, array)					\
+	const struct type *c = (const void *)m->cmd;			\
+	if (m->cmd_size < offsetof(struct type, array)) {		\
+		dxghost_logf(m->h, #type ": %u bytes, need %u",		\
+			     m->cmd_size,				\
+			     (unsigned)offsetof(struct type, array));	\
 		m->status = VIRTIO_DXG_ERR_INVALID;			\
 		return;							\
 	}
@@ -182,6 +199,8 @@ static void unmap_lock(struct dxghost *h, struct dxghost_obj *o)
  * devices, contexts (hardware queues), queues (their fences) and resources.
  * Lock held.
  */
+static void notify_close(struct dxghost_notify *n);
+
 static void forget(struct dxghost *h, uint32_t handle)
 {
 	struct dxghost_objtab *t = &h->objects;
@@ -195,6 +214,10 @@ static void forget(struct dxghost *h, uint32_t handle)
 	else if (o->gpa)
 		dxghost_fence_unmap(h, o->gpa);
 	o->gpa = 0;
+	if (o->notify) {
+		notify_close(o->notify);
+		o->notify = NULL;
+	}
 	dxghost_obj_remove(h, handle);
 	/* Allocations have no children; avoid a table scan per allocation. */
 	if (o->type == OBJ_ALLOCATION)
@@ -551,9 +574,41 @@ static void adapt_umd_name(struct dxghost *h, u8 *data, uint32_t size)
 		path[base + i] = 0;
 }
 
+/*
+ * NVIDIA's adapter private data ('NVDA', version 1, 0xCDF8 bytes) carries a
+ * flag at 0xCCC8 that its kernel driver sets only when the caller is a
+ * Hyper-V vGPU. The user-mode driver then works the way a paravirtualized
+ * guest must: CPU access through Lock2 views, no kernel mappings in the
+ * calling process. That is this guest's situation, but here the kernel
+ * driver's caller is the VMM, an ordinary process, so it clears the flag;
+ * left clear, the guest's driver dereferences addresses that exist only in
+ * the VMM. Its value is restored to what a vGPU guest receives.
+ */
+#define NVDA_PRIVATE_MAGIC	0x4e564441u	/* 'NVDA' */
+#define NVDA_PRIVATE_SIZE	0xcdf8u
+#define NVDA_PRIVATE_GPUPV	0xccc8u
+
+static void adapt_private_data(u8 *data, uint32_t size)
+{
+	uint32_t magic, length;
+	uint16_t version;
+
+	if (size < NVDA_PRIVATE_SIZE)
+		return;
+	memcpy(&magic, data, 4);
+	memcpy(&version, data + 6, 2);
+	memcpy(&length, data + 8, 4);
+	if (magic == NVDA_PRIVATE_MAGIC && version == 1 &&
+	    length == NVDA_PRIVATE_SIZE) {
+		uint32_t gpupv = 1;
+
+		memcpy(data + NVDA_PRIVATE_GPUPV, &gpupv, 4);
+	}
+}
+
 static void cmd_query_adapter_info(struct dxghost_msg *m)
 {
-	COMMAND(dxgkvmb_command_queryadapterinfo);
+	COMMAND_VAR(dxgkvmb_command_queryadapterinfo, private_data);
 	uint32_t size = c->private_data_size;
 	const u8 *in = tail(m, offsetof(struct dxgkvmb_command_queryadapterinfo,
 					private_data), size);
@@ -570,6 +625,8 @@ static void cmd_query_adapter_info(struct dxghost_msg *m)
 	status->v = query(m->h, c->query_type, out, size);
 	if (status->v >= 0 && c->query_type == DXGHOST_QAI_UMDRIVERNAME)
 		adapt_umd_name(m->h, out, size);
+	if (status->v >= 0 && c->query_type == DXGHOST_QAI_UMDRIVERPRIVATE)
+		adapt_private_data(out, size);
 }
 
 static void cmd_feature(struct dxghost_msg *m)
@@ -627,7 +684,7 @@ static void cmd_destroy_device(struct dxghost_msg *m)
 
 static void cmd_create_context(struct dxghost_msg *m)
 {
-	COMMAND(dxgkvmb_command_createcontextvirtual);
+	COMMAND_VAR(dxgkvmb_command_createcontextvirtual, priv_drv_data);
 	uint32_t size = c->priv_drv_data_size;
 	uint32_t total = (uint32_t)offsetof(
 		struct dxgkvmb_command_createcontextvirtual, priv_drv_data) + size;
@@ -635,16 +692,29 @@ static void cmd_create_context(struct dxghost_msg *m)
 	struct d3dkmt_createcontextvirtual a = {0};
 	struct dxghost *h = m->h;
 
-	if (!tail(m, 0, total))
+	if (!tail(m, 0, total)) {
+		dxghost_logf(h, "CreateContextVirtual: message of %u bytes, "
+			     "%u of private data", m->cmd_size, size);
 		return;
-	/* The reply is the command, with context and private data updated. */
-	r = reply(m, total < sizeof(*r) ? (uint32_t)sizeof(*r) : total);
-	if (!r)
+	}
+	/*
+	 * The reply is the command, with context and private data updated, at
+	 * the length the guest sent: sizeof + size - 1, which includes the
+	 * struct's tail padding. A shorter reply fails in the guest.
+	 */
+	r = reply(m, m->cmd_size);
+	if (!r) {
+		dxghost_logf(h, "CreateContextVirtual: no room for a %u-byte "
+			     "reply (capacity %u)", m->cmd_size, m->res_cap);
 		return;
-	memcpy(r, c, total);
+	}
+	memcpy(r, c, m->cmd_size);
 	r->context.v = 0;
-	if (!owns(h, c->device.v, OBJ_DEVICE, m->process))
+	if (!owns(h, c->device.v, OBJ_DEVICE, m->process)) {
+		dxghost_logf(h, "CreateContextVirtual: device 0x%x not owned "
+			     "by process 0x%x", c->device.v, m->process);
 		return;
+	}
 	a.device = c->device;
 	a.node_ordinal = c->node_ordinal;
 	a.engine_affinity = c->engine_affinity;
@@ -652,12 +722,30 @@ static void cmd_create_context(struct dxghost_msg *m)
 	a.priv_drv_data = size ? (u64)(uintptr_t)r->priv_drv_data : 0;
 	a.priv_drv_data_size = size;
 	a.client_hint = c->client_hint;
-	if (h->kmt.CreateContextVirtual(&a) < 0)
-		return;
+	{
+		int32_t status = h->kmt.CreateContextVirtual(&a);
+
+		if (status < 0) {
+			dxghost_logf(h, "CreateContextVirtual(node %u, engines "
+				     "0x%x, flags 0x%x, %u bytes): 0x%08x",
+				     c->node_ordinal, c->engine_affinity,
+				     *(const uint32_t *)&c->flags, size,
+				     (unsigned)status);
+			return;
+		}
+	}
 	LOCK(h);
 	if (dxghost_obj_add(h, a.context.v, OBJ_CONTEXT, m->process,
-			    c->device.v) == 0)
+			    c->device.v) == 0) {
 		r->context = a.context;
+	} else {
+		struct dxghost_obj *old = dxghost_obj_find(h, a.context.v);
+
+		dxghost_logf(h, "context 0x%x: handle already tracked as type "
+			     "%u (process 0x%x, parent 0x%x)", a.context.v,
+			     old ? old->type : 0, old ? old->process : 0,
+			     old ? old->parent : 0);
+	}
 	UNLOCK(h);
 	if (!r->context.v) {
 		struct d3dkmt_destroycontext d = {0};
@@ -850,7 +938,7 @@ static void cmd_create_allocation(struct dxghost_msg *m)
 
 static void cmd_destroy_allocation(struct dxghost_msg *m)
 {
-	COMMAND(dxgkvmb_command_destroyallocation);
+	COMMAND_VAR(dxgkvmb_command_destroyallocation, allocations);
 	const struct d3dkmthandle *list = c->allocations;
 	struct d3dkmt_destroyallocation2 d = {0};
 	struct dxghost *h = m->h;
@@ -986,7 +1074,7 @@ static void cmd_unlock2(struct dxghost_msg *m)
 
 static void cmd_make_resident(struct dxghost_msg *m)
 {
-	COMMAND(dxgkvmb_command_makeresident);
+	COMMAND_VAR(dxgkvmb_command_makeresident, allocations);
 	struct dxgkvmb_command_makeresident_return *r = reply(m, sizeof(*r));
 	struct d3dddi_makeresident a = {0};
 	struct dxghost *h = m->h;
@@ -1012,7 +1100,7 @@ static void cmd_make_resident(struct dxghost_msg *m)
 
 static void cmd_evict(struct dxghost_msg *m)
 {
-	COMMAND(dxgkvmb_command_evict);
+	COMMAND_VAR(dxgkvmb_command_evict, allocations);
 	struct dxgkvmb_command_evict_return *r = reply(m, sizeof(*r));
 	struct d3dkmt_evict a = {0};
 	struct dxghost *h = m->h;
@@ -1089,11 +1177,29 @@ static void cmd_map_gpu_va(struct dxghost_msg *m)
 
 	if (!r)
 		return;
+	/*
+	 * No allocation maps the range to the zero state (sparse resources);
+	 * that needs a base inside this process's own reservations.
+	 */
 	if (!owns(h, a.paging_queue.v, OBJ_PAGING_QUEUE, m->process) ||
-	    !owns(h, a.allocation.v, OBJ_ALLOCATION, m->process) ||
+	    (a.allocation.v ? !owns(h, a.allocation.v, OBJ_ALLOCATION,
+				    m->process) : !a.base_address) ||
 	    (a.base_address &&
 	     !va_inside(h, m->process, a.base_address,
 			a.size_in_pages * PAGE_4K))) {
+		dxghost_logf(h, "MapGpuVirtualAddress refused: queue 0x%x%s, "
+			     "allocation 0x%x%s, base 0x%llx + %llu pages%s",
+			     a.paging_queue.v,
+			     owns(h, a.paging_queue.v, OBJ_PAGING_QUEUE,
+				  m->process) ? "" : " (not owned)",
+			     a.allocation.v,
+			     owns(h, a.allocation.v, OBJ_ALLOCATION,
+				  m->process) ? "" : " (not owned)",
+			     (unsigned long long)a.base_address,
+			     (unsigned long long)a.size_in_pages,
+			     a.base_address && !va_inside(h, m->process,
+				a.base_address, a.size_in_pages * PAGE_4K) ?
+			     " (outside reservations)" : "");
 		r->status.v = DXG_STATUS_INVALID_HANDLE;
 		return;
 	}
@@ -1108,7 +1214,7 @@ static void cmd_map_gpu_va(struct dxghost_msg *m)
 
 static void cmd_update_gpu_va(struct dxghost_msg *m)
 {
-	COMMAND(dxgkvmb_command_updategpuvirtualaddress);
+	COMMAND_VAR(dxgkvmb_command_updategpuvirtualaddress, operations);
 	const struct d3dddi_updategpuvirtualaddress_operation *ops =
 		c->operations;
 	struct d3dkmt_updategpuvirtualaddress a = {0};
@@ -1227,7 +1333,7 @@ static void cmd_submit_hwqueue(struct dxghost_msg *m)
 
 static void cmd_create_hwqueue(struct dxghost_msg *m)
 {
-	COMMAND(dxgkvmb_command_createhwqueue);
+	COMMAND_VAR(dxgkvmb_command_createhwqueue, priv_drv_data);
 	uint32_t size = c->priv_drv_data_size;
 	uint32_t total = (uint32_t)offsetof(struct dxgkvmb_command_createhwqueue,
 					    priv_drv_data) + size;
@@ -1238,10 +1344,10 @@ static void cmd_create_hwqueue(struct dxghost_msg *m)
 
 	if (!tail(m, 0, total))
 		return;
-	r = reply(m, total < sizeof(*r) ? (uint32_t)sizeof(*r) : total);
+	r = reply(m, m->cmd_size);	/* as for contexts */
 	if (!r)
 		return;
-	memcpy(r, c, total);
+	memcpy(r, c, m->cmd_size);
 	r->hwqueue.v = 0;
 	r->hwqueue_progress_fence.v = 0;
 	r->hwqueue_progress_fence_cpuva = NULL;
@@ -1298,6 +1404,72 @@ static void cmd_destroy_hwqueue(struct dxghost_msg *m)
 
 /* --- Synchronization -------------------------------------------------- */
 
+/*
+ * A CPU notification sync object signals a Win32 event every time the GPU
+ * reaches it. Here that event is the host's, and each signal is forwarded
+ * to the guest event that stands for the guest's eventfd. The wait re-arms
+ * itself; an auto-reset event folds signals that arrive meanwhile, as an
+ * eventfd counter would be read once.
+ */
+struct dxghost_notify {
+	struct dxghost *h;
+	HANDLE event;
+	PTP_WAIT tp;
+	uint32_t process;
+	uint64_t guest_event;
+	volatile LONG closing;
+};
+
+static VOID CALLBACK notify_fired(PTP_CALLBACK_INSTANCE instance,
+				  PVOID context, PTP_WAIT tp,
+				  TP_WAIT_RESULT result)
+{
+	struct dxghost_notify *n = context;
+
+	(void)instance;
+	(void)result;
+	if (InterlockedCompareExchange(&n->closing, 0, 0) ||
+	    InterlockedCompareExchange(&n->h->closing, 0, 0))
+		return;
+	dxghost_signal_guest_event(n->h, n->process, n->guest_event);
+	SetThreadpoolWait(tp, n->event, NULL);
+}
+
+static struct dxghost_notify *notify_new(struct dxghost *h, uint32_t process,
+					 uint64_t guest_event)
+{
+	struct dxghost_notify *n = calloc(1, sizeof(*n));
+
+	if (!n)
+		return NULL;
+	n->h = h;
+	n->process = process;
+	n->guest_event = guest_event;
+	n->event = CreateEventW(NULL, FALSE, FALSE, NULL);
+	n->tp = n->event ? CreateThreadpoolWait(notify_fired, n, NULL) : NULL;
+	if (!n->tp) {
+		if (n->event)
+			CloseHandle(n->event);
+		free(n);
+		return NULL;
+	}
+	return n;
+}
+
+/* The callback takes no dxghost lock, so this may run under it. */
+static void notify_close(struct dxghost_notify *n)
+{
+	InterlockedExchange(&n->closing, 1);
+	SetThreadpoolWait(n->tp, NULL, NULL);
+	WaitForThreadpoolWaitCallbacks(n->tp, TRUE);
+	/* A callback that passed its check may have re-armed the wait. */
+	SetThreadpoolWait(n->tp, NULL, NULL);
+	WaitForThreadpoolWaitCallbacks(n->tp, TRUE);
+	CloseThreadpoolWait(n->tp);
+	CloseHandle(n->event);
+	free(n);
+}
+
 static void cmd_create_sync(struct dxghost_msg *m)
 {
 	COMMAND(dxgkvmb_command_createsyncobject);
@@ -1305,6 +1477,8 @@ static void cmd_create_sync(struct dxghost_msg *m)
 	struct d3dkmt_createsynchronizationobject2 a = c->args;
 	struct dxghost *h = m->h;
 	uint64_t cpu_va = 0, gpu_va = 0, gpa = 0;
+	struct dxghost_notify *notify = NULL;
+	int32_t status;
 	bool monitored;
 
 	if (!r)
@@ -1316,10 +1490,22 @@ static void cmd_create_sync(struct dxghost_msg *m)
 	if (a.info.type == _D3DDDI_PERIODIC_MONITORED_FENCE &&
 	    !is_adapter(h, a.info.periodic_monitored_fence.adapter.v))
 		return;
-	if (a.info.type == _D3DDDI_CPU_NOTIFICATION)
-		return;	/* would need a host event per guest eventfd */
-	if (h->kmt.CreateSynchronizationObject2(&a) < 0)
+	if (a.info.type == _D3DDDI_CPU_NOTIFICATION) {
+		/* The guest sends its event's identifier in place of a handle. */
+		notify = notify_new(h, m->process, a.info.cpu_notification.event);
+		if (!notify) {
+			fail_ntstatus(m, DXG_STATUS_NO_MEMORY);
+			return;
+		}
+		a.info.cpu_notification.event = (u64)(uintptr_t)notify->event;
+	}
+	status = h->kmt.CreateSynchronizationObject2(&a);
+	if (status < 0) {
+		if (notify)
+			notify_close(notify);
+		fail_ntstatus(m, status);
 		return;
+	}
 	if (a.info.type == _D3DDDI_MONITORED_FENCE) {
 		cpu_va = (uint64_t)(uintptr_t)
 			 a.info.monitored_fence.fence_cpu_virtual_address;
@@ -1335,7 +1521,12 @@ static void cmd_create_sync(struct dxghost_msg *m)
 	if ((!monitored || gpa) &&
 	    !dxghost_obj_add(h, a.sync_object.v, OBJ_SYNC, m->process,
 			     a.device.v)) {
-		dxghost_obj_find(h, a.sync_object.v)->gpa = gpa;
+		struct dxghost_obj *o = dxghost_obj_find(h, a.sync_object.v);
+
+		o->gpa = gpa;
+		o->notify = notify;
+		if (notify)
+			SetThreadpoolWait(notify->tp, notify->event, NULL);
 		r->sync_object = a.sync_object;
 		r->global_sync_object = a.info.shared_handle;
 		r->fence_gpu_va = gpu_va;
@@ -1349,7 +1540,61 @@ static void cmd_create_sync(struct dxghost_msg *m)
 		struct d3dkmt_destroysynchronizationobject d = {a.sync_object};
 
 		h->kmt.DestroySynchronizationObject(&d);
+		if (notify)
+			notify_close(notify);
+		fail_ntstatus(m, DXG_STATUS_NO_MEMORY);
 	}
+}
+
+static struct dxghost_wait *wait_get(struct dxghost *h);
+static void wait_free(struct dxghost_wait *w);
+static void wait_arm(struct dxghost *h, struct dxghost_wait *w);
+
+/*
+ * Signal with EnqueueCpuEvent: the guest event fires once the GPU has
+ * processed the signal. Only the context-based D3DKMT call takes a CPU
+ * event; contexts[0] is the signalling context, the rest broadcast.
+ */
+static void signal_with_cpu_event(struct dxghost_msg *m,
+	const struct dxgkvmb_command_signalsyncobject *c,
+	const struct d3dkmthandle *objects, const struct d3dkmthandle *contexts)
+{
+	struct d3dkmt_signalsynchronizationobject2 a = {0};
+	struct dxghost *h = m->h;
+	struct dxghost_wait *w;
+	int32_t status;
+
+	if (!c->context_count ||
+	    c->context_count > 1 + D3DDDI_MAX_BROADCAST_CONTEXT ||
+	    !c->cpu_event_handle || !h->kmt.SignalSynchronizationObject2 ||
+	    !owns_all(h, contexts, c->context_count, OBJ_CONTEXT, m->process)) {
+		reply_ntstatus(m, DXG_STATUS_INVALID_PARAMETER);
+		return;
+	}
+	w = wait_get(h);
+	if (!w) {
+		reply_ntstatus(m, DXG_STATUS_NO_MEMORY);
+		return;
+	}
+	w->h = h;
+	w->process = m->process;
+	w->guest_event = c->cpu_event_handle;
+	a.context = contexts[0];
+	a.object_count = c->object_count;
+	memcpy(a.object_array, objects, c->object_count * sizeof(objects[0]));
+	a.flags = c->flags;
+	a.context_count = c->context_count - 1;
+	memcpy(a.contexts, contexts + 1,
+	       a.context_count * sizeof(contexts[0]));
+	a.cpu_event_handle = (u64)(uintptr_t)w->event;
+	status = h->kmt.SignalSynchronizationObject2(&a);
+	if (status < 0) {
+		wait_free(w);
+		reply_ntstatus(m, status);
+		return;
+	}
+	wait_arm(h, w);
+	reply_ntstatus(m, status);
 }
 
 static void cmd_signal_sync(struct dxghost_msg *m)
@@ -1368,10 +1613,13 @@ static void cmd_signal_sync(struct dxghost_msg *m)
 	if (!objects || !contexts)
 		return;
 	if (!c->object_count || c->object_count > D3DDDI_MAX_OBJECT_SIGNALED ||
-	    c->context_count > D3DDDI_MAX_BROADCAST_CONTEXT ||
-	    c->flags.enqueue_cpu_event ||
+	    c->context_count > 1 + D3DDDI_MAX_BROADCAST_CONTEXT ||
 	    !owns_all(h, objects, c->object_count, OBJ_SYNC, m->process)) {
 		reply_ntstatus(m, DXG_STATUS_INVALID_PARAMETER);
+		return;
+	}
+	if (c->flags.enqueue_cpu_event) {
+		signal_with_cpu_event(m, c, objects, contexts);
 		return;
 	}
 	/* Fence values follow when the guest sent them (all but legacy). */
@@ -1485,6 +1733,16 @@ static void wait_reap(struct dxghost *h, bool all)
 static VOID CALLBACK wait_done(PTP_CALLBACK_INSTANCE instance, PVOID context,
 			       PTP_WAIT tp, TP_WAIT_RESULT result);
 
+/* Starts watching a wait whose event D3DKMT now owns. */
+static void wait_arm(struct dxghost *h, struct dxghost_wait *w)
+{
+	AcquireSRWLockExclusive(&h->wait_lock);
+	w->next = h->waits;
+	h->waits = w;
+	ReleaseSRWLockExclusive(&h->wait_lock);
+	SetThreadpoolWait(w->tp, w->event, NULL);
+}
+
 static struct dxghost_wait *wait_get(struct dxghost *h)
 {
 	struct dxghost_wait *w;
@@ -1575,17 +1833,13 @@ static void cmd_wait_cpu(struct dxghost_msg *m)
 		reply_ntstatus(m, status);
 		return;
 	}
-	AcquireSRWLockExclusive(&h->wait_lock);
-	w->next = h->waits;
-	h->waits = w;
-	ReleaseSRWLockExclusive(&h->wait_lock);
-	SetThreadpoolWait(w->tp, w->event, NULL);
+	wait_arm(h, w);
 	reply_ntstatus(m, DXG_STATUS_SUCCESS);
 }
 
 static void cmd_wait_gpu(struct dxghost_msg *m)
 {
-	COMMAND(dxgkvmb_command_waitforsyncobjectfromgpu);
+	COMMAND_VAR(dxgkvmb_command_waitforsyncobjectfromgpu, fence_values);
 	struct dxghost *h = m->h;
 	uint64_t fences_size = (uint64_t)c->object_count * sizeof(u64);
 	const u64 *fences = tail(m, offsetof(
@@ -1630,9 +1884,41 @@ static void cmd_wait_gpu(struct dxghost_msg *m)
 
 /* --- Queries and the rest -------------------------------------------- */
 
+/*
+ * NVIDIA escapes that make the kernel driver map memory into the calling
+ * process and return its address. For a Hyper-V vGPU the kernel driver
+ * refuses them and the user-mode driver uses a dxgkrnl call instead; here
+ * the caller is the VMM, so the address would be one the guest cannot use.
+ * They get the vGPU answer. Buffer: 'NVDA', version word, size, 'NVGL',
+ * function.
+ */
+#define NVDA_ESCAPE_MAGIC	0x4e564441u	/* 'NVDA' */
+#define NVGL_ESCAPE_CLASS	0x4e56474cu	/* 'NVGL' */
+
+static bool nv_maps_into_caller(const u8 *data, uint32_t size)
+{
+	static const uint32_t functions[] = {
+		0x1000077,	/* timestamp page (clock calibration) */
+	};
+	uint32_t magic, cls, function;
+	size_t i;
+
+	if (size < 0x14)
+		return false;
+	memcpy(&magic, data, 4);
+	memcpy(&cls, data + 0xc, 4);
+	memcpy(&function, data + 0x10, 4);
+	if (magic != NVDA_ESCAPE_MAGIC || cls != NVGL_ESCAPE_CLASS)
+		return false;
+	for (i = 0; i < sizeof(functions) / sizeof(functions[0]); i++)
+		if (function == functions[i])
+			return true;
+	return false;
+}
+
 static void cmd_escape(struct dxghost_msg *m)
 {
-	COMMAND(dxgkvmb_command_escape);
+	COMMAND_VAR(dxgkvmb_command_escape, priv_drv_data);
 	uint32_t size = c->priv_drv_data_size;
 	const u8 *in = tail(m, offsetof(struct dxgkvmb_command_escape,
 					priv_drv_data), size);
@@ -1653,6 +1939,10 @@ static void cmd_escape(struct dxghost_msg *m)
 	}
 	if (size)
 		memcpy(out, in, size);
+	if (nv_maps_into_caller(in, size)) {
+		fail_ntstatus(m, DXG_STATUS_NOT_SUPPORTED);
+		return;
+	}
 	a.adapter = c->adapter;
 	a.device = c->device;
 	a.type = c->type;
@@ -1887,7 +2177,7 @@ static void cmd_get_context_priority(struct dxghost_msg *m)
 
 static void cmd_offer(struct dxghost_msg *m)
 {
-	COMMAND(dxgkvmb_command_offerallocations);
+	COMMAND_VAR(dxgkvmb_command_offerallocations, allocations);
 	struct d3dkmt_offerallocations a = {0};
 	struct dxghost *h = m->h;
 	const struct d3dkmthandle *list = c->allocations;
@@ -1916,7 +2206,7 @@ static void cmd_offer(struct dxghost_msg *m)
 
 static void cmd_reclaim(struct dxghost_msg *m)
 {
-	COMMAND(dxgkvmb_command_reclaimallocations);
+	COMMAND_VAR(dxgkvmb_command_reclaimallocations, allocations);
 	struct d3dkmt_reclaimallocations2 a = {0};
 	struct dxgkvmb_command_reclaimallocations_return *r;
 	struct dxghost *h = m->h;

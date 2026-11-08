@@ -336,6 +336,8 @@ static void dxg_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
             r->result_size > VIRTIO_DXG_MAX_MESSAGE ||
             (!r->async &&
              in_size < sizeof(struct virtio_dxg_resp) + r->result_size)) {
+            warn_report("virtio-dxg: rejected request: %u bytes, result %u, "
+                        "reply room %zu", r->size, r->result_size, in_size);
             g_free(r);
             dxg_fail(d, elem, VIRTIO_DXG_ERR_INVALID);
             notify = true;
@@ -344,6 +346,9 @@ static void dxg_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
         r->message = g_malloc(r->size);
         if (iov_to_buf(elem->out_sg, elem->out_num, sizeof(hdr), r->message,
                        r->size) != r->size) {
+            warn_report("virtio-dxg: short request: %u bytes announced, %zu "
+                        "sent", r->size,
+                        iov_size(elem->out_sg, elem->out_num) - sizeof(hdr));
             g_free(r->message);
             g_free(r);
             dxg_fail(d, elem, VIRTIO_DXG_ERR_INVALID);

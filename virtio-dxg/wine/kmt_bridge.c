@@ -431,6 +431,12 @@ static int32_t WINAPI kmt_create_context_virtual(void *args)
 	struct d3dkmt_createcontextvirtual *a = args;
 	int32_t status = kmt_CreateContextVirtual(args);
 
+	if (trace_calls > 0 || status < 0)
+		fprintf(stderr, "[kmt]   context: node %u, engines 0x%x, "
+			"%u bytes of private data -> 0x%x\n", a->node_ordinal,
+			a->engine_affinity, a->priv_drv_data_size,
+			a->context.v);
+
 	if (status >= 0)
 		track(a->device, a->context, 0);
 	return status;
@@ -1212,11 +1218,15 @@ static int32_t WINAPI kmt_create_sync_object2(void *args)
 	int32_t status;
 	long fd;
 
-	if (trace_calls > 0)
-		fprintf(stderr, "[kmt]   sync object type %u flags 0x%x\n",
-			(unsigned)a->info.type, *(uint32_t *)&a->info.flags);
-	if (a->info.type != D3DDDI_CPU_NOTIFICATION)
-		return kmt_CreateSynchronizationObject2(args);
+	if (a->info.type != D3DDDI_CPU_NOTIFICATION) {
+		status = kmt_CreateSynchronizationObject2(args);
+		if (trace_calls > 0)
+			fprintf(stderr, "[kmt]   sync object type %u flags 0x%x "
+				"device %x -> %x\n", (unsigned)a->info.type,
+				*(uint32_t *)&a->info.flags, a->device.v,
+				a->sync_object.v);
+		return status;
+	}
 	fd = linux_eventfd();
 	if (fd < 0)
 		return (int32_t)0xC0000017;

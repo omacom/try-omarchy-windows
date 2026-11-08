@@ -196,13 +196,39 @@ real thing.
 | Guest: `dxgkrnl` over virtio (`guest/`) | Done. Builds against the installed guest kernel `7.2.9-arch1-1`, no warnings in new code at `W=1`. Not yet loaded in a VM. |
 | Host: `dxghost` executor (`host/`) | Done for 50 commands. Unit tested against a fake driver; struct layouts proven identical to the Windows SDK and between GCC and MSVC. Not yet run against the real driver. |
 | QEMU device `virtio-dxg-pci` (`qemu/`) | Written, **not yet compiled**; needs the winq-emu build (MSYS2/CI). |
-| NVIDIA Windows Vulkan driver in Linux (`wine/`) | **Working on WSL2's `/dev/dxg`**: device creation, guest-side shader compile, compute verified, native GPU throughput. Every D3DKMT call the driver makes is bridged. Prototype hooks; to become a Wine/Proton patch. |
+| NVIDIA Windows Vulkan driver in Linux (`wine/`) | **Working in the Omarchy VM over virtio-dxg** (and on WSL2's `/dev/dxg`): device creation, guest-side shader compile, compute verified, 96–97% GPU-bound like native. Every D3DKMT call the driver makes succeeds. Prototype hooks; to become a Wine/Proton patch. |
+| Whole path in the real guest | The user's Omarchy disk booted read-only (QEMU snapshot), `dxgkrnl_virtio` loaded by an initramfs hook (`guest/test/mkdevinitramfs.py`), NVIDIA's driver store shared read-only over 9p. |
 | Launcher option, guest image staging | Not started |
 | Desktop presentation (zero-copy scanout) | Not started |
 
 Not offered yet, with exact replies: cross-process sharing (NT handles,
 `OPENRESOURCE`), existing-sysmem allocations (`VK_EXT_external_memory_host`),
 standard allocations, statistics, optional dxgkrnl features.
+
+### What the first VM runs taught
+
+The kernel driver's caller is the VMM, an ordinary Windows process, where
+under WSL2 it is a Hyper-V vGPU. `dxghost` therefore gives the guest what a
+vGPU guest gets:
+- the GPU-PV flag in NVIDIA's adapter private data (offset 0xCCC8);
+- refusal of the NVIDIA escape that maps a timestamp page into the caller
+  (`NVGL` 0x1000077), so the driver uses `QueryClockCalibration` as under
+  WSL2.
+
+Protocol details WSL2's host tolerates and `dxghost` now does too:
+- commands whose trailing array is empty;
+- in-place replies at the guest's full command length, including struct
+  tail padding;
+- CPU-notification sync objects and `EnqueueCpuEvent` signals, forwarded
+  as guest events;
+- zero-state GPU VA maps (no allocation) inside the caller's reservations.
+
+Fence wake-up, measured with `guest/test/dxgtest`:
+
+| | WSL2 VMBus | virtio-dxg |
+| --- | --- | --- |
+| Blocked wait woken by a signal, median | 45.9 µs | 33.2 µs |
+| Signal + wait round trip, best | 30.1 µs | 29.9 µs |
 
 ## Next milestones
 
