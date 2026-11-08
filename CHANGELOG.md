@@ -17,6 +17,10 @@
 - Hyprland 0.57's sound for every terminal bell is muted, so missed Tab
   completions no longer chime. Existing installs get it with their next
   **Update > Omarchy** (#388, #384).
+- The mouse cursor stays drawn by Windows after Omarchy updates. Arch's
+  aquamarine 0.16.0 replaced our patched build, so the cursor could go back to
+  being drawn inside the desktop. Existing installs get the rebuilt package
+  with their next **Update > Omarchy**.
 - Super+Return and the Omarchy menu open the terminal chosen in Omarchy's
   default terminal setting instead of always opening Foot (#386, #385).
 - On Korean Windows, Omarchy offers Hangul input instead of Chewing. Existing
