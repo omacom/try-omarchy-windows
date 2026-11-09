@@ -61,11 +61,13 @@ if [[ ! -f "$build/build.ninja" ]]; then
     (
         cd "$build"
         "$source/configure" --target-list=x86_64-softmmu --enable-whpx \
-            --enable-sdl --disable-opengl --disable-virglrenderer \
+            --enable-sdl --enable-opengl --disable-virglrenderer \
             --disable-gtk --disable-vnc --disable-libusb --enable-slirp \
             --disable-tools --disable-guest-agent --disable-docs \
             --disable-plugins
     )
 fi
+# Earlier builds were configured without OpenGL (zero-copy scanout needs it).
+(cd "$build" && meson configure -Dopengl=enabled >/dev/null)
 ninja -C "$build" qemu-system-x86_64.exe
 echo "$build/qemu-system-x86_64.exe"

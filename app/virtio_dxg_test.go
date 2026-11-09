@@ -101,6 +101,8 @@ func TestBuildQemuArgsForDxg(t *testing.T) {
 		// QEMU option escaping: a comma in a path is doubled.
 		`path=D:\x,,y,mount_tag=vdxgpayload`,
 		",if=virtio,snapshot=on",
+		// Zero-copy scanout draws GPU textures with OpenGL.
+		"-display sdl,gl=on,",
 	} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("missing %q in %s", want, args)
@@ -109,7 +111,8 @@ func TestBuildQemuArgsForDxg(t *testing.T) {
 	cfg.dxg, cfg.diskSnapshot = dxgLaunch{}, false
 	args = strings.Join(buildQemuArgs(cfg, "root=/dev/vda"), " ")
 	if strings.Contains(args, "virtio-dxg") || strings.Contains(args, "snapshot=on") ||
-		!strings.Contains(args, "tryomarchy.render=cpu") || strings.Contains(args, "-cpu host") {
+		!strings.Contains(args, "tryomarchy.render=cpu") || strings.Contains(args, "-cpu host") ||
+		!strings.Contains(args, "-display sdl,gl=off,") {
 		t.Fatalf("CPU mode changed by dxg support: %s", args)
 	}
 }

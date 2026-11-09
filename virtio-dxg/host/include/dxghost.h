@@ -115,6 +115,16 @@ void dxghost_execute(struct dxghost *host, uint32_t channel,
 /* Guest reset or reboot: releases every object and IO-space mapping. */
 void dxghost_reset(struct dxghost *host);
 
+/*
+ * Opens a guest's shared resource for the VMM itself: *nt_handle becomes an
+ * NT handle (D3DKMTShareObjects) that D3D11, D3D12, OpenGL or Vulkan on the
+ * host can open, and that keeps the resource alive until it is closed with
+ * CloseHandle(). resource is the guest-visible host handle (the shared
+ * resource's global name). Returns 0 or a negative NTSTATUS.
+ */
+int32_t dxghost_share_resource(struct dxghost *host, uint32_t resource,
+			       void **nt_handle);
+
 #ifdef __cplusplus
 }
 #endif

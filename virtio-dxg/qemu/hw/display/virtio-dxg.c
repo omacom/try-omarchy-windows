@@ -27,6 +27,12 @@
 #include "hw/virtio/virtio.h"
 #include "hw/virtio/virtio-pci.h"
 #include "hw/display/virtio-dxg.h"
+#include "hw/display/virtio-gpu-scanout.h"
+#include "qemu/timer.h"
+#include "ui/console.h"
+#ifdef CONFIG_OPENGL
+#include <epoxy/gl.h>
+#endif
 #include "system/memory.h"
 #include "system/whpx.h"
 #include "system/whpx-internal.h"
@@ -421,6 +427,416 @@ static void *dxg_lane_main(void *opaque)
     return NULL;
 }
 
+/* --- Zero-copy scanout -------------------------------------------------- */
+
+/*
+ * The guest's compositor renders into shared D3D12 textures, each paired
+ * with a virtio-gpu 2D scanout buffer. A link opens the texture here (an NT
+ * handle from dxghost); virtio-gpu then neither copies the buffer's guest
+ * memory nor uploads a surface, and the display (SDL's OpenGL window, on the
+ * same GPU) draws the texture itself: GL_EXT_memory_object_win32 imports it
+ * as a GL texture, and presenting a frame is one GPU blit. Links, textures
+ * and statistics are all touched under the BQL: links come from the control
+ * queue handler, the hooks from virtio-gpu's command processing.
+ */
+#ifdef CONFIG_OPENGL
+
+#ifndef GL_BGRA8_EXT
+#define GL_BGRA8_EXT 0x93A1
+#endif
+
+typedef struct DxgScanout {
+    uint32_t resource_id;
+    uint32_t width;
+    uint32_t height;
+    uint32_t drm_format;
+    uint32_t alloc_size;
+    uint64_t cookie;
+    HANDLE nt;
+    GLuint mem;
+    GLuint tex;
+    bool failed;
+} DxgScanout;
+
+static struct {
+    GHashTable *links;          /* resource id -> DxgScanout */
+    GArray *garbage;            /* GL names to delete with the context */
+    QemuConsole *con;           /* console whose context imports */
+    QEMUGLContext ctx;
+    QEMUTimer *probe;           /* until the display exists */
+    int probes;
+    bool ready;                 /* the display can import D3D12 textures */
+    bool stats;
+    GLuint shown_tex;           /* what the console's scanout shows */
+    /* Presentation: frames, and gaps between them over 1.5 periods. */
+    int64_t last_ns;
+    int64_t window_ns;
+    uint64_t frames;
+    uint64_t late;
+    int64_t worst_ns;
+} dxg_scanout;
+
+static void dxg_scanout_free(gpointer data)
+{
+    DxgScanout *s = data;
+
+    /* GL objects go with the context current (main loop); see collect. */
+    if (s->tex || s->mem) {
+        GLuint names[2] = { s->tex, s->mem };
+
+        g_array_append_vals(dxg_scanout.garbage, names, 2);
+    }
+    if (s->nt) {
+        CloseHandle(s->nt);
+    }
+    g_free(s);
+}
+
+static void dxg_scanout_collect(void)
+{
+    guint i;
+
+    for (i = 0; i < dxg_scanout.garbage->len; i += 2) {
+        GLuint tex = g_array_index(dxg_scanout.garbage, GLuint, i);
+        GLuint mem = g_array_index(dxg_scanout.garbage, GLuint, i + 1);
+
+        if (tex) {
+            if (tex == dxg_scanout.shown_tex) {
+                dxg_scanout.shown_tex = 0;
+            }
+            glDeleteTextures(1, &tex);
+        }
+        if (mem) {
+            glDeleteMemoryObjectsEXT(1, &mem);
+        }
+    }
+    g_array_set_size(dxg_scanout.garbage, 0);
+}
+
+/* GL internal format for a DRM fourcc (memory order), or 0. */
+static GLenum dxg_scanout_format(uint32_t fourcc)
+{
+    switch (fourcc) {
+    case 0x34325258:    /* XR24: XRGB8888, B G R X in memory */
+    case 0x34325241:    /* AR24 */
+        return GL_BGRA8_EXT;
+    case 0x34324258:    /* XB24: XBGR8888, R G B X in memory */
+    case 0x34324241:    /* AB24 */
+        return GL_RGBA8;
+    default:
+        return 0;
+    }
+}
+
+/*
+ * Main loop: can the display's GL import D3D12 textures? QEMU runs the main
+ * loop during start-up (block devices poll it) before the display exists,
+ * so this tries again every 200 ms for 10 s. Links made before it answers
+ * keep the guest's copies.
+ */
+static void dxg_scanout_probe(void *opaque)
+{
+    QemuConsole *con = qemu_console_lookup_by_index(0);
+    QEMUGLParams params = { .major_ver = 4, .minor_ver = 5 };
+
+    if (!con || !console_has_gl(con)) {
+        if (++dxg_scanout.probes < 50) {
+            timer_mod(dxg_scanout.probe,
+                      qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 200);
+            return;
+        }
+        info_report("virtio-dxg: zero-copy scanout off (the display has no "
+                    "OpenGL; -display sdl,gl=on enables it)");
+        return;
+    }
+    dxg_scanout.ctx = dpy_gl_ctx_create(con, &params);
+    if (!dxg_scanout.ctx) {
+        warn_report("virtio-dxg: zero-copy scanout off: no GL context");
+        return;
+    }
+    dpy_gl_ctx_make_current(con, dxg_scanout.ctx);
+    if (!epoxy_has_gl_extension("GL_EXT_memory_object_win32")) {
+        warn_report("virtio-dxg: zero-copy scanout off: %s lacks "
+                    "GL_EXT_memory_object_win32", glGetString(GL_RENDERER));
+        return;
+    }
+    dxg_scanout.con = con;
+    dxg_scanout.ready = true;
+    info_report("virtio-dxg: zero-copy scanout on %s, %u.%03u Hz",
+                glGetString(GL_RENDERER),
+                (qemu_edid_refresh_rate_mhz ?: 120000) / 1000,
+                (qemu_edid_refresh_rate_mhz ?: 120000) % 1000);
+}
+
+static bool dxg_scanout_link(VirtIODxg *d,
+                             const struct virtio_dxg_device_cmd *c)
+{
+    uint32_t id = le32_to_cpu(c->gpu_resource);
+    uint64_t host = le64_to_cpu(c->host_resource);
+    uint64_t cookie = le64_to_cpu(c->cookie);
+    DxgScanout *s;
+    void *nt = NULL;
+    int32_t status;
+
+    if (!host) {
+        /* Unlink, unless a later link of the buffer replaced this one. */
+        s = g_hash_table_lookup(dxg_scanout.links, GUINT_TO_POINTER(id));
+        if (dxg_scanout.stats) {
+            info_report("virtio-dxg: scanout %u unlinked%s", id,
+                        s && s->cookie == cookie ? "" : " (stale)");
+        }
+        if (s && s->cookie == cookie) {
+            g_hash_table_remove(dxg_scanout.links, GUINT_TO_POINTER(id));
+        }
+        return false;
+    }
+    /*
+     * Cursor-sized buffers stay in guest memory: virtio-gpu's cursor reads
+     * them there.
+     */
+    if (!dxg_scanout.ready || !id ||
+        !dxg_scanout_format(le32_to_cpu(c->drm_format)) ||
+        (le32_to_cpu(c->width) <= 256 && le32_to_cpu(c->height) <= 256) ||
+        le32_to_cpu(c->width) > 16384 || le32_to_cpu(c->height) > 16384) {
+        return false;
+    }
+    status = dxghost_share_resource(d->host, (uint32_t)host, &nt);
+    if (status < 0 || !nt) {
+        warn_report_once("virtio-dxg: cannot share scanout resource 0x%x: "
+                         "0x%08x", (uint32_t)host, (uint32_t)status);
+        return false;
+    }
+    s = g_new0(DxgScanout, 1);
+    s->resource_id = id;
+    s->width = le32_to_cpu(c->width);
+    s->height = le32_to_cpu(c->height);
+    s->drm_format = le32_to_cpu(c->drm_format);
+    s->alloc_size = le32_to_cpu(c->alloc_size);
+    s->cookie = cookie;
+    s->nt = nt;
+    g_hash_table_replace(dxg_scanout.links, GUINT_TO_POINTER(id), s);
+    if (dxg_scanout.stats) {
+        info_report("virtio-dxg: scanout %u linked to 0x%x (%ux%u %.4s)",
+                    id, (uint32_t)host, s->width, s->height,
+                    (const char *)&s->drm_format);
+    }
+    return true;
+}
+
+/* With dxg_scanout.ctx current. */
+static bool dxg_scanout_import(DxgScanout *s)
+{
+    GLint dedicated = GL_TRUE;
+    GLenum err;
+
+    if (s->failed) {
+        return false;
+    }
+    while (glGetError() != GL_NO_ERROR) {
+        /* earlier errors are not ours */
+    }
+    glCreateMemoryObjectsEXT(1, &s->mem);
+    glMemoryObjectParameterivEXT(s->mem, GL_DEDICATED_MEMORY_OBJECT_EXT,
+                                 &dedicated);
+    glImportMemoryWin32HandleEXT(s->mem, s->alloc_size,
+                                 GL_HANDLE_TYPE_D3D12_RESOURCE_EXT, s->nt);
+    glGenTextures(1, &s->tex);
+    glBindTexture(GL_TEXTURE_2D, s->tex);
+    glTexStorageMem2DEXT(GL_TEXTURE_2D, 1, dxg_scanout_format(s->drm_format),
+                         s->width, s->height, s->mem, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    err = glGetError();
+    if (err != GL_NO_ERROR) {
+        warn_report("virtio-dxg: importing scanout %u (%ux%u, %u bytes) "
+                    "failed: GL error 0x%x", s->resource_id, s->width,
+                    s->height, s->alloc_size, err);
+        s->failed = true;
+        return false;
+    }
+    return true;
+}
+
+static bool dxg_scanout_linked(uint32_t resource_id)
+{
+    DxgScanout *s = dxg_scanout.links ?
+        g_hash_table_lookup(dxg_scanout.links,
+                            GUINT_TO_POINTER(resource_id)) : NULL;
+
+    return s && !s->failed;
+}
+
+static bool dxg_scanout_show(QemuConsole *con, uint32_t resource_id,
+                             uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+{
+    DxgScanout *s;
+
+    if (!dxg_scanout.ready || con != dxg_scanout.con) {
+        return false;
+    }
+    s = g_hash_table_lookup(dxg_scanout.links, GUINT_TO_POINTER(resource_id));
+    if (!s || s->failed) {
+        if (dxg_scanout.stats && g_hash_table_size(dxg_scanout.links)) {
+            warn_report_once("virtio-dxg: scanout of unlinked resource %u "
+                             "(%u linked)", resource_id,
+                             g_hash_table_size(dxg_scanout.links));
+        }
+        return false;
+    }
+    dpy_gl_ctx_make_current(con, dxg_scanout.ctx);
+    dxg_scanout_collect();
+    if (!s->tex && !dxg_scanout_import(s)) {
+        return false;
+    }
+    /* Row 0 of a D3D12 texture is the top of the image. */
+    dpy_gl_scanout_texture(con, s->tex, true, s->width, s->height,
+                           x, y, w, h, NULL);
+    dxg_scanout.shown_tex = s->tex;
+    return true;
+}
+
+static void dxg_scanout_count(void)
+{
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+    uint32_t mhz = qemu_edid_refresh_rate_mhz ?: 120000;
+    int64_t period = 1000000000000ll / mhz;
+
+    if (dxg_scanout.last_ns) {
+        int64_t gap = now - dxg_scanout.last_ns;
+
+        /* Gaps over 100 ms are an idle screen, not a dropped frame. */
+        if (gap < 100 * SCALE_MS) {
+            if (gap > period * 3 / 2) {
+                dxg_scanout.late++;
+            }
+            dxg_scanout.worst_ns = MAX(dxg_scanout.worst_ns, gap);
+        }
+    } else {
+        dxg_scanout.window_ns = now;
+    }
+    dxg_scanout.last_ns = now;
+    dxg_scanout.frames++;
+    if (dxg_scanout.stats && now - dxg_scanout.window_ns >= 10 * NANOSECONDS_PER_SECOND) {
+        double secs = (now - dxg_scanout.window_ns) / 1e9;
+
+        info_report("virtio-dxg: scanout %.1f fps over %.0f s (display "
+                    "%.0f Hz): %" PRIu64 " gaps over 1.5 frames, worst "
+                    "%.2f ms", dxg_scanout.frames / secs, secs, mhz / 1000.0,
+                    dxg_scanout.late, dxg_scanout.worst_ns / 1e6);
+        dxg_scanout.window_ns = now;
+        dxg_scanout.frames = 0;
+        dxg_scanout.late = 0;
+        dxg_scanout.worst_ns = 0;
+    }
+}
+
+static void dxg_scanout_flush(QemuConsole *con, uint32_t resource_id,
+                              uint32_t width, uint32_t height)
+{
+    DxgScanout *s = g_hash_table_lookup(dxg_scanout.links,
+                                        GUINT_TO_POINTER(resource_id));
+
+    /* Relinked since it was shown (a new texture for the same buffer). */
+    if (s && !s->failed && s->tex != dxg_scanout.shown_tex) {
+        dxg_scanout_show(con, resource_id, 0, 0, width, height);
+    }
+    dxg_scanout_count();
+    dpy_gl_update(con, 0, 0, width, height);
+}
+
+static void dxg_scanout_forget(uint32_t resource_id)
+{
+    g_hash_table_remove(dxg_scanout.links, GUINT_TO_POINTER(resource_id));
+}
+
+static const VirtIOGPUScanoutHooks dxg_scanout_hooks = {
+    .linked = dxg_scanout_linked,
+    .show = dxg_scanout_show,
+    .flush = dxg_scanout_flush,
+    .forget = dxg_scanout_forget,
+};
+
+static void dxg_scanout_init(VirtIODxg *d)
+{
+    dxg_scanout.links = g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                              NULL, dxg_scanout_free);
+    dxg_scanout.garbage = g_array_new(false, false, sizeof(GLuint));
+    dxg_scanout.stats = d->stats;
+    virtio_gpu_scanout_hooks = &dxg_scanout_hooks;
+    dxg_scanout.probe = timer_new_ms(QEMU_CLOCK_REALTIME, dxg_scanout_probe,
+                                     d);
+    timer_mod(dxg_scanout.probe, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 200);
+}
+
+static void dxg_scanout_reset(void)
+{
+    if (dxg_scanout.links) {
+        g_hash_table_remove_all(dxg_scanout.links);
+    }
+}
+
+static void dxg_scanout_fini(void)
+{
+    virtio_gpu_scanout_hooks = NULL;
+    if (dxg_scanout.probe) {
+        timer_free(dxg_scanout.probe);
+        dxg_scanout.probe = NULL;
+    }
+    dxg_scanout_reset();
+}
+
+#else /* !CONFIG_OPENGL */
+
+static bool dxg_scanout_link(VirtIODxg *d,
+                             const struct virtio_dxg_device_cmd *c)
+{
+    return false;
+}
+
+static void dxg_scanout_init(VirtIODxg *d)
+{
+}
+
+static void dxg_scanout_reset(void)
+{
+}
+
+static void dxg_scanout_fini(void)
+{
+}
+
+#endif /* CONFIG_OPENGL */
+
+/* VIRTIO_DXG_CHANNEL_DEVICE: the device's own commands. BQL. */
+static void dxg_device_command(VirtIODxg *d, const uint8_t *message,
+                               uint32_t size, uint8_t *result,
+                               uint32_t result_size,
+                               struct virtio_dxg_resp *resp)
+{
+    struct virtio_dxg_device_cmd c;
+    struct virtio_dxg_device_reply reply = { 0 };
+
+    memset(resp, 0, sizeof(*resp));
+    if (size < sizeof(c) || result_size < sizeof(reply)) {
+        resp->status = VIRTIO_DXG_ERR_INVALID;
+        return;
+    }
+    memcpy(&c, message, sizeof(c));
+    switch (le32_to_cpu(c.command)) {
+    case VIRTIO_DXG_DEV_SCANOUT_LINK:
+        if (dxg_scanout_link(d, &c)) {
+            reply.flags = cpu_to_le32(VIRTIO_DXG_SCANOUT_ZERO_COPY);
+        }
+        break;
+    default:
+        resp->status = VIRTIO_DXG_ERR_UNSUPPORTED;
+        return;
+    }
+    memcpy(result, &reply, sizeof(reply));
+    resp->size = sizeof(reply);
+}
+
 static void dxg_fail(VirtIODxg *d, VirtQueueElement *elem, uint32_t status)
 {
     struct virtio_dxg_resp out = { .status = cpu_to_le32(status) };
@@ -476,6 +892,17 @@ static void dxg_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
             g_free(r->message);
             g_free(r);
             dxg_fail(d, elem, VIRTIO_DXG_ERR_INVALID);
+            notify = true;
+            continue;
+        }
+        if (r->channel == VIRTIO_DXG_CHANNEL_DEVICE) {
+            dxg_device_command(d, r->message, r->size,
+                               d->state->inline_result, r->result_size,
+                               &resp);
+            dxg_finish(d, r, d->state->inline_result, &resp);
+            g_free(r->elem);
+            g_free(r->message);
+            g_free(r);
             notify = true;
             continue;
         }
@@ -572,6 +999,7 @@ static void dxg_reset(VirtIODevice *vdev)
     bql_unlock();
     dxghost_reset(d->host);
     bql_lock();
+    dxg_scanout_reset();
     qemu_mutex_lock(&d->state->event_lock);
     while ((e = QSIMPLEQ_FIRST(&d->state->events))) {
         QSIMPLEQ_REMOVE_HEAD(&d->state->events, next);
@@ -641,6 +1069,7 @@ static void dxg_realize(DeviceState *dev, Error **errp)
         qemu_thread_create(&lane->thread, "virtio-dxg", dxg_lane_main, lane,
                            QEMU_THREAD_JOINABLE);
     }
+    dxg_scanout_init(d);
 }
 
 static void dxg_unrealize(DeviceState *dev)
@@ -650,6 +1079,7 @@ static void dxg_unrealize(DeviceState *dev)
     int i;
 
     dxg_drain(d);
+    dxg_scanout_fini();
     for (i = 0; i < DXG_LANES; i++) {
         DxgLane *lane = &d->state->lanes[i];
 

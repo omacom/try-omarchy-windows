@@ -72,7 +72,10 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 			"-machine", machine, "-cpu", cpuModel(cfg),
 			"-smp", smp, "-m", mem,
 			"-vga", "none", "-device", displayDevice(cfg, hostmem),
-			"-display", sdlDisplay(false, cfg.hostCursor),
+			// virtio-dxg: the window draws the guest's frames with OpenGL,
+			// straight from the GPU textures the desktop renders into
+			// (zero-copy scanout); CPU mode keeps SDL's 2D path.
+			"-display", sdlDisplay(cfg.dxg.enabled, cfg.hostCursor),
 			"-serial", "file:"+filepath.Join(vm, "serial.log"),
 		)
 	}

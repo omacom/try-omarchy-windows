@@ -1448,6 +1448,14 @@ static void cmd_create_allocation(struct dxghost_msg *m)
 	a.alloc_count = count;
 	a.allocation_info = (u64)(uintptr_t)a2;
 	a.flags = c->flags;
+	/*
+	 * Shared resources are shared by NT handle on the host, whatever the
+	 * guest's runtime asked: the VMM can then open them
+	 * (dxghost_share_resource, e.g. zero-copy scanout). The guest sees no
+	 * difference: without a global name, the resource handle is its name.
+	 */
+	if (a.flags.create_shared && a.flags.create_resource)
+		a.flags.nt_security_sharing = 1;
 	a.private_runtime_resource_handle = c->private_runtime_resource_handle;
 
 	m->ntstatus = c->flags.existing_sysmem ?
@@ -2944,6 +2952,110 @@ static void cmd_invalidate_cache(struct dxghost_msg *m)
 }
 
 /* Replies for commands that are recognised but not offered. */
+/*
+ * Opens a shared resource on another device of the guest: another Mesa
+ * screen or API in the same process, or another process. The guest kernel
+ * keeps the creator's private data and gives it to the opener itself, so
+ * the host only opens the same allocations on the opener's device, through
+ * an NT handle of the resource (its global name is its host handle).
+ */
+static void cmd_open_resource(struct dxghost_msg *m)
+{
+	COMMAND(dxgkvmb_command_openresource);
+	struct dxgkvmb_command_openresource_return *r;
+	struct d3dkmthandle *handles;
+	struct d3dkmt_queryresourceinfofromnthandle q = {0};
+	struct d3dkmt_openresourcefromnthandle o = {0};
+	struct d3dddi_openallocationinfo2 *info = NULL;
+	u8 *runtime = NULL, *resource_priv = NULL, *total = NULL;
+	struct dxghost *h = m->h;
+	uint32_t count = c->allocation_count, i;
+	void *nt = NULL;
+	int32_t status;
+
+	if (!count || count > D3DKMT_CREATEALLOCATION_MAX) {
+		m->status = VIRTIO_DXG_ERR_INVALID;
+		return;
+	}
+	/* The guest rounds its reply buffer up to 8 bytes and wants it full. */
+	if (m->res_cap < sizeof(*r) + count * sizeof(*handles)) {
+		m->status = VIRTIO_DXG_ERR_OVERFLOW;
+		return;
+	}
+	r = reply(m, m->res_cap);
+	if (!r)
+		return;
+	memset(r, 0, m->res_cap);
+	handles = (struct d3dkmthandle *)&r[1];
+	if (!h->kmt.OpenResourceFromNtHandle ||
+	    !h->kmt.QueryResourceInfoFromNtHandle) {
+		r->status.v = DXG_STATUS_NOT_SUPPORTED;
+		return;
+	}
+	if (!owns(h, c->device.v, OBJ_DEVICE, m->process)) {
+		r->status.v = DXG_STATUS_INVALID_HANDLE;
+		return;
+	}
+	status = dxghost_share_resource(h, c->global_share.v, &nt);
+	if (status < 0) {
+		r->status.v = status;
+		return;
+	}
+	q.device = c->device;
+	q.nt_handle = (u64)(uintptr_t)nt;
+	status = h->kmt.QueryResourceInfoFromNtHandle(&q);
+	if (status >= 0 && q.allocation_count != count)
+		status = DXG_STATUS_INVALID_PARAMETER;
+	if (status >= 0) {
+		info = calloc(count, sizeof(*info));
+		runtime = malloc(q.private_runtime_data_size + 1);
+		resource_priv = malloc(q.resource_priv_drv_data_size + 1);
+		total = malloc(q.total_priv_drv_data_size + 1);
+		if (!info || !runtime || !resource_priv || !total)
+			status = DXG_STATUS_NO_MEMORY;
+	}
+	if (status >= 0) {
+		o.device = c->device;
+		o.nt_handle = q.nt_handle;
+		o.allocation_count = count;
+		o.open_alloc_info = (u64)(uintptr_t)info;
+		o.private_runtime_data_size = (int)q.private_runtime_data_size;
+		o.private_runtime_data = (u64)(uintptr_t)runtime;
+		o.resource_priv_drv_data_size = q.resource_priv_drv_data_size;
+		o.resource_priv_drv_data = (u64)(uintptr_t)resource_priv;
+		o.total_priv_drv_data_size = q.total_priv_drv_data_size;
+		o.total_priv_drv_data = (u64)(uintptr_t)total;
+		status = h->kmt.OpenResourceFromNtHandle(&o);
+	}
+	dxghost_close_nt(nt);
+	if (status >= 0) {
+		LOCK(h);
+		dxghost_obj_add(h, o.resource.v, OBJ_RESOURCE, m->process,
+				c->device.v);
+		for (i = 0; i < count; i++) {
+			struct dxghost_obj *a;
+
+			dxghost_obj_add(h, info[i].allocation.v, OBJ_ALLOCATION,
+					m->process, c->device.v);
+			a = dxghost_obj_find(h, info[i].allocation.v);
+			if (a)
+				a->resource = o.resource.v;
+			handles[i] = info[i].allocation;
+		}
+		UNLOCK(h);
+		r->resource = o.resource;
+	} else {
+		dxghost_logf(h, "OpenResource of 0x%x on device 0x%x failed: "
+			     "0x%08x", c->global_share.v, c->device.v,
+			     (uint32_t)status);
+	}
+	r->status.v = status;
+	free(info);
+	free(runtime);
+	free(resource_priv);
+	free(total);
+}
+
 static void not_supported(struct dxghost_msg *m)
 {
 	if (!m->res_cap)
@@ -3106,6 +3218,8 @@ void dxghost_exec_vgpu(struct dxghost_msg *m, uint32_t type)
 		cmd_invalidate_cache(m);
 		break;
 	case DXGK_VMBCOMMAND_OPENRESOURCE:
+		cmd_open_resource(m);
+		break;
 	case DXGK_VMBCOMMAND_DDIGETSTANDARDALLOCATIONDRIVERDATA:
 	case DXGK_VMBCOMMAND_QUERYSTATISTICS:
 	case DXGK_VMBCOMMAND_SETEXISTINGSYSMEMPAGES:

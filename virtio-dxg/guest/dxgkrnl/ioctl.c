@@ -21,6 +21,9 @@
 #include "dxgkrnl.h"
 #include "dxgvmbus.h"
 #include "dxgsyncfile.h"
+#ifdef DXG_VIRTIO
+#include "virtio_dxg.h"
+#endif
 
 #undef dev_fmt
 #define dev_fmt(fmt)	"dxgk: " fmt
@@ -5584,6 +5587,71 @@ cleanup:
 	return ret;
 }
 
+#ifdef DXG_VIRTIO
+/*
+ * Links a virtio-gpu scanout buffer to the shared resource it is rendered
+ * in (LX_DXVIRTIOSCANOUT). The device answers whether its display shows the
+ * resource itself from now on.
+ */
+static int
+dxgkio_virtio_scanout(struct dxgprocess *process, void *__user inargs)
+{
+	struct d3dkmt_virtioscanout args;
+	struct d3dkmt_virtioscanout __user *user = inargs;
+	struct virtio_dxg_device_cmd cmd = {};
+	struct virtio_dxg_device_reply reply = {};
+	struct dxgglobal *dxgglobal = dxggbl();
+	u64 host = 0;
+	u32 flags;
+	int ret;
+
+	if (copy_from_user(&args, inargs, sizeof(args)))
+		return -EFAULT;
+	if (args.resource_fd >= 0) {
+		struct file *file = fget(args.resource_fd);
+		struct dxgsharedresource *shared;
+
+		if (!file)
+			return -EBADF;
+		if (file->f_op != &dxg_resource_fops ||
+		    !file->private_data) {
+			fput(file);
+			return -EINVAL;
+		}
+		shared = file->private_data;
+		/*
+		 * Resources are shared by NT handle: the host handle comes with
+		 * the share (CREATENTSHAREDOBJECT), and stays while the fd is
+		 * open. The global name is for older, global sharing.
+		 */
+		mutex_lock(&shared->fd_mutex);
+		host = shared->host_shared_handle_nt.v ?:
+		       shared->host_shared_handle.v;
+		mutex_unlock(&shared->fd_mutex);
+		fput(file);
+		if (!host)
+			return -EINVAL;
+	}
+	cmd.command = cpu_to_le32(VIRTIO_DXG_DEV_SCANOUT_LINK);
+	cmd.gpu_resource = cpu_to_le32(args.gpu_resource);
+	cmd.host_resource = cpu_to_le64(host);
+	cmd.width = cpu_to_le32(args.width);
+	cmd.height = cpu_to_le32(args.height);
+	cmd.drm_format = cpu_to_le32(args.drm_format);
+	cmd.alloc_size = cpu_to_le32(args.alloc_size);
+	cmd.cookie = cpu_to_le64(args.cookie);
+	ret = dxgvirtio_send(dxgglobal->channel.channel,
+			     VIRTIO_DXG_CHANNEL_DEVICE, &cmd, sizeof(cmd),
+			     &reply, sizeof(reply), false);
+	if (ret < 0)
+		return ret;
+	flags = le32_to_cpu(reply.flags);
+	if (copy_to_user(&user->flags, &flags, sizeof(flags)))
+		return -EFAULT;
+	return 0;
+}
+#endif
+
 static struct ioctl_desc ioctls[] = {
 /* 0x00 */	{},
 /* 0x01 */	{dxgkio_open_adapter_from_luid, LX_DXOPENADAPTERFROMLUID},
@@ -5673,6 +5741,10 @@ static struct ioctl_desc ioctls[] = {
 		 LX_DXOPENSYNCOBJECTFROMSYNCFILE},
 /* 0x48 */	{dxgkio_enum_processes, LX_DXENUMPROCESSES},
 /* 0x49 */	{dxgkio_is_feature_enabled, LX_ISFEATUREENABLED},
+#ifdef DXG_VIRTIO
+	/* virtio-dxg's own, away from upstream's numbers */
+	[0x80] = {dxgkio_virtio_scanout, LX_DXVIRTIOSCANOUT},
+#endif
 };
 
 /*

@@ -91,7 +91,180 @@ def main():
             sys.exit("hw/virtio/virtio-qmp.c: featureless device list not found")
         text = text.replace(anchor, entry + anchor)
         qmp.write_text(text, newline="\n")
+    patch_virtio_gpu(qemu)
     print(f"virtio-dxg added to {qemu}")
+
+
+# Zero-copy scanout: virtio-gpu 2D asks virtio-dxg whether a resource's
+# image is a host GPU texture (include/hw/display/virtio-gpu-scanout.h).
+# Without virtio-dxg the hooks pointer stays NULL and nothing changes.
+GPU_PATCHES = [
+    ('#include "hw/virtio/virtio-gpu-pixman.h"\n',
+     '#include "hw/virtio/virtio-gpu-pixman.h"\n'
+     '#include "hw/display/virtio-gpu-scanout.h"\n'),
+    ('void virtio_gpu_disable_scanout(VirtIOGPU *g, int scanout_id)\n{\n',
+     '/* virtio-dxg: zero-copy scanout (hw/display/virtio-gpu-scanout.h). */\n'
+     'const VirtIOGPUScanoutHooks *virtio_gpu_scanout_hooks;\n'
+     '/* Scanouts that show a texture rather than a surface. */\n'
+     'static bool virtio_gpu_scanout_texture[VIRTIO_GPU_MAX_SCANOUTS];\n\n'
+     'void virtio_gpu_disable_scanout(VirtIOGPU *g, int scanout_id)\n{\n'),
+    ('    dpy_gfx_replace_surface(scanout->con, NULL);\n'
+     '    scanout->resource_id = 0;\n',
+     '    dpy_gfx_replace_surface(scanout->con, NULL);\n'
+     '    virtio_gpu_scanout_texture[scanout_id] = false;\n'
+     '    scanout->resource_id = 0;\n'),
+    ('    qemu_pixman_image_unref(res->image);\n'
+     '    virtio_gpu_cleanup_mapping(g, res);\n',
+     '    if (virtio_gpu_scanout_hooks) {\n'
+     '        virtio_gpu_scanout_hooks->forget(res->resource_id);\n'
+     '    }\n'
+     '    qemu_pixman_image_unref(res->image);\n'
+     '    virtio_gpu_cleanup_mapping(g, res);\n'),
+    # The image is on the GPU: copying guest memory would be wasted.
+    ('    trace_virtio_gpu_cmd_res_xfer_toh_2d(t2d.resource_id);\n\n'
+     '    res = virtio_gpu_find_check_resource(g, t2d.resource_id, true,\n'
+     '                                         __func__, &cmd->error);\n'
+     '    if (!res || res->blob) {\n'
+     '        return;\n'
+     '    }\n',
+     '    trace_virtio_gpu_cmd_res_xfer_toh_2d(t2d.resource_id);\n\n'
+     '    res = virtio_gpu_find_check_resource(g, t2d.resource_id, true,\n'
+     '                                         __func__, &cmd->error);\n'
+     '    if (!res || res->blob) {\n'
+     '        return;\n'
+     '    }\n'
+     '    if (virtio_gpu_scanout_hooks &&\n'
+     '        virtio_gpu_scanout_hooks->linked(res->resource_id)) {\n'
+     '        return;\n'
+     '    }\n'),
+    ('    /* create a surface for this scanout */\n',
+     '    if (!res->blob && virtio_gpu_scanout_hooks &&\n'
+     '        virtio_gpu_scanout_hooks->show(scanout->con, res->resource_id,\n'
+     '                                       r->x, r->y, r->width,\n'
+     '                                       r->height)) {\n'
+     '        /* A texture, presented on the GPU: no surface, no upload. */\n'
+     '        virtio_gpu_scanout_texture[scanout_id] = true;\n'
+     '        virtio_gpu_update_scanout(g, scanout_id, res, fb, r);\n'
+     '        return true;\n'
+     '    }\n'
+     '    if (virtio_gpu_scanout_texture[scanout_id]) {\n'
+     '        /* Back to memory: the console needs its surface again. */\n'
+     '        virtio_gpu_scanout_texture[scanout_id] = false;\n'
+     '        scanout->ds = NULL;\n'
+     '    }\n\n'
+     '    /* create a surface for this scanout */\n'),
+    ('        scanout = &g->parent_obj.scanout[i];\n\n'
+     '        qemu_rect_init(&rect, scanout->x, scanout->y,\n',
+     '        scanout = &g->parent_obj.scanout[i];\n'
+     '        if (virtio_gpu_scanout_texture[i]) {\n'
+     '            virtio_gpu_scanout_hooks->flush(scanout->con,\n'
+     '                                            res->resource_id,\n'
+     '                                            scanout->width,\n'
+     '                                            scanout->height);\n'
+     '            continue;\n'
+     '        }\n\n'
+     '        qemu_rect_init(&rect, scanout->x, scanout->y,\n'),
+]
+
+
+# The guest's display mode follows the host monitor the window is on: its
+# size already does (SDL is per-monitor DPI aware, so a fullscreen window
+# is the panel's native resolution); the refresh rate was read once, from
+# display 0, at start-up. Now it comes with every resize and with moves to
+# another monitor, and the guest sees it in its EDID.
+SDL_PATCHES = [
+    ('static void handle_windowevent(SDL_Event *ev)\n{\n',
+     '/* The refresh rate of the display showing the window, in mHz, or 0. */\n'
+     'static uint32_t sdl2_window_refresh_mhz(struct sdl2_console *scon)\n'
+     '{\n'
+     '    SDL_DisplayMode mode;\n'
+     '    int index = SDL_GetWindowDisplayIndex(scon->real_window);\n\n'
+     '    if (index >= 0 && SDL_GetCurrentDisplayMode(index, &mode) == 0 &&\n'
+     '        mode.refresh_rate > 0) {\n'
+     '        return mode.refresh_rate * 1000;\n'
+     '    }\n'
+     '    return 0;\n'
+     '}\n\n'
+     'static void handle_windowevent(SDL_Event *ev)\n{\n'),
+    ('            info.width = ev->window.data1;\n'
+     '            info.height = ev->window.data2;\n'
+     '            dpy_set_ui_info(scon->dcl.con, &info, true);\n',
+     '            info.width = ev->window.data1;\n'
+     '            info.height = ev->window.data2;\n'
+     '            info.refresh_rate = sdl2_window_refresh_mhz(scon);\n'
+     '            dpy_set_ui_info(scon->dcl.con, &info, true);\n'),
+    ('    case SDL_WINDOWEVENT_EXPOSED:\n'
+     '        sdl2_redraw(scon);\n'
+     '        break;\n',
+     '    case SDL_WINDOWEVENT_EXPOSED:\n'
+     '        sdl2_redraw(scon);\n'
+     '        break;\n'
+     '    case SDL_WINDOWEVENT_DISPLAY_CHANGED:\n'
+     '        {\n'
+     '            QemuUIInfo info;\n'
+     '            int w, h;\n\n'
+     '            SDL_GetWindowSize(scon->real_window, &w, &h);\n'
+     '            memset(&info, 0, sizeof(info));\n'
+     '            info.width = w;\n'
+     '            info.height = h;\n'
+     '            info.refresh_rate = sdl2_window_refresh_mhz(scon);\n'
+     '            dpy_set_ui_info(scon->dcl.con, &info, true);\n'
+     '        }\n'
+     '        break;\n'),
+]
+
+
+# Input is read when SDL's display refresh runs: every 10 ms while busy and
+# every 30 ms after a quiet moment, so the pointer moved at 100 Hz (33 Hz at
+# first) on any display. It now runs once per display frame (4 ms at
+# 240 Hz) while busy and every two frames when quiet.
+SDL_PATCHES += [
+    ('                scon->dcl.update_interval = GUI_REFRESH_INTERVAL_DEFAULT;\n',
+     '                scon->dcl.update_interval = SDL2_REFRESH_INTERVAL_QUIET;\n'),
+]
+SDL_HEADER_PATCHES = [
+    ('#define SDL2_REFRESH_INTERVAL_BUSY 10\n',
+     '/*\n'
+     ' * Display and input polling: one display frame while busy (4 ms at\n'
+     ' * 240 Hz, 10 ms at most), two when quiet.\n'
+     ' */\n'
+     '#define SDL2_REFRESH_INTERVAL_BUSY \\\n'
+     '    (qemu_edid_refresh_rate_mhz >= 100000 ? \\\n'
+     '     MAX(1000000 / qemu_edid_refresh_rate_mhz, 1) : 10)\n'
+     '#define SDL2_REFRESH_INTERVAL_QUIET (2 * SDL2_REFRESH_INTERVAL_BUSY)\n'),
+]
+
+
+def patch_file(path, patches, marker):
+    text = path.read_text()
+    if marker in text:
+        return
+    for anchor, replacement in patches:
+        if text.count(anchor) != 1:
+            sys.exit(f"{path}: anchor not found once:\n{anchor}")
+        text = text.replace(anchor, replacement)
+    path.write_text(text, newline="\n")
+
+
+def patch_sdl(qemu):
+    patch_file(qemu / "ui/sdl2.c", SDL_PATCHES, "sdl2_window_refresh_mhz")
+    patch_file(qemu / "include/ui/sdl2.h", SDL_HEADER_PATCHES,
+               "SDL2_REFRESH_INTERVAL_QUIET")
+
+
+def patch_virtio_gpu(qemu):
+    patch_sdl(qemu)
+    shutil.copyfile(here / "include/hw/display/virtio-gpu-scanout.h",
+                    qemu / "include/hw/display/virtio-gpu-scanout.h")
+    path = qemu / "hw/display/virtio-gpu.c"
+    text = path.read_text()
+    if "virtio_gpu_scanout_hooks" in text:
+        return
+    for anchor, replacement in GPU_PATCHES:
+        if text.count(anchor) != 1:
+            sys.exit(f"hw/display/virtio-gpu.c: anchor not found once:\n{anchor}")
+        text = text.replace(anchor, replacement)
+    path.write_text(text, newline="\n")
 
 
 if __name__ == "__main__":

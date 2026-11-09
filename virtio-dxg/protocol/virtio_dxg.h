@@ -68,6 +68,37 @@ struct virtio_dxg_config {
 /* Which dxgkrnl channel a request belongs to. */
 #define VIRTIO_DXG_CHANNEL_GLOBAL	0
 #define VIRTIO_DXG_CHANNEL_ADAPTER	1
+/* The device itself (not dxgkrnl): struct virtio_dxg_device_cmd. */
+#define VIRTIO_DXG_CHANNEL_DEVICE	2
+
+/*
+ * Zero-copy scanout. The guest's compositor renders into a shared D3D12
+ * texture paired with a virtio-gpu (2D) scanout buffer. Linking them lets
+ * the host display show the texture itself: virtio-gpu skips the guest
+ * memory copy and the surface upload, and presents the texture on the GPU.
+ * host_resource is the shared resource's host handle (its global share
+ * name); 0 unlinks. A link replaces any earlier one of the same buffer.
+ */
+#define VIRTIO_DXG_DEV_SCANOUT_LINK	1
+
+struct virtio_dxg_device_cmd {
+	VIRTIO_DXG_LE32 command;	/* VIRTIO_DXG_DEV_* */
+	VIRTIO_DXG_LE32 gpu_resource;	/* virtio-gpu resource id */
+	VIRTIO_DXG_LE64 host_resource;	/* d3dkmthandle on the host, 0: unlink */
+	VIRTIO_DXG_LE32 width;
+	VIRTIO_DXG_LE32 height;
+	VIRTIO_DXG_LE32 drm_format;	/* DRM fourcc of the scanout buffer */
+	VIRTIO_DXG_LE32 alloc_size;	/* the resource's allocation, bytes */
+	VIRTIO_DXG_LE64 cookie;		/* guest's id of this link */
+};
+
+/* Reply: the display presents the buffer from the texture. */
+#define VIRTIO_DXG_SCANOUT_ZERO_COPY	(1u << 0)
+
+struct virtio_dxg_device_reply {
+	VIRTIO_DXG_LE32 flags;		/* VIRTIO_DXG_SCANOUT_* */
+	VIRTIO_DXG_LE32 reserved;
+};
 
 #define VIRTIO_DXG_REQ_SYNC		0	/* reply expected */
 #define VIRTIO_DXG_REQ_ASYNC		1	/* no reply, ordered */

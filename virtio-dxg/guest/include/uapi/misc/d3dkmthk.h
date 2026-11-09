@@ -1793,4 +1793,29 @@ struct d3dkmt_invalidatecache {
 #define LX_ISFEATUREENABLED	\
 	_IOWR(0x47, 0x49, struct d3dkmt_isfeatureenabled)
 
+/*
+ * virtio-dxg only: links a virtio-gpu scanout buffer to the shared D3D12
+ * resource it is rendered in, so the host display shows that resource
+ * without copies. resource_fd is the resource's shared handle (from
+ * D3DKMTShareObjects, as ID3D12Device::CreateSharedHandle returns it);
+ * -1 unlinks. alloc_size is the resource's allocation size
+ * (GetResourceAllocationInfo). On return, flags has VIRTIO_DXG_SCANOUT_ZERO_COPY (1) when
+ * the display presents the resource: until then the buffer itself must
+ * carry the image.
+ */
+struct d3dkmt_virtioscanout {
+	__u32			gpu_resource;
+	__s32			resource_fd;
+	__u32			width;
+	__u32			height;
+	__u32			drm_format;
+	__u32			alloc_size;
+	__u32			flags;
+	__u32			reserved;
+	__u64			cookie;
+};
+
+#define LX_DXVIRTIOSCANOUT	\
+	_IOWR(0x47, 0x80, struct d3dkmt_virtioscanout)
+
 #endif /* _D3DKMTHK_H */

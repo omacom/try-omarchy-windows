@@ -180,6 +180,9 @@ struct dxghost_obj *dxghost_obj_get(struct dxghost *h, uint32_t handle,
 void dxghost_obj_remove(struct dxghost *h, uint32_t handle);
 void dxghost_objtab_free(struct dxghost_objtab *t);
 
+/* CloseHandle() of an NT handle from dxghost_share_resource(); NULL is ok. */
+void dxghost_close_nt(void *nt_handle);
+
 /* h->lock: dxghost_lock(); dxghost_unlock() runs the deferred work. */
 void dxghost_lock(struct dxghost *h);
 void dxghost_unlock(struct dxghost *h);

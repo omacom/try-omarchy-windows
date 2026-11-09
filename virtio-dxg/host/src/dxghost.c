@@ -141,6 +141,47 @@ fail:
 	return -1;
 }
 
+int32_t dxghost_share_resource(struct dxghost *h, uint32_t resource,
+			       void **nt_handle)
+{
+	struct dxghost_obj *o;
+	int32_t status;
+	/* OBJECT_ATTRIBUTES: unnamed, default security. */
+	struct {
+		uint32_t length;
+		void *root_directory;
+		void *object_name;
+		uint32_t attributes;
+		void *security_descriptor;
+		void *security_quality_of_service;
+	} oa = { sizeof(oa) };
+
+	*nt_handle = NULL;
+	if (!h->kmt.ShareObjects)
+		return (int32_t)0xC00000BBL;	/* STATUS_NOT_SUPPORTED */
+	dxghost_lock(h);
+	o = dxghost_obj_find(h, resource);
+	if (!o || o->type != OBJ_RESOURCE) {
+		dxghost_unlock(h);
+		return (int32_t)0xC0000008L;	/* STATUS_INVALID_HANDLE */
+	}
+	/*
+	 * Under the lock, so the guest cannot destroy the resource meanwhile;
+	 * the NT handle keeps it alive afterwards. GENERIC_ALL, as
+	 * ID3D12Device::CreateSharedHandle asks.
+	 */
+	status = h->kmt.ShareObjects(1, &resource, &oa, 0x10000000u,
+				     nt_handle);
+	dxghost_unlock(h);
+	return status;
+}
+
+void dxghost_close_nt(void *nt_handle)
+{
+	if (nt_handle)
+		CloseHandle(nt_handle);
+}
+
 void dxghost_reset(struct dxghost *h)
 {
 	uint32_t i;
