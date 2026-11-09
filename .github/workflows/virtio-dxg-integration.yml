@@ -1,0 +1,114 @@
+name: virtio-dxg integration CPU and source checks
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - virtio-dxg/**
+      - .github/workflows/virtio-dxg-integration.yml
+permissions:
+  contents: read
+concurrency:
+  group: virtio-dxg-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  host-mocks:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Compile host; run layout and mocked executor only
+        shell: pwsh
+        run: |
+          virtio-dxg/host/build.ps1 -Out (Join-Path $env:RUNNER_TEMP 'dxghost-cpu')
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: virtio-dxg-host-cpu-build
+          path: ${{ runner.temp }}/dxghost-cpu/
+          retention-days: 7
+  mesa-cohort:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      JOBS: '2'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Install CPU build dependencies; no graphics workload
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config bison flex python3-venv libdrm-dev libexpat1-dev libzstd-dev zlib1g-dev libelf-dev libffi-dev libva-dev libglvnd-dev libx11-dev libx11-xcb-dev libxext-dev libxfixes-dev libxdamage-dev libxrandr-dev libxxf86vm-dev libxshmfence-dev libxcb-dri2-0-dev libxcb-dri3-dev libxcb-glx0-dev libxcb-present-dev libxcb-randr0-dev libxcb-shm0-dev libxcb-sync-dev libxcb-xfixes0-dev
+          python3 -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/bin/pip" install --only-binary=:all: --require-hashes --no-deps -r virtio-dxg/guest/mesa/build-tools.txt
+      - name: Check boot payload and browser arguments with inert fixtures only
+        run: |
+          python3 virtio-dxg/guest/test/test_desktop_payload.py -v
+          bash -n virtio-dxg/guest/mesa/build-in-guest.sh
+          sh -n virtio-dxg/guest/test/initcpio/virtio_dxg
+          sh -n virtio-dxg/guest/test/initcpio/chromium-wrapper
+      - name: Build pinned Wayland libraries, scanner and protocol data; tests disabled
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          records = json.loads(pathlib.Path('experimental/windows-native-gpu/mesa/wayland-build-sources.json').read_text())['sources']
+          for record in records:
+              name = record['filename']
+              if pathlib.Path(name).name != name:
+                  raise RuntimeError('Source archive name escapes build directory')
+              path = root / name
+              subprocess.run(['curl', '--fail', '--location', '--retry', '3', '--retry-all-errors', '--connect-timeout', '15', '--max-time', '180', record['url'], '-o', str(path)], check=True)
+              if hashlib.sha256(path.read_bytes()).hexdigest() != record['sha256']:
+                  raise RuntimeError('Pinned Wayland archive hash differs')
+              subprocess.run(['tar', '-xJf', str(path), '-C', str(root)], check=True)
+          PY
+          meson="$RUNNER_TEMP/tools/bin/meson"
+          "$meson" setup "$RUNNER_TEMP/wayland-build" "$RUNNER_TEMP/wayland-1.26.0" --prefix "$RUNNER_TEMP/wayland-install" --libdir lib --buildtype=release -Dtests=false -Ddocumentation=false -Ddtd_validation=false
+          "$meson" compile -C "$RUNNER_TEMP/wayland-build" -j 2
+          "$meson" install -C "$RUNNER_TEMP/wayland-build" --no-rebuild
+          export PATH="$RUNNER_TEMP/wayland-install/bin:$PATH"
+          export PKG_CONFIG_PATH="$RUNNER_TEMP/wayland-install/lib/pkgconfig"
+          test "$(pkg-config --modversion wayland-client)" = '1.26.0'
+          wayland-scanner --version
+          "$meson" setup "$RUNNER_TEMP/protocols-build" "$RUNNER_TEMP/wayland-protocols-1.47" --prefix "$RUNNER_TEMP/protocols-install" --buildtype=release -Dtests=false
+          "$meson" compile -C "$RUNNER_TEMP/protocols-build" -j 2
+          "$meson" install -C "$RUNNER_TEMP/protocols-build" --no-rebuild
+      - name: Fetch hash-pinned Mesa sources as data
+        run: |
+          curl --fail --location --retry 3 --retry-all-errors --connect-timeout 15 --max-time 180 https://archive.mesa3d.org/mesa-26.2.6.tar.xz -o "$RUNNER_TEMP/mesa-26.2.6.tar.xz"
+          echo "b9436b3e1a8be76fbd4823dc884f90596ab7c6ac5e1867a305e66ffccfb31a92  $RUNNER_TEMP/mesa-26.2.6.tar.xz" | sha256sum --check
+          mkdir "$RUNNER_TEMP/pristine"
+          tar -xJf "$RUNNER_TEMP/mesa-26.2.6.tar.xz" -C "$RUNNER_TEMP/pristine"
+      - name: Exercise actual mirror and fence functions with CPU substitutes
+        run: |
+          python3 virtio-dxg/guest/mesa/test_source.py --source "$RUNNER_TEMP/pristine/mesa-26.2.6" --output "$RUNNER_TEMP/dxg-source-controls"
+      - name: Compile full GLX/EGL/VA-API/Dozen cohort; never load it
+        env:
+          WORK: ${{ runner.temp }}/dxg-mesa-build
+        run: |
+          export PATH="$RUNNER_TEMP/wayland-install/bin:$PATH"
+          export PKG_CONFIG_PATH="$RUNNER_TEMP/wayland-install/lib/pkgconfig:$RUNNER_TEMP/protocols-install/share/pkgconfig"
+          bash virtio-dxg/guest/mesa/build-in-guest.sh "$RUNNER_TEMP/mesa-26.2.6.tar.xz" "$RUNNER_TEMP/mesa-virtio-dxg.tar"
+      - name: Inspect packaged bytes and boot cohort compatibility; no ELF activation
+        run: |
+          python3 virtio-dxg/guest/test/initcpio/desktop_payload.py "$RUNNER_TEMP/mesa-virtio-dxg.tar" "$RUNNER_TEMP/dxg-inspected" --recipe virtio-dxg/guest/mesa/versions/26.2.6/recipe.json
+          cd "$RUNNER_TEMP"
+          sha256sum mesa-virtio-dxg.tar > mesa-virtio-dxg.tar.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: virtio-dxg-mesa-26.2.6-inactive-cohort
+          path: |
+            ${{ runner.temp }}/mesa-virtio-dxg.tar
+            ${{ runner.temp }}/mesa-virtio-dxg.tar.sha256
+            virtio-dxg/guest/mesa/versions/26.2.6/recipe.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: virtio-dxg-source-evidence
+          path: |
+            ${{ runner.temp }}/dxg-source-controls/*.log
+            ${{ runner.temp }}/dxg-source-controls/result.json
+            ${{ runner.temp }}/dxg-inspected/lib/virtio-dxg-build.json
+            ${{ runner.temp }}/dxg-mesa-build/*/compile/meson-logs/meson-log.txt
+          if-no-files-found: ignore
+          retention-days: 14

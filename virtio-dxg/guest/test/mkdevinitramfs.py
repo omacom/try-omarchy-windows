@@ -91,6 +91,11 @@ def main():
         entry(out, 'virtio-dxg', 0o040755)
         entry(out, 'virtio-dxg/dxgkrnl_virtio.ko', 0o100644,
               pathlib.Path(module).read_bytes())
+        for name in ('desktop_payload.py', 'chromium-wrapper'):
+            entry(out, 'virtio-dxg/' + name, 0o100644,
+                  (hook.parent / name).read_bytes())
+        entry(out, 'virtio-dxg/mesa-recipe.json', 0o100644,
+              (hook.parents[2] / 'mesa/versions/26.2.6/recipe.json').read_bytes())
         entry(out, 'TRAILER!!!', 0)
         out.write(b'\0' * ((512 - out.tell() % 512) % 512))
     print('%s: LATEHOOKS now %s' % (output, re.search(

@@ -1,5 +1,11 @@
 # NVIDIA backend progress
 
+Current work is the separate [virtio-dxg integration](VIRTIO-DXG-INTEGRATION.md).
+Its new source/build checks await approval and its daily-use gates remain open.
+The counters and records below describe the earlier private bridge at their
+stated commits; they do not reset or establish acceptance of the new backend.
+
+
 Updated **2026-11-06**. This page tracks the experimental QEMU/WHPX Windows-native
 NVIDIA backend. The released Try Omarchy launcher continues using the upstream
 graphics runtime.
