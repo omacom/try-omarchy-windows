@@ -142,7 +142,7 @@
       },
       {
         "file": "patches/virglrenderer/0006-honor-venus-row-pitch-in-windows-gl-imports.patch",
-        "sha256": "49414dbb4b183c2342edc76cf8de628ebd8dccc5ef1f808fe6b79a84808d0189"
+        "sha256": "775fd221c5a02eb641f6a6004da0e850e38914d51596e3131fb50ac23eadfd9d"
       }
     ]
   }

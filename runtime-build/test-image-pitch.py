@@ -84,8 +84,8 @@ typedef int GLsizei;
 #define PIPE_SHADER_VERTEX 0
 #define PIPE_SHADER_FRAGMENT 1
 #define VIRGL_GBM_MAX_PLANES 4
-enum features { feat_copy_image, feat_texture_storage };
-static bool features[2];
+enum features { feat_copy_image, feat_texture_storage, feat_barrier };
+static bool features[3];
 #define has_feature(f) (features[f])
 struct pipe_resource { int target; unsigned format; unsigned width0, height0; unsigned nr_samples; };
 struct vrend_resource { struct pipe_resource base; GLuint gl_id; GLenum target; GLuint pitch_src_id; };
@@ -94,6 +94,8 @@ struct vrend_renderer_resource_set_type_args {
     uint32_t plane_strides[VIRGL_GBM_MAX_PLANES]; uint32_t plane_offsets[VIRGL_GBM_MAX_PLANES];
 };
 #define GL_READ_ONLY 0x88b8
+#define GL_TEXTURE_UPDATE_BARRIER_BIT 0x100
+#define GL_SHADER_IMAGE_ACCESS_BARRIER_BIT 0x20
 #define GL_READ_WRITE 0x88ba
 #define PIPE_SHADER_COMPUTE 2
 struct vrend_sampler_view { struct vrend_resource *texture; };
@@ -113,7 +115,10 @@ static const char *test_getenv(const char *name) {
     assert(!strcmp(name, "TRYOMARCHY_PITCH_COPY")); return env_value;
 }
 #define getenv(name) test_getenv(name)
-static unsigned copies, refreshes, flushes;
+static unsigned copies, refreshes, flushes, barriers, copies_at_barrier;
+static void glMemoryBarrier(unsigned bits) {
+    assert(bits & GL_TEXTURE_UPDATE_BARRIER_BIT); barriers++; copies_at_barrier = copies;
+}
 static GLuint copy_src, copy_dst;
 static GLsizei copy_w, copy_h, copy_d;
 static void glCopyImageSubData(GLuint src, GLenum st, GLint sl, GLint sx, GLint sy, GLint sz,
@@ -210,6 +215,7 @@ int main(void) {
     sub.image_views[PIPE_SHADER_FRAGMENT][2] = (struct vrend_image_view){GL_READ_WRITE, &image};
     sub.images_used_mask[PIPE_SHADER_FRAGMENT] = (1u << 1) | (1u << 2);
     sub.nr_cbufs = 2; sub.surf[0] = &color; sub.surf[1] = &other;
+    features[feat_barrier] = true;
     copies = refreshes = flushes = 0; vrend_pitch_copy_count = 0;
     vrend_draw_pitch_copies(&sub, false);
     vrend_draw_pitch_copies(&sub, true);
@@ -217,8 +223,11 @@ int main(void) {
     vrend_pitch_copy_count = 3;
     vrend_draw_pitch_copies(&sub, false);
     assert(refreshes == 4 && flushes == 0);
+    assert(barriers == 0);
     vrend_draw_pitch_copies(&sub, true);
     assert(refreshes == 4 && flushes == 2);
+    /* One barrier makes shader image stores visible before the first copy back. */
+    assert(barriers == 1 && copies_at_barrier == 4);
     /* Each draw refreshes again: the guest can change the memory any time. */
     vrend_draw_pitch_copies(&sub, false);
     assert(refreshes == 8);
@@ -241,7 +250,12 @@ int main(void) {
     sub.images_used_mask[PIPE_SHADER_COMPUTE] = 1u << 0;
     vrend_stage_pitch_copies(&sub, PIPE_SHADER_COMPUTE, false);
     vrend_stage_pitch_copies(&sub, PIPE_SHADER_COMPUTE, true);
-    assert(refreshes == 11 && flushes == 4);
+    assert(refreshes == 11 && flushes == 4 && barriers == 2);
+    /* Render targets alone need no barrier, and neither do direct imports. */
+    sub.image_views[PIPE_SHADER_COMPUTE][0].texture = &direct;
+    vrend_stage_pitch_copies(&sub, PIPE_SHADER_COMPUTE, true);
+    vrend_framebuffer_pitch_copies(&sub, true);
+    assert(barriers == 2);
     puts("ok - pitch copy decision, widths, bounds, refresh before reads, flush after writes, direct imports");
     return 0;
 }

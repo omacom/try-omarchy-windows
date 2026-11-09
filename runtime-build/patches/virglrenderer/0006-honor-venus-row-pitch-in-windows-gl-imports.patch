@@ -8,7 +8,7 @@
     /* these appeared broken on at least one driver */
     bool use_explicit_locations : 1;
     /* threaded sync */
-@@ -4827,7 +4828,125 @@ static void vrend_clear_finish(struct vrend_sub_context *sub_ctx,
+@@ -4827,7 +4828,133 @@ static void vrend_clear_finish(struct vrend_sub_context *sub_ctx,
        glDisable(GL_SCISSOR_TEST);
  }
  
@@ -112,12 +112,20 @@
 +            vrend_resource_refresh_pitch_copy(view->texture);
 +      }
 +   }
++   bool barrier = false;
 +   uint32_t mask = sub_ctx->images_used_mask[shader_type];
 +   while (mask) {
 +      int i = u_bit_scan(&mask);
 +      struct vrend_image_view *iview = &sub_ctx->image_views[shader_type][i];
 +      if (flush && iview->access == GL_READ_ONLY)
 +         continue;
++      /* Shader image stores are not ordered with later copies until a
++       * barrier makes them visible. */
++      if (flush && !barrier && iview->texture && iview->texture->pitch_src_id &&
++          has_feature(feat_barrier)) {
++         glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
++         barrier = true;
++      }
 +      vrend_pitch_copy_sync(iview->texture, flush);
 +   }
 +}
@@ -135,7 +143,7 @@
                   const union pipe_color_union *color, double depth,
                   unsigned stencil) {
     GLbitfield bits = 0;
-@@ -4892,7 +5011,16 @@ void vrend_clear(struct vrend_context *ctx, unsigned buffers,
+@@ -4892,7 +5019,16 @@ void vrend_clear(struct vrend_context *ctx, unsigned buffers,
     vrend_clear_finish(sub_ctx, buffers);
  }
  
@@ -153,7 +161,7 @@
                           struct vrend_resource *res, uint32_t level,
                           const struct pipe_box *box,
                           const void * data)
-@@ -4928,6 +5056,18 @@ int vrend_clear_texture(struct vrend_context* ctx,
+@@ -4928,6 +5064,18 @@ int vrend_clear_texture(struct vrend_context* ctx,
     return 0;
  }
  
@@ -172,7 +180,7 @@
  void vrend_clear_surface(struct vrend_context *ctx, uint32_t surf_handle,
                           unsigned buffers, const union pipe_color_union *color,
                           unsigned dstx, unsigned dsty, unsigned width,
-@@ -6021,6 +6161,7 @@ int vrend_draw_vbo(struct vrend_context *ctx,
+@@ -6021,6 +6169,7 @@ int vrend_draw_vbo(struct vrend_context *ctx,
        }
     }
  
@@ -180,7 +188,7 @@
     vrend_draw_bind_objects(sub_ctx, program_select_result == PROGRAMM_NEW);
     vrend_fill_sysval_uniform_block(sub_ctx);
  
-@@ -6208,6 +6349,7 @@ int vrend_draw_vbo(struct vrend_context *ctx,
+@@ -6208,6 +6357,7 @@ int vrend_draw_vbo(struct vrend_context *ctx,
  
     if (use_advanced_blending)
        glDisable(GL_BLEND);
@@ -188,7 +196,7 @@
     return 0;
  }
  
-@@ -6277,6 +6419,8 @@ void vrend_launch_grid(struct vrend_context *ctx,
+@@ -6277,6 +6427,8 @@ void vrend_launch_grid(struct vrend_context *ctx,
     vrend_set_active_pipeline_stage(sub_ctx->prog, PIPE_SHADER_COMPUTE);
     vrend_draw_bind_ubo_shader(sub_ctx, PIPE_SHADER_COMPUTE, 0);
     vrend_draw_bind_const_shader(sub_ctx, PIPE_SHADER_COMPUTE, new_program);
@@ -197,7 +205,7 @@
     vrend_draw_bind_samplers_shader(sub_ctx, PIPE_SHADER_COMPUTE, 0);
     vrend_draw_bind_images_shader(sub_ctx, PIPE_SHADER_COMPUTE);
     vrend_draw_bind_ssbo_shader(sub_ctx, PIPE_SHADER_COMPUTE);
-@@ -6300,6 +6444,8 @@ void vrend_launch_grid(struct vrend_context *ctx,
+@@ -6300,6 +6452,8 @@ void vrend_launch_grid(struct vrend_context *ctx,
     } else {
        glDispatchCompute(grid[0], grid[1], grid[2]);
     }
@@ -206,7 +214,7 @@
  }
  
  static GLenum translate_blend_func(uint32_t pipe_blend)
-@@ -7702,6 +7848,10 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+@@ -7702,6 +7856,10 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
  #ifdef _WIN32
     vrend_state.intel_windows_buffer_uploads = vrend_intel_windows_buffer_uploads();
  #endif
@@ -217,7 +225,7 @@
  
     init_features(gles ? 0 : gl_ver,
                   gles ? gl_ver : 0);
-@@ -8968,6 +9118,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+@@ -8968,6 +9126,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
        glDeleteRenderbuffers(1, &res->rbo_id);
     }
  
@@ -229,7 +237,7 @@
     if (has_bit(res->storage_bits, VREND_STORAGE_GL_MEMOBJ)) {
        glDeleteMemoryObjectsEXT(1, &res->memobj);
     }
-@@ -9353,7 +9508,7 @@ static void vrend_collapse_data_r16g16b16x16(uint64_t size, void *data) {
+@@ -9353,7 +9516,7 @@ static void vrend_collapse_data_r16g16b16x16(uint64_t size, void *data) {
     }
  }
  
@@ -238,7 +246,7 @@
                                               struct vrend_resource *res,
                                               const struct iovec *iov, int num_iovs,
                                               const struct vrend_transfer_info *info)
-@@ -9666,6 +9821,18 @@ static int vrend_renderer_transfer_write_iov(struct vrend_context *ctx,
+@@ -9666,6 +9829,18 @@ static int vrend_renderer_transfer_write_iov(struct vrend_context *ctx,
     return 0;
  }
  
@@ -257,7 +265,7 @@
  static uint32_t vrend_get_texture_depth(struct vrend_resource *res, uint32_t level)
  {
     uint32_t depth = 1;
-@@ -10021,6 +10188,7 @@ static int vrend_renderer_transfer_send_iov(struct vrend_context *ctx,
+@@ -10021,6 +10196,7 @@ static int vrend_renderer_transfer_send_iov(struct vrend_context *ctx,
                                              const struct iovec *iov, int num_iovs,
                                              const struct vrend_transfer_info *info)
  {
@@ -265,7 +273,7 @@
     if ((is_only_bit(res->storage_bits, VREND_STORAGE_GUEST_MEMORY) ||
         has_bit(res->storage_bits, VREND_STORAGE_HOST_SYSTEM_MEMORY)) && res->iov) {
        return vrend_copy_iovec(res->iov, res->num_iovs, info->box->x,
-@@ -10744,7 +10912,7 @@ static bool resource_dest_contains_box(struct vrend_resource *src_res,
+@@ -10744,7 +10920,7 @@ static bool resource_dest_contains_box(struct vrend_resource *src_res,
     return resource_contains_box(dst_res, &dst_box, dst_level);
  }
  
@@ -274,7 +282,7 @@
                                           uint32_t dst_handle, uint32_t dst_level,
                                           uint32_t dstx, uint32_t dsty, uint32_t dstz,
                                           uint32_t src_handle, uint32_t src_level,
-@@ -10878,6 +11046,22 @@ void vrend_renderer_resource_copy_region(struct vrend_context *ctx,
+@@ -10878,6 +11054,22 @@ void vrend_renderer_resource_copy_region(struct vrend_context *ctx,
        glEnable(GL_SCISSOR_TEST);
  }
  
@@ -297,7 +305,7 @@
  
  static inline bool texture_view_compatible(enum virgl_formats src, enum virgl_formats dst)
  {
-@@ -11282,7 +11466,7 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
+@@ -11282,7 +11474,7 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
        glDeleteTextures(1, &blit_info.dst_view);
  }
  
@@ -306,7 +314,7 @@
                           uint32_t dst_handle, uint32_t src_handle,
                           const struct pipe_blit_info *info)
  {
-@@ -11414,6 +11598,19 @@ void vrend_renderer_blit(struct vrend_context *ctx,
+@@ -11414,6 +11606,19 @@ void vrend_renderer_blit(struct vrend_context *ctx,
        vrend_pause_render_condition(ctx, false);
  }
  
@@ -326,7 +334,7 @@
  void vrend_renderer_set_fence_retire(struct vrend_context *ctx,
                                       vrend_context_fence_retire retire,
                                       void *retire_data)
-@@ -13648,12 +13845,29 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+@@ -13648,12 +13853,29 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
           gr->storage_bits |= VREND_STORAGE_GL_TEXTURE | VREND_STORAGE_GL_MEMOBJ;
  
           /* Create a GL texture which uses that memory as storage */
