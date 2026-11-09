@@ -28,6 +28,8 @@
 #include "hw/virtio/virtio-pci.h"
 #include "hw/display/virtio-dxg.h"
 #include "system/memory.h"
+#include "system/whpx.h"
+#include "system/whpx-internal.h"
 #include "trace.h"
 
 #define DXG_LANES 8
@@ -78,7 +80,19 @@ typedef struct DxgEvent {
 
 struct VirtIODxgState {
     DxgLane lanes[DXG_LANES];
-    QTAILQ_HEAD(, DxgMapping) mappings;
+    QTAILQ_HEAD(, DxgMapping) mappings;     /* memory API views (BQL) */
+    /*
+     * Views go straight into the WHPX partition: the IO-space BAR is an
+     * MMIO container without RAM, so its guest-physical range is unmapped
+     * there and a view costs one hypervisor call. Through the memory API a
+     * view cost a flatview rebuild under the BQL (3.3 ms each with a
+     * desktop's views alive, stalling every vCPU meanwhile). Nothing in
+     * QEMU reads these addresses: the guest maps them VM_PFNMAP, which
+     * Linux never hands to devices for DMA.
+     */
+    bool direct;
+    QemuMutex direct_lock;
+    GHashTable *fallback;   /* gpa of views that went the memory API way */
     QemuMutex event_lock;
     QSIMPLEQ_HEAD(, DxgEvent) events;
     /* Reply buffer of inline requests; they run under the BQL. */
@@ -96,6 +110,11 @@ static uint64_t dxg_iospace_gpa(VirtIODxg *d)
     return addr == PCI_BAR_UNMAPPED ? 0 : addr;
 }
 
+/* DXGHOST_STATS: where guest-physical view changes spend their time. */
+static struct {
+    uint64_t maps, bql_wait_us, update_us;
+} dxg_map_stats;
+
 static int dxg_map(void *opaque, uint64_t gpa, void *hva, uint64_t size,
                    bool writable)
 {
@@ -103,11 +122,45 @@ static int dxg_map(void *opaque, uint64_t gpa, void *hva, uint64_t size,
     g_autofree char *name = NULL;
     uint64_t base;
     DxgMapping *m;
-    bool locked = bql_locked();
+    bool locked;
+    int64_t t0 = g_get_monotonic_time(), t1;
 
+    if (d->state->direct) {
+        base = dxg_iospace_gpa(d);
+        if (base && gpa >= base && size <= d->iospace_size &&
+            gpa - base <= d->iospace_size - size) {
+            HRESULT hr = whp_dispatch.WHvMapGpaRange(
+                whpx_global.partition, hva, gpa, size,
+                WHvMapGpaRangeFlagRead |
+                (writable ? WHvMapGpaRangeFlagWrite : 0));
+
+            if (SUCCEEDED(hr)) {
+                if (d->stats) {
+                    dxg_map_stats.maps++;
+                    dxg_map_stats.update_us += g_get_monotonic_time() - t0;
+                    if (dxg_map_stats.maps % 2000 == 0) {
+                        warn_report("virtio-dxg: %" PRIu64 " views mapped "
+                                    "directly: %" PRIu64 " us avg",
+                                    dxg_map_stats.maps,
+                                    dxg_map_stats.update_us /
+                                    dxg_map_stats.maps);
+                    }
+                }
+                return 0;
+            }
+            warn_report_once("virtio-dxg: direct view mapping failed "
+                             "(0x%08lx); using the memory API",
+                             (unsigned long)hr);
+        }
+        qemu_mutex_lock(&d->state->direct_lock);
+        g_hash_table_add(d->state->fallback, g_memdup2(&gpa, sizeof(gpa)));
+        qemu_mutex_unlock(&d->state->direct_lock);
+    }
+    locked = bql_locked();
     if (!locked) {
         bql_lock();
     }
+    t1 = g_get_monotonic_time();
     base = dxg_iospace_gpa(d);
     if (!base || gpa < base || size > d->iospace_size ||
         gpa - base > d->iospace_size - size) {
@@ -126,6 +179,18 @@ static int dxg_map(void *opaque, uint64_t gpa, void *hva, uint64_t size,
     memory_region_set_readonly(&m->mr, !writable);
     memory_region_add_subregion(&d->iospace, m->offset, &m->mr);
     QTAILQ_INSERT_TAIL(&d->state->mappings, m, next);
+    if (d->stats) {
+        dxg_map_stats.maps++;
+        dxg_map_stats.bql_wait_us += t1 - t0;
+        dxg_map_stats.update_us += g_get_monotonic_time() - t1;
+        if (dxg_map_stats.maps % 2000 == 0) {
+            warn_report("virtio-dxg: %" PRIu64 " views mapped: BQL wait %"
+                        PRIu64 " us, memory map update %" PRIu64 " us avg",
+                        dxg_map_stats.maps,
+                        dxg_map_stats.bql_wait_us / dxg_map_stats.maps,
+                        dxg_map_stats.update_us / dxg_map_stats.maps);
+        }
+    }
     if (!locked) {
         bql_unlock();
     }
@@ -137,8 +202,20 @@ static void dxg_unmap(void *opaque, uint64_t gpa, uint64_t size)
     VirtIODxg *d = opaque;
     uint64_t offset;
     DxgMapping *m;
-    bool locked = bql_locked();
+    bool locked;
 
+    if (d->state->direct) {
+        bool fallback;
+
+        qemu_mutex_lock(&d->state->direct_lock);
+        fallback = g_hash_table_remove(d->state->fallback, &gpa);
+        qemu_mutex_unlock(&d->state->direct_lock);
+        if (!fallback) {
+            whp_dispatch.WHvUnmapGpaRange(whpx_global.partition, gpa, size);
+            return;
+        }
+    }
+    locked = bql_locked();
     if (!locked) {
         bql_lock();
     }
@@ -153,6 +230,34 @@ static void dxg_unmap(void *opaque, uint64_t gpa, uint64_t size)
     }
     if (!locked) {
         bql_unlock();
+    }
+}
+
+/*
+ * One memory transaction for a batch of unmaps: the IO space's flatview is
+ * rebuilt once, and the BQL held once, instead of per view.
+ */
+static __thread bool dxg_batch_took_bql;
+
+static void dxg_batch(void *opaque, bool begin)
+{
+    VirtIODxg *d = opaque;
+
+    if (d->state->direct) {
+        return;     /* direct views: no memory map to batch */
+    }
+    if (begin) {
+        dxg_batch_took_bql = !bql_locked();
+        if (dxg_batch_took_bql) {
+            bql_lock();
+        }
+        memory_region_transaction_begin();
+    } else {
+        memory_region_transaction_commit();
+        if (dxg_batch_took_bql) {
+            bql_unlock();
+        }
+        dxg_batch_took_bql = false;
     }
 }
 
@@ -472,6 +577,7 @@ static void dxg_realize(DeviceState *dev, Error **errp)
         .map = dxg_map,
         .unmap = dxg_unmap,
         .event = dxg_event,
+        .batch = dxg_batch,
         .log = dxg_log,
     };
     int i;
@@ -480,6 +586,7 @@ static void dxg_realize(DeviceState *dev, Error **errp)
         error_setg(errp, "virtio-dxg: iospace must be a power of two >= 256M");
         return;
     }
+    d->stats = getenv("DXGHOST_STATS") != NULL;
     config.adapter_luid_low = d->luid_low;
     config.adapter_luid_high = d->luid_high;
     config.iospace_size = d->iospace_size;
@@ -497,6 +604,10 @@ static void dxg_realize(DeviceState *dev, Error **errp)
 
     d->state = g_new0(VirtIODxgState, 1);
     QTAILQ_INIT(&d->state->mappings);
+    d->state->direct = whpx_enabled() && !getenv("VIRTIO_DXG_MEMORY_API");
+    qemu_mutex_init(&d->state->direct_lock);
+    d->state->fallback = g_hash_table_new_full(g_int64_hash, g_int64_equal,
+                                               g_free, NULL);
     QSIMPLEQ_INIT(&d->state->events);
     qemu_mutex_init(&d->state->event_lock);
     d->state->inline_result = g_malloc(VIRTIO_DXG_MAX_MESSAGE);
@@ -542,6 +653,8 @@ static void dxg_unrealize(DeviceState *dev)
     bql_lock();
     g_free(d->state->inline_result);
     qemu_mutex_destroy(&d->state->event_lock);
+    g_hash_table_destroy(d->state->fallback);
+    qemu_mutex_destroy(&d->state->direct_lock);
     g_free(d->state);
     virtio_delete_queue(d->ctrl_vq);
     virtio_delete_queue(d->event_vq);

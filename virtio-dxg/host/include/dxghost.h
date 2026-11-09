@@ -43,6 +43,12 @@ struct dxghost_vmm {
 	void (*event)(void *opaque, const void *packet, uint32_t size);
 	/* Optional diagnostics sink; NULL discards. */
 	void (*log)(void *opaque, const char *message);
+	/*
+	 * Optional: unmaps between batch(true) and batch(false), on one thread,
+	 * may be applied together (one guest memory map update instead of one
+	 * per view: process teardown removes hundreds).
+	 */
+	void (*batch)(void *opaque, bool begin);
 };
 
 struct dxghost_config {

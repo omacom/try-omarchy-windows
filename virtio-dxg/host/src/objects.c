@@ -279,14 +279,21 @@ void dxghost_unlock(struct dxghost *h)
 	h->deferred = NULL;
 	h->deferred_count = h->deferred_capacity = 0;
 	ReleaseSRWLockExclusive(&h->lock);
+	/* Unmaps first, as one batch where the VMM supports it. */
 	for (i = 0; i < count; i++) {
-		if (work[i].fn) {
-			work[i].fn(work[i].arg);
-		} else {
-			h->vmm.unmap(h->vmm.opaque, work[i].gpa, work[i].size);
-			unmapped = true;
-		}
+		if (work[i].fn)
+			continue;
+		if (!unmapped && h->vmm.batch)
+			h->vmm.batch(h->vmm.opaque, true);
+		h->vmm.unmap(h->vmm.opaque, work[i].gpa, work[i].size);
+		unmapped = true;
 	}
+	if (unmapped && h->vmm.batch)
+		h->vmm.batch(h->vmm.opaque, false);
+	/* Closes wait for callbacks that enter the VMM: outside the batch. */
+	for (i = 0; i < count; i++)
+		if (work[i].fn)
+			work[i].fn(work[i].arg);
 	/* Only now may the IO space hold another view. */
 	if (unmapped) {
 		AcquireSRWLockExclusive(&h->lock);

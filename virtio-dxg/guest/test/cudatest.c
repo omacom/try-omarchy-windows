@@ -8,7 +8,15 @@
  *   gcc -O2 -o cudatest cudatest.c -ldl
  *   LD_LIBRARY_PATH=/usr/lib/wsl/lib ./cudatest
  */
+#ifdef _WIN32
+/* The same test on the Windows host, for a native baseline. */
+#include <windows.h>
+#define dlopen(name, flags) ((void *)LoadLibraryA("nvcuda.dll"))
+#define dlsym(lib, sym) ((void *)GetProcAddress((HMODULE)(lib), (sym)))
+#define dlerror() "LoadLibrary(nvcuda.dll) failed"
+#else
 #include <dlfcn.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -182,6 +190,38 @@ int main(void)
 		}
 		printf("vector add of %u floats: best %.3f ms (%.0f GB/s "
 		       "effective)\n", n, best, 3.0 * bytes / best / 1e6);
+	}
+	{
+		/* Latency: a one-block kernel, launched and waited for, 1000
+		 * times; then 1000 launches with a single wait (throughput). */
+		unsigned one = 256;
+		void *args[] = { &a, &b, &c, &one };
+		double sorted[1000];
+		int r, j;
+
+		for (r = 0; r < 1000; r++) {
+			t = now_ms();
+			CK(cuLaunchKernel(fn, 1, 1, 1, 256, 1, 1, 0, NULL, args,
+					  NULL));
+			CK(cuCtxSynchronize());
+			sorted[r] = now_ms() - t;
+		}
+		for (r = 1; r < 1000; r++)	/* insertion sort */
+			for (j = r; j > 0 && sorted[j - 1] > sorted[j]; j--) {
+				double x = sorted[j];
+
+				sorted[j] = sorted[j - 1];
+				sorted[j - 1] = x;
+			}
+		t = now_ms();
+		for (r = 0; r < 1000; r++)
+			CK(cuLaunchKernel(fn, 1, 1, 1, 256, 1, 1, 0, NULL, args,
+					  NULL));
+		CK(cuCtxSynchronize());
+		t = now_ms() - t;
+		printf("launch + sync: median %.1f us, p99 %.1f us; "
+		       "1000 launches: %.1f us each\n", sorted[500] * 1e3,
+		       sorted[990] * 1e3, t);
 	}
 	t = now_ms();
 	CK(cuMemcpyDtoH_v2(hc, c, bytes));

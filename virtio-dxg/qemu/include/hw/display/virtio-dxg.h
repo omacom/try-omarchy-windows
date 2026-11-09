@@ -30,6 +30,7 @@ struct VirtIODxg {
     PCIDevice *pci;
     MemoryRegion iospace;
     uint32_t guest_caps;
+    bool stats;                 /* DXGHOST_STATS */
 
     /* Properties */
     uint64_t iospace_size;
