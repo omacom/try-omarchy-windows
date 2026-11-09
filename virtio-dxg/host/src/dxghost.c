@@ -99,6 +99,7 @@ int dxghost_create(const struct dxghost_config *config,
 	h->config = *config;
 	h->vmm = *vmm;
 	InitializeSRWLock(&h->lock);
+	InitializeSRWLock(&h->map_lock);
 	InitializeSRWLock(&h->wait_lock);
 	h->next_proc = 1;
 	if (config->kmt)
@@ -115,6 +116,15 @@ int dxghost_create(const struct dxghost_config *config,
 	}
 	/* Development: DXGHOST_TRACE logs every command and its result. */
 	h->trace = getenv("DXGHOST_TRACE") != NULL;
+	h->stats = getenv("DXGHOST_STATS") != NULL;
+	{
+		LARGE_INTEGER f, now;
+
+		QueryPerformanceFrequency(&f);
+		QueryPerformanceCounter(&now);
+		h->qpf = f.QuadPart;
+		h->stats_due = now.QuadPart + 10 * f.QuadPart;
+	}
 	dxghost_logf(h, "host GPU ready");
 	*out = h;
 	return 0;
@@ -127,13 +137,13 @@ void dxghost_reset(struct dxghost *h)
 {
 	uint32_t i;
 
-	AcquireSRWLockExclusive(&h->lock);
+	dxghost_lock(h);
 	for (i = 0; i < h->proc_count; i++) {
 		if (!h->procs[i].live)
 			continue;
-		ReleaseSRWLockExclusive(&h->lock);
+		dxghost_unlock(h);
 		dxghost_destroy_process_objects(h, h->procs[i].token);
-		AcquireSRWLockExclusive(&h->lock);
+		dxghost_lock(h);
 		h->procs[i].live = false;
 	}
 	h->proc_count = 0;
@@ -153,7 +163,7 @@ void dxghost_reset(struct dxghost *h)
 	}
 	dxghost_objtab_free(&h->objects);
 	dxghost_io_reset(h, 0, 0);
-	ReleaseSRWLockExclusive(&h->lock);
+	dxghost_unlock(h);
 }
 
 void dxghost_destroy(struct dxghost *h)
@@ -166,6 +176,7 @@ void dxghost_destroy(struct dxghost *h)
 	free(h->vas);
 	free(h->io_free);
 	free(h->fence_pages);
+	free(h->deferred);
 	free(h->procs);
 	free(h);
 }
@@ -250,16 +261,68 @@ static bool process_live(struct dxghost *h, uint32_t token)
 	return live;
 }
 
+static void stats_dump(struct dxghost *h, LONG64 now)
+{
+	LONG64 due = h->stats_due;
+	unsigned c, t;
+
+	/* One thread writes each table. */
+	if (now < due || InterlockedCompareExchange64(&h->stats_due,
+			now + 10 * h->qpf, due) != due)
+		return;
+	for (c = 0; c < 2; c++) {
+		for (t = 0; t < DXGHOST_STAT_TYPES; t++) {
+			struct dxghost_stat *s = &h->stat[c][t];
+			LONG64 n = InterlockedExchange64(&s->count, 0);
+			LONG64 ticks = InterlockedExchange64(&s->ticks, 0);
+			LONG64 max = InterlockedExchange64(&s->max, 0);
+
+			if (!n)
+				continue;
+			dxghost_logf(h, "stats %s %4u: %8lld calls, avg %7.1f us, "
+				     "max %8.1f us, total %8.1f ms",
+				     c ? "adapter" : "global ", c ? t : t + 1000,
+				     (long long)n,
+				     ticks * 1e6 / h->qpf / n, max * 1e6 / h->qpf,
+				     ticks * 1e3 / h->qpf);
+		}
+	}
+}
+
+static void stats_add(struct dxghost *h, unsigned channel, uint32_t type,
+		      LONG64 start)
+{
+	LARGE_INTEGER end;
+	struct dxghost_stat *s;
+	LONG64 ticks, max;
+
+	QueryPerformanceCounter(&end);
+	ticks = end.QuadPart - start;
+	if (channel == 0 && type >= DXGK_VMBCOMMAND_VM_TO_HOST_FIRST)
+		type -= DXGK_VMBCOMMAND_VM_TO_HOST_FIRST;	/* 1000 + n */
+	s = &h->stat[channel][type < DXGHOST_STAT_TYPES ? type :
+			      DXGHOST_STAT_TYPES - 1];
+	InterlockedIncrement64(&s->count);
+	InterlockedAdd64(&s->ticks, ticks);
+	while ((max = s->max) < ticks &&
+	       InterlockedCompareExchange64(&s->max, ticks, max) != max)
+		;
+	stats_dump(h, end.QuadPart);
+}
+
 void dxghost_execute(struct dxghost *h, uint32_t channel,
 		     const void *message, uint32_t size, void *result,
 		     uint32_t result_capacity, struct virtio_dxg_resp *resp)
 {
+	LARGE_INTEGER start = {0};
 	struct dxghost_msg m;
 	const struct dxgkvmb_command_vgpu_to_host *vgpu;
 	uint32_t channel_type, type;
 
 	memset(resp, 0, sizeof(*resp));
 	memset(&m, 0, sizeof(m));
+	if (h->stats)
+		QueryPerformanceCounter(&start);
 	m.h = h;
 	m.res = result;
 	m.res_cap = result ? result_capacity : 0;
@@ -313,6 +376,9 @@ void dxghost_execute(struct dxghost *h, uint32_t channel,
 	resp->status = m.status;
 	resp->size = m.res_len;
 	resp->ntstatus = (uint32_t)m.ntstatus;
+	if (h->stats)
+		stats_add(h, channel_type == DXGKVMB_VM_TO_HOST ? 0 : 1, type,
+			  start.QuadPart);
 	if (h->trace) {
 		uint32_t first = 0;
 

@@ -111,12 +111,13 @@ static int dxgvirtio_sg_table(struct sg_table *table, void *buf, u32 size)
 	return 0;
 }
 
-static void dxgvirtio_ctrl_done(struct virtqueue *vq)
+/* Retires the requests the host completed; returns how many. */
+static unsigned int dxgvirtio_ctrl_reap(struct dxgvirtio *dv)
 {
-	struct dxgvirtio *dv = vq->vdev->priv;
+	struct virtqueue *vq = dv->ctrl;
 	struct dxgvirtio_req *req, *next;
 	unsigned long flags;
-	unsigned int len;
+	unsigned int len, count = 0;
 	LIST_HEAD(done);
 
 	spin_lock_irqsave(&dv->ctrl_lock, flags);
@@ -132,8 +133,30 @@ static void dxgvirtio_ctrl_done(struct virtqueue *vq)
 		if (!req->async)
 			complete(&req->done);
 		kref_put(&req->ref, dxgvirtio_req_free);
+		count++;
 	}
-	wake_up_all(&dv->ctrl_space);
+	if (count)
+		wake_up_all(&dv->ctrl_space);
+	return count;
+}
+
+static void dxgvirtio_ctrl_done(struct virtqueue *vq)
+{
+	dxgvirtio_ctrl_reap(vq->vdev->priv);
+}
+
+/*
+ * A waiter that saw no completion for a while retires finished requests
+ * itself: a completion whose interrupt was lost must not hang a process
+ * (it did with INTx under WHPX). Reports that it happened.
+ */
+static void dxgvirtio_ctrl_poll(struct dxgvirtio *dv)
+{
+	unsigned int found = dxgvirtio_ctrl_reap(dv);
+
+	if (found)
+		pr_warn_ratelimited("dxgkrnl_virtio: %u completion(s) found without an interrupt\n",
+				    found);
 }
 
 static int dxgvirtio_queue(struct dxgvirtio *dv, struct dxgvirtio_req *req)
@@ -175,8 +198,14 @@ static int dxgvirtio_queue(struct dxgvirtio *dv, struct dxgvirtio_req *req)
 		if (ret != -ENOSPC)
 			break;
 		/* Ring full: wait for the host to retire requests. */
-		wait_event_timeout(dv->ctrl_space,
-				   dv->ctrl->num_free >= out + in, HZ / 100);
+		if (wait_event_killable_timeout(dv->ctrl_space,
+						dv->ctrl->num_free >= out + in,
+						HZ / 100) == 0)
+			dxgvirtio_ctrl_poll(dv);
+		if (fatal_signal_pending(current)) {
+			ret = -EINTR;
+			break;
+		}
 	}
 	if (notify)
 		virtqueue_notify(dv->ctrl);
@@ -248,7 +277,16 @@ int dxgvirtio_send(struct dxgvirtio *dv, u32 channel, const void *command,
 	if (async)
 		goto out;
 
-	ret = wait_for_completion_killable(&req->done);
+	for (;;) {
+		long left = wait_for_completion_killable_timeout(&req->done,
+								 HZ / 10);
+
+		if (left != 0) {
+			ret = left < 0 ? left : 0;
+			break;
+		}
+		dxgvirtio_ctrl_poll(dv);
+	}
 	if (ret) {
 		/* The device still owns the buffers; it drops its reference. */
 		DXG_ERR("wait_for_completion failed: %d", ret);

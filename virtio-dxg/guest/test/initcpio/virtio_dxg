@@ -1,22 +1,73 @@
 #!/usr/bin/ash
-# mkinitcpio late hook for virtio-dxg development boots (added by
-# mkdevinitramfs.py; never part of a shipped image). Runs as root before
-# the real root starts: loads the guest module, which stays loaded after
-# switch_root, and mounts the shares the VM was started with:
+# mkinitcpio late hook for virtio-dxg boots, added to the launcher's own
+# initramfs by mkdevinitramfs.py. Runs as root before the real root starts:
+# loads the guest module (it stays loaded after switch_root) and mounts the
+# shares the VM was started with:
 #
-#   wsllib      System32\lxss\lib (NVIDIA's dxgkrnl user-mode libraries)
-#   wslcore     Program Files\WSL\lib (libdxcore, libd3d12)
-#   wsldrivers  the DriverStore FileRepository, read-only, as under WSL2
-#   vdxgshare   development files and results
-#   vdxgdrivers NVIDIA's driver folder (Wine's DriverStore path)
+#   wsllib       System32\lxss\lib (NVIDIA's dxgkrnl user-mode libraries)
+#   wslcore      Program Files\WSL\lib (libdxcore, libd3d12)
+#   wsldrivers   the DriverStore FileRepository, read-only, as under WSL2
+#   vdxgpayload  virtio-dxg's guest payload from the launcher (Mesa build)
+#   vdxgshare    development files and results (development VMs only)
+#   vdxgdrivers  NVIDIA's driver folder for Wine (development VMs only)
+#
+# Nothing is written to the guest's disk: everything the session needs is
+# under /run (a tmpfs that switch_root carries into the system), so a later
+# boot without virtio-dxg starts exactly as before.
 
+# mount_share TAG DIR [rw]: mounts the VM's 9p share TAG if it has one. A
+# mount point this creates for a share the VM does not have is removed
+# again, so the root file system keeps no trace of absent shares.
 mount_share() {
-    mkdir -p "/new_root$2"
-    # cache=mmap: Wine maps DLL images and ld.so maps libraries from these.
-    if mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576,cache=mmap \
-            "$1" "/new_root$2" 2>/dev/null; then
+    created=
+    [ -d "$2" ] || { mkdir -p "$2" && created=1; }
+    # cache=mmap: ld.so and Wine map libraries and DLL images from these.
+    if mount -t 9p -o "trans=virtio,version=9p2000.L,msize=1048576,cache=mmap,${3:-ro}" \
+            "$1" "$2" 2>/dev/null; then
         echo ":: virtio-dxg: mounted $1 on $2"
+        return 0
     fi
+    [ -n "$created" ] && rmdir "$2" 2>/dev/null
+    return 1
+}
+
+# Unpacks virtio-dxg's Mesa build into /run and writes the session
+# environment that selects it (systemd reads /run/environment.d).
+setup_desktop() {
+    m=/run/virtio-dxg-mesa
+    # Paths as the real system sees them (the tools below run in it).
+    tarball=
+    for f in /run/virtio-dxg/payload/mesa-virtio-dxg.tar \
+             /mnt/vdxgshare/out/mesa-virtio-dxg.tar; do
+        case $f in /run/*) src=$f ;; *) src=/new_root$f ;; esac
+        [ -f "$src" ] && { tarball=$f; break; }
+    done
+    if [ -z "$tarball" ]; then
+        echo ":: virtio-dxg: no Mesa build; the desktop stays on CPU rendering" >&2
+        return 1
+    fi
+    mkdir -p "$m"
+    # The initramfs has no tar: run the system's, with this /run in place of
+    # the (still empty) /run of the root file system.
+    mount -o bind /run /new_root/run
+    chroot /new_root /usr/bin/tar -xf "$tarball" -C "$m" \
+        --exclude='*.a' --exclude='lib/pkgconfig'
+    chroot /new_root /usr/bin/sed -i "s|/usr/lib/libvulkan_dzn.so|$m/lib/libvulkan_dzn.so|" \
+        "$m/share/vulkan/icd.d/dzn_icd.x86_64.json"
+    umount /new_root/run
+
+    mkdir -p /run/environment.d
+    # Clients take Mesa's software winsys (wl_shm buffers) with d3d12
+    # rendering, as under WSLg; the compositor renders on d3d12 into
+    # KMS-mirrored scanout buffers. NVIDIA's libraries come from the shares.
+    printf '%s\n' GALLIUM_DRIVER=d3d12 LIBGL_ALWAYS_SOFTWARE=1 \
+        MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA LIBVA_DRIVER_NAME=d3d12 \
+        "LD_LIBRARY_PATH=$m/lib:/usr/lib/wsl/lib:/usr/lib/wsl/core" \
+        "LIBGL_DRIVERS_PATH=$m/lib/dri" "GBM_BACKENDS_PATH=$m/lib/gbm" \
+        "LIBVA_DRIVERS_PATH=$m/lib/dri" \
+        "VK_DRIVER_FILES=$m/share/vulkan/icd.d/dzn_icd.x86_64.json" \
+        >/run/environment.d/90-virtio-dxg.conf
+    echo ":: virtio-dxg: desktop renders through d3d12 (Mesa $(cat "$m/lib/virtio-dxg-mesa-version"))"
 }
 
 run_latehook() {
@@ -24,58 +75,31 @@ run_latehook() {
         echo ":: virtio-dxg: dxgkrnl_virtio loaded"
     else
         echo ":: virtio-dxg: loading dxgkrnl_virtio failed" >&2
+        return
     fi
     # Wine 11 makes one 32 GiB address-space reservation that the default
     # overcommit heuristic refuses in an 8 GiB guest.
     echo 1 >/proc/sys/vm/overcommit_memory
     modprobe -q 9pnet_virtio
     modprobe -q 9p
-    mount_share wsllib /usr/lib/wsl/lib
-    mount_share wslcore /usr/lib/wsl/core
-    mount_share wsldrivers /usr/lib/wsl/drivers
-    mount_share vdxgshare /mnt/vdxgshare
-    mount_share vdxgdrivers /mnt/vdxgdrivers
-    # virtio_dxg.desktop=1: the whole session renders on the host GPU.
-    # Mesa's software path (which CPU mode already uses for Hyprland and
-    # its apps) then runs its d3d12 driver, i.e. NVIDIA's D3D12 driver
-    # over /dev/dxg, instead of llvmpipe; VA-API decodes and Dozen runs
-    # Vulkan on it too. The compositor needs virtio-dxg's Mesa build (KMS
-    # mirrors for scanout, guest/mesa/), unpacked from the development share.
+    # NVIDIA's libraries look for the driver store at /usr/lib/wsl/drivers.
+    mount_share wsllib /new_root/usr/lib/wsl/lib
+    mount_share wslcore /new_root/usr/lib/wsl/core
+    mount_share wsldrivers /new_root/usr/lib/wsl/drivers
+    mount_share vdxgpayload /run/virtio-dxg/payload
+    mount_share vdxgshare /new_root/mnt/vdxgshare rw
+    mount_share vdxgdrivers /new_root/mnt/vdxgdrivers
+
     case " $(cat /proc/cmdline) " in
-    *" virtio_dxg.desktop=1 "*)
-        printf '%s\n' /usr/lib/wsl/lib /usr/lib/wsl/core \
-            >/new_root/etc/ld.so.conf.d/virtio-dxg.conf
-        chroot /new_root /usr/bin/ldconfig
-        mkdir -p /new_root/etc/environment.d
-        env=/new_root/etc/environment.d/90-virtio-dxg.conf
-        # Clients take Mesa's software winsys (wl_shm buffers) with d3d12
-        # rendering, as under WSLg; the compositor renders on d3d12 into
-        # KMS-mirrored scanout buffers.
-        printf '%s\n' GALLIUM_DRIVER=d3d12 LIBGL_ALWAYS_SOFTWARE=1 \
-            MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA LIBVA_DRIVER_NAME=d3d12 \
-            >"$env"
-        m=/opt/virtio-dxg-mesa
-        tarball=/mnt/vdxgshare/out/mesa-virtio-dxg.tar
-        if [ -f "/new_root$tarball" ]; then
-            mkdir -p "/new_root$m"
-            chroot /new_root /usr/bin/tar -xf "$tarball" -C "$m"
-            chroot /new_root /usr/bin/sed -i "s|/usr/lib/libvulkan_dzn.so|$m/lib/libvulkan_dzn.so|" \
-                "$m/share/vulkan/icd.d/dzn_icd.x86_64.json"
-            printf '%s\n' "LD_LIBRARY_PATH=$m/lib" \
-                "LIBGL_DRIVERS_PATH=$m/lib/dri" "GBM_BACKENDS_PATH=$m/lib/gbm" \
-                "LIBVA_DRIVERS_PATH=$m/lib/dri" \
-                "VK_DRIVER_FILES=$m/share/vulkan/icd.d/dzn_icd.x86_64.json" \
-                >>"$env"
-            echo ":: virtio-dxg: Mesa $(cat "/new_root$m/lib/virtio-dxg-mesa-version")"
-        fi
-        echo ":: virtio-dxg: desktop renders through d3d12"
-        ;;
+    *" virtio_dxg.desktop=1 "*) setup_desktop ;;
     esac
-    # virtio_dxg.root=1: run vdxgshare/root.sh as root once the network is
-    # up (development boots of a snapshot disk only; output in out/root.log).
+
+    # virtio_dxg.root=1 (development VMs with a snapshot disk only): run
+    # vdxgshare/root.sh as root once the network is up.
     case " $(cat /proc/cmdline) " in
     *" virtio_dxg.root=1 "*)
-        cat >/new_root/etc/systemd/system/virtio-dxg-root.service <<'EOF'
+        mkdir -p /run/systemd/system/multi-user.target.wants
+        cat >/run/systemd/system/virtio-dxg-root.service <<'EOF'
 [Unit]
 Description=virtio-dxg development root script
 Wants=network-online.target
@@ -85,13 +109,12 @@ After=network-online.target
 Type=oneshot
 ExecStart=/bin/sh -c '/bin/bash /mnt/vdxgshare/root.sh >/mnt/vdxgshare/out/root.log 2>&1'
 EOF
-        mkdir -p /new_root/etc/systemd/system/multi-user.target.wants
         ln -sf ../virtio-dxg-root.service \
-            /new_root/etc/systemd/system/multi-user.target.wants/
+            /run/systemd/system/multi-user.target.wants/
         ;;
     esac
-    # The account the launcher's per-boot SSH authorizes (same rule as its
-    # request-sshd), so the host test knows whom to log in as.
+    # Development VMs: the account the per-boot SSH authorizes (same rule
+    # as the launcher's request-sshd), so the host test knows whom to use.
     if [ -d /new_root/mnt/vdxgshare/out ]; then
         awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /nologin|false/ {
             print $1; exit }' /new_root/etc/passwd \

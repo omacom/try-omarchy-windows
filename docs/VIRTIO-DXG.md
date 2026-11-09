@@ -258,6 +258,43 @@ Open on this path: Chromium's GPU process still falls back to software (its
 sandbox does not admit `/dev/dxg`); the per-frame mirror copy goes away with
 the host-side link; Vulkan clients (Dozen) and VA-API in apps are untested.
 
+### Starting it from the launcher
+
+`TryOmarchy.exe -render dxg` boots the installed Omarchy on virtio-dxg. It is
+opt-in. Normal launches keep the bundled runtime, the GPU (virgl) and CPU
+modes, their render history and upstream updates. A dxg launch records no
+render result, so it never changes what `auto` picks.
+
+The mode needs three files in `<data>\virtio-dxg\`:
+
+| File | Made by |
+| --- | --- |
+| `runtime\bin\qemu-system-x86_64w.exe` (+ the rest of the runtime) | `virtio-dxg/qemu/build-runtime.sh`: the official runtime recipe plus the device |
+| `initramfs-linux.img` | `virtio-dxg/guest/test/mkdevinitramfs.py`: the launcher's own initramfs plus `dxgkrnl_virtio.ko` and its boot hook |
+| `payload\mesa-virtio-dxg.tar` | `virtio-dxg/guest/mesa/build-in-guest.sh` |
+
+NVIDIA's user-mode drivers are not copied. The guest reads them read-only
+from this machine (`System32\lxss\lib`, `Program Files\WSL\lib`, the
+driver store), so a driver update on Windows reaches the guest at its next
+boot. If anything is missing, the launcher names it and stops.
+
+The boot hook writes nothing to the guest's disk. The environment and the
+Mesa build go under `/run` (tmpfs), so a later launch without `-render dxg`
+boots exactly as before. `-disk-snapshot` (any mode) sends the guest's disk
+writes to a temporary overlay that QEMU discards when the VM stops.
+
+### Stability work
+
+The desktop and the test suite exposed four faults, each now fixed and
+covered by a test:
+
+| Fault | Effect | Fix |
+| --- | --- | --- |
+| IO-space views freed while flatviews pending RCU destruction still pointed at them | QEMU crashed within seconds of desktop activity | Views are QOM objects owning their region, freed by the last flatview |
+| `dxghost` mapped and unmapped guest memory, and closed event waits, while holding its lock; inline requests hold the BQL and take that lock | QEMU deadlocked (ABBA, and a three-thread cycle through event callbacks) | Lock order: nothing enters the VMM under `h->lock`; such work is deferred to the unlocking thread. `executor_test` fails any VMM callback made under the lock (it does on the old code) |
+| The device had no MSI-X vectors, so completions went through a shared INTx line | An ISR-read exit and an IOAPIC EOI per completion; under WHPX completions were lost and processes hung unkillably | Three MSI-X vectors (configuration, completions, events). Guest waits are killable and reap completions themselves after 100 ms, logging any that came without an interrupt |
+| QMP virtio introspection asserted on the device ID | One `x-query-virtio-status` killed the VM | The device is listed as featureless |
+
 ## Next milestones
 
 1. **Build the device** with the winq-emu runtime recipe:

@@ -618,12 +618,23 @@ static void dxg_pci_realize(VirtIOPCIProxy *vpci, Error **errp)
                            VIRTIO_DXG_SHM_IOSPACE);
 }
 
+/*
+ * MSI-X, one vector each for configuration, completions and events. Left
+ * unset, virtio-pci gives a device no vectors and the guest falls back to a
+ * shared INTx line: an ISR read and an IOAPIC EOI exit per completion, and
+ * on WHPX completions that never reached the guest.
+ */
+static const Property dxg_pci_properties[] = {
+    DEFINE_PROP_UINT32("vectors", VirtIOPCIProxy, nvectors, 3),
+};
+
 static void dxg_pci_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     VirtioPCIClass *k = VIRTIO_PCI_CLASS(klass);
     PCIDeviceClass *pcidev_k = PCI_DEVICE_CLASS(klass);
 
+    device_class_set_props(dc, dxg_pci_properties);
     set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
     k->realize = dxg_pci_realize;
     pcidev_k->class_id = PCI_CLASS_DISPLAY_OTHER;

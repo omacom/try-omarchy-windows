@@ -18,8 +18,9 @@
 
 #define PAGE_4K 4096ull
 
-#define LOCK(h) AcquireSRWLockExclusive(&(h)->lock)
-#define UNLOCK(h) ReleaseSRWLockExclusive(&(h)->lock)
+/* UNLOCK runs the work deferred under the lock (lock order: host.h). */
+#define LOCK(h) dxghost_lock(h)
+#define UNLOCK(h) dxghost_unlock(h)
 
 /* Declares c, the command, or fails the request when it is truncated. */
 #define COMMAND(type)							\
@@ -182,13 +183,12 @@ static void va_remove(struct dxghost *h, uint32_t process, uint64_t base,
 	UNLOCK(h);
 }
 
-/* Unmaps an allocation's Lock2 view. Lock held. */
+/* Unmaps an allocation's Lock2 view once the lock is released. Lock held. */
 static void unmap_lock(struct dxghost *h, struct dxghost_obj *o)
 {
 	if (!o->gpa)
 		return;
-	h->vmm.unmap(h->vmm.opaque, o->gpa, o->size);
-	dxghost_io_free(h, o->gpa, o->size);
+	dxghost_defer_unmap(h, o->gpa, o->size);
 	o->gpa = 0;
 	o->hva = NULL;
 	o->size = 0;
@@ -200,6 +200,43 @@ static void unmap_lock(struct dxghost *h, struct dxghost_obj *o)
  * Lock held.
  */
 static void notify_close(struct dxghost_notify *n);
+static void notify_close_cb(void *n);
+static void notify_stop(struct dxghost_notify *n);
+static void lock_cache_drop(struct dxghost *h, struct dxghost_obj *o);
+
+/*
+ * The cached driver lock of an allocation about to be destroyed: released
+ * right after h->lock (deferred, so before the DestroyAllocation2 or
+ * DestroyDevice that follows). Lock held.
+ */
+struct lock_release {
+	struct dxghost *h;
+	struct d3dkmt_unlock2 u;
+};
+
+static void lock_release_cb(void *arg)
+{
+	struct lock_release *l = arg;
+
+	l->h->kmt.Unlock2(&l->u);
+	free(l);
+}
+
+static void lock_release_later(struct dxghost *h, struct dxghost_obj *o)
+{
+	struct lock_release *l = calloc(1, sizeof(*l));
+	struct dxghost_obj *a = o;
+
+	if (!l)
+		return;
+	/* An allocation's parent is its device, or a resource whose parent is. */
+	while (a && a->type != OBJ_DEVICE && a->parent)
+		a = dxghost_obj_find(h, a->parent);
+	l->h = h;
+	l->u.device.v = a && a->type == OBJ_DEVICE ? a->handle : o->parent;
+	l->u.allocation.v = o->handle;
+	dxghost_defer_call(h, lock_release_cb, l);
+}
 
 static void forget(struct dxghost *h, uint32_t handle)
 {
@@ -209,13 +246,20 @@ static void forget(struct dxghost *h, uint32_t handle)
 
 	if (!o)
 		return;
-	if (o->type == OBJ_ALLOCATION)
+	if (o->type == OBJ_ALLOCATION) {
+		if (o->lock_cached)
+			lock_release_later(h, o);
+		lock_cache_drop(h, o);
+		o->guest_locks = 0;
 		unmap_lock(h, o);
+	}
 	else if (o->gpa)
 		dxghost_fence_unmap(h, o->gpa);
 	o->gpa = 0;
 	if (o->notify) {
-		notify_close(o->notify);
+		/* Its callback delivers guest events through the VMM. */
+		notify_stop(o->notify);
+		dxghost_defer_call(h, notify_close_cb, o->notify);
 		o->notify = NULL;
 	}
 	if (o->sysmem) {
@@ -315,6 +359,8 @@ static uint32_t *snapshot(struct dxghost *h, uint32_t process, uint8_t type,
 	return handles;
 }
 
+static void va_release_process(struct dxghost *h, uint32_t process);
+
 void dxghost_destroy_process_objects(struct dxghost *h, uint32_t process)
 {
 	uint32_t *handles, count, i;
@@ -351,8 +397,58 @@ void dxghost_destroy_process_objects(struct dxghost *h, uint32_t process)
 	}
 	free(handles);
 	free(types);
-	va_remove(h, process, 0, UINT64_MAX);
+	va_release_process(h, process);
 	dxghost_sysmem_release(h);
+}
+
+/*
+ * GPU virtual address reservations belong to the host process (QEMU, for
+ * every guest process) and its adapter, not to a device: destroying the
+ * devices leaves them in place. Releases what an exiting guest process left
+ * reserved; otherwise each CUDA, NVENC or NVDEC process leaked its ranges
+ * (often 12 GiB each) until the shared GPU address space ran out.
+ */
+static void va_release_process(struct dxghost *h, uint32_t process)
+{
+	struct dxghost_va *gone = NULL;
+	uint32_t count = 0, i = 0;
+	uint32_t adapter;
+
+	LOCK(h);
+	adapter = h->adapter;
+	gone = malloc((h->va_count + 1) * sizeof(*gone));
+	while (gone && i < h->va_count) {
+		if (h->vas[i].process == process) {
+			gone[count++] = h->vas[i];
+			h->vas[i] = h->vas[--h->va_count];
+		} else {
+			i++;
+		}
+	}
+	if (!gone)
+		count = 0;
+	UNLOCK(h);
+	for (i = 0; i < count && adapter && h->kmt.FreeGpuVirtualAddress; i++) {
+		struct d3dkmt_freegpuvirtualaddress a = {0};
+		int32_t status;
+
+		a.adapter.v = adapter;
+		a.base_address = gone[i].base;
+		a.size = gone[i].size;
+		status = h->kmt.FreeGpuVirtualAddress(&a);
+		if (status < 0)
+			dxghost_logf(h, "releasing GPU VA 0x%llx+0x%llx of process "
+				     "0x%x: 0x%08x",
+				     (unsigned long long)a.base_address,
+				     (unsigned long long)a.size, process,
+				     (unsigned)status);
+	}
+	if (count)
+		dxghost_logf(h, "released %u GPU VA reservation(s) of process 0x%x",
+			     count, process);
+	if (!gone)
+		va_remove(h, process, 0, UINT64_MAX);
+	free(gone);
 }
 
 static void cmd_destroy_process(struct dxghost_msg *m)
@@ -931,8 +1027,8 @@ static void cmd_create_paging_queue(struct dxghost_msg *m)
 	a.fence_cpu_virtual_address = 0;
 	if (h->kmt.CreatePagingQueue(&a) < 0)
 		return;
-	LOCK(h);
 	gpa = dxghost_fence_map(h, (void *)(uintptr_t)a.fence_cpu_virtual_address);
+	LOCK(h);
 	if (gpa && !dxghost_obj_add(h, a.paging_queue.v, OBJ_PAGING_QUEUE,
 				    m->process, a.device.v)) {
 		o = dxghost_obj_find(h, a.paging_queue.v);
@@ -1422,15 +1518,40 @@ static void cmd_destroy_allocation(struct dxghost_msg *m)
 	dxghost_sysmem_release(h);
 }
 
+/*
+ * Lock2 and Unlock2.
+ *
+ * Every guest Lock2 reaches the driver: besides the CPU view it waits for
+ * the GPU to finish with the allocation (unless the guest passed
+ * DonotWait), which video encoders rely on before reading their output.
+ * The view itself is mapped into the IO space once and shared while the
+ * allocation is locked; after the guest's last Unlock2 one driver lock and
+ * the view stay cached (within LOCK_CACHE_MAX), so the next frame's
+ * Lock2/Unlock2 cost a driver call each instead of a guest-physical map and
+ * unmap. Locked, the CPU view of an allocation cannot move.
+ *
+ * Driver locks held = guest_locks + (lock_cached ? 1 : 0).
+ */
+#define LOCK_CACHE_MAX (1ull << 30)
+
+static void lock2_reply(struct dxgkvmb_command_lock2_return_virtio *r,
+			uint64_t gpa, uint64_t size, bool cached)
+{
+	r->base.cpu_visible_buffer_offset = (void *)(uintptr_t)gpa;
+	r->mapped_size = size;
+	r->flags = cached ? DXGK_VIRTIO_LOCK2_CACHED : 0;
+}
+
 static void cmd_lock2(struct dxghost_msg *m)
 {
 	COMMAND(dxgkvmb_command_lock2);
 	struct dxgkvmb_command_lock2_return_virtio *r;
 	struct d3dkmt_lock2 a = c->args;
+	struct d3dkmt_unlock2 u = {a.device, a.allocation};
 	struct dxghost *h = m->h;
 	struct dxghost_obj *o;
 	MEMORY_BASIC_INFORMATION mbi;
-	uint64_t gpa, size;
+	uint64_t gpa = 0, size;
 	bool cached;
 
 	r = reply(m, m->res_cap >= sizeof(*r) ? sizeof(*r) : sizeof(r->base));
@@ -1441,63 +1562,94 @@ static void cmd_lock2(struct dxghost_msg *m)
 		r->base.status.v = DXG_STATUS_INVALID_HANDLE;
 		return;
 	}
-	/* Already visible: the guest keeps one mapping per allocation. */
-	LOCK(h);
-	o = dxghost_obj_find(h, a.allocation.v);
-	if (o->gpa) {
-		r->base.cpu_visible_buffer_offset = (void *)(uintptr_t)o->gpa;
-		r->mapped_size = o->size;
-		r->flags = o->cached ? DXGK_VIRTIO_LOCK2_CACHED : 0;
-		UNLOCK(h);
-		return;
-	}
-	UNLOCK(h);
-
 	a.data = 0;
 	r->base.status.v = h->kmt.Lock2(&a);
 	if (r->base.status.v < 0)
 		return;
-	if (!VirtualQuery((void *)(uintptr_t)a.data, &mbi, sizeof(mbi)) ||
-	    mbi.State != MEM_COMMIT) {
-		goto unlock;
+
+	/* Mapped already: the view of a locked allocation does not move. */
+	LOCK(h);
+	o = dxghost_obj_find(h, a.allocation.v);
+	if (o && o->gpa && o->hva == (void *)(uintptr_t)a.data) {
+		o->guest_locks++;
+		lock2_reply(r, o->gpa, o->size, o->cached);
+		UNLOCK(h);
+		return;
 	}
+	if (o && o->gpa) {
+		dxghost_logf(h, "Lock2: view of 0x%x moved while locked",
+			     a.allocation.v);
+		goto fail_locked;
+	}
+	UNLOCK(h);
+
+	if (!VirtualQuery((void *)(uintptr_t)a.data, &mbi, sizeof(mbi)) ||
+	    mbi.State != MEM_COMMIT)
+		goto fail;
 	size = (uint64_t)((uintptr_t)mbi.BaseAddress + mbi.RegionSize -
 			  (uintptr_t)a.data);
 	size = (size + PAGE_4K - 1) & ~(PAGE_4K - 1);
 	cached = !(mbi.Protect & (PAGE_WRITECOMBINE | PAGE_NOCACHE));
 
+	AcquireSRWLockExclusive(&h->map_lock);
 	LOCK(h);
-	gpa = dxghost_io_alloc(h, size);
+	o = dxghost_obj_find(h, a.allocation.v);
+	if (o && o->gpa && o->hva == (void *)(uintptr_t)a.data) {
+		/* Another thread mapped it meanwhile. */
+		o->guest_locks++;
+		lock2_reply(r, o->gpa, o->size, o->cached);
+		UNLOCK(h);
+		ReleaseSRWLockExclusive(&h->map_lock);
+		return;
+	}
+	gpa = o && !o->gpa ? dxghost_io_alloc(h, size) : 0;
+	UNLOCK(h);
 	/* Lock2 has no read-only flag: guest views are always writable. */
 	if (gpa && h->vmm.map(h->vmm.opaque, gpa, (void *)(uintptr_t)a.data,
 			      size, true)) {
+		LOCK(h);
 		dxghost_io_free(h, gpa, size);
+		UNLOCK(h);
 		gpa = 0;
 	}
 	if (gpa) {
+		LOCK(h);
 		o = dxghost_obj_find(h, a.allocation.v);
-		o->hva = (void *)(uintptr_t)a.data;
-		o->gpa = gpa;
-		o->size = size;
-		o->cached = cached;
+		if (o && !o->gpa) {
+			o->hva = (void *)(uintptr_t)a.data;
+			o->gpa = gpa;
+			o->size = size;
+			o->cached = cached;
+			o->guest_locks = 1;
+		} else {
+			dxghost_defer_unmap(h, gpa, size);	/* destroyed meanwhile */
+			gpa = 0;
+		}
+		UNLOCK(h);
 	}
-	UNLOCK(h);
+	ReleaseSRWLockExclusive(&h->map_lock);
 	if (!gpa) {
-		dxghost_logf(h, "IO space exhausted mapping %llu bytes",
+		dxghost_logf(h, "Lock2: no view for %llu bytes",
 			     (unsigned long long)size);
-		goto unlock;
+		goto fail;
 	}
-	r->base.cpu_visible_buffer_offset = (void *)(uintptr_t)gpa;
-	r->mapped_size = size;
-	r->flags = cached ? DXGK_VIRTIO_LOCK2_CACHED : 0;
+	lock2_reply(r, gpa, size, cached);
 	return;
-unlock:
-	{
-		struct d3dkmt_unlock2 u = {a.device, a.allocation};
 
-		h->kmt.Unlock2(&u);
-		r->base.status.v = DXG_STATUS_NO_MEMORY;
-	}
+fail_locked:
+	UNLOCK(h);
+fail:
+	h->kmt.Unlock2(&u);
+	r->base.status.v = DXG_STATUS_NO_MEMORY;
+}
+
+/* Drops the cached driver lock and view of an allocation. Lock held. */
+static void lock_cache_drop(struct dxghost *h, struct dxghost_obj *o)
+{
+	if (!o->lock_cached)
+		return;
+	o->lock_cached = 0;
+	h->lock_cache_bytes -= o->size;
 }
 
 static void cmd_unlock2(struct dxghost_msg *m)
@@ -1506,7 +1658,7 @@ static void cmd_unlock2(struct dxghost_msg *m)
 	struct d3dkmt_unlock2 u = c->args;
 	struct dxghost *h = m->h;
 	struct dxghost_obj *o;
-	bool mapped = false;
+	bool keep = false;
 
 	if (!owns(h, u.device.v, OBJ_DEVICE, m->process) ||
 	    !owns(h, u.allocation.v, OBJ_ALLOCATION, m->process)) {
@@ -1515,12 +1667,24 @@ static void cmd_unlock2(struct dxghost_msg *m)
 	}
 	LOCK(h);
 	o = dxghost_obj_find(h, u.allocation.v);
-	if (o->gpa) {
-		unmap_lock(h, o);
-		mapped = true;
+	if (!o || !o->guest_locks) {
+		UNLOCK(h);
+		reply_ntstatus(m, DXG_STATUS_INVALID_PARAMETER);
+		return;
+	}
+	if (--o->guest_locks == 0 && o->gpa) {
+		if (!o->lock_cached &&
+		    h->lock_cache_bytes + o->size <= LOCK_CACHE_MAX) {
+			/* This driver lock stays, with the view. */
+			o->lock_cached = 1;
+			h->lock_cache_bytes += o->size;
+			keep = true;
+		} else if (!o->lock_cached) {
+			unmap_lock(h, o);	/* over budget: as before */
+		}
 	}
 	UNLOCK(h);
-	reply_ntstatus(m, mapped ? h->kmt.Unlock2(&u) : DXG_STATUS_SUCCESS);
+	reply_ntstatus(m, keep ? DXG_STATUS_SUCCESS : h->kmt.Unlock2(&u));
 }
 
 /* --- Residency and GPU virtual addresses ----------------------------- */
@@ -1835,8 +1999,8 @@ static void cmd_create_hwqueue(struct dxghost_msg *m)
 		dxghost_logf(h, "CreateHwQueue: 0x%08x", (unsigned)r->status.v);
 		return;
 	}
-	LOCK(h);
 	gpa = dxghost_fence_map(h, (void *)(uintptr_t)a.queue_progress_fence_cpu_va);
+	LOCK(h);
 	if (gpa && !dxghost_obj_add(h, a.queue.v, OBJ_HWQUEUE, m->process,
 				    c->context.v)) {
 		dxghost_obj_find(h, a.queue.v)->gpa = gpa;
@@ -1929,7 +2093,7 @@ static struct dxghost_notify *notify_new(struct dxghost *h, uint32_t process,
 	return n;
 }
 
-/* The callback takes no dxghost lock, so this may run under it. */
+/* Waits for the callback, which enters the VMM: never under h->lock. */
 static void notify_close(struct dxghost_notify *n)
 {
 	InterlockedExchange(&n->closing, 1);
@@ -1941,6 +2105,17 @@ static void notify_close(struct dxghost_notify *n)
 	CloseThreadpoolWait(n->tp);
 	CloseHandle(n->event);
 	free(n);
+}
+
+static void notify_close_cb(void *n)
+{
+	notify_close(n);
+}
+
+/* No more guest events from it, effective at once (callbacks check). */
+static void notify_stop(struct dxghost_notify *n)
+{
+	InterlockedExchange(&n->closing, 1);
 }
 
 static void cmd_create_sync(struct dxghost_msg *m)
@@ -1988,9 +2163,9 @@ static void cmd_create_sync(struct dxghost_msg *m)
 			 a.info.periodic_monitored_fence.fence_cpu_virtual_address;
 		gpu_va = a.info.periodic_monitored_fence.fence_gpu_virtual_address;
 	}
-	LOCK(h);
 	if (monitored)
 		gpa = dxghost_fence_map(h, (void *)(uintptr_t)cpu_va);
+	LOCK(h);
 	if ((!monitored || gpa) &&
 	    !dxghost_obj_add(h, a.sync_object.v, OBJ_SYNC, m->process,
 			     a.device.v)) {

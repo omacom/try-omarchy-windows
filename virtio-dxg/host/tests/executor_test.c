@@ -100,6 +100,27 @@ static int32_t __stdcall f_create_device(void *p)
 	return 0;
 }
 
+static uint32_t calls_free_va;
+static uint64_t freed_va_base, freed_va_size;
+
+static int32_t __stdcall f_reserve_va(void *p)
+{
+	struct d3dddi_reservegpuvirtualaddress *a = p;
+
+	a->virtual_address = a->base_address ? a->base_address : 0x200000000ull;
+	return 0;
+}
+
+static int32_t __stdcall f_free_va(void *p)
+{
+	const struct d3dkmt_freegpuvirtualaddress *a = p;
+
+	calls_free_va++;
+	freed_va_base = a->base_address;
+	freed_va_size = a->size;
+	return 0;
+}
+
 static int32_t __stdcall f_destroy_device(void *p)
 {
 	(void)p;
@@ -187,9 +208,29 @@ static uint64_t last_map_gpa, last_map_size;
 static volatile LONG events;
 static uint64_t last_event;
 
+/*
+ * The VMM may hold its own lock while calling in (inline requests on vCPU
+ * threads), so dxghost must never call it back with h->lock held: that
+ * deadlocked QEMU. Map and unmap run on the test's thread, where a failed
+ * try-lock can only mean dxghost holds it.
+ */
+static struct dxghost *test_h;
+static int lock_violations;
+
+static void check_unlocked(void)
+{
+	if (!test_h)
+		return;
+	if (TryAcquireSRWLockExclusive(&test_h->lock))
+		ReleaseSRWLockExclusive(&test_h->lock);
+	else
+		lock_violations++;
+}
+
 static int vmm_map(void *o, uint64_t gpa, void *hva, uint64_t size, bool w)
 {
 	(void)o; (void)hva; (void)w;
+	check_unlocked();
 	maps++;
 	last_map_gpa = gpa;
 	last_map_size = size;
@@ -199,6 +240,7 @@ static int vmm_map(void *o, uint64_t gpa, void *hva, uint64_t size, bool w)
 static void vmm_unmap(void *o, uint64_t gpa, uint64_t size)
 {
 	(void)o; (void)gpa; (void)size;
+	check_unlocked();
 	unmaps++;
 }
 
@@ -297,6 +339,8 @@ static void test_executor(void)
 	kmt.OpenAdapterFromLuid = f_open_luid;
 	kmt.CreateDevice = f_create_device;
 	kmt.DestroyDevice = f_destroy_device;
+	kmt.ReserveGpuVirtualAddress = f_reserve_va;
+	kmt.FreeGpuVirtualAddress = f_free_va;
 	kmt.CreateAllocation2 = f_create_allocation;
 	kmt.DestroyAllocation2 = f_destroy_allocation;
 	kmt.Lock2 = f_lock2;
@@ -314,6 +358,7 @@ static void test_executor(void)
 				  PAGE_READWRITE);
 
 	CHECK(dxghost_create(&config, &vmm, &h) == 0);
+	test_h = h;
 	dxghost_device_config(h, &dev);
 	CHECK(dev.vgpu_luid_low == NV_LUID);	/* NVIDIA, not Intel */
 	CHECK(dev.vmbus_version == 40);
@@ -457,17 +502,44 @@ static void test_executor(void)
 			/* A write-combined host view must not be mapped cached. */
 			CHECK(!(r->flags & DXGK_VIRTIO_LOCK2_CACHED));
 		}
-		CHECK(calls_lock2 == 1 && maps == 1);
+		/* Each lock reaches the driver (it waits for the GPU); the
+		 * view is mapped once. */
+		CHECK(calls_lock2 == 2 && maps == 1);
 		CHECK(last_map_gpa == gpa && last_map_size == 3 * 4096);
 	}
 	{
-		struct dxgkvmb_command_unlock2 *c = msg(sizeof(*c));
+		struct dxgkvmb_command_unlock2 *c;
+		struct dxgkvmb_command_lock2 *l;
+		struct dxgkvmb_command_lock2_return_virtio *r = (void *)res_buf;
 
+		/* First of two unlocks: the driver unlocks, the view stays. */
+		c = msg(sizeof(*c));
 		vgpu(c, DXGK_VMBCOMMAND_UNLOCK2, p1);
 		c->args.device.v = d1;
 		c->args.allocation.v = alloc1;
 		run(h, sizeof(*c), 4);
-		CHECK(status_of() == 0 && calls_unlock2 == 1 && unmaps == 1);
+		CHECK(status_of() == 0 && calls_unlock2 == 1 && unmaps == 0);
+		/* Last unlock: one driver lock and the view stay cached. */
+		run(h, sizeof(*c), 4);
+		CHECK(status_of() == 0 && calls_unlock2 == 1 && unmaps == 0);
+		/* One more unlock than locks is refused. */
+		run(h, sizeof(*c), 4);
+		CHECK(status_of() == DXG_STATUS_INVALID_PARAMETER);
+		/* The next frame's lock and unlock: no map, no unmap. */
+		l = msg(sizeof(*l));
+		vgpu(l, DXGK_VMBCOMMAND_LOCK2, p1);
+		l->args.device.v = d1;
+		l->args.allocation.v = alloc1;
+		run(h, sizeof(*l), sizeof(*r));
+		CHECK(r->base.status.v == 0 && calls_lock2 == 3 && maps == 1 &&
+		      (uint64_t)(uintptr_t)r->base.cpu_visible_buffer_offset == gpa);
+		c = msg(sizeof(*c));
+		vgpu(c, DXGK_VMBCOMMAND_UNLOCK2, p1);
+		c->args.device.v = d1;
+		c->args.allocation.v = alloc1;
+		run(h, sizeof(*c), 4);
+		CHECK(status_of() == 0 && calls_unlock2 == 2 && unmaps == 0);
+		CHECK(calls_lock2 - calls_unlock2 == 1);	/* the cached lock */
 	}
 
 	/* Two fences on one host page share one guest mapping. */
@@ -543,16 +615,39 @@ static void test_executor(void)
 		CHECK(calls_destroy_device == before);
 	}
 
-	/* Process exit destroys its device and releases every mapping. */
+	/* A GPU VA range the process reserves and never frees. */
+	{
+		struct dxgkvmb_command_reservegpuvirtualaddress *c = msg(sizeof(*c));
+		struct dxgkvmb_command_reservegpuvirtualaddress_return *r =
+			(void *)res_buf;
+
+		vgpu(c, DXGK_VMBCOMMAND_RESERVEGPUVIRTUALADDRESS, p1);
+		c->args.adapter.v = 0x500;
+		c->args.size = 12ull << 30;
+		CHECK(run(h, sizeof(*c), sizeof(*r)).status == VIRTIO_DXG_OK);
+		CHECK(r->virtual_address == 0x200000000ull);
+	}
+
+	/* Process exit destroys its device and releases every mapping, and
+	 * the GPU VA it left reserved (the host process owns reservations). */
 	{
 		struct dxgkvmb_command_destroyprocess *c = msg(sizeof(*c));
 		uint32_t before = calls_destroy_device, unmaps_before = unmaps;
+		uint32_t frees_before = calls_free_va;
+		uint32_t unlocks_before = calls_unlock2;
 
 		global(c, DXGK_VMBCOMMAND_DESTROYPROCESS, p1);
 		run(h, sizeof(*c), 4);
 		CHECK(status_of() == 0);
 		CHECK(calls_destroy_device == before + 1);
-		CHECK(unmaps == unmaps_before + 1);	/* the shared fence page */
+		/* The shared fence page and alloc1's cached view, whose driver
+		 * lock is released before the device goes. */
+		CHECK(unmaps == unmaps_before + 2);
+		CHECK(calls_unlock2 == unlocks_before + 1 &&
+		      calls_lock2 == calls_unlock2);
+		CHECK(calls_free_va == frees_before + 1 &&
+		      freed_va_base == 0x200000000ull &&
+		      freed_va_size == (12ull << 30));
 		AcquireSRWLockExclusive(&h->lock);
 		CHECK(!dxghost_obj_find(h, d1) && !dxghost_obj_find(h, alloc2));
 		CHECK(dxghost_obj_find(h, d2) != NULL);
@@ -602,7 +697,10 @@ static void test_executor(void)
 				   freq.QuadPart));
 	}
 
+	/* Teardown unmaps too: still on this thread, still checked. */
 	dxghost_destroy(h);
+	test_h = NULL;
+	CHECK(lock_violations == 0);
 }
 
 static void test_iospace(void)

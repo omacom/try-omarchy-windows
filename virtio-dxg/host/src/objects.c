@@ -214,6 +214,90 @@ void dxghost_io_free(struct dxghost *h, uint64_t gpa, uint64_t size)
 	h->io_free_count++;
 }
 
+/* h->lock and the work deferred under it (lock order: see host.h). */
+
+void dxghost_lock(struct dxghost *h)
+{
+	AcquireSRWLockExclusive(&h->lock);
+}
+
+static struct dxghost_deferred *defer_slot(struct dxghost *h)
+{
+	if (h->deferred_count == h->deferred_capacity) {
+		uint32_t capacity = h->deferred_capacity ?
+				    h->deferred_capacity * 2 : 16;
+		struct dxghost_deferred *grown =
+			realloc(h->deferred, capacity * sizeof(*grown));
+
+		if (!grown)
+			return NULL;
+		h->deferred = grown;
+		h->deferred_capacity = capacity;
+	}
+	return &h->deferred[h->deferred_count++];
+}
+
+void dxghost_defer_unmap(struct dxghost *h, uint64_t gpa, uint64_t size)
+{
+	struct dxghost_deferred *d = defer_slot(h);
+
+	if (!d) {
+		/* Leave it mapped and its IO space reserved: never reused. */
+		dxghost_logf(h, "out of memory deferring an unmap of %llu bytes",
+			     (unsigned long long)size);
+		return;
+	}
+	d->fn = NULL;
+	d->arg = NULL;
+	d->gpa = gpa;
+	d->size = size;
+}
+
+void dxghost_defer_call(struct dxghost *h, void (*fn)(void *), void *arg)
+{
+	struct dxghost_deferred *d = defer_slot(h);
+
+	if (!d) {
+		dxghost_logf(h, "out of memory deferring a close");
+		return;		/* leaked: never run under the lock */
+	}
+	d->fn = fn;
+	d->arg = arg;
+	d->gpa = d->size = 0;
+}
+
+void dxghost_unlock(struct dxghost *h)
+{
+	struct dxghost_deferred *work = h->deferred;
+	uint32_t count = h->deferred_count, i;
+	bool unmapped = false;
+
+	if (!count) {
+		ReleaseSRWLockExclusive(&h->lock);
+		return;
+	}
+	h->deferred = NULL;
+	h->deferred_count = h->deferred_capacity = 0;
+	ReleaseSRWLockExclusive(&h->lock);
+	for (i = 0; i < count; i++) {
+		if (work[i].fn) {
+			work[i].fn(work[i].arg);
+		} else {
+			h->vmm.unmap(h->vmm.opaque, work[i].gpa, work[i].size);
+			unmapped = true;
+		}
+	}
+	/* Only now may the IO space hold another view. */
+	if (unmapped) {
+		AcquireSRWLockExclusive(&h->lock);
+		for (i = 0; i < count; i++)
+			if (!work[i].fn)
+				dxghost_io_free(h, work[i].gpa, work[i].size);
+		ReleaseSRWLockExclusive(&h->lock);
+	}
+	free(work);
+}
+
 /* Fence pages: one read-only guest mapping per host page, refcounted. */
 
 uint64_t dxghost_fence_map(struct dxghost *h, void *fence_hva)
@@ -223,38 +307,53 @@ uint64_t dxghost_fence_map(struct dxghost *h, void *fence_hva)
 	uint64_t offset = va & (PAGE_SIZE_4K - 1);
 	struct dxghost_fence_page *p;
 	uint32_t i;
-	uint64_t gpa;
+	uint64_t gpa = 0;
 
 	if (!fence_hva)
 		return 0;
+	AcquireSRWLockExclusive(&h->map_lock);
+	dxghost_lock(h);
 	for (i = 0; i < h->fence_page_count; i++) {
 		if (h->fence_pages[i].hva == page) {
 			h->fence_pages[i].refs++;
-			return h->fence_pages[i].gpa + offset;
+			gpa = h->fence_pages[i].gpa + offset;
+			dxghost_unlock(h);
+			ReleaseSRWLockExclusive(&h->map_lock);
+			return gpa;
 		}
 	}
 	if (h->fence_page_count == h->fence_page_capacity) {
 		uint32_t capacity = h->fence_page_capacity ?
 				    h->fence_page_capacity * 2 : 64;
+
 		p = realloc(h->fence_pages, capacity * sizeof(*p));
-		if (!p)
-			return 0;
-		h->fence_pages = p;
-		h->fence_page_capacity = capacity;
+		if (p) {
+			h->fence_pages = p;
+			h->fence_page_capacity = capacity;
+		}
 	}
-	gpa = dxghost_io_alloc(h, PAGE_SIZE_4K);
-	if (!gpa)
-		return 0;
+	if (h->fence_page_count < h->fence_page_capacity)
+		gpa = dxghost_io_alloc(h, PAGE_SIZE_4K);
+	dxghost_unlock(h);
 	/* Fence values are written by the GPU and read by the guest CPU. */
-	if (h->vmm.map(h->vmm.opaque, gpa, page, PAGE_SIZE_4K, false)) {
+	if (gpa && h->vmm.map(h->vmm.opaque, gpa, page, PAGE_SIZE_4K, false)) {
+		dxghost_lock(h);
 		dxghost_io_free(h, gpa, PAGE_SIZE_4K);
-		return 0;
+		dxghost_unlock(h);
+		gpa = 0;
 	}
-	p = &h->fence_pages[h->fence_page_count++];
-	p->hva = page;
-	p->gpa = gpa;
-	p->refs = 1;
-	return gpa + offset;
+	if (gpa) {
+		/* map_lock kept the page out of the table meanwhile, and only
+		 * unmaps (which never add) ran: the slot is still free. */
+		dxghost_lock(h);
+		p = &h->fence_pages[h->fence_page_count++];
+		p->hva = page;
+		p->gpa = gpa;
+		p->refs = 1;
+		dxghost_unlock(h);
+	}
+	ReleaseSRWLockExclusive(&h->map_lock);
+	return gpa ? gpa + offset : 0;
 }
 
 void dxghost_fence_unmap(struct dxghost *h, uint64_t fence_gpa)
@@ -271,8 +370,7 @@ void dxghost_fence_unmap(struct dxghost *h, uint64_t fence_gpa)
 			continue;
 		if (--p->refs)
 			return;
-		h->vmm.unmap(h->vmm.opaque, gpa, PAGE_SIZE_4K);
-		dxghost_io_free(h, gpa, PAGE_SIZE_4K);
+		dxghost_defer_unmap(h, gpa, PAGE_SIZE_4K);
 		*p = h->fence_pages[--h->fence_page_count];
 		return;
 	}

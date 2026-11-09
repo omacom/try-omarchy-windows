@@ -78,6 +78,19 @@ def main():
         text = text.replace(anchor, '    [VIRTIO_ID_SPI] = "virtio-spi",\n'
                             + entry + '};')
         virtio.write_text(text, newline="\n")
+
+    # QMP's virtio introspection (x-query-virtio-status) decodes features
+    # per device ID and asserts on unknown IDs: one query killed the VM.
+    # virtio-dxg has no device feature bits.
+    qmp = qemu / "hw/virtio/virtio-qmp.c"
+    text = qmp.read_text()
+    entry = '    case 62: /* VIRTIO_ID_DXG */\n'
+    if entry not in text:
+        anchor = '    case VIRTIO_ID_AUDIO_POLICY:\n        break;'
+        if anchor not in text:
+            sys.exit("hw/virtio/virtio-qmp.c: featureless device list not found")
+        text = text.replace(anchor, entry + anchor)
+        qmp.write_text(text, newline="\n")
     print(f"virtio-dxg added to {qemu}")
 
 
