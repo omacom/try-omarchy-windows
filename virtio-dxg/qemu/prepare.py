@@ -167,53 +167,10 @@ GPU_PATCHES = [
 ]
 
 
-# The guest's display mode follows the host monitor the window is on: its
-# size already does (SDL is per-monitor DPI aware, so a fullscreen window
-# is the panel's native resolution); the refresh rate was read once, from
-# display 0, at start-up. Now it comes with every resize and with moves to
-# another monitor, and the guest sees it in its EDID.
-SDL_PATCHES = [
-    ('static void handle_windowevent(SDL_Event *ev)\n{\n',
-     '/* The refresh rate of the display showing the window, in mHz, or 0. */\n'
-     'static uint32_t sdl2_window_refresh_mhz(struct sdl2_console *scon)\n'
-     '{\n'
-     '    SDL_DisplayMode mode;\n'
-     '    int index = SDL_GetWindowDisplayIndex(scon->real_window);\n\n'
-     '    if (index >= 0 && SDL_GetCurrentDisplayMode(index, &mode) == 0 &&\n'
-     '        mode.refresh_rate > 0) {\n'
-     '        return mode.refresh_rate * 1000;\n'
-     '    }\n'
-     '    return 0;\n'
-     '}\n\n'
-     'static void handle_windowevent(SDL_Event *ev)\n{\n'),
-    ('            info.width = ev->window.data1;\n'
-     '            info.height = ev->window.data2;\n'
-     '            dpy_set_ui_info(scon->dcl.con, &info, true);\n',
-     '            info.width = ev->window.data1;\n'
-     '            info.height = ev->window.data2;\n'
-     '            info.refresh_rate = sdl2_window_refresh_mhz(scon);\n'
-     '            dpy_set_ui_info(scon->dcl.con, &info, true);\n'),
-    ('    case SDL_WINDOWEVENT_EXPOSED:\n'
-     '        sdl2_redraw(scon);\n'
-     '        break;\n',
-     '    case SDL_WINDOWEVENT_EXPOSED:\n'
-     '        sdl2_redraw(scon);\n'
-     '        break;\n'
-     '    case SDL_WINDOWEVENT_DISPLAY_CHANGED:\n'
-     '        {\n'
-     '            QemuUIInfo info;\n'
-     '            int w, h;\n\n'
-     '            SDL_GetWindowSize(scon->real_window, &w, &h);\n'
-     '            memset(&info, 0, sizeof(info));\n'
-     '            info.width = w;\n'
-     '            info.height = h;\n'
-     '            info.refresh_rate = sdl2_window_refresh_mhz(scon);\n'
-     '            dpy_set_ui_info(scon->dcl.con, &info, true);\n'
-     '        }\n'
-     '        break;\n'),
-]
-
-
+# The guest's display mode follows the host monitor (see virtio-dxg.c,
+# dxg_follow_refresh): handle_windowevent is left alone, as the runtime's own
+# tests compile it from this file.
+SDL_PATCHES = []
 # Input is read when SDL's display refresh runs: every 10 ms while busy and
 # every 30 ms after a quiet moment, so the pointer moved at 100 Hz (33 Hz at
 # first) on any display. It now runs once per display frame (4 ms at
@@ -247,7 +204,7 @@ def patch_file(path, patches, marker):
 
 
 def patch_sdl(qemu):
-    patch_file(qemu / "ui/sdl2.c", SDL_PATCHES, "sdl2_window_refresh_mhz")
+    patch_file(qemu / "ui/sdl2.c", SDL_PATCHES, "SDL2_REFRESH_INTERVAL_QUIET")
     patch_file(qemu / "include/ui/sdl2.h", SDL_HEADER_PATCHES,
                "SDL2_REFRESH_INTERVAL_QUIET")
 

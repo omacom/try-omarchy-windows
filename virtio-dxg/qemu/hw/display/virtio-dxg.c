@@ -827,6 +827,68 @@ static void dxg_scanout_fini(void)
 
 #endif /* CONFIG_OPENGL */
 
+/* --- The guest's refresh rate follows the host monitor ------------------ */
+
+/*
+ * The display gives the guest the window's size; its refresh rate SDL reads
+ * once, from the primary display, at start. Once a second (main loop, the
+ * window's own thread) this looks at the monitor showing the window and,
+ * when its rate differs, gives the guest the new one with the window's size
+ * (dpy_set_ui_info: virtio-gpu's EDID). A 240 Hz panel thus gives a 240 Hz
+ * guest mode, and moving the window to a 60 Hz monitor a 60 Hz one.
+ */
+static QEMUTimer *dxg_refresh_timer;
+
+static BOOL CALLBACK dxg_find_window(HWND hwnd, LPARAM out)
+{
+    char cls[16];
+
+    if (IsWindowVisible(hwnd) && GetClassNameA(hwnd, cls, sizeof(cls)) &&
+        !strcmp(cls, "SDL_app")) {
+        *(HWND *)out = hwnd;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static void dxg_follow_refresh(void *opaque)
+{
+    QemuConsole *con = qemu_console_lookup_by_index(0);
+    MONITORINFOEXW mi = { .cbSize = sizeof(mi) };
+    DEVMODEW dm = { .dmSize = sizeof(dm) };
+    const QemuUIInfo *cur;
+    HWND hwnd = NULL;
+    uint32_t mhz;
+
+    timer_mod(dxg_refresh_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 1000);
+    if (!con) {
+        return;
+    }
+    EnumThreadWindows(GetCurrentThreadId(), dxg_find_window, (LPARAM)&hwnd);
+    if (!hwnd ||
+        !GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                         (MONITORINFO *)&mi) ||
+        !EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm) ||
+        dm.dmDisplayFrequency < 24) {
+        return;
+    }
+    mhz = dm.dmDisplayFrequency * 1000;
+    cur = dpy_get_ui_info(con);
+    if (mhz == (cur->refresh_rate ?: qemu_edid_refresh_rate_mhz)) {
+        return;
+    }
+    /* Also SDL's input polling, which runs once per display frame. */
+    qemu_edid_refresh_rate_mhz = mhz;
+    if (cur->width && cur->height) {
+        QemuUIInfo info = *cur;
+
+        info.refresh_rate = mhz;
+        dpy_set_ui_info(con, &info, false);
+    }
+    info_report("virtio-dxg: the window's display runs at %u Hz",
+                (unsigned)dm.dmDisplayFrequency);
+}
+
 /* VIRTIO_DXG_CHANNEL_DEVICE: the device's own commands. BQL. */
 static void dxg_device_command(VirtIODxg *d, const uint8_t *message,
                                uint32_t size, uint8_t *result,
@@ -1089,6 +1151,9 @@ static void dxg_realize(DeviceState *dev, Error **errp)
                            QEMU_THREAD_JOINABLE);
     }
     dxg_scanout_init(d);
+    dxg_refresh_timer = timer_new_ms(QEMU_CLOCK_REALTIME, dxg_follow_refresh,
+                                     d);
+    timer_mod(dxg_refresh_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 1000);
 }
 
 static void dxg_unrealize(DeviceState *dev)
@@ -1099,6 +1164,10 @@ static void dxg_unrealize(DeviceState *dev)
 
     dxg_drain(d);
     dxg_scanout_fini();
+    if (dxg_refresh_timer) {
+        timer_free(dxg_refresh_timer);
+        dxg_refresh_timer = NULL;
+    }
     for (i = 0; i < DXG_LANES; i++) {
         DxgLane *lane = &d->state->lanes[i];
 
