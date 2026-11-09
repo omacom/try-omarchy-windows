@@ -474,6 +474,8 @@ static struct {
     uint64_t frames;
     uint64_t late;
     int64_t worst_ns;
+    int64_t present_ns;         /* dpy_gl_update: blit and swap */
+    int64_t present_worst_ns;
 } dxg_scanout;
 
 static void dxg_scanout_free(gpointer data)
@@ -689,8 +691,13 @@ static bool dxg_scanout_show(QemuConsole *con, uint32_t resource_id,
     if (!s->tex && !dxg_scanout_import(s)) {
         return false;
     }
-    /* Row 0 of a D3D12 texture is the top of the image. */
-    dpy_gl_scanout_texture(con, s->tex, true, s->width, s->height,
+    /*
+     * Row 0 of a D3D12 texture is the top of the image, and GL sees it as
+     * row 0 too: the display flips it to the window's bottom-up origin,
+     * as it does a GL-rendered (bottom-up) scanout. So, for the display,
+     * not "y 0 top".
+     */
+    dpy_gl_scanout_texture(con, s->tex, false, s->width, s->height,
                            x, y, w, h, NULL);
     dxg_scanout.shown_tex = s->tex;
     return true;
@@ -722,12 +729,17 @@ static void dxg_scanout_count(void)
 
         info_report("virtio-dxg: scanout %.1f fps over %.0f s (display "
                     "%.0f Hz): %" PRIu64 " gaps over 1.5 frames, worst "
-                    "%.2f ms", dxg_scanout.frames / secs, secs, mhz / 1000.0,
-                    dxg_scanout.late, dxg_scanout.worst_ns / 1e6);
+                    "%.2f ms; present %.3f ms, worst %.2f ms",
+                    dxg_scanout.frames / secs, secs, mhz / 1000.0,
+                    dxg_scanout.late, dxg_scanout.worst_ns / 1e6,
+                    dxg_scanout.present_ns / 1e6 / dxg_scanout.frames,
+                    dxg_scanout.present_worst_ns / 1e6);
         dxg_scanout.window_ns = now;
         dxg_scanout.frames = 0;
         dxg_scanout.late = 0;
         dxg_scanout.worst_ns = 0;
+        dxg_scanout.present_ns = 0;
+        dxg_scanout.present_worst_ns = 0;
     }
 }
 
@@ -741,8 +753,15 @@ static void dxg_scanout_flush(QemuConsole *con, uint32_t resource_id,
     if (s && !s->failed && s->tex != dxg_scanout.shown_tex) {
         dxg_scanout_show(con, resource_id, 0, 0, width, height);
     }
+    {
+        int64_t t0 = qemu_clock_get_ns(QEMU_CLOCK_REALTIME), t;
+
+        dpy_gl_update(con, 0, 0, width, height);
+        t = qemu_clock_get_ns(QEMU_CLOCK_REALTIME) - t0;
+        dxg_scanout.present_ns += t;
+        dxg_scanout.present_worst_ns = MAX(dxg_scanout.present_worst_ns, t);
+    }
     dxg_scanout_count();
-    dpy_gl_update(con, 0, 0, width, height);
 }
 
 static void dxg_scanout_forget(uint32_t resource_id)
