@@ -8,10 +8,11 @@ virglrenderer fork commits in `sources.lock.json`. It produces:
 - `SHA256SUMS`, hashes for both archives
 
 The portable archive includes source provenance, the MSYS2 package inventory,
-per-file hashes, and licenses. The Runtime workflow remains manual. Its r25
-output is published as `runtime-v1-r25` and is pinned for the next app release;
-r24 shipped in `v0.12.0` and `v0.12.1`, r23 in `v0.11.0`, r22 in `v0.10.0` and
-`v0.10.1`, r21 in `v0.9.0`, and r20c from `v0.3.0` through `v0.8.0`. Future runtime
+per-file hashes, and licenses. The Runtime workflow remains manual. Its r26
+output is published as `runtime-v1-r26` and is pinned for the next app release;
+r25 shipped in `v0.13.0`, r24 in `v0.12.0` and `v0.12.1`, r23 in `v0.11.0`, r22
+in `v0.10.0` and `v0.10.1`, r21 in `v0.9.0`, and r20c from `v0.3.0` through
+`v0.8.0`. Future runtime
 replacements stay test artifacts until they pass physical Windows validation.
 
 To build in an MSYS2 UCRT64 shell with the packages in `packages.txt` installed:
@@ -31,6 +32,19 @@ because independent plane bindings cannot select one shared alternate handle;
 requirements2 and maintenance4 preserve each plane's requirements. Explicit
 external images keep their existing route. Unknown creation-info chains also
 keep plain backing rather than assuming host-import support.
+
+`0006-honor-venus-row-pitch-in-windows-gl-imports.patch` handles a Venus image
+that OpenGL samples, such as a Vulkan app's window in the compositor. Its
+memory is imported with `GL_EXT_memory_object`, which has no row pitch, so GL
+lays the linear texture out with its own pitch instead of the image's. On
+Intel's Windows drivers a window whose width is not a multiple of 64 pixels
+reads skewed (#394). When the guest's row pitch is wider than the image,
+the renderer views the memory as a texture one pitch wide and copies the visible
+part into the resource's texture before anything reads it: draws, compute,
+clears, blits, copies, uploads and readback. Anything OpenGL writes into it is
+copied back into the memory straight afterwards, so Vulkan sees it too. It is on for Intel's Windows OpenGL driver; `TRYOMARCHY_PITCH_COPY=on`
+or `off` overrides that. `test-image-pitch.py <patched-renderer-source>` covers
+the decision, widths, bounds and refreshes against fake GL calls.
 
 `test-image-capabilities.py <patched-renderer-source>` compiles the actual image
 dispatch against mocked Vulkan entry points. It runs on Linux or MSYS2 without
@@ -197,3 +211,32 @@ the socket count grew again. The larger sets take about 96 KB of main-loop
 stack, well inside QEMU's 2 MB thread stacks. `test-fd-setsize.py` binds 100
 loopback sockets and checks that `select()` reports the last one ready with the
 pinned size, and misses it with Winsock's default.
+
+`0025-fail-fast-on-missing-sdl-audio-endpoints.patch` keeps a missing Windows
+audio endpoint from freezing the VM. SDL's WASAPI backend retries a missing
+endpoint for eight seconds inside `SDL_OpenAudioDevice`, which runs on QEMU's
+main loop. Each guest sound, such as Hyprland 0.57's terminal bell, stopped
+the display, input, QMP and slirp for that long, and the launcher reported the
+VM as unresponsive (#384). Before opening, QEMU now checks SDL's inventory in
+both directions and asks Windows directly whether a default endpoint exists.
+A missing default, or an empty inventory, fails at once and is checked again on
+the next route poll. A selected device that left the inventory goes straight to
+the default, and a selected device that fails to open only falls back to the
+default when Windows has one. Playback now backs off after a failed open like capture does,
+across route polls and stream starts: ten seconds after an open that reached
+SDL, one second after the quick checks found no endpoint. A successful open
+clears it. A missing endpoint and an SDL open failure are each reported once
+until that direction opens again.
+On the reporter's kind of failure, a Windows VM without a default playback
+device, the check answers in about 1 ms where SDL took 8 s.
+
+`test-sdl-playback.py` compiles the playback start and route functions with
+mocked endpoints and a fake clock: immediate reopen after a normal sound, no
+repeat of a slow failed open across polls and repeated sounds, recovery, a
+missing default, empty-inventory hotplug and a failed live route change.
+`test-sdl-endpoint.py` compiles the Windows endpoint check against mocked COM
+calls: the enumerator and interface GUIDs, the console role, present and
+missing defaults, other errors, COM and loader failures, and released objects.
+`test-sdl-audio.py` and `test-sdl-capture.py` cover the open preflight, the
+fallback and single reports. An endpoint removed after the check can still enter SDL's
+wait once; the backoff keeps it from repeating.
