@@ -49,15 +49,19 @@ def update_spec(spec, release, source, digest):
     )
 
 
-def full_ci_passed(workflow_run, jobs, sha):
+def workflow_passed(workflow_run, jobs, sha, required_job):
     return (
         workflow_run.get("head_sha") == sha
         and workflow_run.get("event") == "workflow_dispatch"
         and workflow_run.get("conclusion") == "success"
         and bool(jobs)
         and all(job.get("conclusion") == "success" for job in jobs)
-        and any(job.get("name") == "Guest image candidate" for job in jobs)
+        and any(job.get("name") == required_job for job in jobs)
     )
+
+
+def full_ci_passed(workflow_run, jobs, sha):
+    return workflow_passed(workflow_run, jobs, sha, "Guest image candidate")
 
 
 def summary(message):
@@ -68,28 +72,37 @@ def summary(message):
             stream.write(message + "\n\n")
 
 
-def validate_and_merge(repo, pr, branch, sha, lock_ok=True):
+def dispatch_candidate_workflow(repo, branch, sha, workflow, *inputs):
     started = datetime.datetime.now(datetime.timezone.utc)
-    run("gh", "workflow", "run", "ci.yml", "--repo", repo, "--ref", branch,
-        "-f", "build_guest=true")
+    run("gh", "workflow", "run", workflow, "--repo", repo, "--ref", branch, *inputs)
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
-        candidates = gh("api", f"repos/{repo}/actions/workflows/ci.yml/runs?branch={branch}&event=workflow_dispatch&per_page=30")["workflow_runs"]
+        candidates = gh("api", f"repos/{repo}/actions/workflows/{workflow}/runs?branch={branch}&event=workflow_dispatch&per_page=30")["workflow_runs"]
         candidates = [item for item in candidates if item["head_sha"] == sha
                       and datetime.datetime.fromisoformat(item["created_at"].replace("Z", "+00:00")) >= started.replace(microsecond=0)]
         if candidates:
-            ci = max(candidates, key=lambda item: item["id"])
-            break
+            candidate = max(candidates, key=lambda item: item["id"])
+            summary(f"Candidate {workflow}: {candidate['html_url']}")
+            return candidate
         time.sleep(5)
     else:
-        raise RuntimeError("Dispatched CI was not found; leaving the PR as a draft")
-    summary(f"Candidate CI: {ci['html_url']}")
+        raise RuntimeError(f"Dispatched {workflow} was not found for the candidate commit; leaving the PR as a draft")
+
+
+def wait_for_candidate_workflow(repo, ci, sha, required_job):
     run("gh", "run", "watch", str(ci["id"]), "--repo", repo, "--exit-status", "--interval", "30")
     ci = gh("api", f"repos/{repo}/actions/runs/{ci['id']}")
     jobs = gh("api", "--paginate", "--slurp", f"repos/{repo}/actions/runs/{ci['id']}/attempts/{ci['run_attempt']}/jobs?per_page=100")
     jobs = [job for page in jobs for job in page["jobs"]]
-    if not full_ci_passed(ci, jobs, sha):
-        raise RuntimeError("Full CI including guest build and boot did not pass")
+    if not workflow_passed(ci, jobs, sha, required_job):
+        raise RuntimeError(f"Candidate workflow including {required_job} did not pass; leaving the PR as a draft")
+
+
+def validate_and_merge(repo, pr, branch, sha, lock_ok=True):
+    ci = dispatch_candidate_workflow(repo, branch, sha, "ci.yml", "-f", "build_guest=true")
+    canary = dispatch_candidate_workflow(repo, branch, sha, "shell-canary.yml", "-f", "unfixed_palette=false")
+    wait_for_candidate_workflow(repo, ci, sha, "Guest image candidate")
+    wait_for_candidate_workflow(repo, canary, sha, "Current packages and guest shell")
     if not lock_ok:
         raise RuntimeError("Package lock refresh failed; leaving the PR as a draft")
     live = gh("pr", "view", str(pr), "--repo", repo, "--json", "headRefOid,state,baseRefName")
@@ -97,7 +110,7 @@ def validate_and_merge(repo, pr, branch, sha, lock_ok=True):
         raise RuntimeError("PR changed during validation; refusing to merge")
     run("gh", "pr", "ready", str(pr), "--repo", repo)
     run("gh", "pr", "merge", str(pr), "--repo", repo, "--squash", "--auto", "--match-head-commit", sha)
-    summary("Full CI passed. Requested merge of the tested commit under repository rules.")
+    summary("Full CI and Shell canary passed. Requested merge of the tested commit under repository rules.")
 
 
 def main():
@@ -154,8 +167,8 @@ def main():
             "Pin its commit, tree and normalized source digest. Keep reviewed backports in place so incompatibilities fail validation.\n\n"
             "## User check\n\nCreate a fresh VM and confirm its version and desktop. Upgrade a disposable older VM and verify files and Windows integrations.\n\n"
             f"## Validation\n\nPackage lock refresh: {'passed' if lock_ok else 'FAILED; manual compatibility work required'}. "
-            "Full CI is explicitly dispatched with the guest image build and boot enabled. "
-            "Automatic merge requires that entire run to pass for this exact commit. Windows hardware acceptance and signed release publication remain separate.\n",
+            "Full CI is explicitly dispatched with the guest image build and boot enabled, alongside Shell canary. "
+            "Automatic merge requires both entire runs to pass for this exact commit. Windows hardware acceptance and signed release publication remain separate.\n",
             encoding="utf-8")
         try:
             url = run("gh", "pr", "create", "--repo", repo, "--draft", "--title", f"Upgrade Omarchy to {tag}",
