@@ -30,7 +30,7 @@ def function(text, signature):
 
 init = function(renderer, 'int vrend_renderer_init(')
 assert 'vrend_state.intel_windows_buffer_uploads = vrend_intel_windows_buffer_uploads();' in init
-transfer = renderer.index('static int vrend_renderer_transfer_write_iov(')
+transfer = renderer.index('static int vrend_renderer_transfer_write_iov_unsynced(')
 buffer = renderer.index('if (has_bit(res->storage_bits, VREND_STORAGE_GL_BUFFER))', transfer)
 harness = r'''
 #include <assert.h>
