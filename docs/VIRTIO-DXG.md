@@ -198,13 +198,17 @@ real thing.
 | QEMU device `virtio-dxg-pci` (`qemu/`) | **Built** (development build and the full winq-emu runtime via `qemu/build-runtime.sh`). |
 | NVIDIA Windows Vulkan driver in Linux (`wine/`) | **Working in the Omarchy VM over virtio-dxg** (and on WSL2's `/dev/dxg`): device creation, guest-side shader compile, compute verified, 96–97% GPU-bound like native. Every D3DKMT call the driver makes succeeds. Prototype hooks; to become a Wine/Proton patch. |
 | Whole path in the real guest | The user's Omarchy disk booted read-only (QEMU snapshot), `dxgkrnl_virtio` loaded by an initramfs hook (`guest/test/mkdevinitramfs.py`), NVIDIA's driver store shared read-only over 9p. |
-| Launcher option, guest image staging | Not started |
-| Whole desktop on the GPU (Hyprland, shell, Xwayland, apps) | **Working**, stage 1: rendered on NVIDIA through Mesa d3d12 with KMS mirrors (`guest/mesa/`), presented by copying each frame into the virtio-gpu scanout buffer. |
-| Desktop presentation (zero-copy scanout) | Next: host-side link of mirrors to their D3D12 resources. |
+| Launcher option, guest image staging | **Working**: `TryOmarchy.exe -render dxg` (below). |
+| Whole desktop on the GPU (Hyprland, shell, Xwayland, apps) | **Working**: rendered on NVIDIA through Mesa d3d12 with KMS mirrors (`guest/mesa/`). |
+| Desktop presentation (zero-copy scanout) | **Working**: the window draws the compositor's D3D12 textures (below); 238 of 240 frames/s at 2496×1407, 240 Hz. |
+| Guest display mode | **Follows the host**: the window's size, its monitor's refresh rate (240 Hz on this panel). |
+| Sharing between devices and processes (`OPENRESOURCE`) | **Working** for shared resources (NT-handle sharing on the host). |
 
-Not offered yet, with exact replies: cross-process sharing (NT handles,
-`OPENRESOURCE`), existing-sysmem allocations (`VK_EXT_external_memory_host`),
-standard allocations, statistics, optional dxgkrnl features.
+Measured results, before and after: [VIRTIO-DXG-RESULTS.md](VIRTIO-DXG-RESULTS.md).
+
+Not offered yet, with exact replies: existing-sysmem allocations
+(`VK_EXT_external_memory_host`), standard allocations, statistics, optional
+dxgkrnl features.
 
 ### What the first VM runs taught
 
@@ -254,9 +258,37 @@ desktop maps and unmaps views fast enough to hit it within seconds. Views are
 now QOM objects that own their region, so the last flatview frees them, the
 same pattern virtio-gpu uses for blob mappings.
 
-Open on this path: Chromium's GPU process still falls back to software (its
-sandbox does not admit `/dev/dxg`); the per-frame mirror copy goes away with
-the host-side link; Vulkan clients (Dozen) and VA-API in apps are untested.
+Open on this path: Chromium's GPU process falls back to software unless
+`virtio_dxg.chromium_gpu=1` (its sandbox does not admit `/dev/dxg`), and
+applications still hand frames to the compositor through shared memory.
+
+### Zero-copy scanout
+
+The compositor's scanout buffers are virtio-gpu 2D dumb buffers, each
+mirrored by a GPU texture. Copying every frame from the texture into the
+buffer, then into QEMU's surface, then into SDL's texture held Hyprland to
+61 FPS at 2496×1407 on a 240 Hz panel. Now:
+
+1. Mesa (`guest/mesa/0005`) creates scanout mirrors as shared D3D12
+   textures and links each to its buffer: `LX_DXVIRTIOSCANOUT` on
+   `/dev/dxg` takes the texture's shared handle and the buffer's virtio-gpu
+   resource id. When the host accepts, flushes stop copying and only finish
+   the GPU work. The compositor imports its buffers on a second GBM device;
+   that import wraps the same texture (OpenResource on the host).
+2. The guest module sends the link on the device channel
+   (`VIRTIO_DXG_CHANNEL_DEVICE`) with the resource's host handle.
+3. QEMU opens the resource as an NT handle (`dxghost_share_resource`),
+   imports it into the SDL window's OpenGL context
+   (`GL_EXT_memory_object_win32`, BGRA8), and virtio-gpu, through hooks
+   `qemu/prepare.py` adds (`include/hw/display/virtio-gpu-scanout.h`),
+   skips the guest-memory copy and the surface of linked buffers: each frame
+   is `dpy_gl_scanout_texture`/`dpy_gl_update`, a GPU blit of 0.04–0.06 ms.
+   Cursor-sized buffers stay in memory, where virtio-gpu's cursor reads them.
+
+It needs `-display sdl,gl=on`, which the launcher's dxg mode uses; on any
+other display the links are refused and the copies stay. With
+`DXGHOST_STATS=1`, QEMU logs the presented frame rate and the gaps longer
+than 1.5 frames every 10 s.
 
 ### Starting it from the launcher
 
@@ -264,6 +296,11 @@ the host-side link; Vulkan clients (Dozen) and VA-API in apps are untested.
 opt-in. Normal launches keep the bundled runtime, the GPU (virgl) and CPU
 modes, their render history and upstream updates. A dxg launch records no
 render result, so it never changes what `auto` picks.
+
+The window is SDL's OpenGL display, which zero-copy scanout draws into. The
+guest's display mode follows it: the window's size in physical pixels
+(fullscreen is the panel's native resolution) and the refresh rate of the
+monitor it is on, updated when the window moves to another monitor.
 
 The mode needs three files in `<data>\virtio-dxg\`:
 

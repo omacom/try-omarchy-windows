@@ -1,0 +1,126 @@
+# virtio-dxg: results before and after
+
+Measured on one machine: an RTX 5090 Laptop GPU (driver 621.14) driving a
+2560×1600 240 Hz panel, Windows 11, and the owner's Omarchy install, booted
+read-only (QEMU snapshot) with 8 vCPUs and 8 GiB. "Native" means the same
+test on Windows itself, on the same GPU (MSYS2 ffmpeg, a CUDA test built
+against `nvcuda.dll`). The scripts are in
+[virtio-dxg/bench](../virtio-dxg/bench/README.md). Design:
+[VIRTIO-DXG.md](VIRTIO-DXG.md).
+
+"After" is this branch. "Before" comes from earlier builds of the same
+work, measured the same way:
+- the desktop table: the first build that ran the desktop (black screen,
+  virtio name), and for the 240 Hz rows the copy path that zero-copy
+  scanout replaced;
+- the graphics, compute and video tables: the full suite run of the build
+  before this round of fixes (`final-vm.txt` in the bench output). Earlier
+  still, NVENC ran at 72–95 fps with failures and NVDEC at 136 fps.
+
+## The desktop
+
+| | Before | After |
+| --- | --- | --- |
+| What renders the desktop | Black screen on the GPU path; CPU rendering only | Hyprland, its shell, Xwayland and apps on NVIDIA's D3D12 driver |
+| GPU name in `lspci`, fastfetch, `eglinfo`, `vulkaninfo`, `vainfo`, `nvidia-smi` | "Red Hat, Inc. Device 107e" (virtio) | "NVIDIA GeForce RTX 5090 Laptop GPU" |
+| Display mode | 1280×800 at 120 Hz, fixed | The host window's size and its monitor's refresh rate, followed live: 2496×1407 at 240 Hz in a window, the panel's 2560×1600 at 240 Hz fullscreen |
+| How a frame reaches the window | Three full-frame CPU copies (GPU readback into the virtio-gpu buffer, into QEMU's surface, into SDL's texture) | Zero-copy: the window draws the compositor's own D3D12 texture, one GPU blit (0.04–0.06 ms) |
+| Compositor at 2496×1407, 240 Hz | **61 FPS**, 16.4 ms per frame, 67 ms variance (Hyprland's overlay) | **238 page flips/s**; 99.1% of frames on time (1414 of 1427 in 6 s), 12 one frame late (kernel DRM trace, vkcube running) |
+| Browser animation test (testufo, Chromium) | — | about 200 fps, the owner's own test |
+| Input polling (keyboard, pointer buttons, wheel) | every 10 ms when busy, 30 ms after a pause | every display frame: 4 ms at 240 Hz, 8 ms when quiet |
+| Compositor freezes | Hyprland froze for good after seconds to hours (Mesa 26.2.4 slab-lock self-deadlock) | Fixed (upstream Mesa fix backported); 180 s of overlay, vkcube and glmark2 together without a missed check |
+
+The pointer itself moves with the Windows cursor (QEMU turns Hyprland's
+cursor into the host cursor), so it was never limited by these rates;
+clicks, drags and keys were.
+
+## Graphics
+
+| Test | Before | After | Notes |
+| --- | --- | --- | --- |
+| glmark2 1080p off-screen (OpenGL 4.6, Mesa d3d12) | 1289 (the first desktop build: 42, then a hang) | 2255–2522 | |
+| glmark2 720p windowed | 313 | 453–519 | Windowed clients still hand frames to the compositor through shared memory (below) |
+| vkmark 720p (Vulkan 1.2, Dozen) | 491 | 1026–1211 | |
+| vkcube, Wayland | timed out | 300 frames in 0.8 s without vsync | |
+| vkcube with vsync at 240 Hz | — | 202 fps | Limited by vkcube's own present (a CPU readback per frame), not the compositor |
+
+DirectX 12, as the guest's applications see it (`d3d12test`): feature level
+12_1, shader model 6.7, mesh shaders tier 1, variable-rate shading tier 2,
+sampler feedback 0.9, wave ops (32 lanes), tiled resources and resource
+binding tier 3. WSL2 on the same machine reports exactly the same. NVIDIA's
+user-mode D3D12 driver for Linux offers no DXR (ray tracing) and no
+feature level 12_2 there either.
+
+## Compute
+
+| Test | Native | Before | After | After vs native |
+| --- | --- | --- | --- | --- |
+| CUDA vector add, 16M floats (memory bandwidth) | 787–793 GB/s | 728 GB/s | 770–774 GB/s | 97.5–98% |
+| CUDA launch + synchronize, median | 7.2 µs (WSL2: 13.4 µs) | 44 µs | 16.9–17 µs | |
+| CUDA 1000 launches | 8.3–9.1 µs each | — | 17–18 µs each | |
+| CUDA 1080p→4K scaling (ffmpeg `scale_cuda`) | — | 123 fps | 136–141 fps | |
+
+## Video
+
+Steady state (1200 frames minus 60, so start-up is excluded):
+
+| | Native | Before | After | After vs native |
+| --- | --- | --- | --- | --- |
+| NVENC H.264 1080p | 591 fps | 333 fps | 596 fps | 101% |
+| NVENC HEVC 1080p | 516 fps | 533 fps | 525 fps | 102% |
+| NVDEC H.264 1080p | 2528 fps | 665 fps | 1827–2147 fps | 72–85% |
+
+Whole runs (1200 frames, start-up included):
+
+| | Native | Before | After |
+| --- | --- | --- | --- |
+| NVDEC decode | 793 ms | 1498 ms | 1277 ms |
+| NVENC H.264 | 2414 ms | 1604 ms, failing | 3131 ms |
+| NVENC HEVC | 2688 ms | 3686 ms | 3406 ms |
+| NVENC AV1 | 2455 ms | 3886 ms, failing | 3210 ms |
+| Transcode NVDEC→NVENC | 2358 ms | 7014 ms | 2893 ms |
+| Start-up, NVDEC / NVENC | 309 / 449 ms | 1428 / 2454 ms | 710 / 1178 ms |
+| Failures in 30 mixed sessions | 0 | 2 ("out of memory" locking bitstream buffers) | 0 |
+
+Other media:
+
+| | Before | After |
+| --- | --- | --- |
+| VA-API (Mesa d3d12) | 15 profiles; decoding crashed ffmpeg (the first desktop build: no VA-API at all) | 15 profiles; H.264 1080p decode 241 fps with start-up |
+| VA-API encode | fails | **still fails**: D3D12's video encoder removes the device on the first frame. NVENC (ffmpeg's `*_nvenc`, OBS) works |
+| JPEG 1080p decode, NVDEC (`mjpeg_cuvid`) | not measured (0.0 parse error) | 467 fps |
+| NVIDIA libraries: OptiX, NGX, Optical Flow, NVML, NVCUVID, NVENC | load | load |
+
+## Stability fixes behind these numbers
+
+| Fault | Effect | Fix |
+| --- | --- | --- |
+| Mesa 26.2.4 freed suballocated buffers under its own slab lock | Hyprland froze for good during a texture upload | Upstream fixes `1761974a`, `8835df35` backported (`guest/mesa/0003`, `0004`) |
+| Lock2 views mapped with the size of the first view | Corrupt mappings; NVENC "invalid param" | Each view mapped with its own size |
+| Process exit freed GPU VA ranges the driver frees with their allocations | 11k STATUS_INVALID_PARAMETER per run, slowdowns | Ranges remember the allocation that created them |
+| Views went through QEMU's memory API (a flatview rebuild under the BQL each) | 3.3 ms per view, vCPUs stalled | Mapped straight into the WHPX partition: 0.1–0.3 ms |
+| OpenResource was not offered | The guest's D3D12 runtime removed the device when one Mesa screen opened another's texture | dxghost opens the resource on the guest device through an NT handle |
+| Expected adapter-info probe failures logged as errors | About 25 serial-console lines per process start, each byte a VM exit | Debug level; other ioctl failures rate limited |
+| The debug overlay and idle blanking in measurements | Throttled clients (display off, locked session); Hyprland's overlay can deadlock in hyprgraphics | Benchmarks keep the display on and do not use the overlay |
+
+## Where the rest of native performance goes
+
+- **Application windows.** Apps hand frames to Hyprland through shared
+  memory (`wl_shm`): a GPU readback in the app and an upload in the
+  compositor, about 14 MB each per frame at 2.5K. That is what keeps a
+  full-screen browser animation near 200 fps rather than 240. The fix is
+  the same sharing the compositor's scanout now uses, extended to client
+  buffers (OpenResource now works across processes, which it needs).
+- **Frame pacing.** The guest's vblank is a 240 Hz timer, not the host
+  panel's: a frame can land just after the host's refresh and wait one
+  more, felt as an uneven frame now and then.
+- **Per-call latency.** Every GPU call is a VM exit and a host call: CUDA
+  launch + synchronize costs 17 µs against 7 µs native, and NVDEC decode,
+  which synchronizes per frame, reaches 72–85% of native. Video encode
+  and compute bandwidth, which batch their work, are at 97–102%.
+- **Start-up.** Creating a hardware queue costs the host 5–11 ms; video
+  sessions start in 0.7–1.2 s against 0.3–0.45 s natively.
+- **Not exposed by the platform.** DXR ray tracing, feature level 12_2 and
+  DLSS for Linux applications need NVIDIA's Linux Vulkan or D3D12 driver
+  stack, which WSL's user-mode driver does not provide (WSL2 lacks them
+  the same way). OptiX ray tracing goes through CUDA and loads.
