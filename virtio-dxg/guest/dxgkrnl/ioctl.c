@@ -667,7 +667,7 @@ cleanup:
 	if (adapter)
 		kref_put(&adapter->adapter_kref, dxgadapter_release);
 
-	DXG_TRACE_IOCTL_END(ret);
+	DXG_PROBE_IOCTL_END(ret);
 	return ret;
 }
 
@@ -4665,7 +4665,7 @@ cleanup:
 		dxgadapter_release_lock_shared(adapter);
 	if (adapter)
 		kref_put(&adapter->adapter_kref, dxgadapter_release);
-	DXG_TRACE_IOCTL_END(ret);
+	DXG_PROBE_IOCTL_END(ret);
 	return ret;
 }
 
@@ -5580,7 +5580,7 @@ cleanup:
 	if (adapter)
 		kref_put(&adapter->adapter_kref, dxgadapter_release);
 
-	DXG_TRACE_IOCTL_END(ret);
+	DXG_PROBE_IOCTL_END(ret);
 	return ret;
 }
 

@@ -1098,9 +1098,26 @@ void dxgk_validate_ioctls(void);
 
 #endif /* DEBUG */
 
+/*
+ * Rate limited: a failing application can call thousands of times, and every
+ * line on a VM's serial console costs the caller an exit per byte.
+ */
 #define DXG_TRACE_IOCTL_END(ret)  do {			\
 	if (ret < 0)					\
-		DXG_ERR("Ioctl failed: %d", ret);	\
+		dev_err_ratelimited(DXGDEV, "%s: Ioctl failed: %d", \
+				    __func__, ret);	\
+	else						\
+		DXG_TRACE("Ioctl returned: %d", ret);	\
+} while (0)
+
+/*
+ * Queries the runtime makes to find out what the host supports (adapter
+ * info types, feature flags, driver escapes): a failure is an answer, about
+ * 25 of them per process start, so it is only a debug message.
+ */
+#define DXG_PROBE_IOCTL_END(ret)  do {			\
+	if (ret < 0)					\
+		dev_dbg(DXGDEV, "%s: Ioctl failed: %d", __func__, ret); \
 	else						\
 		DXG_TRACE("Ioctl returned: %d", ret);	\
 } while (0)

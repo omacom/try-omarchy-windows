@@ -33,6 +33,63 @@ static const GUID IID_ID3D12Device = { 0x189819f1, 0x1db6, 0x4b57,
 #define CALL(obj, idx, type, ...) \
 	((type)((Obj *)(obj))->vtbl[idx])(obj, ##__VA_ARGS__)
 
+/* ID3D12Device::CheckFeatureSupport (slot 13). */
+static HRESULT feature(void *device, int which, void *data, uint32_t size)
+{
+	memset(data, 0, size);
+	return CALL(device, 13, HRESULT (*)(void *, int, void *, uint32_t),
+		    which, data, size);
+}
+
+static const char *tier(uint32_t t)
+{
+	static char buf[32];
+
+	if (!t)
+		return "no";
+	snprintf(buf, sizeof(buf), "tier %u.%u", t / 10, t % 10);
+	return buf;
+}
+
+/* The DirectX 12 Ultimate features, as the guest's applications see them. */
+static void features(void *device)
+{
+	uint32_t d[16];
+	int sm;
+
+	/* D3D12_FEATURE_SHADER_MODEL (7): in, the highest model asked. */
+	for (sm = 0x69; sm >= 0x60; sm--) {
+		d[0] = sm;
+		if (CALL(device, 13, HRESULT (*)(void *, int, void *, uint32_t),
+			 7, d, 4) >= 0)
+			break;
+	}
+	if (sm >= 0x60)
+		printf("shader model: %x.%x\n", d[0] >> 4, d[0] & 15);
+	/* OPTIONS5 (27): SRVOnlyTiledResourceTier3, RenderPassesTier,
+	 * RaytracingTier. */
+	if (feature(device, 27, d, 12) >= 0)
+		printf("ray tracing (DXR): %s\n", tier(d[2]));
+	/* OPTIONS6 (30): ..., VariableShadingRateTier at 8. */
+	if (feature(device, 30, d, 20) >= 0)
+		printf("variable rate shading: tier %u\n", d[2]);
+	/* OPTIONS7 (32): MeshShaderTier, SamplerFeedbackTier. */
+	if (feature(device, 32, d, 8) >= 0) {
+		printf("mesh shaders: %s\n", tier(d[0]));
+		printf("sampler feedback: %s\n", tier(d[1] / 10));
+	}
+	/* OPTIONS1 (8): WaveOps, WaveLaneCountMin, Max, TotalLaneCount. */
+	if (feature(device, 8, d, 24) >= 0)
+		printf("wave ops: %s, %u lanes, %u in total\n",
+		       d[0] ? "yes" : "no", d[1], d[3]);
+	/* OPTIONS (0): TiledResourcesTier at 12, ResourceBindingTier at 16,
+	 * ConservativeRasterizationTier at 32. */
+	if (feature(device, 0, d, 60) >= 0)
+		printf("tiled resources: tier %u, resource binding: tier %u, "
+		       "conservative rasterization: tier %u\n",
+		       d[3], d[4], d[8]);
+}
+
 int main(void)
 {
 	void *dxcore = dlopen("libdxcore.so", RTLD_NOW);
@@ -76,10 +133,21 @@ int main(void)
 			CALL(adapter, 6, HRESULT (*)(void *, int, size_t, void *),
 			     2, sizeof(name), name);
 			printf("adapter 0: %s\n", name);
-			hr = create_device(adapter, 0xb000, &IID_ID3D12Device,
+			/* 12_2 is DirectX 12 Ultimate; 11_0 is what Mesa asks. */
+			hr = create_device(adapter, 0xc200, &IID_ID3D12Device,
 					   &device);
-			printf("D3D12CreateDevice(feature level 11_0): 0x%08x%s\n",
-			       (unsigned)hr, hr >= 0 ? "  D3D12 TEST PASSED" : "");
+			printf("D3D12CreateDevice(feature level 12_2): 0x%08x\n",
+			       (unsigned)hr);
+			if (hr < 0) {
+				hr = create_device(adapter, 0xb000,
+						   &IID_ID3D12Device, &device);
+				printf("D3D12CreateDevice(feature level 11_0): 0x%08x\n",
+				       (unsigned)hr);
+			}
+			if (hr >= 0) {
+				features(device);
+				printf("D3D12 TEST PASSED\n");
+			}
 		}
 	}
 	return device ? 0 : 1;
