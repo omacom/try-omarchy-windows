@@ -390,11 +390,56 @@ static void dxg_complete(VirtIODxg *d, DxgRequest *r, uint8_t *result,
     bql_unlock();
 }
 
+/*
+ * Windows runs the threads of processes it considers background (no
+ * foreground window, or flagged efficient) at low QoS: on efficiency cores at
+ * low clocks, with their timer requests ignored while the window is hidden.
+ * Then a vCPU or a GPU request lane wakes in milliseconds where it took
+ * microseconds, and the guest's frames and calls stall. QEMU opts out for
+ * the whole process (execution speed and timer resolution), and the lanes,
+ * which carry the guest's GPU calls, also run above normal priority.
+ * Information classes: ProcessPowerThrottling 4, ThreadPowerThrottling 3.
+ */
+typedef BOOL (WINAPI *DxgSetInfo)(HANDLE, int, LPVOID, DWORD);
+
+typedef struct DxgPowerThrottling {
+    ULONG version;
+    ULONG control_mask;
+    ULONG state_mask;
+} DxgPowerThrottling;
+
+static void dxg_high_qos_process(void)
+{
+    DxgSetInfo set = (DxgSetInfo)(void (*)(void))
+        GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetProcessInformation");
+    /* Controlled, and off: never throttled, timer requests always honored. */
+    DxgPowerThrottling s = { 1, 0x1 | 0x4, 0 };
+
+    if (!set || !set(GetCurrentProcess(), 4, &s, sizeof(s))) {
+        warn_report("virtio-dxg: cannot opt out of power throttling: %lu",
+                    (unsigned long)GetLastError());
+    }
+}
+
+static void dxg_high_qos_thread(void)
+{
+    DxgSetInfo set = (DxgSetInfo)(void (*)(void))
+        GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetThreadInformation");
+    DxgPowerThrottling s = { 1, 0x1, 0 };
+
+    if (set) {
+        set(GetCurrentThread(), 3, &s, sizeof(s));
+    }
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+}
+
 static void *dxg_lane_main(void *opaque)
 {
     DxgLane *lane = opaque;
     VirtIODxg *d = lane->dev;
     g_autofree uint8_t *result = g_malloc(VIRTIO_DXG_MAX_MESSAGE);
+
+    dxg_high_qos_thread();
 
     qemu_mutex_lock(&lane->lock);
     for (;;) {
@@ -1109,6 +1154,9 @@ static void dxg_realize(DeviceState *dev, Error **errp)
         return;
     }
     d->stats = getenv("DXGHOST_STATS") != NULL;
+    if (!getenv("VIRTIO_DXG_DEFAULT_QOS")) {
+        dxg_high_qos_process();
+    }
     config.adapter_luid_low = d->luid_low;
     config.adapter_luid_high = d->luid_high;
     config.iospace_size = d->iospace_size;

@@ -283,6 +283,17 @@ bool dxghost_nonblocking(const void *message, uint32_t size)
 	case DXGK_VMBCOMMAND_SUBMITCOMMAND:
 	case DXGK_VMBCOMMAND_SUBMITCOMMANDTOHWQUEUE:
 	case DXGK_VMBCOMMAND_GETDEVICESTATE:
+	/*
+	 * Queries the kernel answers from its own state. Mesa asks for the
+	 * video memory budget at every flush: through a lane, waking its
+	 * thread cost 1-9 ms each in the compositor's frame.
+	 */
+	case dxgk_vmbcommand_queryvideomemoryinfo:
+	case DXGK_VMBCOMMAND_QUERYCLOCKCALIBRATION:
+	case DXGK_VMBCOMMAND_QUERYALLOCATIONRESIDENCY:
+	case DXGK_VMBCOMMAND_GETALLOCATIONPRIORITY:
+	case DXGK_VMBCOMMAND_SETALLOCATIONPRIORITY:
+	case DXGK_VMBCOMMAND_GETCONTEXTSCHEDULINGPRIORITY:
 		return true;
 	case DXGK_VMBCOMMAND_WAITFORSYNCOBJECTFROMCPU:
 		/* Without a guest event the host call blocks until done. */
