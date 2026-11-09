@@ -44,11 +44,25 @@ assert 'glTexStorage2D(gr->target, 1, internalformat, width, height);' in wide
 assert 'vrend_pitch_copy_count++;' in wide
 assert 'glTexStorageMem2DEXT(gr->target, 1, internalformat, width, height, mem_object, 0);' in set_type
 
-# Every read refreshes the copy first: draws, blits, copies and readback.
+# Reads refresh the copy from the imported memory first, and GL writes are
+# sent back to it afterwards: draws, clears, compute, blits, copies, uploads
+# and readback.
 draw = function(renderer, 'int vrend_draw_vbo(')
-assert draw.index('vrend_draw_refresh_pitch_copies(sub_ctx);') < draw.index('vrend_draw_bind_objects(sub_ctx,')
-assert 'vrend_resource_refresh_pitch_copy(src_res);' in function(renderer, 'void vrend_renderer_blit(')
-assert 'vrend_resource_refresh_pitch_copy(src_res);' in function(renderer, 'void vrend_renderer_resource_copy_region(')
+assert draw.index('vrend_draw_pitch_copies(sub_ctx, false);') < draw.index('vrend_draw_bind_objects(sub_ctx,')
+assert draw.rstrip().endswith('vrend_draw_pitch_copies(sub_ctx, true);\n   return 0;\n}')
+grid = function(renderer, 'void vrend_launch_grid(')
+assert grid.index('vrend_stage_pitch_copies(sub_ctx, PIPE_SHADER_COMPUTE, false);') < grid.index('vrend_draw_bind_samplers_shader(sub_ctx, PIPE_SHADER_COMPUTE, 0);')
+assert grid.rstrip().endswith('vrend_stage_pitch_copies(sub_ctx, PIPE_SHADER_COMPUTE, true);\n}')
+for signature, call in (
+        ('void vrend_clear(struct vrend_context *ctx, unsigned buffers,\n                 const union pipe_color_union *color, double depth,\n                 unsigned stencil)\n{', 'vrend_clear_unsynced('),
+        ('int vrend_clear_texture(struct vrend_context* ctx,\n                        struct', 'vrend_clear_texture_unsynced('),
+        ('static int vrend_renderer_transfer_write_iov(struct vrend_context *ctx,\n                                             struct vrend_resource *res,\n                                             const struct iovec *iov, int num_iovs,\n                                             const struct vrend_transfer_info *info)\n{', 'vrend_renderer_transfer_write_iov_unsynced('),
+        ('void vrend_renderer_resource_copy_region(struct vrend_context *ctx,', 'vrend_renderer_resource_copy_region_unsynced('),
+        ('void vrend_renderer_blit(struct vrend_context *ctx,', 'vrend_renderer_blit_unsynced(')):
+    wrapper = function(renderer, signature)
+    refresh = min(wrapper.find(x) for x in ('vrend_resource_refresh_pitch_copy(', 'vrend_framebuffer_pitch_copies(ctx->sub, false);') if x in wrapper)
+    flush = max(wrapper.rfind(x) for x in ('vrend_resource_flush_pitch_copy(', 'vrend_framebuffer_pitch_copies(ctx->sub, true);'))
+    assert 0 <= refresh < wrapper.index(call) < flush, signature
 assert 'vrend_resource_refresh_pitch_copy(res);' in function(renderer, 'static int vrend_renderer_transfer_send_iov(')
 destroy = function(renderer, 'void vrend_renderer_resource_destroy(')
 assert 'glDeleteTextures(1, &res->pitch_src_id);' in destroy and 'vrend_pitch_copy_count--;' in destroy
@@ -79,11 +93,18 @@ struct vrend_renderer_resource_set_type_args {
     uint32_t format, bind, width, height, usage; uint64_t modifier; uint32_t plane_count;
     uint32_t plane_strides[VIRGL_GBM_MAX_PLANES]; uint32_t plane_offsets[VIRGL_GBM_MAX_PLANES];
 };
+#define GL_READ_ONLY 0x88b8
+#define GL_READ_WRITE 0x88ba
+#define PIPE_SHADER_COMPUTE 2
 struct vrend_sampler_view { struct vrend_resource *texture; };
 struct vrend_shader_view { struct vrend_sampler_view *views[32]; };
-struct vrend_linked_shader_program { uint32_t samplers_used_mask[2]; };
+struct vrend_image_view { GLenum access; struct vrend_resource *texture; };
+struct vrend_surface { struct vrend_resource *texture; };
+struct vrend_linked_shader_program { uint32_t samplers_used_mask[3]; };
 struct vrend_sub_context { struct vrend_linked_shader_program *prog; int last_shader_idx;
-                           struct vrend_shader_view views[2]; };
+                           struct vrend_shader_view views[3];
+                           struct vrend_image_view image_views[3][8]; uint32_t images_used_mask[3];
+                           uint32_t nr_cbufs; struct vrend_surface *surf[8]; struct vrend_surface *zsurf; };
 static struct { bool pitch_copy_imports; } vrend_state;
 static unsigned util_format_get_blocksize(unsigned format) { return format; }
 static int u_bit_scan(uint32_t *mask) { int i = __builtin_ctz(*mask); *mask &= *mask - 1; return i; }
@@ -92,7 +113,7 @@ static const char *test_getenv(const char *name) {
     assert(!strcmp(name, "TRYOMARCHY_PITCH_COPY")); return env_value;
 }
 #define getenv(name) test_getenv(name)
-static unsigned copies;
+static unsigned copies, refreshes, flushes;
 static GLuint copy_src, copy_dst;
 static GLsizei copy_w, copy_h, copy_d;
 static void glCopyImageSubData(GLuint src, GLenum st, GLint sl, GLint sx, GLint sy, GLint sz,
@@ -101,13 +122,19 @@ static void glCopyImageSubData(GLuint src, GLenum st, GLint sl, GLint sx, GLint 
     assert(st == GL_TEXTURE_2D && dt == GL_TEXTURE_2D);
     assert(!sl && !sx && !sy && !sz && !dl && !dx && !dy && !dz);
     copies++; copy_src = src; copy_dst = dst; copy_w = w; copy_h = h; copy_d = d;
+    /* Pitch views have odd names in the tests, private textures even ones. */
+    if (src % 2) refreshes++; else flushes++;
 }
 '''
 harness += 'static uint32_t vrend_pitch_copy_count;\n'
 harness += function(renderer, 'static bool vrend_pitch_copy_imports(')
 harness += function(renderer, 'static GLsizei vrend_import_pitch_width(')
 harness += function(renderer, 'static void vrend_resource_refresh_pitch_copy(')
-harness += function(renderer, 'static void vrend_draw_refresh_pitch_copies(')
+harness += function(renderer, 'static void vrend_resource_flush_pitch_copy(')
+harness += function(renderer, 'static void vrend_pitch_copy_sync(')
+harness += function(renderer, 'static void vrend_framebuffer_pitch_copies(')
+harness += function(renderer, 'static void vrend_stage_pitch_copies(')
+harness += function(renderer, 'static void vrend_draw_pitch_copies(')
 harness += r'''
 static GLsizei width_for(unsigned w, unsigned h, unsigned stride, unsigned planes,
                          uint64_t map_size, int target, unsigned samples) {
@@ -152,33 +179,70 @@ int main(void) {
     features[feat_copy_image] = true; features[feat_texture_storage] = false;
     assert(width_for(1000, 700, 4096, 1, big, PIPE_TEXTURE_2D, 0) == 0);
 
-    /* A refresh copies exactly the visible image from the pitch view. */
-    struct vrend_resource copied = {{PIPE_TEXTURE_2D, 4, 1000, 700, 0}, 11, GL_TEXTURE_2D, 12};
-    struct vrend_resource direct = {{PIPE_TEXTURE_2D, 4, 1024, 700, 0}, 13, GL_TEXTURE_2D, 0};
+    /* A refresh copies exactly the visible image from the pitch view, and a
+     * flush sends it back the other way. */
+    struct vrend_resource copied = {{PIPE_TEXTURE_2D, 4, 1000, 700, 0}, 12, GL_TEXTURE_2D, 11};
+    struct vrend_resource direct = {{PIPE_TEXTURE_2D, 4, 1024, 700, 0}, 14, GL_TEXTURE_2D, 0};
+    struct vrend_resource target = {{PIPE_TEXTURE_2D, 4, 1000, 700, 0}, 16, GL_TEXTURE_2D, 15};
+    struct vrend_resource image = {{PIPE_TEXTURE_2D, 4, 1000, 700, 0}, 18, GL_TEXTURE_2D, 17};
     vrend_resource_refresh_pitch_copy(&copied);
-    assert(copies == 1 && copy_src == 12 && copy_dst == 11 && copy_w == 1000 && copy_h == 700 && copy_d == 1);
+    assert(copies == 1 && copy_src == 11 && copy_dst == 12 && copy_w == 1000 && copy_h == 700 && copy_d == 1);
+    vrend_resource_flush_pitch_copy(&copied);
+    assert(copies == 2 && copy_src == 12 && copy_dst == 11 && copy_w == 1000 && copy_h == 700);
     vrend_resource_refresh_pitch_copy(&direct);
+    vrend_resource_flush_pitch_copy(&direct);
     vrend_resource_refresh_pitch_copy(NULL);
-    assert(copies == 1);
+    vrend_resource_flush_pitch_copy(NULL);
+    assert(copies == 2);
 
-    /* A draw refreshes each sampled copy, every time, and nothing else. */
+    /* Before a draw: every sampled texture, shader image and render target
+     * is refreshed. After it: only what the draw could write is flushed. */
     struct vrend_sampler_view a = {&copied}, b = {&direct}, unused = {&copied};
-    struct vrend_linked_shader_program prog = {{0, (1u << 0) | (1u << 3)}};
-    struct vrend_sub_context sub = {&prog, PIPE_SHADER_FRAGMENT, {{{0}}, {{0}}}};
+    struct vrend_surface color = {&target}, other = {&direct};
+    struct vrend_linked_shader_program prog = {{0, (1u << 0) | (1u << 3), 1u << 0}};
+    struct vrend_sub_context sub;
+    memset(&sub, 0, sizeof(sub));
+    sub.prog = &prog; sub.last_shader_idx = PIPE_SHADER_FRAGMENT;
     sub.views[PIPE_SHADER_FRAGMENT].views[0] = &a;
     sub.views[PIPE_SHADER_FRAGMENT].views[3] = &b;
     sub.views[PIPE_SHADER_FRAGMENT].views[5] = &unused;
-    copies = 0; vrend_pitch_copy_count = 0;
-    vrend_draw_refresh_pitch_copies(&sub);
+    sub.image_views[PIPE_SHADER_FRAGMENT][1] = (struct vrend_image_view){GL_READ_ONLY, &image};
+    sub.image_views[PIPE_SHADER_FRAGMENT][2] = (struct vrend_image_view){GL_READ_WRITE, &image};
+    sub.images_used_mask[PIPE_SHADER_FRAGMENT] = (1u << 1) | (1u << 2);
+    sub.nr_cbufs = 2; sub.surf[0] = &color; sub.surf[1] = &other;
+    copies = refreshes = flushes = 0; vrend_pitch_copy_count = 0;
+    vrend_draw_pitch_copies(&sub, false);
+    vrend_draw_pitch_copies(&sub, true);
     assert(copies == 0);
-    vrend_pitch_copy_count = 1;
-    vrend_draw_refresh_pitch_copies(&sub);
-    vrend_draw_refresh_pitch_copies(&sub);
-    assert(copies == 2);
+    vrend_pitch_copy_count = 3;
+    vrend_draw_pitch_copies(&sub, false);
+    assert(refreshes == 4 && flushes == 0);
+    vrend_draw_pitch_copies(&sub, true);
+    assert(refreshes == 4 && flushes == 2);
+    /* Each draw refreshes again: the guest can change the memory any time. */
+    vrend_draw_pitch_copies(&sub, false);
+    assert(refreshes == 8);
     prog.samplers_used_mask[PIPE_SHADER_FRAGMENT] = 1u << 2;
-    vrend_draw_refresh_pitch_copies(&sub);
-    assert(copies == 2);
-    puts("ok - pitch copy decision, widths, bounds, refresh on draws and direct imports");
+    sub.images_used_mask[PIPE_SHADER_FRAGMENT] = 0;
+    sub.nr_cbufs = 0;
+    vrend_draw_pitch_copies(&sub, false);
+    vrend_draw_pitch_copies(&sub, true);
+    assert(refreshes == 8 && flushes == 2);
+    /* A depth buffer counts as a render target. */
+    struct vrend_surface depth = {&target};
+    sub.zsurf = &depth;
+    vrend_framebuffer_pitch_copies(&sub, false);
+    vrend_framebuffer_pitch_copies(&sub, true);
+    vrend_framebuffer_pitch_copies(NULL, true);
+    assert(refreshes == 9 && flushes == 3);
+    /* Compute refreshes its samplers and images, and flushes writable images. */
+    sub.views[PIPE_SHADER_COMPUTE].views[0] = &a;
+    sub.image_views[PIPE_SHADER_COMPUTE][0] = (struct vrend_image_view){GL_READ_WRITE, &image};
+    sub.images_used_mask[PIPE_SHADER_COMPUTE] = 1u << 0;
+    vrend_stage_pitch_copies(&sub, PIPE_SHADER_COMPUTE, false);
+    vrend_stage_pitch_copies(&sub, PIPE_SHADER_COMPUTE, true);
+    assert(refreshes == 11 && flushes == 4);
+    puts("ok - pitch copy decision, widths, bounds, refresh before reads, flush after writes, direct imports");
     return 0;
 }
 '''

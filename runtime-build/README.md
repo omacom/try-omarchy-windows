@@ -40,8 +40,9 @@ lays the linear texture out with its own pitch instead of the image's. On
 Intel's Windows drivers a window whose width is not a multiple of 64 pixels
 reads skewed (#394). When the guest's row pitch is wider than the image,
 the renderer views the memory as a texture one pitch wide and copies the visible
-part into the resource's texture before each draw, blit, copy or readback that
-uses it. It is on for Intel's Windows OpenGL driver; `TRYOMARCHY_PITCH_COPY=on`
+part into the resource's texture before anything reads it: draws, compute,
+clears, blits, copies, uploads and readback. Anything OpenGL writes into it is
+copied back into the memory straight afterwards, so Vulkan sees it too. It is on for Intel's Windows OpenGL driver; `TRYOMARCHY_PITCH_COPY=on`
 or `off` overrides that. `test-image-pitch.py <patched-renderer-source>` covers
 the decision, widths, bounds and refreshes against fake GL calls.
 
