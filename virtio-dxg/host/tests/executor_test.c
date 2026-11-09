@@ -111,6 +111,15 @@ static int32_t __stdcall f_reserve_va(void *p)
 	return 0;
 }
 
+static int32_t __stdcall f_map_va(void *p)
+{
+	struct d3dddi_mapgpuvirtualaddress *a = p;
+
+	if (!a->base_address)
+		a->virtual_address = 0x300000000ull;	/* the driver picks */
+	return 0;
+}
+
 static int32_t __stdcall f_free_va(void *p)
 {
 	const struct d3dkmt_freegpuvirtualaddress *a = p;
@@ -341,6 +350,7 @@ static void test_executor(void)
 	kmt.DestroyDevice = f_destroy_device;
 	kmt.ReserveGpuVirtualAddress = f_reserve_va;
 	kmt.FreeGpuVirtualAddress = f_free_va;
+	kmt.MapGpuVirtualAddress = f_map_va;
 	kmt.CreateAllocation2 = f_create_allocation;
 	kmt.DestroyAllocation2 = f_destroy_allocation;
 	kmt.Lock2 = f_lock2;
@@ -672,6 +682,24 @@ static void test_executor(void)
 		c->args.size = 12ull << 30;
 		CHECK(run(h, sizeof(*c), sizeof(*r)).status == VIRTIO_DXG_OK);
 		CHECK(r->virtual_address == 0x200000000ull);
+	}
+
+	/* A base-less map: the driver frees its range with the allocation,
+	 * so process exit must not (another process may own it by then). */
+	{
+		struct dxgkvmb_command_mapgpuvirtualaddress *c = msg(sizeof(*c));
+
+		AcquireSRWLockExclusive(&h->lock);
+		CHECK(dxghost_obj_add(h, 0x7a00, OBJ_PAGING_QUEUE, p1, d1) == 0);
+		ReleaseSRWLockExclusive(&h->lock);
+		vgpu(c, DXGK_VMBCOMMAND_MAPGPUVIRTUALADDRESS, p1);
+		c->args.paging_queue.v = 0x7a00;
+		c->args.allocation.v = alloc1;
+		c->args.size_in_pages = 16;
+		run(h, sizeof(*c),
+		    sizeof(struct dxgkvmb_command_mapgpuvirtualaddress_return));
+		CHECK(((struct dxgkvmb_command_mapgpuvirtualaddress_return *)
+		       res_buf)->virtual_address == 0x300000000ull);
 	}
 
 	/* Process exit destroys its device and releases every mapping, and

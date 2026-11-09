@@ -76,6 +76,10 @@ struct dxghost_deferred {
 /* GPU VA range a guest process reserved; guest VA operations stay inside. */
 struct dxghost_va {
 	uint32_t process;
+	/* 0: an explicit ReserveGpuVirtualAddress, the process must free it.
+	 * Else the allocation whose base-less map created the range; the
+	 * driver frees it with the allocation. */
+	uint32_t allocation;
 	uint64_t base;
 	uint64_t size;
 };

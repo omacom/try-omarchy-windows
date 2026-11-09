@@ -113,6 +113,7 @@ static uint64_t dxg_iospace_gpa(VirtIODxg *d)
 /* DXGHOST_STATS: where guest-physical view changes spend their time. */
 static struct {
     uint64_t maps, bql_wait_us, update_us;
+    uint64_t direct_unmaps, direct_unmap_failures;
 } dxg_map_stats;
 
 static int dxg_map(void *opaque, uint64_t gpa, void *hva, uint64_t size,
@@ -140,10 +141,14 @@ static int dxg_map(void *opaque, uint64_t gpa, void *hva, uint64_t size,
                     dxg_map_stats.update_us += g_get_monotonic_time() - t0;
                     if (dxg_map_stats.maps % 2000 == 0) {
                         warn_report("virtio-dxg: %" PRIu64 " views mapped "
-                                    "directly: %" PRIu64 " us avg",
+                                    "directly: %" PRIu64 " us avg, %" PRIu64
+                                    " live, %" PRIu64 " unmap failures",
                                     dxg_map_stats.maps,
                                     dxg_map_stats.update_us /
-                                    dxg_map_stats.maps);
+                                    dxg_map_stats.maps,
+                                    dxg_map_stats.maps -
+                                    dxg_map_stats.direct_unmaps,
+                                    dxg_map_stats.direct_unmap_failures);
                     }
                 }
                 return 0;
@@ -211,7 +216,15 @@ static void dxg_unmap(void *opaque, uint64_t gpa, uint64_t size)
         fallback = g_hash_table_remove(d->state->fallback, &gpa);
         qemu_mutex_unlock(&d->state->direct_lock);
         if (!fallback) {
-            whp_dispatch.WHvUnmapGpaRange(whpx_global.partition, gpa, size);
+            HRESULT hr = whp_dispatch.WHvUnmapGpaRange(whpx_global.partition,
+                                                       gpa, size);
+
+            dxg_map_stats.direct_unmaps++;
+            if (FAILED(hr)) {
+                dxg_map_stats.direct_unmap_failures++;
+                warn_report_once("virtio-dxg: unmapping a view failed "
+                                 "(0x%08lx)", (unsigned long)hr);
+            }
             return;
         }
     }

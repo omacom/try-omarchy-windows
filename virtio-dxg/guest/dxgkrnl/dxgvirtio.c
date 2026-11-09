@@ -26,6 +26,7 @@
 #include <linux/version.h>
 #include <linux/virtio.h>
 #include <linux/virtio_config.h>
+#include <linux/hrtimer.h>
 #include "dxgkrnl.h"
 #include "dxgvmbus.h"
 #include "virtio_dxg.h"
@@ -45,6 +46,7 @@ struct dxgvirtio_req {
 	u32				cmd_size;
 	u32				result_size;
 	bool				async;
+	bool				urgent;	/* async, but its sender sleeps on it */
 };
 
 struct dxgvirtio {
@@ -53,6 +55,10 @@ struct dxgvirtio {
 	struct virtqueue		*event;
 	spinlock_t			ctrl_lock;
 	wait_queue_head_t		ctrl_space;
+	/* Asynchronous messages queued without a kick yet (ctrl_lock). */
+	bool				kick_pending;
+	struct hrtimer			kick_timer;
+	ktime_t				last_kick;
 	spinlock_t			event_lock;
 	u8				*event_bufs;
 	u32				event_size;
@@ -65,6 +71,62 @@ struct dxgvirtio {
 	bool				compute_only;
 	bool				owns_global;
 };
+
+/*
+ * Every kick is a VM exit, and the host runs the queue inline during it.
+ * Asynchronous messages (submissions and signals: a CUDA launch, a GL
+ * flush) are queued without one; the next synchronous message, a CPU wait
+ * (its sender sleeps until the host answers), a full ring or this delay
+ * kicks once for all of them, in order. The delay bounds what a lone
+ * submission waits; 0 kicks every message.
+ *
+ * Off by default: on an RTX 5090 host it made a loop of 1000 CUDA launches
+ * up to 2x faster per launch, but a launch followed by a wait (the common
+ * case: a frame, a kernel and its result) 1.3x (5 us) to 2.3x (20 us)
+ * slower, and a timer-driven kick costs more than the exit it saves.
+ */
+static unsigned int kick_delay_us;
+module_param(kick_delay_us, uint, 0644);
+MODULE_PARM_DESC(kick_delay_us,
+		 "Longest delay (us) of asynchronous messages, batched into one kick");
+
+static enum hrtimer_restart dxgvirtio_kick_timer(struct hrtimer *timer)
+{
+	struct dxgvirtio *dv = container_of(timer, struct dxgvirtio, kick_timer);
+	unsigned long flags;
+	bool notify = false;
+
+	spin_lock_irqsave(&dv->ctrl_lock, flags);
+	if (dv->kick_pending) {
+		dv->kick_pending = false;
+		notify = virtqueue_kick_prepare(dv->ctrl);
+		dv->last_kick = ktime_get();
+	}
+	spin_unlock_irqrestore(&dv->ctrl_lock, flags);
+	if (notify)
+		virtqueue_notify(dv->ctrl);
+	return HRTIMER_NORESTART;
+}
+
+/*
+ * Whether the sender of an asynchronous message is about to sleep on it: a
+ * CPU wait completing through a guest event. Anything not laid out as
+ * expected counts as such (kicked at once).
+ */
+static bool dxgvirtio_urgent(const void *command, u32 size)
+{
+	const struct dxgkvmb_command_vgpu_to_host *cmd;
+	u32 offset;
+
+	if (size < sizeof(offset))
+		return true;
+	memcpy(&offset, command, sizeof(offset));	/* dxgvmb_ext_header */
+	if (offset > size || size - offset < sizeof(*cmd))
+		return true;
+	cmd = (const void *)((const u8 *)command + offset);
+	return cmd->channel_type != DXGKVMB_VGPU_TO_HOST ||
+	       cmd->command_type == DXGK_VMBCOMMAND_WAITFORSYNCOBJECTFROMCPU;
+}
 
 static void dxgvirtio_req_free(struct kref *ref)
 {
@@ -190,13 +252,35 @@ static int dxgvirtio_queue(struct dxgvirtio *dv, struct dxgvirtio_req *req)
 	}
 
 	for (;;) {
+		bool arm = false;
+		unsigned int delay = READ_ONCE(kick_delay_us);
+
 		spin_lock_irqsave(&dv->ctrl_lock, flags);
 		ret = virtqueue_add_sgs(dv->ctrl, sgs, out, in, req,
 					GFP_ATOMIC);
-		notify = ret == 0 && virtqueue_kick_prepare(dv->ctrl);
+		if (ret == 0 && req->async && !req->urgent && delay) {
+			/* Later: with the next synchronous message or the timer. */
+			arm = !dv->kick_pending;
+			dv->kick_pending = true;
+			notify = false;
+		} else {
+			/* Now, for this message and any held back before it. */
+			if (ret == 0 || ret == -ENOSPC) {
+				dv->kick_pending = false;
+				dv->last_kick = ktime_get();
+			}
+			notify = (ret == 0 || ret == -ENOSPC) &&
+				 virtqueue_kick_prepare(dv->ctrl);
+		}
 		spin_unlock_irqrestore(&dv->ctrl_lock, flags);
+		if (arm)
+			hrtimer_start(&dv->kick_timer, ns_to_ktime(delay * 1000ull),
+				      HRTIMER_MODE_REL);
 		if (ret != -ENOSPC)
 			break;
+		if (notify)
+			virtqueue_notify(dv->ctrl);	/* let the host drain it */
+		notify = false;
 		/* Ring full: wait for the host to retire requests. */
 		if (wait_event_killable_timeout(dv->ctrl_space,
 						dv->ctrl->num_free >= out + in,
@@ -258,6 +342,7 @@ int dxgvirtio_send(struct dxgvirtio *dv, u32 channel, const void *command,
 	req->cmd_size = cmd_size;
 	req->result_size = result_size;
 	req->async = async;
+	req->urgent = async && dxgvirtio_urgent(command, cmd_size);
 	req->hdr.kind = cpu_to_le32(async ? VIRTIO_DXG_REQ_ASYNC :
 					    VIRTIO_DXG_REQ_SYNC);
 	req->hdr.channel = cpu_to_le32(channel);
@@ -480,6 +565,8 @@ static int dxgvirtio_probe(struct virtio_device *vdev)
 	dv->vdev = vdev;
 	vdev->priv = dv;
 	spin_lock_init(&dv->ctrl_lock);
+	hrtimer_setup(&dv->kick_timer, dxgvirtio_kick_timer, CLOCK_MONOTONIC,
+		      HRTIMER_MODE_REL);
 	spin_lock_init(&dv->event_lock);
 	init_waitqueue_head(&dv->ctrl_space);
 	dxgvirtio_read_config(dv);
@@ -560,6 +647,7 @@ static void dxgvirtio_remove(struct virtio_device *vdev)
 		dxgglobal_destroy_global_channel();
 	mutex_unlock(&dxgglobal->device_mutex);
 
+	hrtimer_cancel(&dv->kick_timer);
 	virtio_reset_device(vdev);
 	/* Requests nobody waits for any more; waiters were woken above. */
 	while ((req = virtqueue_detach_unused_buf(dv->ctrl)) != NULL) {

@@ -141,8 +141,8 @@ static bool va_inside(struct dxghost *h, uint32_t process, uint64_t base,
 	return ok;
 }
 
-static void va_add(struct dxghost *h, uint32_t process, uint64_t base,
-		   uint64_t size)
+static void va_add(struct dxghost *h, uint32_t process, uint32_t allocation,
+		   uint64_t base, uint64_t size)
 {
 	LOCK(h);
 	if (h->va_count == h->va_capacity) {
@@ -157,6 +157,7 @@ static void va_add(struct dxghost *h, uint32_t process, uint64_t base,
 		h->va_capacity = capacity;
 	}
 	h->vas[h->va_count].process = process;
+	h->vas[h->va_count].allocation = allocation;
 	h->vas[h->va_count].base = base;
 	h->vas[h->va_count].size = size;
 	h->va_count++;
@@ -247,6 +248,13 @@ static void forget(struct dxghost *h, uint32_t handle)
 	if (!o)
 		return;
 	if (o->type == OBJ_ALLOCATION) {
+		/* The driver frees the ranges its base-less maps created. */
+		for (i = 0; i < h->va_count;) {
+			if (h->vas[i].allocation == handle)
+				h->vas[i] = h->vas[--h->va_count];
+			else
+				i++;
+		}
 		if (o->lock_cached)
 			lock_release_later(h, o);
 		lock_cache_drop(h, o);
@@ -419,7 +427,10 @@ static void va_release_process(struct dxghost *h, uint32_t process)
 	gone = malloc((h->va_count + 1) * sizeof(*gone));
 	while (gone && i < h->va_count) {
 		if (h->vas[i].process == process) {
-			gone[count++] = h->vas[i];
+			/* Ranges of base-less maps went with their allocations
+			 * (and may belong to another process by now). */
+			if (!h->vas[i].allocation)
+				gone[count++] = h->vas[i];
 			h->vas[i] = h->vas[--h->va_count];
 		} else {
 			i++;
@@ -1784,7 +1795,7 @@ static void cmd_reserve_gpu_va(struct dxghost_msg *m)
 	fail_ntstatus(m, status);
 	if (status < 0)
 		return;
-	va_add(h, m->process, a.virtual_address, a.size);
+	va_add(h, m->process, 0, a.virtual_address, a.size);
 	r->virtual_address = a.virtual_address;
 	r->paging_fence_value = a.paging_fence_value;
 }
@@ -1845,7 +1856,7 @@ static void cmd_map_gpu_va(struct dxghost_msg *m)
 	r->paging_fence_value = a.paging_fence_value;
 	/* Maps without a base allocate their own range. */
 	if (r->status.v >= 0 && !a.base_address)
-		va_add(h, m->process, a.virtual_address,
+		va_add(h, m->process, a.allocation.v, a.virtual_address,
 		       a.size_in_pages * PAGE_4K);
 }
 

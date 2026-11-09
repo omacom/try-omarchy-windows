@@ -67,6 +67,15 @@ setup_desktop() {
         "LIBVA_DRIVERS_PATH=$m/lib/dri" \
         "VK_DRIVER_FILES=$m/share/vulkan/icd.d/dzn_icd.x86_64.json" \
         >/run/environment.d/90-virtio-dxg.conf
+    # virtio_dxg.chromium_gpu=1: Chromium's GPU process admits only known
+    # device nodes, so it falls back to software rendering. Running it
+    # without its GPU sandbox puts it on the GPU, at the cost of that
+    # isolation: an opt-in. (Arch's chromium wrapper adds these flags.)
+    case " $(cat /proc/cmdline) " in
+    *" virtio_dxg.chromium_gpu=1 "*)
+        echo 'CHROMIUM_USER_FLAGS=--disable-gpu-sandbox --ignore-gpu-blocklist' \
+            >>/run/environment.d/90-virtio-dxg.conf ;;
+    esac
     echo ":: virtio-dxg: desktop renders through d3d12 (Mesa $(cat "$m/lib/virtio-dxg-mesa-version"))"
 }
 
