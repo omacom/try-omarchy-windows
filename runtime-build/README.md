@@ -33,6 +33,18 @@ requirements2 and maintenance4 preserve each plane's requirements. Explicit
 external images keep their existing route. Unknown creation-info chains also
 keep plain backing rather than assuming host-import support.
 
+`0006-honor-venus-row-pitch-in-windows-gl-imports.patch` handles a Venus image
+that OpenGL samples, such as a Vulkan app's window in the compositor. Its
+memory is imported with `GL_EXT_memory_object`, which has no row pitch, so GL
+lays the linear texture out with its own pitch instead of the image's. On
+Intel's Windows drivers a window whose width is not a multiple of 64 pixels
+reads skewed (#394). When the guest's row pitch is wider than the image,
+the renderer views the memory as a texture one pitch wide and copies the visible
+part into the resource's texture before each draw, blit, copy or readback that
+uses it. It is on for Intel's Windows OpenGL driver; `TRYOMARCHY_PITCH_COPY=on`
+or `off` overrides that. `test-image-pitch.py <patched-renderer-source>` covers
+the decision, widths, bounds and refreshes against fake GL calls.
+
 `test-image-capabilities.py <patched-renderer-source>` compiles the actual image
 dispatch against mocked Vulkan entry points. It runs on Linux or MSYS2 without
 a GPU or desktop and covers capability rejection, usable fallback masks,

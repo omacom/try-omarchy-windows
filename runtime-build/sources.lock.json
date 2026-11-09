@@ -139,6 +139,10 @@
       {
         "file": "patches/virglrenderer/0005-batch-intel-windows-buffer-uploads.patch",
         "sha256": "af35a04151d4e9d14ed0c86ba3741a45e0af6e47c8ced747e7523dc1eab8a34d"
+      },
+      {
+        "file": "patches/virglrenderer/0006-honor-venus-row-pitch-in-windows-gl-imports.patch",
+        "sha256": "ed0fc64478e80086a9b072be635a0c496a49f2a2c35c19ccee116694f9dbbbaf"
       }
     ]
   }
