@@ -3482,6 +3482,11 @@ cleanup:
 }
 
 #ifdef DXG_VIRTIO
+static bool fast_cpu_wait = true;
+module_param(fast_cpu_wait, bool, 0644);
+MODULE_PARM_DESC(fast_cpu_wait,
+		 "Answer CPU waits on reached monitored fences without the host");
+
 /*
  * True when every monitored fence of a CPU wait (any one of them with
  * wait_any) has already reached its value, read from the fence page this
@@ -3498,7 +3503,7 @@ static bool dxg_fences_reached(struct dxgprocess *process,
 	u32 i, n = args->object_count;
 	bool reached = true;
 
-	if (n > D3DDDI_MAX_OBJECT_WAITED_ON ||
+	if (!READ_ONCE(fast_cpu_wait) || n > D3DDDI_MAX_OBJECT_WAITED_ON ||
 	    copy_from_user(handles, (void __user *)args->objects,
 			   n * sizeof(handles[0])) ||
 	    copy_from_user(values, (void __user *)args->fence_values,
@@ -3916,7 +3921,7 @@ dxgkio_unlock2(struct dxgprocess *process, void *__user inargs)
 					done = true;
 				} else {
 					dxg_unmap_iospace(alloc->cpu_address,
-						alloc->num_pages << PAGE_SHIFT);
+						alloc->cpu_map_size);
 					alloc->cpu_address_mapped = false;
 					alloc->cpu_address = NULL;
 				}

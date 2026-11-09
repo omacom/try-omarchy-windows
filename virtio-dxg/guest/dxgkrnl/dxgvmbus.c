@@ -21,6 +21,8 @@
 #include <linux/mman.h>
 #include <linux/delay.h>
 #include <linux/pagemap.h>
+#include <linux/moduleparam.h>
+#include <linux/nls.h>
 #include "dxgkrnl.h"
 #include "dxgvmbus.h"
 #ifdef DXG_VIRTIO
@@ -1291,6 +1293,30 @@ int dxgvmb_send_close_adapter(struct dxgadapter *adapter)
 	return ret;
 }
 
+#ifdef DXG_VIRTIO
+/*
+ * The host GPU's own name ("NVIDIA GeForce RTX ..."), as the host driver
+ * reports it: /sys/module/dxgkrnl_virtio/parameters/gpu_name. The boot hook
+ * gives it to the PCI ID database so system tools name the device by the
+ * GPU behind it rather than as an unknown virtio device.
+ */
+static char dxg_gpu_name[160];
+module_param_string(gpu_name, dxg_gpu_name, sizeof(dxg_gpu_name), 0444);
+MODULE_PARM_DESC(gpu_name, "Name of the host GPU (read only)");
+
+static void dxg_publish_gpu_name(const u16 *name, size_t max)
+{
+	size_t n = 0;
+	int len;
+
+	while (n < max && name[n])
+		n++;
+	len = utf16s_to_utf8s((const wchar_t *)name, n, UTF16_LITTLE_ENDIAN,
+			      dxg_gpu_name, sizeof(dxg_gpu_name) - 1);
+	dxg_gpu_name[len > 0 ? len : 0] = 0;
+}
+#endif
+
 int dxgvmb_send_get_internal_adapter_info(struct dxgadapter *adapter)
 {
 	int ret;
@@ -1317,6 +1343,10 @@ int dxgvmb_send_get_internal_adapter_info(struct dxgadapter *adapter)
 		adapter->host_vgpu_luid = result.host_vgpu_luid;
 		wcsncpy(adapter->device_description, result.device_description,
 			sizeof(adapter->device_description) / sizeof(u16));
+#ifdef DXG_VIRTIO
+		dxg_publish_gpu_name(adapter->device_description,
+			ARRAY_SIZE(adapter->device_description));
+#endif
 		wcsncpy(adapter->device_instance_id, result.device_instance_id,
 			sizeof(adapter->device_instance_id) / sizeof(u16));
 		dxgglobal->async_msg_enabled = result.async_msg_enabled != 0;
@@ -3402,7 +3432,11 @@ int dxgvmb_send_lock2(struct dxgprocess *process,
 		} else {
 			u64 offset = (u64)result.cpu_visible_buffer_offset;
 
+			alloc->cpu_map_size = (u64)alloc->num_pages << PAGE_SHIFT;
 #ifdef DXG_VIRTIO
+			/* This view's own size, every time (see cpu_map_size). */
+			if (result_ext.mapped_size)
+				alloc->cpu_map_size = result_ext.mapped_size;
 			if (alloc->num_pages == 0)
 				alloc->num_pages =
 					result_ext.mapped_size >> PAGE_SHIFT;
@@ -3410,7 +3444,7 @@ int dxgvmb_send_lock2(struct dxgprocess *process,
 					   DXGK_VIRTIO_LOCK2_CACHED);
 #endif
 			args->data = dxg_map_iospace(offset,
-					alloc->num_pages << PAGE_SHIFT,
+					alloc->cpu_map_size,
 					PROT_READ | PROT_WRITE, alloc->cached);
 			if (args->data) {
 				alloc->cpu_address_refcount = 1;
@@ -3429,7 +3463,7 @@ int dxgvmb_send_lock2(struct dxgprocess *process,
 				alloc->cpu_address_refcount--;
 				if (alloc->cpu_address_refcount == 0) {
 					dxg_unmap_iospace(alloc->cpu_address,
-					   alloc->num_pages << PAGE_SHIFT);
+					   alloc->cpu_map_size);
 					alloc->cpu_address_mapped = false;
 					alloc->cpu_address = NULL;
 				}

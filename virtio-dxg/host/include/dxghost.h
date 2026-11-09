@@ -87,6 +87,18 @@ uint32_t dxghost_lane(const void *message, uint32_t size);
 bool dxghost_nonblocking(const void *message, uint32_t size);
 
 /*
+ * Runs the request on the calling thread if it cannot block, as
+ * dxghost_execute() would, and returns true. Returns false, having done
+ * nothing, when it must go to its lane: the VMM calls this on vCPU threads
+ * while holding its own lock. Besides dxghost_nonblocking()'s requests this
+ * covers Unlock2 and Lock2 of an allocation whose view is mapped already
+ * (every frame after the first in video and compute work).
+ */
+bool dxghost_try_inline(struct dxghost *host, uint32_t channel,
+			const void *message, uint32_t size, void *result,
+			uint32_t result_capacity, struct virtio_dxg_resp *resp);
+
+/*
  * Executes one control request and fills the virtio reply. result may be
  * NULL when result_capacity is 0 (async requests). Thread safe.
  */

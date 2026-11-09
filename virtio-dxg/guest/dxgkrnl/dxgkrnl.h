@@ -782,6 +782,13 @@ struct dxgallocation {
 	 */
 	u32				cpu_address_refcount;
 	/*
+	 * Size of the CPU view mapped at cpu_address. Under virtio the host
+	 * sizes each Lock2 view itself, and a later view of the same
+	 * allocation can be smaller than the first: mapping the first size
+	 * again reached into the next view (another allocation's memory).
+	 */
+	u64				cpu_map_size;
+	/*
 	 * CPU address from the existing sysmem allocation, or
 	 * mapped to the CPU visible backing store in the IO space
 	 */

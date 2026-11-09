@@ -114,6 +114,7 @@ struct dxghost {
 	SRWLOCK map_lock;
 	/* Bytes of Lock2 views kept mapped (and locked) between guest locks. */
 	uint64_t lock_cache_bytes;
+	uint64_t lock_cache_max;	/* DXGHOST_LOCK_CACHE_MB, default 1024 */
 	struct dxghost_deferred *deferred;
 	uint32_t deferred_count, deferred_capacity;
 
@@ -149,6 +150,7 @@ struct dxghost {
 	 * log every 10 s ([0] global, [1] adapter commands).
 	 */
 	bool stats;
+	bool inline_lock2, inline_unlock2;
 	struct dxghost_stat {
 		volatile LONG64 count, ticks, max;
 	} stat[2][DXGHOST_STAT_TYPES];
@@ -215,6 +217,10 @@ struct dxghost_msg {
 	uint32_t res_len;	/* bytes written */
 	int32_t ntstatus;	/* for VIRTIO_DXG_ERR_NTSTATUS replies */
 	uint32_t status;	/* VIRTIO_DXG_* */
+	/* Running on a vCPU thread (dxghost_try_inline): a command that
+	 * finds it would need map_lock sets to_lane, undoing what it did. */
+	bool inline_call;
+	bool to_lane;
 };
 
 void dxghost_exec_global(struct dxghost_msg *m, uint32_t type);

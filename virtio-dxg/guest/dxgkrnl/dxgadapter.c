@@ -897,8 +897,7 @@ void dxgallocation_stop(struct dxgallocation *alloc)
 	}
 	dxgprocess_ht_lock_exclusive_down(alloc->process);
 	if (alloc->cpu_address_mapped) {
-		dxg_unmap_iospace(alloc->cpu_address,
-				  alloc->num_pages << PAGE_SHIFT);
+		dxg_unmap_iospace(alloc->cpu_address, alloc->cpu_map_size);
 		alloc->cpu_address_mapped = false;
 		alloc->cpu_address = NULL;
 		alloc->cpu_address_refcount = 0;

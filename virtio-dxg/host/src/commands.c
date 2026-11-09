@@ -1582,6 +1582,13 @@ static void cmd_lock2(struct dxghost_msg *m)
 		goto fail_locked;
 	}
 	UNLOCK(h);
+	if (m->inline_call) {
+		/* Its view went meanwhile: mapping one needs map_lock, which
+		 * a vCPU thread may not take. Undo; the lane does it all. */
+		h->kmt.Unlock2(&u);
+		m->to_lane = true;
+		return;
+	}
 
 	if (!VirtualQuery((void *)(uintptr_t)a.data, &mbi, sizeof(mbi)) ||
 	    mbi.State != MEM_COMMIT)
@@ -1674,7 +1681,7 @@ static void cmd_unlock2(struct dxghost_msg *m)
 	}
 	if (--o->guest_locks == 0 && o->gpa) {
 		if (!o->lock_cached &&
-		    h->lock_cache_bytes + o->size <= LOCK_CACHE_MAX) {
+		    h->lock_cache_bytes + o->size <= h->lock_cache_max) {
 			/* This driver lock stays, with the view. */
 			o->lock_cached = 1;
 			h->lock_cache_bytes += o->size;

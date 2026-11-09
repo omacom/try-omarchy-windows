@@ -323,6 +323,7 @@ static void dxg_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
         struct virtio_dxg_req hdr;
         DxgRequest *r;
         DxgLane *lane;
+        struct virtio_dxg_resp resp;
         size_t in_size = iov_size(elem->in_sg, elem->in_num);
 
         if (iov_to_buf(elem->out_sg, elem->out_num, 0, &hdr, sizeof(hdr)) !=
@@ -363,14 +364,11 @@ static void dxg_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
         lane = &d->state->lanes[dxghost_lane(r->message, r->size) %
                                 DXG_LANES];
         qemu_mutex_lock(&lane->lock);
+        /* The lane lock keeps this lane's next requests behind it. */
         if (!lane->busy && QSIMPLEQ_EMPTY(&lane->queue) &&
-            dxghost_nonblocking(r->message, r->size)) {
-            struct virtio_dxg_resp resp;
-
-            /* The lane lock keeps this lane's next requests behind it. */
-            dxghost_execute(d->host, r->channel, r->message, r->size,
-                            r->async ? NULL : d->state->inline_result,
-                            r->result_size, &resp);
+            dxghost_try_inline(d->host, r->channel, r->message, r->size,
+                               r->async ? NULL : d->state->inline_result,
+                               r->result_size, &resp)) {
             qemu_mutex_unlock(&lane->lock);
             dxg_finish(d, r, d->state->inline_result, &resp);
             g_free(r->elem);

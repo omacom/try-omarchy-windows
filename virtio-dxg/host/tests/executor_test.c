@@ -542,6 +542,52 @@ static void test_executor(void)
 		CHECK(calls_lock2 - calls_unlock2 == 1);	/* the cached lock */
 	}
 
+	/* What runs inline on a vCPU thread, and what goes to a lane. */
+	{
+		struct dxgkvmb_command_lock2 *l;
+		struct dxgkvmb_command_unlock2 *u;
+		uint32_t locks = calls_lock2;
+
+		/* alloc1's view is cached: Lock2 runs inline. */
+		l = msg(sizeof(*l));
+		vgpu(l, DXGK_VMBCOMMAND_LOCK2, p1);
+		l->args.device.v = d1;
+		l->args.allocation.v = alloc1;
+		CHECK(dxghost_try_inline(h, VIRTIO_DXG_CHANNEL_GLOBAL, msg_buf,
+				 sizeof(struct dxgvmb_ext_header) + sizeof(*l),
+				 res_buf, sizeof(struct dxgkvmb_command_lock2_return_virtio),
+				 &resp));
+		CHECK(resp.status == VIRTIO_DXG_OK && calls_lock2 == locks + 1 &&
+		      maps == 1);
+		u = msg(sizeof(*u));
+		vgpu(u, DXGK_VMBCOMMAND_UNLOCK2, p1);
+		u->args.device.v = d1;
+		u->args.allocation.v = alloc1;
+		CHECK(dxghost_try_inline(h, VIRTIO_DXG_CHANNEL_GLOBAL, msg_buf,
+				 sizeof(struct dxgvmb_ext_header) + sizeof(*u),
+				 res_buf, 4, &resp));
+		CHECK(resp.status == VIRTIO_DXG_OK);
+		/* alloc2 has no view: refused, with no driver call made. */
+		l = msg(sizeof(*l));
+		vgpu(l, DXGK_VMBCOMMAND_LOCK2, p1);
+		l->args.device.v = d1;
+		l->args.allocation.v = alloc2;
+		CHECK(!dxghost_try_inline(h, VIRTIO_DXG_CHANNEL_GLOBAL, msg_buf,
+				  sizeof(struct dxgvmb_ext_header) + sizeof(*l),
+				  res_buf, sizeof(struct dxgkvmb_command_lock2_return_virtio),
+				  &resp));
+		CHECK(calls_lock2 == locks + 1);
+		/* Creating objects never runs inline. */
+		{
+			struct dxgkvmb_command_createdevice *c = msg(sizeof(*c));
+
+			vgpu(c, DXGK_VMBCOMMAND_CREATEDEVICE, p1);
+			CHECK(!dxghost_try_inline(h, VIRTIO_DXG_CHANNEL_GLOBAL,
+					  msg_buf, sizeof(struct dxgvmb_ext_header) +
+					  sizeof(*c), res_buf, 4, &resp));
+		}
+	}
+
 	/* Two fences on one host page share one guest mapping. */
 	{
 		struct dxgkvmb_command_createsyncobject *c;

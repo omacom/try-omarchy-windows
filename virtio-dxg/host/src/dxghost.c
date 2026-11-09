@@ -117,6 +117,14 @@ int dxghost_create(const struct dxghost_config *config,
 	/* Development: DXGHOST_TRACE logs every command and its result. */
 	h->trace = getenv("DXGHOST_TRACE") != NULL;
 	h->stats = getenv("DXGHOST_STATS") != NULL;
+	/* Diagnostics: DXGHOST_NO_INLINE_LOCK2 / _UNLOCK2 send them to lanes. */
+	h->inline_lock2 = getenv("DXGHOST_NO_INLINE_LOCK2") == NULL;
+	h->inline_unlock2 = getenv("DXGHOST_NO_INLINE_UNLOCK2") == NULL;
+	{
+		const char *mb = getenv("DXGHOST_LOCK_CACHE_MB");
+
+		h->lock_cache_max = (mb ? strtoull(mb, NULL, 10) : 1024) << 20;
+	}
 	{
 		LARGE_INTEGER f, now;
 
@@ -310,9 +318,60 @@ static void stats_add(struct dxghost *h, unsigned channel, uint32_t type,
 	stats_dump(h, end.QuadPart);
 }
 
+static bool execute(struct dxghost *h, uint32_t channel,
+		    const void *message, uint32_t size, void *result,
+		    uint32_t result_capacity, struct virtio_dxg_resp *resp,
+		    bool inline_call);
+
 void dxghost_execute(struct dxghost *h, uint32_t channel,
 		     const void *message, uint32_t size, void *result,
 		     uint32_t result_capacity, struct virtio_dxg_resp *resp)
+{
+	execute(h, channel, message, size, result, result_capacity, resp, false);
+}
+
+/* Whether a Lock2 can be answered from a view mapped already. */
+static bool lock2_view_mapped(struct dxghost *h, const uint8_t *cmd,
+			      uint32_t cmd_size)
+{
+	const struct dxgkvmb_command_lock2 *c = (const void *)cmd;
+	const struct dxghost_obj *o;
+	bool mapped;
+
+	if (cmd_size < sizeof(*c))
+		return false;
+	AcquireSRWLockShared(&h->lock);
+	o = dxghost_obj_find(h, c->args.allocation.v);
+	mapped = o && o->type == OBJ_ALLOCATION && o->gpa;
+	ReleaseSRWLockShared(&h->lock);
+	return mapped;
+}
+
+bool dxghost_try_inline(struct dxghost *h, uint32_t channel,
+			const void *message, uint32_t size, void *result,
+			uint32_t result_capacity, struct virtio_dxg_resp *resp)
+{
+	uint32_t cmd_size;
+	const uint8_t *cmd = command_of(message, size, &cmd_size);
+	const struct dxgkvmb_command_vgpu_to_host *hdr = (const void *)cmd;
+
+	if (!dxghost_nonblocking(message, size)) {
+		if (!cmd || hdr->channel_type != DXGKVMB_VGPU_TO_HOST)
+			return false;
+		if (!(hdr->command_type == DXGK_VMBCOMMAND_UNLOCK2 &&
+		      h->inline_unlock2) &&
+		    !(hdr->command_type == DXGK_VMBCOMMAND_LOCK2 &&
+		      h->inline_lock2 && lock2_view_mapped(h, cmd, cmd_size)))
+			return false;
+	}
+	return execute(h, channel, message, size, result, result_capacity,
+		       resp, true);
+}
+
+static bool execute(struct dxghost *h, uint32_t channel,
+		    const void *message, uint32_t size, void *result,
+		    uint32_t result_capacity, struct virtio_dxg_resp *resp,
+		    bool inline_call)
 {
 	LARGE_INTEGER start = {0};
 	struct dxghost_msg m;
@@ -324,6 +383,7 @@ void dxghost_execute(struct dxghost *h, uint32_t channel,
 	if (h->stats)
 		QueryPerformanceCounter(&start);
 	m.h = h;
+	m.inline_call = inline_call;
 	m.res = result;
 	m.res_cap = result ? result_capacity : 0;
 	m.cmd = command_of(message, size, &m.cmd_size);
@@ -332,7 +392,7 @@ void dxghost_execute(struct dxghost *h, uint32_t channel,
 		dxghost_logf(h, "malformed request: %u bytes on channel %u",
 			     size, channel);
 		resp->status = VIRTIO_DXG_ERR_INVALID;
-		return;
+		return true;
 	}
 	if (m.res_cap)
 		memset(m.res, 0, m.res_cap);
@@ -357,7 +417,7 @@ void dxghost_execute(struct dxghost *h, uint32_t channel,
 			dxghost_logf(h, "global command %u from unknown "
 				     "process 0x%x", type, m.process);
 			resp->status = VIRTIO_DXG_ERR_INVALID;
-			return;
+			return true;
 		}
 		dxghost_exec_global(&m, type);
 	} else if (channel_type == DXGKVMB_VGPU_TO_HOST) {
@@ -365,7 +425,7 @@ void dxghost_execute(struct dxghost *h, uint32_t channel,
 			dxghost_logf(h, "adapter command %u from unknown "
 				     "process 0x%x", type, m.process);
 			resp->status = VIRTIO_DXG_ERR_INVALID;
-			return;
+			return true;
 		}
 		dxghost_exec_vgpu(&m, type);
 	} else {
@@ -373,6 +433,8 @@ void dxghost_execute(struct dxghost *h, uint32_t channel,
 			     channel_type);
 		m.status = VIRTIO_DXG_ERR_INVALID;
 	}
+	if (m.to_lane)
+		return false;	/* undone; the lane runs it */
 	resp->status = m.status;
 	resp->size = m.res_len;
 	resp->ntstatus = (uint32_t)m.ntstatus;
@@ -390,4 +452,5 @@ void dxghost_execute(struct dxghost *h, uint32_t channel,
 			     "adapter", type, m.status, (unsigned)m.ntstatus,
 			     m.res_len, first);
 	}
+	return true;
 }
