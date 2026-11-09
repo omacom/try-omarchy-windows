@@ -99,8 +99,14 @@ setup_desktop() {
             cat >/run/virtio-dxg/bin/chromium <<'EOF'
 #!/bin/sh
 # virtio-dxg: Chromium on the host GPU (see the boot hook virtio_dxg).
-exec /usr/bin/chromium "$@" --ozone-platform=x11 --use-angle=gl \
-    --ignore-gpu-blocklist
+# Through Xwayland when the session has it; as configured otherwise (a
+# browser started before the session exports DISPLAY would sit without a
+# window, and every later launch would join it).
+if [ -n "$DISPLAY" ]; then
+    exec /usr/bin/chromium "$@" --ozone-platform=x11 --use-angle=gl \
+        --ignore-gpu-blocklist
+fi
+exec /usr/bin/chromium "$@"
 EOF
             chmod 755 /run/virtio-dxg/bin/chromium
             cat >/run/systemd/system/virtio-dxg-bin.service <<'EOF'
