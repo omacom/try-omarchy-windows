@@ -14,8 +14,13 @@ nine newer official upstream fixes. Claude's branch is kept untouched.
 The owner reports a working GPU desktop with remaining animation glitches.
 The new candidate addresses per-context frame publication, scanout lifetime,
 handle churn, matched Mesa 26.2.6 packaging and Chromium menu launches.
-**These new changes have not been tested. Stable daily use, accurate 240 Hz
-animation, full Chromium acceleration and 4K performance remain open.**
+The first remote batch at d717dfa passed host mocks, 39 actual-source Mesa
+fault cases and 13 boot/browser data tests; the full Mesa cohort compiled.
+Linux launcher compilation and runtime-archive acceptance then failed.
+Their source fixes and an additional submitted-fence guard are prepared for
+a separately approved follow-up. **This follow-up is untested. Stable daily
+use, accurate 240 Hz animation, full Chromium acceleration and 4K performance
+remain open.**
 
 ![Integration source merged; verification pending; daily use 0/6](docs/images/virtio-dxg-integration-progress.svg)
 

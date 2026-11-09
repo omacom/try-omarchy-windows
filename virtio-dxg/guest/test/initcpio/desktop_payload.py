@@ -51,8 +51,11 @@ def extract(archive, destination, recipe):
             raise ValueError('Payload and initramfs recipes differ; rebuild the matched pair')
         inventory = receipt['files']
         names = {n for n, m in members.items() if not m.isdir()}
-        if names != set(inventory) | {'lib/virtio-dxg-build.json', 'lib/virtio-dxg-mesa-version'}:
-            raise ValueError('Payload inventory differs')
+        expected_names = set(inventory) | {'lib/virtio-dxg-build.json', 'lib/virtio-dxg-mesa-version'}
+        if names != expected_names:
+            raise ValueError('Payload inventory differs: missing=' +
+                             repr(sorted(expected_names - names)[:12]) +
+                             ', unlisted=' + repr(sorted(names - expected_names)[:12]))
         for name, record in inventory.items():
             canonical(name)
             member = members[name]
@@ -75,10 +78,14 @@ def extract(archive, destination, recipe):
                 path = stage / name
                 if not path.resolve(strict=True).is_relative_to(stage):
                     raise ValueError('Alias leaves the payload: ' + name)
-            for name in (f'libgallium-{version}.so', 'libEGL_mesa.so.0', 'libGLX_mesa.so.0',
-                         'libgbm.so.1', 'libvulkan_dzn.so'):
-                if not (stage / 'lib' / name).is_file():
+            for name in expected['runtimeRequiredPaths']:
+                canonical(name)
+                if not (stage / name).is_file():
                     raise ValueError('Incomplete graphics cohort: ' + name)
+            for name, target in expected['runtimeAliases'].items():
+                path = stage / name
+                if not path.is_symlink() or os.readlink(path) != target:
+                    raise ValueError('Incorrect runtime alias: ' + name)
             icd = stage / 'share/vulkan/icd.d/dzn_icd.x86_64.json'
             data = json.loads(icd.read_text(encoding='utf-8'))
             data['ICD']['library_path'] = str(destination / 'lib/libvulkan_dzn.so')

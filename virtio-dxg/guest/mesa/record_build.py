@@ -11,13 +11,19 @@ def record(source, installed, recipe):
     version = (source / 'VERSION').read_text(encoding='utf-8').strip()
     if version != manifest['mesaVersion']:
         raise ValueError('Cannot relabel a different Mesa release')
-    for name in (f'libgallium-{version}.so', 'libEGL_mesa.so.0', 'libGLX_mesa.so.0',
-                 'libgbm.so.1', 'libvulkan_dzn.so'):
-        if not (installed / 'lib' / name).is_file():
+    for name in manifest['runtimeRequiredPaths']:
+        if not (installed / name).is_file():
             raise ValueError('Incomplete graphics cohort: ' + name)
+    for name, target in manifest['runtimeAliases'].items():
+        path = installed / name
+        if not path.is_symlink() or os.readlink(path) != target:
+            raise ValueError('Incorrect runtime alias: ' + name)
     inventory = {}
     for path in sorted(installed.rglob('*')):
         relative = path.relative_to(installed).as_posix()
+        # The runtime archive ships lib/ and share/, not SDK headers/tools.
+        if relative.split('/', 1)[0] not in ('lib', 'share'):
+            continue
         if relative in ('lib/virtio-dxg-build.json', 'lib/virtio-dxg-mesa-version'):
             continue
         if path.is_symlink():

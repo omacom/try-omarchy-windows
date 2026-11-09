@@ -790,7 +790,7 @@
     pipe_resource *planes[d3d12_max_planes];
     unsigned int strides[d3d12_max_planes];
     unsigned int layer_strides[d3d12_max_planes];
-@@ -1271,6 +1828,140 @@
+@@ -1271,6 +1828,142 @@
     ctx->cmdlist->CopyTextureRegion(&info.dst_loc, info.dst_x, info.dst_y, info.dst_z,
                                     &info.src_loc, info.src_box);
     ctx->has_commands = true;
@@ -915,10 +915,12 @@
 +         recorded = true;
 +      }
 +   }
-+   bool completed = true;
++   bool completed = false;
 +   if (recorded) {
 +      struct d3d12_batch *batch = d3d12_current_batch(ctx);
-+      if (d3d12_flush_cmdlist(ctx))
++      /* Close/Signal/allocation can fail before a fence exists. A reset
++       * without a submitted fence is not evidence of GPU completion. */
++      if (d3d12_flush_cmdlist(ctx) && !batch->has_errors && batch->fence)
 +         completed = d3d12_reset_batch(ctx, batch, OS_TIMEOUT_INFINITE);
 +   }
 +   for (unsigned i = 0; i < count; i++) {

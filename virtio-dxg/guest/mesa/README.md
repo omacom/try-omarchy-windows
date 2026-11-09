@@ -3,7 +3,10 @@
 This branch combines Claude's KMS mirrors and compositor zero-copy scanout with
 our resource-ownership, upload, constant-buffer, fence and Dozen FD guards.
 It uses the real guest dxg kernel ABI, not the older private userspace broker.
-**The combined candidate has not been compiled or run yet.** See
+The first cohort at d717dfa compiled completely and its CPU controls passed,
+but runtime-archive acceptance failed because its receipt also listed SDK
+headers not shipped in the tar. The corrected receipt and an additional
+submitted-fence guard are **prepared but untested**. No GPU/VM run occurred. See
 [status and performance limits](../../../docs/VIRTIO-DXG-INTEGRATION.md).
 
 The versioned recipe in `versions/26.2.6/` pins the official source archive,
@@ -51,6 +54,6 @@ check. Mesa version compatibility cannot be proven by renaming its library.
 
 The prepared remote workflow builds the complete cohort and runs inert boot-data,
 actual-source mirror/fence and mock-host controls. No ICD or graphics ELF is
-loaded. These checks are not yet run for this candidate. Hardware correctness,
+loaded. The first batch passed those controls/build but rejected its archive; the current follow-up needs a new approved batch. Hardware correctness,
 accurate animations, CPU/app-launch gains, full Chromium acceleration, 4K and
 sustained cleanup/recovery require separately approved tests.

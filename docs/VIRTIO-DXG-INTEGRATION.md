@@ -1,7 +1,7 @@
 # virtio-dxg integration and desktop performance
 
 Updated November 9, 2026. Branch: `integration/virtio-dxg`. **Source candidate;
-new checks have not run. Daily-use stability, accurate 240 Hz animations and
+the first remote batch has partial successes and retained failures; follow-up checks have not run. Daily-use stability, accurate 240 Hz animations and
 full Chromium acceleration are not established.**
 
 ![Source merged; verification pending; daily-use gates pending](images/virtio-dxg-integration-progress.svg)
@@ -31,7 +31,7 @@ for dxg mode.
 | Missing/stale animation frames | Mirror writes are queued independently per context, replacing a shared texture dirty bit. | One pending context no longer suppresses another context's flush. This is a source defect, not a confirmed diagnosis of every observed glitch. |
 | CPU work in each frame | Up to 16 pending mirrors use a stack list instead of a temporary heap allocation. | Removes that allocation from an ordinary flush; does not remove application `wl_shm` copies. |
 | Scanout lifetime | Borrowed textures retain the original scanout owner; weak lookups cannot revive a zero-ref resource; owner fallback propagates to borrowers. | Prevents premature unlink/dangling-owner behavior; driver imports run outside the registry mutex. Full concurrent teardown still needs runtime validation. |
-| Completion/error handling | Device-removal sentinel values cannot mean successful fence completion or reclaim; mirror CPU publication requires a successful completion wait. | Prevents publishing incomplete readback and unsafe retirement/retry progress. Other driver-removal and unmap paths remain to audit. |
+| Completion/error handling | Device-removal sentinel values cannot mean successful fence completion or reclaim; mirror CPU publication requires a successful completion wait. The follow-up additionally requires a submitted fence and no batch error. | Prevents publishing incomplete readback and unsafe retirement/retry progress. Other driver-removal and unmap paths remain to audit. |
 | Upload failures | Carry forward uploader and constant-buffer ownership guards. | Retains previous failure fixes on the real-kernel path, without carrying over the old private interposer ABI. |
 | App churn | Rehash deleted handle-table slots without doubling capacity when the live population is small. | Bounds table growth during repeated open/close cycles; large live populations still grow normally. |
 | Guest Mesa | Build actual 26.2.6 with KMS mirrors, zero-copy scanout, Dozen FD ownership and the guards above; pin DirectX-Headers to `adbd6f3`. | The two old 26.2.4 deadlock backports are already upstream. Source `VERSION` is no longer overwritten with the installed system version. |
@@ -82,16 +82,49 @@ baseline; no universal speedup is claimed here.
 
 ## Verification plan and current status
 
-**Not run:** the new CPU fixtures, combined Mesa compile and new boot payload
-checks await approval. No GPU, VM, renderer or graphics library has been run
-for this integration. Existing successful legacy checks describe their own
-commits/profiles, not this new combined Mesa recipe.
+The first approved remote batch ran against **d717dfa**, in
+[PR #3](https://github.com/7Wdev/try-omarchy-windows/pull/3). It produced:
+
+| Check at d717dfa | Result |
+| --- | --- |
+| Windows host layout/mock executor | Pass, including 25,600 create/remove pairs at a fixed 1,024-slot table and a live-population growth check. |
+| Actual-source Mesa controls | Pass: 14 mirror, 15 fence and 10 reclaim cases, plus four recipe controls. The old shared-dirty-bit and removal-sentinel defects reproduce in CPU fixtures. |
+| Inert boot/browser controls | Pass: 13 tests, including URL/action preservation and argv-only wrapper execution. No browser starts. |
+| Combined Mesa GLX/EGL/GBM/VA-API/Dozen build | Pass: all 1,284 build steps and staged installation complete. No generated graphics library is loaded. |
+| Runtime archive acceptance | **Fail:** the receipt included build-only headers excluded from the runtime tar. The validator rejected it. No accepted runtime archive was published. |
+| Linux launcher test compilation | **Fail:** the non-Windows config mirror omitted dxg and diskSnapshot. Windows launcher tests passed. |
+| Guest contract, importer, software shell canary | Pass; these do not test this backend's physical GPU operation. |
+
+[Remote integration run](https://github.com/7Wdev/try-omarchy-windows/actions/runs/42681470596),
+[general checks](https://github.com/7Wdev/try-omarchy-windows/actions/runs/42681470445).
+All four workflows are terminal: 12 jobs passed, two failed and one full-guest
+boot job was skipped. [Structured evidence](evidence/VIRTIO-DXG-INTEGRATION-CI-d717dfa-2026-11-09.json).
+The retained source-evidence artifact is 13702219484, SHA256
+ee8f8adbbfed22e9718479c532026c80ebdb01180b7bc181d3dd800c1084a245.
+The old recipe's SHA256 is
+9fcd94a4f87748658ec8f7cd7d2f6bd7810dad1e8e5960fb04dc68a740cd7950;
+it is **not** the current follow-up recipe.
+
+The prepared follow-up adds the two missing test-config fields and limits the
+receipt to the exact lib/share roots shipped by the archive. It adds a header
+fixture so that mismatch cannot silently return. Nineteen required runtime paths
+and ten loader aliases are pinned to the completed build's observed layout;
+missing drivers remain rejected even when a receipt's own inventory agrees.
+The follow-up prepares 16 boot/browser data tests. Source inspection also found
+that a no-fence batch reset can return success after a failed submission; the
+follow-up refuses CPU publication without a submitted fence and adds three
+failure cases. These changes have **not** run or been published yet.
+
+No local GPU, VM, renderer, graphics library or test has run for this
+integration. Existing successful legacy checks describe their own
+commits/profiles, not the current combined recipe.
 
 Prepared workflow: [virtio-dxg-integration.yml](../.github/workflows/virtio-dxg-integration.yml).
 Windows host checks use a mock D3DKMT dispatch table. Linux checks use inert
 archive/browser fixtures and extract the actual Mesa mirror/fence/reclaim functions
-into CPU substitutes, with an expected failure of the old shared-dirty-bit
-, fence-sentinel and reclaim-sentinel code. The combined release build enables X11/Wayland,
+into CPU substitutes (17 mirror, 15 fence and 10 reclaim cases in the
+follow-up), with an expected failure of the old shared-dirty-bit,
+fence-sentinel and reclaim-sentinel code. The combined release build enables X11/Wayland,
 GLX/EGL/GBM/GLVND, d3d12/softpipe, VA-API and Dozen, with **two compiler
 workers**. Its libraries are packaged and inspected, never loaded. Windows
 job limit: 10 minutes; Linux controls/build limit: 45 minutes.

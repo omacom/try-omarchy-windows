@@ -7,7 +7,7 @@
   "profiles": {
     "graphics": {
       "patchFile": "graphics.patch",
-      "patchSha256": "62ac09c4666c3dfd6758803a1ad23ba4fa2cfbafe1f1145a1b43be362b4a7311",
+      "patchSha256": "37a60b67ac57fec6e7b87e1303561af58598cda5083996e2f61f1c02fb74b312",
       "files": {
         "VERSION": {
           "originalSha256": "982a353702e30cae7604c76ff1a99db8b959088c79b12dd1ea480141241f2e48",
@@ -51,7 +51,7 @@
         },
         "src/gallium/drivers/d3d12/d3d12_resource.cpp": {
           "originalSha256": "b03b1d70e20342b13b615807534aaeed23688955477b014f21ecb5a09aec486b",
-          "patchedSha256": "28572e59b9bb4838e08acf7e787630774d9c8897257aea62bf3aa9903b2b1e4d"
+          "patchedSha256": "9153ab604f799610570a9e1fca2dae8b1020e79cc56e26e6115f619946e71290"
         },
         "src/gallium/drivers/d3d12/d3d12_resource.h": {
           "originalSha256": "ed9984a73896dfc781c534aa091b998c338bc3030e47e15f77bccce485cf0a56",
@@ -89,5 +89,38 @@
     }
   },
   "profile": "virtio-dxg kernel ABI: KMS mirrors, zero-copy scanout, native Dozen FD lifetime, upload/constbuf/fence/reclaim guards, per-context mirror writes without per-frame heap allocation for <=16 mirrors",
-  "sourceVersionIsNotRewritten": true
+  "sourceVersionIsNotRewritten": true,
+  "runtimeRequiredPaths": [
+    "lib/dri/d3d12_dri.so",
+    "lib/dri/d3d12_drv_video.so",
+    "lib/dri/kms_swrast_dri.so",
+    "lib/dri/libdril_dri.so",
+    "lib/dri/swrast_dri.so",
+    "lib/gbm/dri_gbm.so",
+    "lib/libEGL_mesa.so",
+    "lib/libEGL_mesa.so.0",
+    "lib/libEGL_mesa.so.0.0.0",
+    "lib/libGLX_mesa.so",
+    "lib/libGLX_mesa.so.0",
+    "lib/libGLX_mesa.so.0.0.0",
+    "lib/libgallium-26.2.6.so",
+    "lib/libgbm.so",
+    "lib/libgbm.so.1",
+    "lib/libgbm.so.1.0.0",
+    "lib/libvulkan_dzn.so",
+    "share/glvnd/egl_vendor.d/50_mesa.json",
+    "share/vulkan/icd.d/dzn_icd.x86_64.json"
+  ],
+  "runtimeAliases": {
+    "lib/libEGL_mesa.so": "libEGL_mesa.so.0",
+    "lib/libEGL_mesa.so.0": "libEGL_mesa.so.0.0.0",
+    "lib/libGLX_mesa.so": "libGLX_mesa.so.0",
+    "lib/libGLX_mesa.so.0": "libGLX_mesa.so.0.0.0",
+    "lib/libgbm.so": "libgbm.so.1",
+    "lib/libgbm.so.1": "libgbm.so.1.0.0",
+    "lib/dri/d3d12_drv_video.so": "../libgallium-26.2.6.so",
+    "lib/dri/d3d12_dri.so": "libdril_dri.so",
+    "lib/dri/kms_swrast_dri.so": "libdril_dri.so",
+    "lib/dri/swrast_dri.so": "libdril_dri.so"
+  }
 }

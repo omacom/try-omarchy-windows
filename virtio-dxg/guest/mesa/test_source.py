@@ -89,7 +89,7 @@ def main():
         'd3d12_mirror_reference', 'd3d12_mirror_sync'))
     template = (HERE / 'mirror_cases.cpp.in').read_text().replace(
         '// ACTUAL_MIRROR_FUNCTIONS', '// ACTUAL_FUNCTIONS')
-    run_fixture(out, 'mirror-patched', template, mirror, 0, 'MIRROR_CPU_PASS cases=14')
+    run_fixture(out, 'mirror-patched', template, mirror, 0, 'MIRROR_CPU_PASS cases=17')
     # Use the actual old batch function to show the shared-bit defect, not a
     # second hand-written version of its algorithm.
     old = copy_source('claude-baseline')
@@ -128,7 +128,7 @@ def main():
         run_fixture(out, label, reclaim_template, actual, expected, message)
     receipt = {'schema': 1, 'recipeSha256': hashlib.sha256((recipe / 'recipe.json').read_bytes()).hexdigest(),
                'mesaVersion': manifest['mesaVersion'], 'recipeControls': 4,
-               'actualMirrorCpuCases': 14, 'actualFenceCpuCases': 15,
+               'actualMirrorCpuCases': 17, 'actualFenceCpuCases': 15,
                'actualReclaimCpuCases': 10,
                'baselineDefectsReproduced': ['shared-dirty-bit', 'device-removal-completion', 'device-removal-reclaim'],
                'graphicsLibraryLoaded': False, 'hardwareIntegrationTested': False}

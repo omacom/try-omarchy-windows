@@ -77,7 +77,7 @@ jobs:
           echo "b9436b3e1a8be76fbd4823dc884f90596ab7c6ac5e1867a305e66ffccfb31a92  $RUNNER_TEMP/mesa-26.2.6.tar.xz" | sha256sum --check
           mkdir "$RUNNER_TEMP/pristine"
           tar -xJf "$RUNNER_TEMP/mesa-26.2.6.tar.xz" -C "$RUNNER_TEMP/pristine"
-      - name: Exercise actual mirror and fence functions with CPU substitutes
+      - name: Exercise actual mirror, fence and reclaim functions with CPU substitutes
         run: |
           python3 virtio-dxg/guest/mesa/test_source.py --source "$RUNNER_TEMP/pristine/mesa-26.2.6" --output "$RUNNER_TEMP/dxg-source-controls"
       - name: Compile full GLX/EGL/VA-API/Dozen cohort; never load it
@@ -109,6 +109,7 @@ jobs:
             ${{ runner.temp }}/dxg-source-controls/*.log
             ${{ runner.temp }}/dxg-source-controls/result.json
             ${{ runner.temp }}/dxg-inspected/lib/virtio-dxg-build.json
+            ${{ runner.temp }}/dxg-mesa-build/*/dest/usr/lib/virtio-dxg-build.json
             ${{ runner.temp }}/dxg-mesa-build/*/compile/meson-logs/meson-log.txt
           if-no-files-found: ignore
           retention-days: 14

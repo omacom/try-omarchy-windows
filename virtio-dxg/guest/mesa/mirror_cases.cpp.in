@@ -44,12 +44,17 @@ d3d12_resource *d3d12_resource_cast(pipe_resource *p) {
 }
 #define d3d12_resource(p) d3d12_resource_cast(p)
 struct d3d12_context;
-struct d3d12_batch { d3d12_context *ctx; uint8_t state = 0; };
+struct d3d12_batch {
+   d3d12_context *ctx;
+   uint8_t state = 0;
+   bool has_errors = false;
+   void *fence = reinterpret_cast<void *>(1);
+};
 struct d3d12_context {
    util_dynarray mirror_dirty;
    d3d12_batch batch{this, 0};
    unsigned flushes = 0, waits = 0, records = 0;
-   bool complete = true, record_ok = true;
+   bool complete = true, record_ok = true, submit = true;
    std::vector<pipe_resource *> published;
    ~d3d12_context() {
       util_dynarray_foreach(&mirror_dirty, pipe_resource *, p)
@@ -61,7 +66,7 @@ enum batch_bo_reference_state { batch_bo_reference_read = 1, batch_bo_reference_
 uint8_t *d3d12_batch_acquire_reference(d3d12_batch *b, void *) { return &b->state; }
 void d3d12_mirror_reference(d3d12_context *, struct d3d12_resource *);
 d3d12_batch *d3d12_current_batch(d3d12_context *c) { return &c->batch; }
-bool d3d12_flush_cmdlist(d3d12_context *c) { ++c->flushes; return true; }
+bool d3d12_flush_cmdlist(d3d12_context *c) { ++c->flushes; return c->submit; }
 bool d3d12_reset_batch(d3d12_context *c, d3d12_batch *, uint64_t timeout) {
    assert(timeout == OS_TIMEOUT_INFINITE); ++c->waits; return c->complete;
 }
@@ -148,6 +153,17 @@ int main() {
          require(c.published.size() == 17, "Large mirror list did not recover");
          for (auto &r : textures) require(r.base.b.reference.count == 1, "Large flush leaked");
          cases += 2;
+      }
+      for (int mode = 0; mode < 3; ++mode) {
+         struct d3d12_resource texture; d3d12_context c;
+         if (mode == 0) { c.batch.has_errors = true; c.batch.fence = nullptr; }
+         if (mode == 1) c.batch.fence = nullptr;
+         if (mode == 2) c.submit = false;
+         d3d12_mirror_reference(&c, &texture); d3d12_mirror_sync(&c);
+         require(c.published.empty() && !c.waits,
+                 "A failed/missing submission was treated as completed");
+         require(texture.base.b.reference.count == 1, "Failed submit leaked queued reference");
+         ++cases;
       }
       {
          pipe_resource p, *held = nullptr;
