@@ -294,6 +294,16 @@ other display the links are refused and the copies stay. With
 `DXGHOST_STATS=1`, QEMU logs the presented frame rate and the gaps longer
 than 1.5 frames every 10 s.
 
+### Zero-copy windows
+
+Applications reach the compositor without copies as well: their window
+buffers are virtio-gpu dma-bufs paired with shared GPU textures in the guest
+module, which the compositor's Mesa opens on import
+([guest/mesa](../virtio-dxg/guest/mesa/README.md#window-buffers)). The boot
+hook selects this when the module offers it (`virtio_dxg.winbuf=0` keeps
+`wl_shm`): GL applications then run through Mesa's KMS winsys on the render
+node, and Chromium is a native Wayland client on the GPU with no wrapper.
+
 ### Starting it from the launcher
 
 `TryOmarchy.exe -render dxg` boots the installed Omarchy on virtio-dxg. It is

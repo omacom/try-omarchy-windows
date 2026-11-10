@@ -89,7 +89,7 @@ def main():
         'd3d12_mirror_reference', 'd3d12_mirror_sync'))
     template = (HERE / 'mirror_cases.cpp.in').read_text().replace(
         '// ACTUAL_MIRROR_FUNCTIONS', '// ACTUAL_FUNCTIONS')
-    run_fixture(out, 'mirror-patched', template, mirror, 0, 'MIRROR_CPU_PASS cases=17')
+    run_fixture(out, 'mirror-patched', template, mirror, 0, 'MIRROR_CPU_PASS cases=18')
     # Use the actual old batch function to show the shared-bit defect, not a
     # second hand-written version of its algorithm.
     old = copy_source('claude-baseline')

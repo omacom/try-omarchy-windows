@@ -10,7 +10,7 @@ while IFS= read -r line; do
 done < /run/environment.d/90-virtio-dxg.conf
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 export WAYLAND_DISPLAY=$(basename "$(ls $XDG_RUNTIME_DIR/wayland-? 2>/dev/null | head -1)")
-export HYPRLAND_INSTANCE_SIGNATURE=$(ls $XDG_RUNTIME_DIR/hypr 2>/dev/null | head -1)
+export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t $XDG_RUNTIME_DIR/hypr 2>/dev/null | head -1)
 W=$(mktemp -d)
 pass=0 fail=0
 # An idle session turns the display off, and the compositor then throttles

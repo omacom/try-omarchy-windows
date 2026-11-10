@@ -1818,4 +1818,27 @@ struct d3dkmt_virtioscanout {
 #define LX_DXVIRTIOSCANOUT	\
 	_IOWR(0x47, 0x80, struct d3dkmt_virtioscanout)
 
+/*
+ * virtio-dxg only: window buffers without copies. An application's window
+ * buffer travels to the compositor as a dma-buf (of the virtio-gpu device,
+ * which is what compositors validate and can scan out). The application
+ * pairs it with the shared D3D12 resource it renders in; the compositor,
+ * holding the dma-buf, gets a descriptor of that resource and samples the
+ * texture itself. Pairs end with their unregister or with the process that
+ * registered them.
+ */
+#define D3DKMT_VIRTIOWINBUF_REGISTER	1	/* dmabuf_fd, resource_fd in */
+#define D3DKMT_VIRTIOWINBUF_UNREGISTER	2	/* dmabuf_fd in */
+#define D3DKMT_VIRTIOWINBUF_LOOKUP	3	/* dmabuf_fd in, resource_fd out */
+
+struct d3dkmt_virtiowinbuf {
+	__u32			op;
+	__s32			dmabuf_fd;
+	__s32			resource_fd;
+	__u32			reserved;
+};
+
+#define LX_DXVIRTIOWINBUF	\
+	_IOWR(0x47, 0x81, struct d3dkmt_virtiowinbuf)
+
 #endif /* _D3DKMTHK_H */

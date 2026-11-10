@@ -59,9 +59,16 @@ setup_desktop() {
     cp /virtio-dxg/desktop_payload.py /virtio-dxg/chromium-wrapper \
         /virtio-dxg/mesa-recipe.json /run/virtio-dxg/ || return 1
     mount -o bind /run /new_root/run || return 1
+    # Window buffers (the guest module offers them unless
+    # virtio_dxg.winbuf=0): applications hand the compositor GPU textures,
+    # and Chromium runs on the GPU as a native Wayland client. Without them
+    # applications use wl_shm, and Chromium needs its Xwayland wrapper.
+    winbuf=
+    [ -e /sys/module/dxgkrnl_virtio/parameters/winbuf ] && winbuf=1
+    case " $(cat /proc/cmdline) " in *" virtio_dxg.winbuf=0 "*) winbuf= ;; esac
     browser=
-    case " $(cat /proc/cmdline) " in
-    *" virtio_dxg.chromium=wayland "*) ;;
+    case "$winbuf $(cat /proc/cmdline) " in
+    1*|*" virtio_dxg.chromium=wayland "*) ;;
     *) browser='--browser-wrapper /run/virtio-dxg/chromium-wrapper' ;;
     esac
     # shellcheck disable=SC2086
@@ -74,14 +81,23 @@ setup_desktop() {
     umount /new_root/run || return 1
 
     mkdir -p /run/environment.d || return 1
-    # Clients take Mesa's software winsys (wl_shm buffers) with d3d12
-    # rendering, as under WSLg; the compositor renders on d3d12 into
-    # KMS-mirrored scanout buffers. NVIDIA's libraries come from the shares.
+    # The compositor renders on d3d12 into KMS-mirrored scanout buffers.
+    # Applications: with window buffers, Mesa's KMS winsys on the render
+    # node (MESA_LOADER_DRIVER_OVERRIDE: the node's own driver, virtio_gpu,
+    # does not exist), whose GBM buffers are GPU textures the compositor
+    # samples directly; otherwise Mesa's software winsys (wl_shm buffers)
+    # with d3d12 rendering, as under WSLg. NVIDIA's libraries come from
+    # the shares.
+    if [ -n "$winbuf" ]; then
+        clients=MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
+    else
+        clients=LIBGL_ALWAYS_SOFTWARE=1
+    fi
     # Xwayland: glamor would allocate window pixmaps through GBM on the
     # render node, which has no hardware driver: X11 windows then never
     # reach the compositor. Without glamor they go as wl_shm buffers, and
     # X11 applications' own OpenGL still renders on d3d12.
-    printf '%s\n' GALLIUM_DRIVER=d3d12 LIBGL_ALWAYS_SOFTWARE=1 \
+    printf '%s\n' GALLIUM_DRIVER=d3d12 "$clients" \
         XWAYLAND_NO_GLAMOR=1 \
         MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA LIBVA_DRIVER_NAME=d3d12 \
         "LD_LIBRARY_PATH=$m/lib:/usr/lib/wsl/lib:/usr/lib/wsl/core" \
@@ -94,7 +110,7 @@ setup_desktop() {
     # The payload helper prepares both PATH and desktop-menu launch paths.
     # Chromium retains its sandbox. Known-broken VA-API encode is disabled
     # in that wrapper; hardware decode and full browser acceptance are open.
-    echo ":: virtio-dxg: desktop selects d3d12 (Mesa $(cat "$m/lib/virtio-dxg-mesa-version"))"
+    echo ":: virtio-dxg: desktop selects d3d12 (Mesa $(cat "$m/lib/virtio-dxg-mesa-version")${winbuf:+, zero-copy windows})"
 }
 
 # System tools (lspci, fastfetch, desktop info) name PCI devices from the

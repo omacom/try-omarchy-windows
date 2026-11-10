@@ -5,8 +5,12 @@ our resource-ownership, upload, constant-buffer, fence and Dozen FD guards.
 It uses the real guest dxg kernel ABI, not the older private userspace broker.
 The first cohort at d717dfa compiled completely and its CPU controls passed,
 but runtime-archive acceptance failed because its receipt also listed SDK
-headers not shipped in the tar. The corrected receipt and an additional
-submitted-fence guard are **prepared but untested**. No GPU/VM run occurred. See
+headers not shipped in the tar. The corrected receipt and the submitted-fence
+guard have since **run on hardware** (RTX 5090 Laptop GPU, 2026-11-10): the
+Omarchy desktop, zero-copy scanout, the CUDA, video and D3D12 checks and a
+60 s compositor stress pass on this cohort. That run found one fault, fixed
+since: the staged directory kept mkdtemp's 0700 mode, so the session could
+not load it. See
 [status and performance limits](../../../docs/VIRTIO-DXG-INTEGRATION.md).
 
 The versioned recipe in `versions/26.2.6/` pins the official source archive,
@@ -18,8 +22,34 @@ patches are retained as source history; the build uses only the pinned recipe.
 The new recipe also tracks mirror writes per context, retains the scanout owner
 through borrowed wrappers and rejects zero-ref weak lookups. Up to 16 pending
 mirrors avoid a per-flush heap list. A failed GPU completion cannot publish a
-CPU readback. Application windows still use shared-memory readback/upload;
-compositor scanout zero-copy does not make applications zero-copy.
+CPU readback.
+
+## Window buffers
+
+Application windows are zero-copy too. On the render node no dumb buffer can
+be made, so applications used Mesa's software winsys: a GPU readback in the
+application and an upload in the compositor for every frame (`wl_shm`). Now a
+shared image on the render node is a **window buffer**:
+
+- a 2D virtio-gpu buffer exported as a dma-buf. Compositors validate client
+  buffers on their DRM device (Hyprland calls `drmPrimeFDToHandle`), which a
+  bare D3D12 shared handle fails; a virtio-gpu dma-buf passes, and its memory
+  is never touched;
+- a shared D3D12 texture the application renders in, paired with that dma-buf
+  in the guest's dxg module (`LX_DXVIRTIOWINBUF`, register);
+- on import, in any process, Mesa asks the module for the texture of the
+  dma-buf it holds (lookup) and opens it: the compositor samples what the
+  application rendered. Possession of the dma-buf is what grants the lookup.
+
+Flushes that wrote a window buffer finish the GPU work, as scanout mirrors
+do, so a committed frame is complete. Without the registry (an older module)
+no window buffer is made, and the boot hook keeps sessions on `wl_shm`.
+`guest/test/clientbuftest.c` runs both ends in one process.
+
+Measured at 1280x720 on the RTX 5090: glmark2 windowed 1579-1757 FPS (254
+with `wl_shm`); opening the Omarchy menu, 346 of 367 possible frames with 5
+late (311 with 26 late). Chromium runs on the GPU as a native Wayland client
+with its default flags (ANGLE on D3D12), where it needed Xwayland before.
 
 ## Building the inactive cohort
 

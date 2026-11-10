@@ -68,6 +68,9 @@ void dxgprocess_destroy(struct dxgprocess *process)
 	struct dxgprocess_adapter *entry;
 	struct dxgprocess_adapter *tmp;
 
+#ifdef DXG_VIRTIO
+	dxgwinbuf_release_process(process);
+#endif
 	/* Destroy all adapter state */
 	dxgglobal_acquire_process_adapter_lock();
 	list_for_each_entry_safe(entry, tmp,

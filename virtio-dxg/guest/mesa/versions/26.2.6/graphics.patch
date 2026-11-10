@@ -173,7 +173,7 @@
  }
 --- a/src/gallium/drivers/d3d12/d3d12_resource.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_resource.cpp
-@@ -37,6 +37,25 @@
+@@ -37,6 +37,29 @@
  #include "util/format/u_format_zs.h"
  
  #include "frontend/sw_winsys.h"
@@ -187,6 +187,8 @@
 +#include <sys/mman.h>
 +#include <unistd.h>
 +#include "drm-uapi/virtgpu_drm.h"
++#include <sys/stat.h>
++#include <sys/sysmacros.h>
 +#include "util/hash_table.h"
 +#include "util/u_atomic.h"
 +#include <limits.h>
@@ -195,19 +197,24 @@
 +
 +static void
 +d3d12_scanout_unlink(struct d3d12_resource *res);
++static void
++d3d12_winbuf_unregister(int dmabuf_fd);
 +#endif
  
  #include <dxguids/dxguids.h>
  #include <memory>
-@@ -80,6 +99,22 @@
+@@ -80,6 +103,25 @@
     // and only destroy it on the last plane being destroyed
     if (resource->dt_refcount > 0)
        resource->dt_refcount--;
 +#ifndef _WIN32
 +   if (resource->mirror_zero_copy && !resource->mirror_link_borrowed)
 +      d3d12_scanout_unlink(resource);
++   if (resource->dxg_shared)
++      d3d12_winbuf_unregister(resource->mirror_fd);
 +   if (resource->mirror_has_fd) {
-+      munmap(resource->dt_map, resource->mirror_map_size);
++      if (resource->dt_map)
++         munmap(resource->dt_map, resource->mirror_map_size);
 +      close(resource->mirror_fd);
 +      resource->dt_map = NULL;
 +   }
@@ -222,7 +229,7 @@
     if ((resource->dt_refcount == 0) && resource->dt)
     {
        struct d3d12_screen *screen = d3d12_screen(pscreen);
-@@ -95,6 +130,8 @@
+@@ -95,6 +137,8 @@
        d3d12_bo_unreference(resource->bo);
     if (resource->logicop_texture)
        pipe_resource_reference(&resource->logicop_texture, NULL);
@@ -231,7 +238,7 @@
     FREE(resource);
  }
  
-@@ -540,10 +577,460 @@
+@@ -540,10 +584,651 @@
     return &res->base.b;
  }
  
@@ -526,6 +533,183 @@
 +#endif /* !_WIN32 */
 +
 +static struct pipe_resource *
++d3d12_resource_create_or_place(struct d3d12_screen *screen,
++                               struct d3d12_resource *res,
++                               const struct pipe_resource *templ,
++                               ID3D12Heap *heap,
++                               uint64_t placed_offset);
++
++#ifndef _WIN32
++/* virtio-dxg zero-copy window buffers ------------------------------------
++ *
++ * On a render node a shared image (a Wayland window buffer) is a virtio-gpu
++ * buffer exported as a dma-buf, with a shared GPU texture registered for it
++ * in the dxg module (LX_DXVIRTIOWINBUF). An import of such a dma-buf, in
++ * any process, gets the texture. D3D12_ZERO_COPY_CLIENTS=false, or a
++ * kernel without the registry, leaves a mirror that is filled by a copy.
++ */
++struct d3d12_virtio_winbuf {
++   uint32_t op;         /* 1 register, 2 unregister, 3 lookup */
++   int32_t dmabuf_fd;
++   int32_t resource_fd;
++   uint32_t reserved;
++};
++#define D3D12_LX_DXVIRTIOWINBUF _IOWR(0x47, 0x81, struct d3d12_virtio_winbuf)
++
++static int
++d3d12_dxg_fd(void)
++{
++   simple_mtx_lock(&d3d12_scanout_lock);
++   if (d3d12_scanout_dxg == -2) {
++      d3d12_scanout_dxg = open("/dev/dxg", O_RDWR | O_CLOEXEC);
++      if (d3d12_scanout_dxg < 0)
++         d3d12_scanout_dxg = -1;
++   }
++   int fd = d3d12_scanout_dxg;
++   simple_mtx_unlock(&d3d12_scanout_lock);
++   return fd;
++}
++
++static bool
++d3d12_on_render_node(struct d3d12_screen *screen)
++{
++   struct stat st;
++   int fd = screen->winsys && screen->winsys->get_fd ?
++            screen->winsys->get_fd(screen->winsys) : -1;
++
++   return fd >= 0 && fstat(fd, &st) == 0 && S_ISCHR(st.st_mode) &&
++          major(st.st_rdev) == 226 && minor(st.st_rdev) >= 128;
++}
++
++static uint32_t
++d3d12_virtio_gpu_format(enum pipe_format format)
++{
++   switch (format) {
++   case PIPE_FORMAT_B8G8R8A8_UNORM: return 1;
++   case PIPE_FORMAT_B8G8R8X8_UNORM: return 2;
++   case PIPE_FORMAT_R8G8B8A8_UNORM: return 67;
++   case PIPE_FORMAT_R8G8B8X8_UNORM: return 134;
++   default: return 0;
++   }
++}
++
++static struct pipe_resource *
++d3d12_winbuf_create(struct d3d12_screen *screen,
++                    const struct pipe_resource *templ)
++{
++   int drm_fd = screen->winsys->get_fd(screen->winsys);
++   uint32_t format = d3d12_virtio_gpu_format(templ->format);
++   unsigned stride = align(util_format_get_stride(templ->format, templ->width0), 64);
++   uint64_t size = (uint64_t)stride * templ->height0;
++   if (!format || size > UINT32_MAX)
++      return NULL;
++
++   /* The dma-buf: a 2D virtio-gpu buffer (render nodes may create them). */
++   struct drm_virtgpu_resource_create rc = {};
++   rc.target = 2;
++   rc.format = format;
++   rc.width = templ->width0;
++   rc.height = templ->height0;
++   rc.depth = 1;
++   rc.array_size = 1;
++   rc.size = (uint32_t)size;
++   if (ioctl(drm_fd, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE, &rc))
++      return NULL;
++   struct drm_prime_handle prime = {};
++   prime.handle = rc.bo_handle;
++   prime.flags = DRM_CLOEXEC | DRM_RDWR;
++   int ret = ioctl(drm_fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime);
++   struct drm_gem_close gem = {};
++   gem.handle = rc.bo_handle;
++   ioctl(drm_fd, DRM_IOCTL_GEM_CLOSE, &gem);   /* the dma-buf keeps it */
++   if (ret)
++      return NULL;
++   int fd = prime.fd;
++
++   struct d3d12_resource *res = CALLOC_STRUCT(d3d12_resource);
++   if (!res) {
++      close(fd);
++      return NULL;
++   }
++   struct pipe_resource tex_templ = *templ;
++   tex_templ.bind &= ~d3d12_mirror_binds;
++   tex_templ.bind |= PIPE_BIND_SHARED | PIPE_BIND_RENDER_TARGET |
++                     PIPE_BIND_SAMPLER_VIEW;
++   struct pipe_resource *pres =
++      d3d12_resource_create_or_place(screen, res, &tex_templ, nullptr, 0);
++   if (!pres) {
++      close(fd);
++      return NULL;
++   }
++   pres->bind = templ->bind | PIPE_BIND_SHARED;
++   res->dt_mirror = true;
++   res->dt_stride = stride;
++   res->mirror_has_fd = true;
++   res->mirror_fd = fd;
++   res->mirror_map_size = size;
++
++   /* Pair the texture with the dma-buf for whoever imports it. */
++   HANDLE shared = nullptr;
++   int dxg = d3d12_dxg_fd();
++   ID3D12Resource *d3d12_res = d3d12_resource_resource(res);
++   if (dxg >= 0 && d3d12_res &&
++       SUCCEEDED(screen->dev->CreateSharedHandle(d3d12_res, nullptr, GENERIC_ALL,
++                                                 nullptr, &shared)) && shared) {
++      struct d3d12_virtio_winbuf reg = {};
++      reg.op = 1;
++      reg.dmabuf_fd = fd;
++      reg.resource_fd = (int)(intptr_t)shared;
++      res->dxg_shared = ioctl(dxg, D3D12_LX_DXVIRTIOWINBUF, &reg) == 0;
++      close(reg.resource_fd);
++   }
++   if (!res->dxg_shared) {
++      /* No pairing (an older dxg module): an importer could not see the
++       * image, so there is no window buffer; callers fall back. */
++      pipe_resource_reference(&pres, NULL);
++      return NULL;
++   }
++   return pres;
++}
++
++static void
++d3d12_winbuf_unregister(int dmabuf_fd)
++{
++   int dxg = d3d12_dxg_fd();
++   struct d3d12_virtio_winbuf unreg = {};
++   unreg.op = 2;
++   unreg.dmabuf_fd = dmabuf_fd;
++   unreg.resource_fd = -1;
++   if (dxg >= 0)
++      ioctl(dxg, D3D12_LX_DXVIRTIOWINBUF, &unreg);
++}
++
++/* The texture paired with an imported window buffer, as a resource of this
++ * screen; NULL when the dma-buf has none. */
++static struct pipe_resource *
++d3d12_winbuf_import(struct d3d12_screen *screen,
++                    const struct pipe_resource *templ, int dmabuf_fd)
++{
++   int dxg = d3d12_dxg_fd();
++   struct d3d12_virtio_winbuf look = {};
++   look.op = 3;
++   look.dmabuf_fd = dmabuf_fd;
++   look.resource_fd = -1;
++   if (dxg < 0 || !debug_get_bool_option("D3D12_ZERO_COPY_CLIENTS", true) ||
++       ioctl(dxg, D3D12_LX_DXVIRTIOWINBUF, &look) || look.resource_fd < 0)
++      return NULL;
++   struct winsys_handle wh = {};
++   wh.type = WINSYS_HANDLE_TYPE_FD;
++   wh.handle = look.resource_fd;
++   wh.format = templ->format;
++   /* Not a dma-buf: the regular path opens the shared handle. */
++   struct pipe_resource *pres = screen->base.resource_from_handle(
++      &screen->base, templ, &wh, PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
++   close(look.resource_fd);
++   return pres;
++}
++#endif /* !_WIN32 */
++
++static struct pipe_resource *
 +d3d12_mirror_attach(struct d3d12_screen *screen,
 +                    const struct pipe_resource *templ,
 +                    struct sw_displaytarget *dt, unsigned dt_stride)
@@ -635,6 +819,12 @@
 +                              &gpu_resource);
 +      if (linked)
 +         return linked;
++      if (!borrowed) {
++         struct pipe_resource *window =
++            d3d12_winbuf_import(screen, templ, (int)handle->handle);
++         if (window)
++            return window;
++      }
 +      int fd = os_dupfd_cloexec((int)handle->handle);
 +      if (fd < 0) {
 +         pipe_resource_reference(&borrowed, NULL);
@@ -685,6 +875,14 @@
                        const struct pipe_resource *templ)
  {
 +   struct d3d12_screen *screen = d3d12_screen(pscreen);
++#ifndef _WIN32
++   if ((templ->bind & d3d12_mirror_binds) &&
++       d3d12_mirror_wanted(screen, templ) && d3d12_on_render_node(screen)) {
++      struct pipe_resource *winbuf = d3d12_winbuf_create(screen, templ);
++      if (winbuf)
++         return winbuf;
++   }
++#endif
 +   if ((templ->bind & d3d12_mirror_binds) &&
 +       d3d12_mirror_wanted(screen, templ))
 +      return d3d12_mirror_create(screen, templ);
@@ -692,7 +890,7 @@
     struct d3d12_resource *res = CALLOC_STRUCT(d3d12_resource);
     if (!res)
        return NULL;
-@@ -557,6 +1044,13 @@
+@@ -557,6 +1242,13 @@
                            struct winsys_handle *handle, unsigned usage)
  {
     struct d3d12_screen *screen = d3d12_screen(pscreen);
@@ -706,7 +904,7 @@
     if (handle->type != WINSYS_HANDLE_TYPE_D3D12_RES &&
         handle->type != WINSYS_HANDLE_TYPE_FD &&
         handle->type != WINSYS_HANDLE_TYPE_WIN32_NAME)
-@@ -846,6 +1340,27 @@
+@@ -846,6 +1538,27 @@
     struct d3d12_resource *res = d3d12_resource(pres);
     struct d3d12_screen *screen = d3d12_screen(pscreen);
  
@@ -734,7 +932,7 @@
     switch (handle->type) {
     case WINSYS_HANDLE_TYPE_D3D12_RES:
        handle->com_obj = d3d12_resource_resource(res);
-@@ -985,6 +1500,13 @@
+@@ -985,6 +1698,13 @@
  
  static constexpr unsigned d3d12_max_planes = 3;
  
@@ -748,7 +946,7 @@
  /**
   * Get stride and offset for the given pipe resource without the need to get
   * a winsys_handle.
-@@ -1003,6 +1525,41 @@
+@@ -1003,6 +1723,41 @@
     struct d3d12_resource* res = d3d12_resource(pres);
     unsigned num_planes = util_format_get_num_planes(res->overall_format);
  
@@ -790,12 +988,10 @@
     pipe_resource *planes[d3d12_max_planes];
     unsigned int strides[d3d12_max_planes];
     unsigned int layer_strides[d3d12_max_planes];
-@@ -1271,6 +1828,142 @@
-    ctx->cmdlist->CopyTextureRegion(&info.dst_loc, info.dst_x, info.dst_y, info.dst_z,
-                                    &info.src_loc, info.src_box);
+@@ -1273,6 +2028,142 @@
     ctx->has_commands = true;
-+}
-+
+ }
+ 
 +static bool
 +d3d12_mirror_staging(struct d3d12_resource *res)
 +{
@@ -907,7 +1103,7 @@
 +   bool recorded = false;
 +   for (unsigned i = 0; i < count; i++) {
 +      struct d3d12_resource *res = d3d12_resource(list[i].resource);
-+      if (d3d12_scanout_active(res)) {
++      if (res->dxg_shared || d3d12_scanout_active(res)) {
 +         /* The host shows the texture: finish GPU work before KMS commits. */
 +         recorded = true;
 +      } else if (d3d12_mirror_record(ctx, res)) {
@@ -930,12 +1126,14 @@
 +   }
 +   if (list != local)
 +      free(list);
- }
- 
++}
++
  static void
+ transfer_buf_to_image_part(struct d3d12_context *ctx,
+                            struct d3d12_resource *res,
 --- a/src/gallium/drivers/d3d12/d3d12_resource.h
 +++ b/src/gallium/drivers/d3d12/d3d12_resource.h
-@@ -54,6 +54,29 @@
+@@ -54,6 +54,33 @@
     unsigned dt_stride;
     struct pipe_resource *dt_proxy;
  
@@ -944,6 +1142,10 @@
 +    * reach dt when the writing context flushes. */
 +   bool dt_mirror;
 +   void *dt_map;
++   /* A window buffer on a render node, paired with this (shared) texture
++    * in the dxg module: the compositor samples the texture, so flushes
++    * that wrote it only finish the GPU work. */
++   bool dxg_shared;
 +   /* An imported dma-buf is mapped through its own descriptor: render
 +    * nodes (where compositors usually render) cannot map dumb buffers. */
 +   bool mirror_has_fd;
@@ -965,11 +1167,10 @@
     struct util_range valid_buffer_range;
     uint32_t bind_counts[MESA_SHADER_STAGES][D3D12_RESOURCE_BINDING_TYPES];
     unsigned generation_id;
-@@ -61,6 +84,17 @@
-    util_once_flag logicop_texture_init_flag;
+@@ -62,6 +89,17 @@
     struct pipe_resource *logicop_texture;
  };
-+
+ 
 +struct d3d12_context;
 +
 +/* Track each writing context independently: another context's pending flush
@@ -980,9 +1181,10 @@
 +/* Copies every mirror the context wrote into its dumb buffer (at flush). */
 +void
 +d3d12_mirror_sync(struct d3d12_context *ctx);
- 
++
  struct d3d12_memory_object {
     struct pipe_memory_object base;
+    ID3D12Resource *res;
 --- a/src/gallium/drivers/d3d12/d3d12_screen.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_screen.cpp
 @@ -420,6 +420,12 @@
