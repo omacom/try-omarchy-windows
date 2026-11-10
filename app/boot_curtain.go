@@ -83,6 +83,9 @@ func (s *desktopStreak) reset() { s.look(time.Time{}, false) }
 
 type bootCurtainTimes struct {
 	boot, ready, session time.Time
+	// hostCapture.blindTime when ready and session were recorded, so time
+	// the screen could not be seen is left out of the blank-desktop wait.
+	readyBlind, sessionBlind time.Duration
 }
 
 // liftReason says why the window may be shown now, or "" while it should
@@ -102,13 +105,15 @@ func (t bootCurtainTimes) liftReason(now time.Time, painted bool) string {
 }
 
 // blankDesktopDue reports whether a window that never showed the desktop has
-// been watched long enough to ask the user about it.
-func (t bootCurtainTimes) blankDesktopDue(now time.Time, looks int32) bool {
-	start := t.session
+// been watched long enough to ask the user about it. blind is
+// hostCapture.blindTime(now): time the screen could not be seen (display
+// off, session locked) does not count toward the wait.
+func (t bootCurtainTimes) blankDesktopDue(now time.Time, looks int32, blind time.Duration) bool {
+	start, startBlind := t.session, t.sessionBlind
 	if start.IsZero() {
-		start = t.ready
+		start, startBlind = t.ready, t.readyBlind
 	}
-	return !start.IsZero() && now.Sub(start) >= blankDesktopWait && looks >= blankDesktopLooks
+	return !start.IsZero() && now.Sub(start)-(blind-startBlind) >= blankDesktopWait && looks >= blankDesktopLooks
 }
 
 // checkPaint is true once the screen can show something other than boot

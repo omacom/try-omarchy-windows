@@ -1544,7 +1544,7 @@ func watch(cfg *config, qmp *qmpConn, exited <-chan error) bool {
 				recordRenderResult(cfg)
 			}
 			if gpuRecordPending && !blankOffered && recovery == nil && stopDeadline == nil && !pendingReboot.Load() && !setupCancelled() &&
-				curtainTimes().blankDesktopDue(now, desktopLooks.Load()) {
+				hostCapture.usable() && curtainTimes().blankDesktopDue(now, desktopLooks.Load(), hostCapture.blindTime(now)) {
 				blankOffered = true
 				if probe, _ := loadRenderProbe(cfg.dir); !gpuDesktopConfirmed(probe, cfg.runtimeID, cfg.displayDriver) {
 					logf("display health: GPU rendering has not shown the desktop in the Omarchy window")

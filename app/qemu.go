@@ -323,13 +323,21 @@ func prepareDisk(cfg *config, expandedMiB int64) error {
 	if !st.Mode().IsRegular() || st.Size() > expandedBytes {
 		return fmt.Errorf("factory image does not fit the requested disk capacity")
 	}
-	if err := sparseCopy(dst, src, st.Size(), ui); err != nil {
+	phase := startSetupPhase("writable disk copy")
+	err = sparseCopy(dst, src, st.Size(), ui)
+	if err == nil {
+		err = dst.Truncate(expandedBytes)
+	}
+	phase.end(err)
+	if err != nil {
 		return err
 	}
-	if err := dst.Truncate(expandedBytes); err != nil {
-		return err
-	}
-	if err := dst.Sync(); err != nil {
+	// Windows may still be writing gigabytes of the copy from its cache.
+	ui.setStatus("%s", uiText("status.saving_disk"))
+	phase = startSetupPhase("writable disk flush")
+	err = dst.Sync()
+	phase.end(err)
+	if err != nil {
 		return err
 	}
 	if err := dst.Close(); err != nil {

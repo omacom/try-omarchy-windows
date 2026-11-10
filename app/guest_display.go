@@ -27,14 +27,16 @@ func guestBootStarted() {
 func guestDesktopReady() {
 	bootAnnouncedReady.Store(true)
 	guestFollowsWindow.Store(true)
-	updateCurtainTimes(func(t *bootCurtainTimes) { t.ready = time.Now() })
+	now := time.Now()
+	updateCurtainTimes(func(t *bootCurtainTimes) { t.ready, t.readyBlind = now, hostCapture.blindTime(now) })
 }
 
 // guestSessionStarted runs when the desktop session's clipboard bridge connects.
 func guestSessionStarted() {
 	updateCurtainTimes(func(t *bootCurtainTimes) {
 		if t.session.IsZero() {
-			t.session = time.Now()
+			now := time.Now()
+			t.session, t.sessionBlind = now, hostCapture.blindTime(now)
 		}
 	})
 }
