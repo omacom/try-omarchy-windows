@@ -4,15 +4,32 @@
 
 <h1 align="center">Try Omarchy for Windows</h1>
 
-**7Wdev development fork:** [build and upstream sync](https://github.com/7Wdev/try-omarchy-windows/blob/windows-nvgpu-lab/docs/FORK.md) ·
-[NVIDIA development PR #2](https://github.com/7Wdev/try-omarchy-windows/pull/2).
-The experimental QEMU/WHPX bridge renders the shipped Omarchy wallpaper, bar
-and three readable applications on NVIDIA at **3840×2160**, through QEMU SDL.
-Normal launcher integration and a stable interactive desktop remain in development.
+**7Wdev development fork — virtio-dxg integration:** Claude's driver-level
+backend and our published work are combined on `integration/virtio-dxg`, with
+nine newer official upstream fixes. Claude's branch is kept untouched.
+[Integration, fixes and acceptance gates](docs/VIRTIO-DXG-INTEGRATION.md) ·
+[Reported virtio-dxg results](docs/VIRTIO-DXG-RESULTS.md) ·
+[Earlier development PR #2](https://github.com/7Wdev/try-omarchy-windows/pull/2).
 
-[Daily-use readiness and remaining product checks](https://github.com/7Wdev/try-omarchy-windows/blob/windows-nvgpu-lab/docs/DAILY-USE-READINESS.md).
+The owner reports a working GPU desktop with remaining animation glitches.
+The new candidate addresses per-context frame publication, scanout lifetime,
+handle churn, matched Mesa 26.2.6 packaging and Chromium menu launches.
+The first remote batch at d717dfa passed host mocks, 39 actual-source Mesa
+fault cases and 13 boot/browser data tests; the full Mesa cohort compiled.
+Linux launcher compilation and runtime-archive acceptance then failed.
+Their source fixes and an additional submitted-fence guard are prepared for
+a separately approved follow-up. **This follow-up is untested. Stable daily
+use, accurate 240 Hz animation, full Chromium acceleration and 4K performance
+remain open.**
 
-![Three GPU apps complete 1800 handoffs; backend 4/8; desktop product 0/4](https://raw.githubusercontent.com/7Wdev/try-omarchy-windows/windows-nvgpu-lab/docs/images/gpu-backend-progress-three-apps-2026-10-27.svg)
+![Integration source merged; verification pending; daily use 0/6](docs/images/virtio-dxg-integration-progress.svg)
+
+<details>
+<summary>Earlier private-bridge development and evidence history (October–November 6)</summary>
+
+The following entries and the older 4/8 and 0/4 counters describe the earlier
+backend and their stated test limits. They are retained as history; they are
+not the verification state of the new virtio-dxg integration.
 
 **Host display incident — November 3, 2026:** the user reports brightness and
 graphics corruption across Windows; NVIDIA driver-reset events are recorded.
@@ -299,7 +316,10 @@ CPU handoff intervals do not establish displayed FPS or native performance.
 [Driver-update matching](docs/LIVE-SUSTAINED-NVIDIA-DESKTOP.md) ·
 [Virtio trace/UART comparison](docs/LIVE-VIRTIO-GRAPHICS-TRACE.md).
 
-Download links below refer to official upstream releases.
+</details>
+
+Download links below refer to official upstream releases. The experimental
+integration is not included in those releases.
 
 <p align="center">The full Omarchy desktop, running in a window on your Windows PC.</p>
 

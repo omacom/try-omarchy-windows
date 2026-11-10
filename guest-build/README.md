@@ -10,6 +10,34 @@ scripts/release/build-guest.sh --contract-only
 scripts/release/build-guest.sh --output /path/to/artifacts
 ```
 
+Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
+aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
+rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME
+15, for new images. Arch's 0.16.0 had replaced the patched 0.15.1 build on
+updated disks, so the cursor could go back to being drawn inside desktop
+frames. Compatibility revision 67 offers the rebuild in the local repository.
+Patch 0159 makes runtime `4.0.4-13` require Arch's `aquamarine>=0.16.0-1`
+rather than the rebuild. pacman upgrades from the first repository that has
+the package, so on a disk with the 0.15.1 rebuild a rebuild-only minimum could
+not be met once Arch moved, and Update > Omarchy failed. Existing disks take
+Arch's release; getting the rebuild onto them needs an explicit install step.
+
+Patch 0156 mutes Hyprland's sound for every terminal bell (#384). Hyprland
+0.57 plays one for each bell, and Foot rings it on missed Tab completions and
+Backspace at an empty prompt. Each sound opens the Windows audio device; where
+that fails, the VM stalls. It backports Omarchy's `bell_sound = "none"`
+(basecamp/omarchy c019850d), set only on Hyprland 0.57 and later because 0.56
+rejects the option. `default/` is now a backported tree. Runtime `4.0.4-12`
+brings it to existing disks with their next **Update > Omarchy**.
+
+Patch 0155 lets Omarchy's default terminal setting choose the terminal (#385).
+The image used to put a Foot-only `xdg-terminal-exec` in `/usr/local/bin`,
+ahead of the packaged one, so Super+Return and the Omarchy menu always opened
+Foot. The packaged tool already starts with Foot in Omarchy's list, and
+Omarchy's `foot.desktop` maps the app id, title and directory arguments.
+Catch-up removes the shim from existing disks when it is still the unchanged
+copy, delivered by compatibility revision 66.
+
 Patch 0153 offers Hangul instead of Chewing on Korean Windows. The guest ships
 fcitx5-hangul, and when the launcher passes `tryomarchy.locale=ko_KR`,
 `apply-host-locale` switches fcitx5 profiles that are still the image default

@@ -10,6 +10,7 @@ python "$recipe/test-win32-handles.py" "$source"
 python "$recipe/test-host-memory.py" "$source"
 python "$recipe/test-image-capabilities.py" "$source"
 python "$recipe/test-buffer-upload.py" "$source"
+python "$recipe/test-image-pitch.py" "$source"
 meson setup "$output/build" "$source" --buildtype=release --prefix=/ucrt64 -Dvenus=true -Dvideo=true -Dtests=false
 meson compile -C "$output/build"
 meson install -C "$output/build"

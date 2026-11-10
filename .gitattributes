@@ -1,5 +1,9 @@
 app/testdata/SHA256SUMS.* text eol=lf
 
+# The boot scripts and hash-pinned virtio-dxg recipe need identical bytes on Windows.
+virtio-dxg/** text=auto eol=lf
+virtio-dxg/guest/mesa/**/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+
 # Runtime patches are digest-pinned and must be byte-identical on Windows.
 runtime-build/patches/**/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
 experimental/qemu/socket-reconnect-yank.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof

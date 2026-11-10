@@ -19,10 +19,18 @@ static uint32_t slot_of(uint32_t handle, uint32_t capacity)
 
 static int objtab_grow(struct dxghost_objtab *t)
 {
-	uint32_t capacity = t->capacity ? t->capacity * 2 : 1024;
-	struct dxghost_obj *slots = calloc(capacity, sizeof(*slots));
+	uint32_t capacity = t->capacity ? t->capacity : 1024;
+	struct dxghost_obj *slots;
 	uint32_t i;
 
+	/* Deleted slots trigger a rebuild, not necessarily growth. Keeping the
+	 * size tied to live handles bounds churn costs when apps open/close. */
+	if (t->capacity && ((uint64_t)t->live + 1) * 2 > capacity) {
+		if (capacity > UINT32_MAX / 2)
+			return -1;
+		capacity *= 2;
+	}
+	slots = calloc(capacity, sizeof(*slots));
 	if (!slots)
 		return -1;
 	for (i = 0; i < t->capacity; i++) {
@@ -50,12 +58,10 @@ int dxghost_obj_add(struct dxghost *h, uint32_t handle, uint8_t type,
 	struct dxghost_obj *o;
 	uint32_t s;
 
-	if (!handle)
+	if (!handle || dxghost_obj_find(h, handle))
 		return -1;
-	if ((t->used + 1) * 2 > t->capacity && objtab_grow(t))
+	if (((uint64_t)t->used + 1) * 2 > t->capacity && objtab_grow(t))
 		return -1;
-	if (dxghost_obj_find(h, handle))
-		return -1;	/* dxgkrnl never hands out a live handle twice */
 	for (s = slot_of(handle, t->capacity); t->slots[s].state == 1;
 	     s = (s + 1) & (t->capacity - 1))
 		;

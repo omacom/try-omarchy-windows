@@ -1,0 +1,257 @@
+--- a/audio/sdlaudio.c
++++ b/audio/sdlaudio.c
+@@ -41,6 +41,47 @@
+ 
+ #include "audio_int.h"
+ 
++#ifdef _WIN32
++#include <mmdeviceapi.h>
++
++/*
++ * SDL's WASAPI backend retries a missing endpoint for eight seconds before
++ * failing, and QEMU opens devices on its main loop, so every attempt froze
++ * the VM. Ask Windows once whether the default endpoint exists. Any other
++ * answer, including a COM failure, leaves the decision to SDL as before.
++ */
++static bool sdl_default_endpoint_missing(int rec)
++{
++    /* CLSID_MMDeviceEnumerator and IID_IMMDeviceEnumerator, kept local so
++     * the runtime needs no extra import library. */
++    static const GUID clsid = { 0xbcde0395, 0xe52f, 0x467c,
++        { 0x8e, 0x3d, 0xc4, 0x57, 0x92, 0x91, 0x69, 0x2e } };
++    static const GUID iid = { 0xa95664d2, 0x9614, 0x4f35,
++        { 0xa7, 0x46, 0xde, 0x8d, 0xb6, 0x36, 0x17, 0xe6 } };
++    typedef HRESULT (WINAPI *CreateInstance)(REFCLSID, LPUNKNOWN, DWORD,
++                                             REFIID, LPVOID *);
++    HMODULE ole32 = GetModuleHandleW(L"ole32.dll");
++    CreateInstance create = ole32 ?
++        (CreateInstance)(void *)GetProcAddress(ole32, "CoCreateInstance") :
++        NULL;
++    IMMDeviceEnumerator *enumerator = NULL;
++    IMMDevice *device = NULL;
++    HRESULT hr;
++
++    if (!create || FAILED(create(&clsid, NULL, CLSCTX_INPROC_SERVER, &iid,
++                                 (void **)&enumerator)) || !enumerator) {
++        return false;
++    }
++    hr = enumerator->lpVtbl->GetDefaultAudioEndpoint(
++            enumerator, rec ? eCapture : eRender, eConsole, &device);
++    if (device) {
++        device->lpVtbl->Release(device);
++    }
++    enumerator->lpVtbl->Release(enumerator);
++    return hr == HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
++}
++#endif
++
+ #define TYPE_AUDIO_SDL "audio-sdl"
+ OBJECT_DECLARE_SIMPLE_TYPE(AudioSdl, AUDIO_SDL)
+ 
+@@ -60,6 +101,7 @@
+     SDL_AudioSpec reopen_spec;
+     char *device_name;
+     gint64 next_route_check;
++    gint64 next_open_attempt;
+     bool route_matches;
+     bool enabled;
+ } SDLVoiceOut;
+@@ -233,6 +275,25 @@
+     return true;
+ }
+ 
++/* Whether the last open in each direction reached SDL_OpenAudioDevice,
++ * which can wait for seconds, rather than failing in the quick checks.
++ */
++static bool sdl_open_reached_sdl[2];
++/* Report each outage once until that direction opens again. */
++static bool sdl_missing_reported[2], sdl_failure_reported[2];
++
++#ifdef _WIN32
++static void sdl_report_default_missing(int rec)
++{
++    if (!sdl_missing_reported[rec]) {
++        warn_report("The Windows default %s device is unavailable; "
++                    "checking again without blocking",
++                    rec ? "recording" : "playback");
++        sdl_missing_reported[rec] = true;
++    }
++}
++#endif
++
+ /* Keep the working default open while a selected endpoint is absent. */
+ static bool sdl_named_device_available(const char *name, int rec)
+ {
+@@ -258,13 +319,37 @@
+                                   bool *route_matches)
+ {
+     SDL_AudioDeviceID devid;
++    bool fell_back = false;
++
++    sdl_open_reached_sdl[rec] = false;
+ #ifdef _WIN32
+-    /* WASAPI retries E_NOTFOUND for eight seconds. An empty capture
+-     * inventory is normal while a headset is disconnected, not an open error.
+-     * Check again on the next route poll so microphone hotplug keeps working.
++    /* WASAPI retries E_NOTFOUND for eight seconds on QEMU's main loop. An
++     * empty inventory is normal while a headset or speaker is disconnected,
++     * not an open error. Fail fast and check again on the next route poll so
++     * hotplug keeps working. An empty capture inventory stays silent; other
++     * outages are reported once until the direction opens again.
+      */
+-    if (rec && SDL_GetNumAudioDevices(rec) <= 0) {
++    if (SDL_GetNumAudioDevices(rec) <= 0) {
++        *route_matches = false;
++        if (!rec && !sdl_missing_reported[rec]) {
++            warn_report("No Windows playback device is available; "
++                        "checking again without blocking");
++            sdl_missing_reported[rec] = true;
++        }
++        return 0;
++    }
++    /* A selected endpoint that left the inventory would also wait eight
++     * seconds; go straight to the default. */
++    if (device_name && !sdl_named_device_available(device_name, rec)) {
++        warn_report(
++                "Requested SDL %s device disappeared; using system default",
++                rec ? "recording" : "playback");
++        device_name = NULL;
++        fell_back = true;
++    }
++    if (!device_name && sdl_default_endpoint_missing(rec)) {
+         *route_matches = false;
++        sdl_report_default_missing(rec);
+         return 0;
+     }
+ #else
+@@ -284,21 +369,34 @@
+     }
+ #endif
+ 
++    sdl_open_reached_sdl[rec] = true;
+     devid = SDL_OpenAudioDevice(device_name, rec, req, obt, 0);
+-    *route_matches = devid || !device_name;
++    *route_matches = !fell_back && (devid || !device_name);
+     if (!devid && device_name) {
+         warn_report(
+                 "Requested SDL %s device disappeared; using system default",
+                 rec ? "recording" : "playback");
+         SDL_ClearError();
++#ifdef _WIN32
++        if (sdl_default_endpoint_missing(rec)) {
++            *route_matches = false;
++            sdl_report_default_missing(rec);
++            return 0;
++        }
++#endif
+         devid = SDL_OpenAudioDevice(NULL, rec, req, obt, 0);
+         if (devid) {
+             *route_matches = false;
+         }
+     }
+     if (!devid) {
+-        error_report("SDL_OpenAudioDevice for %s failed: %s",
+-                   rec ? "recording" : "playback", SDL_GetError());
++        if (!sdl_failure_reported[rec]) {
++            error_report("SDL_OpenAudioDevice for %s failed: %s",
++                       rec ? "recording" : "playback", SDL_GetError());
++            sdl_failure_reported[rec] = true;
++        }
++    } else {
++        sdl_missing_reported[rec] = sdl_failure_reported[rec] = false;
+     }
+ 
+ #ifndef _WIN32
+@@ -451,6 +549,34 @@
+     return true;
+ }
+ 
++/* Playback counterpart of sdl_backoff_in(). Stream starts respect it too,
++ * so a slow failed open cannot repeat on every guest sound.
++ */
++static void sdl_backoff_out(SDLVoiceOut *sdl)
++{
++    int seconds = sdl_open_reached_sdl[0] ? 10 : 1;
++
++    sdl->next_open_attempt = g_get_monotonic_time() + seconds * G_USEC_PER_SEC;
++}
++
++static bool sdl_open_due_out(SDLVoiceOut *sdl)
++{
++    return g_get_monotonic_time() >= sdl->next_open_attempt;
++}
++
++static bool sdl_try_acquire_out(SDLVoiceOut *sdl)
++{
++    if (!sdl_open_due_out(sdl)) {
++        return false;
++    }
++    if (sdl_acquire_out(sdl)) {
++        sdl->next_open_attempt = 0;
++        return true;
++    }
++    sdl_backoff_out(sdl);
++    return false;
++}
++
+ static void sdl_refresh_route_Out(SDLVoiceOut *sdl)
+ {
+     g_autofree char *requested = NULL;
+@@ -462,7 +588,7 @@
+ 
+     if (!sdl->devid) {
+         if (sdl->enabled && sdl_route_check_due(&sdl->next_route_check) &&
+-            sdl_acquire_out(sdl)) {
++            sdl_try_acquire_out(sdl)) {
+             SDL_PauseAudioDevice(sdl->devid, 0);
+         }
+         return;
+@@ -483,11 +609,16 @@
+          !sdl_named_device_available(requested, 0))) {
+         return;
+     }
++    if (!sdl_open_due_out(sdl)) {
++        return;
++    }
+     replacement = sdl_open(&sdl->reopen_spec, &obtained, 0, requested,
+                            &route_matches);
+     if (!replacement) {
++        sdl_backoff_out(sdl);
+         return;
+     }
++    sdl->next_open_attempt = 0;
+     if (!sdl_audio_specs_match(&sdl->reopen_spec, &obtained)) {
+         warn_report(
+                 "Requested SDL playback route has an incompatible format");
+@@ -570,11 +701,12 @@
+ }
+ 
+ /* SDL's cached inventory check is cheap; an attempted WASAPI open may block.
+- * Leave ten seconds after a failed open before trying a listed endpoint again.
++ * Leave ten seconds after a failed SDL open before trying again, and one
++ * second after the quick checks found no endpoint.
+  */
+ static void sdl_backoff_in(SDLVoiceIn *sdl)
+ {
+-    int seconds = SDL_GetNumAudioDevices(1) > 0 ? 10 : 1;
++    int seconds = sdl_open_reached_sdl[1] ? 10 : 1;
+ 
+     sdl->next_route_check = g_get_monotonic_time() + seconds * G_USEC_PER_SEC;
+ }
+@@ -703,6 +835,7 @@
+     sdl_close_out(sdl);
+     g_clear_pointer(&sdl->device_name, g_free);
+     sdl->next_route_check = 0;
++    sdl->next_open_attempt = 0;
+ }
+ 
+ static int sdl_init_out(HWVoiceOut *hw, struct audsettings *as)
+@@ -765,7 +898,7 @@
+         sdl_release_out(sdl);
+         return;
+     }
+-    if (!sdl->devid && !sdl_acquire_out(sdl)) {
++    if (!sdl->devid && !sdl_try_acquire_out(sdl)) {
+         return;
+     }
+     SDL_PauseAudioDevice(sdl->devid, 0);

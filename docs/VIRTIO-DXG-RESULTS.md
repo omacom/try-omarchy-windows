@@ -1,5 +1,11 @@
 # virtio-dxg: results before and after
 
+> Historical runtime results inherited from Claude's November 8, 2026 snapshot
+> (`6d3524c`). The new [integration candidate](VIRTIO-DXG-INTEGRATION.md) has
+> not been run. These short samples do not establish daily-use stability,
+> correct 240 Hz animations, full Chromium acceleration or 4K performance.
+
+
 Measured on one machine: an RTX 5090 Laptop GPU (driver 621.14) driving a
 2560×1600 240 Hz panel, Windows 11, and the owner's Omarchy install, booted
 read-only (QEMU snapshot) with 8 vCPUs and 8 GiB. "Native" means the same

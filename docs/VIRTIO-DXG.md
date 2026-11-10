@@ -1,6 +1,8 @@
 # virtio-dxg: driver-level NVIDIA virtualization on a Windows host
 
-Updated 2026-11-08. Code: [`virtio-dxg/`](../virtio-dxg).
+Updated 2026-11-09. [New integration candidate and limits](VIRTIO-DXG-INTEGRATION.md).
+The runtime results below are inherited from Claude's November 8 snapshot;
+the new combined candidate has not been run. Code: [`virtio-dxg/`](../virtio-dxg).
 
 ## The short version
 
@@ -26,8 +28,8 @@ memory the way NVIDIA's Linux user-mode driver expects; dxgkrnl owns
 scheduling, residency and GPU virtual memory. The only route to RM from user
 mode is vendor-private `D3DKMTEscape` traffic, which is undocumented, changes
 with each driver and is not a translation of the Linux ABI. Building an RM
-translator on it would be reverse engineering against NVIDIA's EULA with no
-stability. GPT's earlier investigation reached the same conclusion
+translator on it would require an undocumented, vendor-specific translation
+and a separate compatibility effort. GPT's earlier investigation reached the same conclusion
 ([WINDOWS-NVIDIA-BACKEND.md](WINDOWS-NVIDIA-BACKEND.md)).
 
 ### The equivalent boundary Windows does have
@@ -52,7 +54,8 @@ Under Wine in the Linux guest, with Wine's D3DKMT calls sent to `/dev/dxg`,
 it records command buffers natively in the guest and submits them to the
 host's NVIDIA kernel driver. This is how a Windows VM with Hyper-V GPU
 partitioning works, minus the Windows guest. Proton games (DXVK, vkd3d-proton)
-run on it directly.
+would need compatible Wine/Proton hooks and presentation; the current
+compute prototype does not demonstrate game execution.
 
 [`virtio-dxg/wine/`](../virtio-dxg/wine) is the working prototype:
 - `kmt_bridge.c`: D3DKMT on `/dev/dxg`, one ioctl per call, plus the legacy
@@ -108,7 +111,7 @@ Guest (Arch, kernel 7.2)                     Host (Windows, QEMU/WHPX process)
 ──────────────────────────────────           ─────────────────────────────────
 App / Hyprland
 NVIDIA WSL user-mode driver (unmodified)
-Mesa d3d12 / Dozen / d3d12 video (unmodified)
+Patched Mesa d3d12 / Dozen / d3d12 video
   │ ioctl on /dev/dxg
   ▼
 dxgkrnl (Microsoft, unmodified above
@@ -132,8 +135,7 @@ queue, so a waiting guest thread costs no host thread.
 
 ### Where it beats WSL2's path
 
-- **Presentation.** WSLg copies every frame to the CPU and sends it over RDP.
-  This backend's target is zero-copy: the guest's frame stays a GPU resource
+- **Presentation.** This backend keeps the compositor scanout on the GPU: the guest's frame stays a GPU resource
   and is shown in the existing SDL window (milestone 4 below).
 - **Submission.** Submits and signals are fire-and-forget; requests of
   different guest processes run in parallel lanes, and the vCPU that rings
@@ -168,25 +170,24 @@ inside QEMU. Nothing under `experimental/` was removed.
 What this path can and cannot reach. "Native" means NVIDIA's own driver
 executes the work; GPU-bound performance is then the hardware's.
 
-| Capability | How | Expectation |
+| Capability | Path | Current evidence / limit |
 | --- | --- | --- |
-| CUDA | NVIDIA `libcuda` (WSL build) | Native kernels. WSL2 measures within a few percent for GPU-bound work. Launch-bound work pays the per-call cost. |
-| NVENC / NVDEC | `libnvidia-encode`, `libnvcuvid` | Native engines. |
-| D3D12, including DXR ray tracing | `libnvwgf2umx.so` | Native driver. Few Linux apps use D3D12 directly. |
-| OptiX (RT cores from CUDA) | `nvoptix.bin` | Native. |
-| Vulkan 1.4 for Windows programs (Proton, DXVK, vkd3d-proton) | NVIDIA's Windows driver `nvoglv64.dll` under Wine | Native driver. **Measured at native GPU throughput** (above). |
-| Vulkan hardware ray tracing | same | Native: `VK_KHR_ray_tracing_pipeline`, `ray_query`, acceleration structures reported. Not yet exercised by a test. |
-| DLSS, Reflex, frame generation in Proton games | same, with NGX from the driver store | Extensions reported (`NVX_binary_import`, `NV_low_latency2`, `NV_optical_flow`). NGX loading not yet tested. |
-| OpenGL 4.6 for Windows programs | `nvoglv64.dll` (same DLL) | Native driver. Not yet tested. |
-| OpenGL 4.6 for Linux programs | Mesa `d3d12` Gallium driver | Translation on the CPU side; GPU-bound work close to native, draw-call-heavy work less. |
-| Vulkan for Linux programs | Mesa Dozen (Vulkan on D3D12) | Partial Vulkan 1.3. Fine for compositors and many apps. Next step: load `nvoglv64.dll` as a Linux ICD through a minimal PE loader, which would give Linux programs NVIDIA's own Vulkan. |
-| VA-API video | Mesa `d3d12` video | H.264/HEVC/AV1 decode and encode on NVIDIA. |
+| CUDA | NVIDIA WSL `libcuda` | Reported GPU bandwidth 97.5–98% native; launch/synchronize about 17 µs vs 7.2 µs native. Not a universal 93% result. |
+| NVENC / NVDEC | NVIDIA WSL video libraries | NVENC steady-state samples near native; NVDEC reported at 72–85%. Codec/session limits still apply. |
+| D3D12 | NVIDIA WSL `libnvwgf2umx.so` | Reported feature level 12_1 / shader model 6.7. **DXR is not offered by this path.** |
+| OptiX | CUDA / `nvoptix.bin` | Library loading reported; representative RT workload acceptance open. |
+| Windows Vulkan under Wine | NVIDIA Windows `nvoglv64.dll` with prototype D3DKMT hooks | Reported verified compute dispatch. Windowed games, swapchains and general Proton compatibility remain open. |
+| Vulkan ray tracing | Same Windows-driver prototype | RT extensions reported; actual RT workloads not exercised in the documented results. |
+| DLSS / Reflex / frame generation | Windows-driver prototype and NGX | Extensions and library loading are not proof of working game integration. Workload validation remains open. |
+| Windows OpenGL | NVIDIA Windows driver under Wine | Not tested. |
+| Linux OpenGL | Mesa d3d12 | Reported OpenGL 4.6 samples and compositor rendering. Accurate animations and sustained stability remain open. |
+| Linux Vulkan | Mesa Dozen on D3D12 | Reported Vulkan 1.2 sample path; no native NVIDIA Linux ICD or general Vulkan conformance claim. |
+| VA-API decode | Mesa d3d12 video | Reported H.264 sample; Chromium codec-specific hardware decode still needs verification. |
+| VA-API encode | Mesa d3d12 video | **Blocked: first frame removes the device in the reported test.** Chromium's integration wrapper disables accelerated video encode. NVENC is a separate working sample path. |
 
-NVIDIA's Linux Vulkan driver still cannot run here: it speaks RM ioctls,
-which only VFIO or device assignment provide. Its Windows Vulkan driver can,
-and it is the same driver feature set. Windows games through Proton are the
-main Vulkan, DLSS and ray tracing workload on this desktop, and they get the
-real thing.
+NVIDIA's native Linux Vulkan driver expects the Linux RM kernel ABI, which
+this dxg bridge does not implement. The Wine compute prototype is promising,
+but it does not establish native Linux Vulkan, DLSS or ray-traced games.
 
 ## Status
 
@@ -258,9 +259,12 @@ desktop maps and unmaps views fast enough to hit it within seconds. Views are
 now QOM objects that own their region, so the last flatview frees them, the
 same pattern virtio-gpu uses for blob mappings.
 
-Open on this path: Chromium's GPU process falls back to software unless
-`virtio_dxg.chromium_gpu=1` (its sandbox does not admit `/dev/dxg`), and
-applications still hand frames to the compositor through shared memory.
+The original software fallback was subsequently addressed with Xwayland and
+ANGLE OpenGL while retaining Chromium's sandbox. The integration candidate
+also routes the installed menu entry through that wrapper. Full browser/video
+hardware acceleration is still unverified, and applications still hand frames
+to the compositor through shared memory. The obsolete `chromium_gpu=1`
+sandbox workaround is not part of the current boot hook.
 
 ### Zero-copy scanout
 

@@ -30,6 +30,8 @@ typedef struct {
     void *callback, *userdata;
 } SDL_AudioSpec;
 static int opens, warnings, clears, failures;
+static int playback_count = 2, capture_count = 1;
+static bool default_missing, fail_default;
 static const char *last_name;
 static int last_rec;
 static const char *available_name = "Speakers, USB";
@@ -37,7 +39,8 @@ static const char *available_name = "Speakers, USB";
 #define error_report(...) (failures++)
 static void SDL_ClearError(void) { clears++; }
 static const char *SDL_GetError(void) { return "unavailable"; }
-static int SDL_GetNumAudioDevices(int rec) { return rec ? 1 : 2; }
+static int SDL_GetNumAudioDevices(int rec) { return rec ? capture_count : playback_count; }
+static bool sdl_default_endpoint_missing(int rec) { (void)rec; return default_missing; }
 static const char *SDL_GetAudioDeviceName(int index, int rec) {
     return rec ? "Microphone, USB" : index ? available_name : "Speakers";
 }
@@ -48,6 +51,9 @@ static SDL_AudioDeviceID SDL_OpenAudioDevice(const char *name, int rec,
     last_name = name;
     last_rec = rec;
     *obt = *req;
+    if (!name && fail_default) {
+        return 0;
+    }
     return name && !strcmp(name, "missing") ? 0 : 17;
 }
 ''' + helper + r'''
@@ -91,12 +97,76 @@ int main(void) {
     obt = req; obt.freq++;
     assert(!sdl_audio_specs_match(&req, &obt));
 
+    available_name = "Speakers, USB";
     assert(sdl_open(&req, &obt, 0, "Speakers, USB", &matched) == 17);
     assert(matched && opens == 1 && last_rec == 0 &&
            !strcmp(last_name, "Speakers, USB"));
+    /* A device that left SDL's inventory skips SDL's eight-second wait. */
     assert(sdl_open(&req, &obt, 1, "missing", &matched) == 17);
-    assert(!matched && opens == 3 && last_rec == 1 && !last_name);
-    assert(warnings >= 2 && clears == 1 && failures == 0);
+    assert(!matched && opens == 2 && last_rec == 1 && !last_name);
+    assert(clears == 0 && failures == 0);
+
+    /* A listed device that still fails falls back to the default. */
+    available_name = "missing";
+    assert(sdl_open(&req, &obt, 0, "missing", &matched) == 17);
+    assert(!matched && opens == 4 && !last_name && clears == 1);
+    available_name = "reconnected";
+
+    /* No playback devices: no SDL open, one report per outage. */
+    playback_count = 0;
+    warnings = 0;
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 0 && !matched);
+    assert(sdl_open(&req, &obt, 0, "Speakers", &matched) == 0 && !matched);
+    assert(opens == 4 && warnings == 1 && failures == 0);
+    /* An empty capture inventory stays silent. */
+    capture_count = 0;
+    assert(sdl_open(&req, &obt, 1, NULL, &matched) == 0 && !matched);
+    assert(opens == 4 && warnings == 1);
+    capture_count = 1;
+    playback_count = 2;
+
+    /* The default endpoint is missing although devices are listed. */
+    default_missing = true;
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 0 && !matched);
+    assert(opens == 4 && warnings == 1);
+    default_missing = false;
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 17 && matched);
+    assert(opens == 5);
+    default_missing = true;
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 0);
+    assert(opens == 5 && warnings == 2);
+    /* A missing endpoint does not hide a different open failure. */
+    default_missing = false;
+    fail_default = true;
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 0);
+    assert(opens == 6 && warnings == 2 && failures == 1);
+    fail_default = false;
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 17 && opens == 7);
+
+    /* Other open failures are reported once until an open succeeds. */
+    fail_default = true;
+    failures = 0;
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 0);
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 0);
+    assert(opens == 9 && failures == 1);
+    fail_default = false;
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 17);
+    fail_default = true;
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 0);
+    assert(failures == 2);
+    fail_default = false;
+
+    /* A listed selection that fails must not fall back into SDL's wait
+     * when Windows has no default either. */
+    assert(sdl_open(&req, &obt, 0, NULL, &matched) == 17);
+    available_name = "missing";
+    default_missing = true;
+    warnings = 0;
+    int before = opens;
+    assert(sdl_open(&req, &obt, 0, "missing", &matched) == 0 && !matched);
+    assert(opens == before + 1 && !strcmp(last_name, "missing"));
+    assert(warnings == 2); /* selection fell back, default unavailable */
+    default_missing = false;
     remove(output);
     g_rmdir(directory);
     return 0;
@@ -110,4 +180,4 @@ with tempfile.TemporaryDirectory(prefix='tryomarchy-sdl-audio-') as temporary:
     subprocess.run(['gcc', '-std=gnu11', '-O2', str(root / 'test.c'),
                     '-o', str(root / 'test.exe'), *flags], check=True)
     subprocess.run([str(root / 'test.exe')], check=True)
-print('ok - independent SDL routes, control file parsing, missing-device fallback and route polling')
+print('ok - independent SDL routes, control file parsing, missing-device fallback, non-blocking missing endpoints and route polling')

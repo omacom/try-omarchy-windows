@@ -798,8 +798,40 @@ static void test_iospace(void)
 	free(h.io_free);
 }
 
+static void test_handle_churn(void)
+{
+	struct dxghost h;
+	uint32_t round, i;
+
+	memset(&h, 0, sizeof(h));
+	for (round = 0; round < 64; round++) {
+		for (i = 1; i <= 400; i++) {
+			/* Vary the low bits too: reusing the same 400 hash slots
+			 * would not exercise accumulated deleted slots. */
+			uint32_t handle = 1 + round * 400 + i;
+			CHECK(dxghost_obj_add(&h, handle, OBJ_ALLOCATION, 17, 3) == 0);
+			CHECK(dxghost_obj_get(&h, handle, OBJ_ALLOCATION, 17) != NULL);
+			CHECK(dxghost_obj_get(&h, handle, OBJ_ALLOCATION, 18) == NULL);
+			CHECK(dxghost_obj_add(&h, handle, OBJ_ALLOCATION, 17, 3) != 0);
+		}
+		for (i = 1; i <= 400; i++)
+			dxghost_obj_remove(&h, 1 + round * 400 + i);
+		CHECK(h.objects.live == 0);
+		CHECK(h.objects.capacity == 1024);
+	}
+	/* A genuinely live burst still grows and keeps every object. */
+	for (i = 1; i <= 2000; i++)
+		CHECK(dxghost_obj_add(&h, i, OBJ_ALLOCATION, 17, 3) == 0);
+	CHECK(h.objects.capacity == 4096);
+	for (i = 1; i <= 2000; i++)
+		CHECK(dxghost_obj_get(&h, i, OBJ_ALLOCATION, 17) != NULL);
+	dxghost_objtab_free(&h.objects);
+	puts("handle churn: 25600 create/remove pairs stay at 1024 slots; live burst preserved");
+}
+
 int main(void)
 {
+	test_handle_churn();
 	test_iospace();
 	test_executor();
 	if (failures) {

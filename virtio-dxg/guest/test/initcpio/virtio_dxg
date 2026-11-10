@@ -53,17 +53,27 @@ setup_desktop() {
         echo ":: virtio-dxg: no Mesa build; the desktop stays on CPU rendering" >&2
         return 1
     fi
-    mkdir -p "$m"
-    # The initramfs has no tar: run the system's, with this /run in place of
-    # the (still empty) /run of the root file system.
-    mount -o bind /run /new_root/run
-    chroot /new_root /usr/bin/tar -xf "$tarball" -C "$m" \
-        --exclude='*.a' --exclude='lib/pkgconfig'
-    chroot /new_root /usr/bin/sed -i "s|/usr/lib/libvulkan_dzn.so|$m/lib/libvulkan_dzn.so|" \
-        "$m/share/vulkan/icd.d/dzn_icd.x86_64.json"
-    umount /new_root/run
+    # The initramfs has no Python: use the real root's interpreter with
+    # this /run bound in. Only select a complete, hash-matched Mesa cohort.
+    mkdir -p /run/virtio-dxg || return 1
+    cp /virtio-dxg/desktop_payload.py /virtio-dxg/chromium-wrapper \
+        /virtio-dxg/mesa-recipe.json /run/virtio-dxg/ || return 1
+    mount -o bind /run /new_root/run || return 1
+    browser=
+    case " $(cat /proc/cmdline) " in
+    *" virtio_dxg.chromium=wayland "*) ;;
+    *) browser='--browser-wrapper /run/virtio-dxg/chromium-wrapper' ;;
+    esac
+    # shellcheck disable=SC2086
+    if ! chroot /new_root /usr/bin/python3 /run/virtio-dxg/desktop_payload.py \
+            "$tarball" "$m" --recipe /run/virtio-dxg/mesa-recipe.json $browser; then
+        umount /new_root/run
+        echo ":: virtio-dxg: Mesa payload rejected; GPU environment not selected" >&2
+        return 1
+    fi
+    umount /new_root/run || return 1
 
-    mkdir -p /run/environment.d
+    mkdir -p /run/environment.d || return 1
     # Clients take Mesa's software winsys (wl_shm buffers) with d3d12
     # rendering, as under WSLg; the compositor renders on d3d12 into
     # KMS-mirrored scanout buffers. NVIDIA's libraries come from the shares.
@@ -78,54 +88,13 @@ setup_desktop() {
         "LIBGL_DRIVERS_PATH=$m/lib/dri" "GBM_BACKENDS_PATH=$m/lib/gbm" \
         "LIBVA_DRIVERS_PATH=$m/lib/dri" \
         "VK_DRIVER_FILES=$m/share/vulkan/icd.d/dzn_icd.x86_64.json" \
-        >/run/environment.d/90-virtio-dxg.conf
-    # Chromium on the GPU. On Wayland its GPU process allocates frames
-    # through GBM on the render node, which has no hardware driver here, and
-    # ANGLE's Vulkan backend (on Dozen) offers no OpenGL ES 3, so it falls
-    # back to software: no WebGL, CPU raster and compositing. Through
-    # Xwayland with ANGLE on OpenGL it gets Mesa's d3d12 (ES 3.1, GL 4.6):
-    # WebGL, GPU raster, compositing and video, sandbox kept. A `chromium`
-    # first in PATH adds those flags after the user's chromium-flags.conf,
-    # so they win. The session's PATH comes from the login shell, so the
-    # wrapper reaches it through /usr/local/bin (before /usr/bin, never a
-    # package's): a read-only overlay adds it on top of whatever is there,
-    # for this boot only. virtio_dxg.chromium=wayland keeps Chromium as
-    # configured.
-    case " $(cat /proc/cmdline) " in
-    *" virtio_dxg.chromium=wayland "*) ;;
-    *)
-        if [ -x /new_root/usr/bin/chromium ] && [ -d /new_root/usr/local/bin ]; then
-            mkdir -p /run/virtio-dxg/bin /run/systemd/system/sysinit.target.wants
-            cat >/run/virtio-dxg/bin/chromium <<'EOF'
-#!/bin/sh
-# virtio-dxg: Chromium on the host GPU (see the boot hook virtio_dxg).
-# Through Xwayland when the session has it; as configured otherwise (a
-# browser started before the session exports DISPLAY would sit without a
-# window, and every later launch would join it).
-if [ -n "$DISPLAY" ]; then
-    exec /usr/bin/chromium "$@" --ozone-platform=x11 --use-angle=gl \
-        --ignore-gpu-blocklist
-fi
-exec /usr/bin/chromium "$@"
-EOF
-            chmod 755 /run/virtio-dxg/bin/chromium
-            cat >/run/systemd/system/virtio-dxg-bin.service <<'EOF'
-[Unit]
-Description=virtio-dxg: GPU wrappers in /usr/local/bin for this boot
-DefaultDependencies=no
-After=local-fs.target
-Before=sysinit.target systemd-user-sessions.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/mount -t overlay overlay -o ro,lowerdir=/run/virtio-dxg/bin:/usr/local/bin /usr/local/bin
-EOF
-            ln -sf ../virtio-dxg-bin.service \
-                /run/systemd/system/sysinit.target.wants/
-        fi
-        ;;
-    esac
-    echo ":: virtio-dxg: desktop renders through d3d12 (Mesa $(cat "$m/lib/virtio-dxg-mesa-version"))"
+        >/run/environment.d/90-virtio-dxg.conf.pending || return 1
+    mv /run/environment.d/90-virtio-dxg.conf.pending \
+        /run/environment.d/90-virtio-dxg.conf || return 1
+    # The payload helper prepares both PATH and desktop-menu launch paths.
+    # Chromium retains its sandbox. Known-broken VA-API encode is disabled
+    # in that wrapper; hardware decode and full browser acceptance are open.
+    echo ":: virtio-dxg: desktop selects d3d12 (Mesa $(cat "$m/lib/virtio-dxg-mesa-version"))"
 }
 
 # System tools (lspci, fastfetch, desktop info) name PCI devices from the

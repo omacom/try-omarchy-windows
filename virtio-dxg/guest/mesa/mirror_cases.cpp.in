@@ -1,0 +1,185 @@
+// CPU substitutes around the actual patched functions. No Mesa/COM/DRM calls.
+#include <cassert>
+#include <climits>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <stdexcept>
+#include <vector>
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+constexpr uint64_t OS_TIMEOUT_INFINITE = UINT64_MAX;
+struct pipe_reference { int count = 1; };
+struct pipe_resource { pipe_reference reference; };
+struct d3d12_resource {
+   struct { pipe_resource b; } base;
+   bool dt_mirror = true, dt_mirror_dirty = false, mirror_zero_copy = false;
+   pipe_resource *mirror_link_owner = nullptr;
+   void *bo = nullptr;
+};
+struct util_dynarray { void *data = nullptr; size_t size = 0, capacity = 0; };
+void append(util_dynarray *a, pipe_resource *p) {
+   if (a->size == a->capacity) {
+      a->capacity += 32 * sizeof(p);
+      void *data = std::realloc(a->data, a->capacity);
+      if (!data) throw std::bad_alloc();
+      a->data = data;
+   }
+   std::memcpy(static_cast<char *>(a->data) + a->size, &p, sizeof(p));
+   a->size += sizeof(p);
+}
+#define util_dynarray_append(a, p) append((a), (p))
+#define util_dynarray_num_elements(a, type) ((a)->size / sizeof(type))
+#define util_dynarray_foreach(a, type, it) \
+   for (type *it = static_cast<type *>((a)->data); \
+        (a)->size && it < static_cast<type *>((a)->data) + (a)->size / sizeof(type); ++it)
+void util_dynarray_clear(util_dynarray *a) { a->size = 0; }
+void pipe_resource_reference(pipe_resource **target, pipe_resource *source) {
+   if (source) ++source->reference.count;
+   if (*target) { assert((*target)->reference.count > 0); --(*target)->reference.count; }
+   *target = source;
+}
+d3d12_resource *d3d12_resource_cast(pipe_resource *p) {
+   return reinterpret_cast<struct d3d12_resource *>(p);
+}
+#define d3d12_resource(p) d3d12_resource_cast(p)
+struct d3d12_context;
+struct d3d12_batch {
+   d3d12_context *ctx;
+   uint8_t state = 0;
+   bool has_errors = false;
+   void *fence = reinterpret_cast<void *>(1);
+};
+struct d3d12_context {
+   util_dynarray mirror_dirty;
+   d3d12_batch batch{this, 0};
+   unsigned flushes = 0, waits = 0, records = 0;
+   bool complete = true, record_ok = true, submit = true;
+   std::vector<pipe_resource *> published;
+   ~d3d12_context() {
+      util_dynarray_foreach(&mirror_dirty, pipe_resource *, p)
+         pipe_resource_reference(p, nullptr);
+      std::free(mirror_dirty.data);
+   }
+};
+enum batch_bo_reference_state { batch_bo_reference_read = 1, batch_bo_reference_written = 2 };
+uint8_t *d3d12_batch_acquire_reference(d3d12_batch *b, void *) { return &b->state; }
+void d3d12_mirror_reference(d3d12_context *, struct d3d12_resource *);
+d3d12_batch *d3d12_current_batch(d3d12_context *c) { return &c->batch; }
+bool d3d12_flush_cmdlist(d3d12_context *c) { ++c->flushes; return c->submit; }
+bool d3d12_reset_batch(d3d12_context *c, d3d12_batch *, uint64_t timeout) {
+   assert(timeout == OS_TIMEOUT_INFINITE); ++c->waits; return c->complete;
+}
+bool d3d12_mirror_record(d3d12_context *c, struct d3d12_resource *) {
+   ++c->records; return c->record_ok;
+}
+void d3d12_mirror_publish(d3d12_context *c, struct d3d12_resource *r) {
+   assert(c->complete); c->published.push_back(&r->base.b);
+}
+int p_atomic_read(int *p) { return *p; }
+int p_atomic_cmpxchg(int *p, int expected, int desired) {
+   int old = *p; if (old == expected) *p = desired; return old;
+}
+int d3d12_scanout_lock = 0;
+void simple_mtx_lock(int *p) { assert(!*p); *p = 1; }
+void simple_mtx_unlock(int *p) { assert(*p); *p = 0; }
+bool fail_allocation = false;
+unsigned allocations = 0;
+void *cpu_calloc(size_t count, size_t size) {
+   ++allocations; return fail_allocation ? nullptr : std::calloc(count, size);
+}
+#define calloc cpu_calloc
+// ACTUAL_MIRROR_FUNCTIONS
+#undef calloc
+
+void require(bool yes, const char *label) { if (!yes) throw std::runtime_error(label); }
+int main() {
+   try {
+      unsigned cases = 0;
+      {
+         struct d3d12_resource texture; d3d12_context a, b;
+         d3d12_mirror_reference(&a, &texture);
+         d3d12_mirror_reference(&a, &texture);
+         require(texture.base.b.reference.count == 2, "Duplicate writes retained twice");
+         d3d12_mirror_reference(&b, &texture);
+         require(b.mirror_dirty.size == sizeof(pipe_resource *), "Second context write was suppressed");
+         require(texture.base.b.reference.count == 3, "Each context must own its reference");
+         d3d12_mirror_sync(&a); d3d12_mirror_sync(&b);
+         require(a.published.size() == 1 && b.published.size() == 1, "Both contexts must publish");
+         require(texture.base.b.reference.count == 1, "Flush leaked a resource");
+         require(allocations == 0, "Ordinary frame allocated a temporary heap list");
+         cases += 4;
+      }
+      {
+         struct d3d12_resource texture; d3d12_context c;
+         c.complete = false;
+         d3d12_mirror_reference(&c, &texture); d3d12_mirror_sync(&c);
+         require(c.published.empty() && c.waits == 1, "Incomplete GPU data was published");
+         require(texture.base.b.reference.count == 1, "Incomplete flush leaked queued reference");
+         cases += 2;
+      }
+      {
+         struct d3d12_resource texture; d3d12_context c;
+         texture.mirror_zero_copy = true;
+         d3d12_mirror_reference(&c, &texture); d3d12_mirror_sync(&c);
+         require(c.published.empty() && c.records == 0 && c.waits == 1,
+                 "Zero-copy scanout copied CPU pixels or skipped completion");
+         ++cases;
+      }
+      {
+         struct d3d12_resource owner, borrower; d3d12_context c;
+         owner.mirror_zero_copy = borrower.mirror_zero_copy = true;
+         borrower.mirror_link_owner = &owner.base.b;
+         owner.mirror_zero_copy = false;
+         d3d12_mirror_reference(&c, &borrower); d3d12_mirror_sync(&c);
+         require(c.published.size() == 1, "Owner fallback did not propagate to borrower");
+         ++cases;
+      }
+      {
+         struct d3d12_resource texture; d3d12_context c;
+         c.record_ok = false;
+         d3d12_mirror_reference(&c, &texture); d3d12_mirror_sync(&c);
+         require(c.published.empty() && c.waits == 0, "Failed readback was published");
+         require(texture.base.b.reference.count == 1, "Failed readback leaked reference");
+         ++cases;
+      }
+      {
+         struct d3d12_resource textures[17]; d3d12_context c;
+         for (auto &r : textures) d3d12_mirror_reference(&c, &r);
+         fail_allocation = true; d3d12_mirror_sync(&c);
+         require(c.mirror_dirty.size == 17 * sizeof(pipe_resource *), "OOM lost pending writes");
+         for (auto &r : textures) require(r.base.b.reference.count == 2, "OOM lost a reference");
+         fail_allocation = false; d3d12_mirror_sync(&c);
+         require(c.published.size() == 17, "Large mirror list did not recover");
+         for (auto &r : textures) require(r.base.b.reference.count == 1, "Large flush leaked");
+         cases += 2;
+      }
+      for (int mode = 0; mode < 3; ++mode) {
+         struct d3d12_resource texture; d3d12_context c;
+         if (mode == 0) { c.batch.has_errors = true; c.batch.fence = nullptr; }
+         if (mode == 1) c.batch.fence = nullptr;
+         if (mode == 2) c.submit = false;
+         d3d12_mirror_reference(&c, &texture); d3d12_mirror_sync(&c);
+         require(c.published.empty() && !c.waits,
+                 "A failed/missing submission was treated as completed");
+         require(texture.base.b.reference.count == 1, "Failed submit leaked queued reference");
+         ++cases;
+      }
+      {
+         pipe_resource p, *held = nullptr;
+         require(d3d12_scanout_try_reference(&held, &p), "Live owner not retained");
+         require(p.reference.count == 2, "Owner reference not incremented");
+         pipe_resource_reference(&held, nullptr);
+         p.reference.count = 0;
+         require(!d3d12_scanout_try_reference(&held, &p) && held == nullptr,
+                 "Weak registry resurrected a dying owner");
+         p.reference.count = INT_MAX;
+         require(!d3d12_scanout_try_reference(&held, &p), "Owner refcount overflowed");
+         cases += 3;
+      }
+      std::printf("MIRROR_CPU_PASS cases=%u graphicsLibraryLoaded=false\n", cases);
+      return 0;
+   } catch (const std::exception &e) {
+      std::fprintf(stderr, "MIRROR_CPU_FAIL %s\n", e.what()); return 1;
+   }
+}

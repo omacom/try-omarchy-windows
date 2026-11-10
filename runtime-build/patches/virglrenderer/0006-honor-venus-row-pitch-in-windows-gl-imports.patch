@@ -1,0 +1,383 @@
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -402,6 +402,7 @@ struct global_renderer_state {
+    bool use_integer : 1;
+    /* Upload mutable buffers without mapping them (see below). */
+    bool intel_windows_buffer_uploads : 1;
++   bool pitch_copy_imports : 1;
+    /* these appeared broken on at least one driver */
+    bool use_explicit_locations : 1;
+    /* threaded sync */
+@@ -4827,7 +4828,133 @@ static void vrend_clear_finish(struct vrend_sub_context *sub_ctx,
+       glDisable(GL_SCISSOR_TEST);
+ }
+ 
+-void vrend_clear(struct vrend_context *ctx, unsigned buffers,
++/* Resources with a pitch copy (see vrend_import_pitch_width). Draws skip the
++ * sampler scan while there are none. */
++static uint32_t vrend_pitch_copy_count;
++
++/* Whether imported images get a pitch copy (vrend_import_pitch_width).
++ * Linear textures made with GL_EXT_memory_object use the GL driver's own row
++ * pitch, not the one the image was laid out with. On Intel's Windows drivers a
++ * Venus image whose width is not a multiple of 64 pixels reads skewed (#394).
++ * TRYOMARCHY_PITCH_COPY=on uses the copy on any driver and =off never. */
++static bool vrend_pitch_copy_imports(bool intel_windows)
++{
++   const char *env = getenv("TRYOMARCHY_PITCH_COPY");
++   if (env && !strcmp(env, "on"))
++      return true;
++   if (env && !strcmp(env, "off"))
++      return false;
++   return intel_windows;
++}
++
++/* Texture width that matches an imported image's row pitch when it is wider
++ * than the image, or 0 to import the image as is. */
++static GLsizei vrend_import_pitch_width(const struct vrend_resource *gr,
++                                        const struct vrend_renderer_resource_set_type_args *args,
++                                        uint64_t map_size)
++{
++   if (!vrend_state.pitch_copy_imports || !has_feature(feat_copy_image) ||
++       !has_feature(feat_texture_storage))
++      return 0;
++   if (gr->base.target != PIPE_TEXTURE_2D || gr->base.nr_samples > 1 ||
++       args->plane_count != 1 || !args->width || !args->height)
++      return 0;
++
++   const uint32_t block = util_format_get_blocksize(gr->base.format);
++   const uint32_t stride = args->plane_strides[0];
++   if (!block || stride % block || stride / block <= args->width ||
++       stride / block > args->width + 4096 ||
++       (uint64_t)stride * args->height > map_size)
++      return 0;
++   return (GLsizei)(stride / block);
++}
++
++/* Bring a pitch copy up to date with the imported memory before GL reads
++ * the resource. The memory can change between any two reads, since the
++ * guest's Vulkan side writes it directly. */
++static void vrend_resource_refresh_pitch_copy(struct vrend_resource *res)
++{
++   if (!res || !res->pitch_src_id)
++      return;
++   glCopyImageSubData(res->pitch_src_id, res->target, 0, 0, 0, 0,
++                      res->gl_id, res->target, 0, 0, 0, 0,
++                      res->base.width0, res->base.height0, 1);
++}
++
++/* Send GL writes to a pitch copy back to the imported memory, so the guest's
++ * Vulkan side and the next refresh see them. */
++static void vrend_resource_flush_pitch_copy(struct vrend_resource *res)
++{
++   if (!res || !res->pitch_src_id)
++      return;
++   glCopyImageSubData(res->gl_id, res->target, 0, 0, 0, 0,
++                      res->pitch_src_id, res->target, 0, 0, 0, 0,
++                      res->base.width0, res->base.height0, 1);
++}
++
++static void vrend_pitch_copy_sync(struct vrend_resource *res, bool flush)
++{
++   if (flush)
++      vrend_resource_flush_pitch_copy(res);
++   else
++      vrend_resource_refresh_pitch_copy(res);
++}
++
++/* Refresh the bound color and depth buffers before GL renders into them, or
++ * flush them afterwards. */
++static void vrend_framebuffer_pitch_copies(struct vrend_sub_context *sub_ctx, bool flush)
++{
++   if (!vrend_pitch_copy_count || !sub_ctx)
++      return;
++   for (uint32_t i = 0; i < sub_ctx->nr_cbufs; i++) {
++      if (sub_ctx->surf[i])
++         vrend_pitch_copy_sync(sub_ctx->surf[i]->texture, flush);
++   }
++   if (sub_ctx->zsurf)
++      vrend_pitch_copy_sync(sub_ctx->zsurf->texture, flush);
++}
++
++/* Refresh a stage's sampled textures and shader images before it runs, or
++ * flush the images it can write afterwards. */
++static void vrend_stage_pitch_copies(struct vrend_sub_context *sub_ctx, int shader_type, bool flush)
++{
++   if (!flush) {
++      uint32_t mask = sub_ctx->prog->samplers_used_mask[shader_type];
++      while (mask) {
++         int i = u_bit_scan(&mask);
++         struct vrend_sampler_view *view = sub_ctx->views[shader_type].views[i];
++         if (view)
++            vrend_resource_refresh_pitch_copy(view->texture);
++      }
++   }
++   bool barrier = false;
++   uint32_t mask = sub_ctx->images_used_mask[shader_type];
++   while (mask) {
++      int i = u_bit_scan(&mask);
++      struct vrend_image_view *iview = &sub_ctx->image_views[shader_type][i];
++      if (flush && iview->access == GL_READ_ONLY)
++         continue;
++      /* Shader image stores are not ordered with later copies until a
++       * barrier makes them visible. */
++      if (flush && !barrier && iview->texture && iview->texture->pitch_src_id &&
++          has_feature(feat_barrier)) {
++         glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
++         barrier = true;
++      }
++      vrend_pitch_copy_sync(iview->texture, flush);
++   }
++}
++
++static void vrend_draw_pitch_copies(struct vrend_sub_context *sub_ctx, bool flush)
++{
++   if (!vrend_pitch_copy_count)
++      return;
++   for (int shader_type = PIPE_SHADER_VERTEX; shader_type <= sub_ctx->last_shader_idx; shader_type++)
++      vrend_stage_pitch_copies(sub_ctx, shader_type, flush);
++   vrend_framebuffer_pitch_copies(sub_ctx, flush);
++}
++
++static void vrend_clear_unsynced(struct vrend_context *ctx, unsigned buffers,
+                  const union pipe_color_union *color, double depth,
+                  unsigned stencil) {
+    GLbitfield bits = 0;
+@@ -4892,7 +5019,16 @@ void vrend_clear(struct vrend_context *ctx, unsigned buffers,
+    vrend_clear_finish(sub_ctx, buffers);
+ }
+ 
+-int vrend_clear_texture(struct vrend_context* ctx,
++void vrend_clear(struct vrend_context *ctx, unsigned buffers,
++                 const union pipe_color_union *color, double depth,
++                 unsigned stencil)
++{
++   vrend_framebuffer_pitch_copies(ctx->sub, false);
++   vrend_clear_unsynced(ctx, buffers, color, depth, stencil);
++   vrend_framebuffer_pitch_copies(ctx->sub, true);
++}
++
++static int vrend_clear_texture_unsynced(struct vrend_context* ctx,
+                          struct vrend_resource *res, uint32_t level,
+                          const struct pipe_box *box,
+                          const void * data)
+@@ -4928,6 +5064,18 @@ int vrend_clear_texture(struct vrend_context* ctx,
+    return 0;
+ }
+ 
++int vrend_clear_texture(struct vrend_context* ctx,
++                        struct vrend_resource *res, uint32_t level,
++                        const struct pipe_box *box,
++                        const void * data)
++{
++   vrend_resource_refresh_pitch_copy(res);
++   int ret = vrend_clear_texture_unsynced(ctx, res, level, box, data);
++   if (!ret)
++      vrend_resource_flush_pitch_copy(res);
++   return ret;
++}
++
+ void vrend_clear_surface(struct vrend_context *ctx, uint32_t surf_handle,
+                          unsigned buffers, const union pipe_color_union *color,
+                          unsigned dstx, unsigned dsty, unsigned width,
+@@ -6021,6 +6169,7 @@ int vrend_draw_vbo(struct vrend_context *ctx,
+       }
+    }
+ 
++   vrend_draw_pitch_copies(sub_ctx, false);
+    vrend_draw_bind_objects(sub_ctx, program_select_result == PROGRAMM_NEW);
+    vrend_fill_sysval_uniform_block(sub_ctx);
+ 
+@@ -6208,6 +6357,7 @@ int vrend_draw_vbo(struct vrend_context *ctx,
+ 
+    if (use_advanced_blending)
+       glDisable(GL_BLEND);
++   vrend_draw_pitch_copies(sub_ctx, true);
+    return 0;
+ }
+ 
+@@ -6277,6 +6427,8 @@ void vrend_launch_grid(struct vrend_context *ctx,
+    vrend_set_active_pipeline_stage(sub_ctx->prog, PIPE_SHADER_COMPUTE);
+    vrend_draw_bind_ubo_shader(sub_ctx, PIPE_SHADER_COMPUTE, 0);
+    vrend_draw_bind_const_shader(sub_ctx, PIPE_SHADER_COMPUTE, new_program);
++   if (vrend_pitch_copy_count)
++      vrend_stage_pitch_copies(sub_ctx, PIPE_SHADER_COMPUTE, false);
+    vrend_draw_bind_samplers_shader(sub_ctx, PIPE_SHADER_COMPUTE, 0);
+    vrend_draw_bind_images_shader(sub_ctx, PIPE_SHADER_COMPUTE);
+    vrend_draw_bind_ssbo_shader(sub_ctx, PIPE_SHADER_COMPUTE);
+@@ -6300,6 +6452,8 @@ void vrend_launch_grid(struct vrend_context *ctx,
+    } else {
+       glDispatchCompute(grid[0], grid[1], grid[2]);
+    }
++   if (vrend_pitch_copy_count)
++      vrend_stage_pitch_copies(sub_ctx, PIPE_SHADER_COMPUTE, true);
+ }
+ 
+ static GLenum translate_blend_func(uint32_t pipe_blend)
+@@ -7702,6 +7856,10 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+ #ifdef _WIN32
+    vrend_state.intel_windows_buffer_uploads = vrend_intel_windows_buffer_uploads();
+ #endif
++   vrend_state.pitch_copy_imports =
++      vrend_pitch_copy_imports(vrend_state.intel_windows_buffer_uploads);
++   virgl_info("imported image pitch copy %s\n",
++              vrend_state.pitch_copy_imports ? "on" : "off");
+ 
+    init_features(gles ? 0 : gl_ver,
+                  gles ? gl_ver : 0);
+@@ -8968,6 +9126,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+       glDeleteRenderbuffers(1, &res->rbo_id);
+    }
+ 
++   if (res->pitch_src_id) {
++      glDeleteTextures(1, &res->pitch_src_id);
++      vrend_pitch_copy_count--;
++   }
++
+    if (has_bit(res->storage_bits, VREND_STORAGE_GL_MEMOBJ)) {
+       glDeleteMemoryObjectsEXT(1, &res->memobj);
+    }
+@@ -9353,7 +9516,7 @@ static void vrend_collapse_data_r16g16b16x16(uint64_t size, void *data) {
+    }
+ }
+ 
+-static int vrend_renderer_transfer_write_iov(struct vrend_context *ctx,
++static int vrend_renderer_transfer_write_iov_unsynced(struct vrend_context *ctx,
+                                              struct vrend_resource *res,
+                                              const struct iovec *iov, int num_iovs,
+                                              const struct vrend_transfer_info *info)
+@@ -9666,6 +9829,18 @@ static int vrend_renderer_transfer_write_iov(struct vrend_context *ctx,
+    return 0;
+ }
+ 
++static int vrend_renderer_transfer_write_iov(struct vrend_context *ctx,
++                                             struct vrend_resource *res,
++                                             const struct iovec *iov, int num_iovs,
++                                             const struct vrend_transfer_info *info)
++{
++   vrend_resource_refresh_pitch_copy(res);
++   int ret = vrend_renderer_transfer_write_iov_unsynced(ctx, res, iov, num_iovs, info);
++   if (!ret)
++      vrend_resource_flush_pitch_copy(res);
++   return ret;
++}
++
+ static uint32_t vrend_get_texture_depth(struct vrend_resource *res, uint32_t level)
+ {
+    uint32_t depth = 1;
+@@ -10021,6 +10196,7 @@ static int vrend_renderer_transfer_send_iov(struct vrend_context *ctx,
+                                             const struct iovec *iov, int num_iovs,
+                                             const struct vrend_transfer_info *info)
+ {
++   vrend_resource_refresh_pitch_copy(res);
+    if ((is_only_bit(res->storage_bits, VREND_STORAGE_GUEST_MEMORY) ||
+        has_bit(res->storage_bits, VREND_STORAGE_HOST_SYSTEM_MEMORY)) && res->iov) {
+       return vrend_copy_iovec(res->iov, res->num_iovs, info->box->x,
+@@ -10744,7 +10920,7 @@ static bool resource_dest_contains_box(struct vrend_resource *src_res,
+    return resource_contains_box(dst_res, &dst_box, dst_level);
+ }
+ 
+-void vrend_renderer_resource_copy_region(struct vrend_context *ctx,
++static void vrend_renderer_resource_copy_region_unsynced(struct vrend_context *ctx,
+                                          uint32_t dst_handle, uint32_t dst_level,
+                                          uint32_t dstx, uint32_t dsty, uint32_t dstz,
+                                          uint32_t src_handle, uint32_t src_level,
+@@ -10878,6 +11054,22 @@ void vrend_renderer_resource_copy_region(struct vrend_context *ctx,
+       glEnable(GL_SCISSOR_TEST);
+ }
+ 
++void vrend_renderer_resource_copy_region(struct vrend_context *ctx,
++                                         uint32_t dst_handle, uint32_t dst_level,
++                                         uint32_t dstx, uint32_t dsty, uint32_t dstz,
++                                         uint32_t src_handle, uint32_t src_level,
++                                         const struct pipe_box *src_box)
++{
++   struct vrend_resource *src_res = vrend_renderer_ctx_res_lookup(ctx, src_handle);
++   struct vrend_resource *dst_res = vrend_renderer_ctx_res_lookup(ctx, dst_handle);
++   vrend_resource_refresh_pitch_copy(src_res);
++   if (dst_res != src_res)
++      vrend_resource_refresh_pitch_copy(dst_res);
++   vrend_renderer_resource_copy_region_unsynced(ctx, dst_handle, dst_level, dstx, dsty, dstz,
++                                                src_handle, src_level, src_box);
++   vrend_resource_flush_pitch_copy(dst_res);
++}
++
+ 
+ static inline bool texture_view_compatible(enum virgl_formats src, enum virgl_formats dst)
+ {
+@@ -11282,7 +11474,7 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
+       glDeleteTextures(1, &blit_info.dst_view);
+ }
+ 
+-void vrend_renderer_blit(struct vrend_context *ctx,
++static void vrend_renderer_blit_unsynced(struct vrend_context *ctx,
+                          uint32_t dst_handle, uint32_t src_handle,
+                          const struct pipe_blit_info *info)
+ {
+@@ -11414,6 +11606,19 @@ void vrend_renderer_blit(struct vrend_context *ctx,
+       vrend_pause_render_condition(ctx, false);
+ }
+ 
++void vrend_renderer_blit(struct vrend_context *ctx,
++                         uint32_t dst_handle, uint32_t src_handle,
++                         const struct pipe_blit_info *info)
++{
++   struct vrend_resource *src_res = vrend_renderer_ctx_res_lookup(ctx, src_handle);
++   struct vrend_resource *dst_res = vrend_renderer_ctx_res_lookup(ctx, dst_handle);
++   vrend_resource_refresh_pitch_copy(src_res);
++   if (dst_res != src_res)
++      vrend_resource_refresh_pitch_copy(dst_res);
++   vrend_renderer_blit_unsynced(ctx, dst_handle, src_handle, info);
++   vrend_resource_flush_pitch_copy(dst_res);
++}
++
+ void vrend_renderer_set_fence_retire(struct vrend_context *ctx,
+                                      vrend_context_fence_retire retire,
+                                      void *retire_data)
+@@ -13648,12 +13853,29 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+          gr->storage_bits |= VREND_STORAGE_GL_TEXTURE | VREND_STORAGE_GL_MEMOBJ;
+ 
+          /* Create a GL texture which uses that memory as storage */
+-         glGenTextures(1, &gr->gl_id);
+-         glBindTexture(gr->target, gr->gl_id);
+          GLsizei width = (GLsizei)args->width;
+          GLsizei height = (GLsizei)args->height;
+-         glTexParameteri(gr->target, GL_TEXTURE_TILING_EXT, GL_LINEAR_TILING_EXT);
+-         glTexStorageMem2DEXT(gr->target, 1, internalformat, width, height, mem_object, 0);
++         GLsizei pitch_width = vrend_import_pitch_width(gr, args, res->map_size);
++         if (pitch_width > width) {
++            /* GL_EXT_memory_object has no row pitch, so a linear texture
++             * uses the GL driver's own pitch, which can differ from the one
++             * Vulkan laid the image out with. View the memory as a texture
++             * exactly one pitch wide, then copy its visible part into gl_id
++             * before each read (vrend_resource_refresh_pitch_copy). */
++            glGenTextures(1, &gr->pitch_src_id);
++            glBindTexture(gr->target, gr->pitch_src_id);
++            glTexParameteri(gr->target, GL_TEXTURE_TILING_EXT, GL_LINEAR_TILING_EXT);
++            glTexStorageMem2DEXT(gr->target, 1, internalformat, pitch_width, height, mem_object, 0);
++            glGenTextures(1, &gr->gl_id);
++            glBindTexture(gr->target, gr->gl_id);
++            glTexStorage2D(gr->target, 1, internalformat, width, height);
++            vrend_pitch_copy_count++;
++         } else {
++            glGenTextures(1, &gr->gl_id);
++            glBindTexture(gr->target, gr->gl_id);
++            glTexParameteri(gr->target, GL_TEXTURE_TILING_EXT, GL_LINEAR_TILING_EXT);
++            glTexStorageMem2DEXT(gr->target, 1, internalformat, width, height, mem_object, 0);
++         }
+          glBindTexture(gr->target, 0);
+          gr->is_imported = true;
+       }
+--- a/src/vrend/vrend_renderer.h
++++ b/src/vrend/vrend_renderer.h
+@@ -111,6 +111,10 @@ struct vrend_resource {
+    uint64_t size;
+    GLbitfield buffer_storage_flags;
+    GLuint memobj;
++   /* Imported memory whose row pitch GL cannot express: a texture as wide as
++    * the pitch views the memory, and gl_id holds a copy of its visible part,
++    * refreshed before each read. */
++   GLuint pitch_src_id;
+ 
+    uint32_t blob_id;
+    struct list_head head;
