@@ -64,7 +64,8 @@ fail, so first-run repeated at every login and sent its welcome notifications
 again. `materialize-omarchy.sh` drops those two lines, guarded by the reviewed
 digests; the other units are still enabled and started, and one that fails
 still fails the step. Disks updated from 4.0.4 finished first-run before and
-never run it again.
+never run it again. Patch 0173 refreshes the package lock, which brings in
+Hyprland 0.57.2.
 
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
