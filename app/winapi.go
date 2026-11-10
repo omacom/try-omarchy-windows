@@ -341,6 +341,12 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	if enumTitleTopologyChanged {
 		state.topologyRepair = true
 	}
+	// While the curtain hides a window its frame is off, so its placement
+	// and fullscreen state are not what the user will see. A topology change
+	// is recorded above and repaired once the curtain lifts.
+	if curtainConcealed(hwnd) {
+		return 1
+	}
 	if !enumTitleFullscreen && !state.fullscreen {
 		if restored := state.repairTopology(capturePlacement(hwnd), beingDragged(hwnd), enumTitleMonitorDetails, func(p *windowPlacement) bool {
 			return correctPlacement(hwnd, p)
