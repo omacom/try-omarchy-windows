@@ -5,6 +5,9 @@ systemctl is-active try-omarchy-system-ownership.service
 [[ $(pacman -Q try-omarchy-runtime) == "try-omarchy-runtime $CANDIDATE_RUNTIME" ]]
 [[ $(cat /usr/share/omarchy/version) == "$CANDIDATE_VERSION" ]]
 sha256sum -c "$HOME/upgrade-preserve.sha256"
+# The update left the camera and battery modules for the running kernel.
+lsmod | grep -q '^try_omarchy_battery '
+[[ -c /dev/video42 ]]
 # Later boots, including the older image, neither duplicate nor drop the
 # pinch loader or the personal override.
 sha256sum -c "$HOME/upgrade-input-after.sha256"

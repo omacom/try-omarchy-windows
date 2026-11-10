@@ -20,7 +20,11 @@ created by older images. Apps a user removed on purpose are not on that list
 and stay removed. System configuration shipped by the runtime uses pacman's backup
 handling, so local edits can be retained with a `.pacnew` file for review.
 Personal files stay on the existing disk. The launcher continues to supply the
-external kernel and matching modules; the guest's linux package stays held.
+external kernel and matching modules; the guest's linux and linux-headers
+packages stay held. Disks from before compatibility revision 70 held only
+linux, so an update could move the headers past the running kernel and DKMS
+then removed the camera and battery modules. Revision 70 adds the headers to
+the hold, and its initramfs puts those modules back.
 
 Compatibility revision 54 installs pacman hooks before the desktop starts on
 existing disks. When a transaction replaces Omarchy files, the pre-transaction
