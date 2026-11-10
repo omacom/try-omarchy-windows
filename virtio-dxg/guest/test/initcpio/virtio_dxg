@@ -88,17 +88,19 @@ setup_desktop() {
     # samples directly; otherwise Mesa's software winsys (wl_shm buffers)
     # with d3d12 rendering, as under WSLg. NVIDIA's libraries come from
     # the shares.
+    # Xwayland's glamor allocates window pixmaps through GBM on the render
+    # node. With window buffers that works (X11 windows and DRI3 clients
+    # are zero-copy too); without them X11 windows would never reach the
+    # compositor, so glamor is off and they go as wl_shm buffers (X11
+    # applications' own OpenGL still renders on d3d12).
     if [ -n "$winbuf" ]; then
         clients=MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
+        xwayland=       # an empty line in the file
     else
         clients=LIBGL_ALWAYS_SOFTWARE=1
+        xwayland=XWAYLAND_NO_GLAMOR=1
     fi
-    # Xwayland: glamor would allocate window pixmaps through GBM on the
-    # render node, which has no hardware driver: X11 windows then never
-    # reach the compositor. Without glamor they go as wl_shm buffers, and
-    # X11 applications' own OpenGL still renders on d3d12.
-    printf '%s\n' GALLIUM_DRIVER=d3d12 "$clients" \
-        XWAYLAND_NO_GLAMOR=1 \
+    printf '%s\n' GALLIUM_DRIVER=d3d12 "$clients" "$xwayland" \
         MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA LIBVA_DRIVER_NAME=d3d12 \
         "LD_LIBRARY_PATH=$m/lib:/usr/lib/wsl/lib:/usr/lib/wsl/core" \
         "LIBGL_DRIVERS_PATH=$m/lib/dri" "GBM_BACKENDS_PATH=$m/lib/gbm" \
