@@ -58,6 +58,14 @@ upgrade. No package owns those files, so a runtime update alone left updated
 disks with 4.0.4's copies. A file some package owns, or a fastfetch layout an
 administrator edited, is left alone.
 
+Patch 0172 lets first-run finish. Omarchy 4.5's first-run units step also
+enables OWE's daemon and installs its theme-set hook, and with OWE left out both
+fail, so first-run repeated at every login and sent its welcome notifications
+again. `materialize-omarchy.sh` drops those two lines, guarded by the reviewed
+digests; the other units are still enabled and started, and one that fails
+still fails the step. Disks updated from 4.0.4 finished first-run before and
+never run it again.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME
