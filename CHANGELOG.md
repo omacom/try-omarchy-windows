@@ -30,7 +30,9 @@
   repairs reach them (#393).
 - Runtime r27 draws Vulkan windows straight on Intel graphics at every window
   width. They were skewed unless the width was a multiple of 64 pixels (#395,
-  #394).
+  #394). Known issue: in those windows red and blue can show swapped (#400).
+  Setting the Windows user environment variable `TRYOMARCHY_PITCH_COPY=off`
+  goes back to the v0.14.0 behavior.
 - During first setup, the setup window says when it is saving the new disk and
   registering Try Omarchy with Windows instead of showing an earlier step, and
   shows progress while it checks an existing system image. shell.log records
