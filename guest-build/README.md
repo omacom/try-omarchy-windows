@@ -106,6 +106,7 @@ modules. Disks that already lost the modules keep the newer headers, which
 have no matching kernel, until a release boots that kernel. The camera bridge
 now stops and shows as failed when its device is missing, instead of waiting
 as active.
+Patch 0179 refreshes the package lock, which brings in kernel 7.2.15.
 
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
