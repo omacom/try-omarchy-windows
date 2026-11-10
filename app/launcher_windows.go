@@ -292,8 +292,11 @@ func offerLauncherShortcuts(dir string) {
 		logf("stable launcher path: %v", err)
 		return
 	}
+	getUI().setStatus("%s", uiText("status.registering_launcher"))
+	phase := startSetupPhase("Windows registration")
 	target, err := stableLauncherPath(installDir)
 	if err != nil {
+		phase.end(err)
 		logf("stable launcher: %v", err)
 		return
 	}
@@ -311,6 +314,7 @@ func offerLauncherShortcuts(dir string) {
 	} else {
 		logf("launch preferences: %v", err)
 	}
+	phase.end(nil)
 	if shortcutOfferRecorded(installDir) {
 		return
 	}

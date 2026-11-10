@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- During first setup, the setup window says when it is saving the new disk and
+  registering Try Omarchy with Windows instead of showing an earlier step, and
+  shows progress while it checks an existing system image. shell.log records
+  when each long setup step and each setup question started and how long it
+  took.
+
 ## v0.14.0 - 2026-11-08
 
 - With GPU rendering on Hyprland 0.57, notifications and other transparent

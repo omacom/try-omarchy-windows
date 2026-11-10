@@ -165,6 +165,7 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 		return fmt.Errorf("authenticating SHA256SUMS: %w", err)
 	}
 	ui := getUI()
+	phase := startSetupPhase("boot files")
 	for index, name := range downloadedGuestArtifacts {
 		if !validSHA256(sums[name]) {
 			return fmt.Errorf("release manifest has no valid SHA256 for %s", name)
@@ -178,9 +179,11 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 			err = ensureVerifiedDownload(client, normalizedRelease(release)+"/"+name, dest, sums[name], status, ui)
 		}
 		if err != nil {
+			phase.end(err)
 			return fmt.Errorf("preparing %s: %w", name, err)
 		}
 	}
+	phase.end(nil)
 	if _, err := readGuestArtifactSizes(filepath.Join(cfg.guestDir, "guest-manifest.json"), sums); err != nil {
 		return err
 	}
@@ -200,7 +203,19 @@ func ensureGuestFiles(cfg *config, release, sumsSHA256 string) error {
 		}
 	}
 	// Preserve an existing full layout when repairing the same installed build.
-	if ok, err := verifyFileSHA256(filepath.Join(cfg.guestDir, "rootfs.ext4"), sums["rootfs.ext4"], nil); err != nil {
+	rootfs := filepath.Join(cfg.guestDir, "rootfs.ext4")
+	var progress func(done, total int64)
+	if _, err := os.Lstat(rootfs); err == nil {
+		// Hashing an existing system image takes minutes on a slow disk.
+		ui.setStatus("%s", uiText("status.checking_cached_system"))
+		progress = ui.setProgress
+		phase = startSetupPhase("existing system image check")
+	}
+	ok, err := verifyFileSHA256(rootfs, sums["rootfs.ext4"], progress)
+	if progress != nil {
+		phase.end(err)
+	}
+	if err != nil {
 		return err
 	} else if ok {
 		names = append(names, "rootfs.ext4")
@@ -344,7 +359,9 @@ func ensureFactory(cfg *config, release, digest string) (result error) {
 	ok := false
 	// A receipt miss above already hashed these bytes against the same digest.
 	if !checkedLocal || localHash != sums["rootfs.ext4"] {
+		phase := startSetupPhase("system image check")
 		ok, err = verifyFileSHA256(rootfs, sums["rootfs.ext4"], ui.setProgress)
+		phase.end(err)
 		if err != nil {
 			return err
 		}
@@ -362,7 +379,10 @@ func ensureFactory(cfg *config, release, digest string) (result error) {
 		if err := requireDiskSpace(stage, required); err != nil {
 			return err
 		}
-		if err := acquireFactoryArtifact(cfg, client, release, digest, "rootfs.ext4.zst", zst, sums["rootfs.ext4.zst"], ui); err != nil {
+		phase := startSetupPhase("system image download")
+		err = acquireFactoryArtifact(cfg, client, release, digest, "rootfs.ext4.zst", zst, sums["rootfs.ext4.zst"], ui)
+		phase.end(err)
+		if err != nil {
 			return err
 		}
 		if err := requireDiskSpace(stage, allocated+diskSpaceReserve); err != nil {
@@ -376,7 +396,10 @@ func ensureFactory(cfg *config, release, digest string) (result error) {
 		if err := checkSetupCancelled(); err != nil {
 			return err
 		}
-		if err := publishMoveFile(next, rootfs); err != nil {
+		phase = startSetupPhase("system image publish")
+		err = publishMoveFile(next, rootfs)
+		phase.end(err)
+		if err != nil {
 			return err
 		}
 	}
@@ -561,17 +584,22 @@ func decompress(src, dest, wantSum string, ui *progressUI) error {
 	// exFAT allocates them when the file is truncated but uses the same copy
 	// loop so progress continues to update during the full-size fallback.
 	_ = setSparse(out)
-	if err := sparseCopyStream(out, dec, st.Size(), counted, ui); err != nil {
-		return err
+	phase := startSetupPhase("system image unpack")
+	err = sparseCopyStream(out, dec, st.Size(), counted, ui)
+	if err == nil {
+		err = out.Sync()
 	}
-	if err := out.Sync(); err != nil {
+	phase.end(err)
+	if err != nil {
 		return err
 	}
 	if err := out.Close(); err != nil {
 		return err
 	}
 	ui.setStatus("%s", uiText("status.checking_unpacked_system"))
+	phase = startSetupPhase("unpacked system image check")
 	ok, err := verifyFileSHA256(tmp, wantSum, ui.setProgress)
+	phase.end(err)
 	if err != nil {
 		return err
 	}
