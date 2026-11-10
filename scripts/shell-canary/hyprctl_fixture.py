@@ -18,6 +18,12 @@ QUERIES = {
     ('hyprsunset', 'temperature'): 6500,
     ('-j', 'getoption', 'decoration:rounding'): {'int': 0},
     ('-j', 'getoption', 'general:gaps_out'): {'custom': '0 0 0 0'},
+    # Omarchy 4.5: reduced-motion check and the workspace layout indicator.
+    ('-j', 'getoption', 'animations:enabled'): {'bool': True, 'set': True},
+    ('getoption', 'general.layout', '-j'): {'str': 'dwindle', 'set': True},
+    ('activeworkspace', '-j'): {'id': 1, 'name': '1', 'tiledLayout': 'dwindle'},
+    # The background intro hands the cursor back when it ends (fire and forget).
+    ('eval', 'if omarchy_startup_cursor_restore then omarchy_startup_cursor_restore() end'): 'ok',
 }
 
 

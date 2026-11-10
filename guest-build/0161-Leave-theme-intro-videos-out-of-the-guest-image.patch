@@ -1,0 +1,37 @@
+From 426f24ebddd43571f891de619ad9e73da1c55494 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sun, 8 Nov 2026 00:32:49 -0500
+Subject: [PATCH] Leave theme intro videos out of the guest image
+
+Omarchy 4.5 adds 82 MiB of theme intro videos, which play only through
+OWE's video backgrounds. The image leaves OWE out, so a theme switch
+shows the still background either way. The runtime package carrying the
+themes is stored several times in the image, and with the videos the
+compressed disk grew past GitHub's 2 GiB release asset limit.
+---
+ guest/scripts/materialize-omarchy.sh | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
+index 3387be7..94b1e3f 100755
+--- a/guest/scripts/materialize-omarchy.sh
++++ b/guest/scripts/materialize-omarchy.sh
+@@ -193,9 +193,15 @@ snapper_config="$omarchy_root/install/config/snapper.sh"
+ [[ -f $snapper_config ]] || fail "Omarchy's Snapper setup moved; review it before skipping: $snapper_config"
+ install_file 0644 "$guest_dir/fragments/snapper-guest.sh" "$snapper_config"
+ 
++# Theme intro videos play only through OWE's video backgrounds, which this
++# image leaves out; without OWE the theme switch shows the still background.
++# They are 82 MiB in Omarchy 4.5, and the runtime package that carries them is
++# stored several times in the image, which would push the compressed disk past
++# GitHub's 2 GiB release asset limit.
+ while IFS= read -r theme; do
+   [[ -n $theme ]] || continue
+   copy_tree "$source_dir/themes/$theme" "$omarchy_root/themes/$theme"
++  rm -rf "$omarchy_root/themes/$theme/backgrounds/intros"
+ done < <(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["themes"]))' "$spec")
+ 
+ for file in icon.png icon.txt logo.svg logo.txt version; do
+-- 
+2.56.0
+

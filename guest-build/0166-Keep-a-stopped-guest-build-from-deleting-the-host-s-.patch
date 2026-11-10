@@ -1,0 +1,105 @@
+From 01a69265982337efec1f05235766ce4f353f6a89 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sun, 8 Nov 2026 01:26:32 -0500
+Subject: [PATCH] Keep a stopped guest build from deleting the host's device
+ nodes
+
+pacstrap mounts the kernel's devtmpfs inside the staged root, and that is the host's /dev even in the privileged build container. Stopping a build mid-pacstrap ran cleanup with it still mounted, and rm -rf emptied the host's /dev. Unmount everything below the root first, and keep every removal on one filesystem.
+---
+ guest/build.sh                    | 17 +++++++++--
+ guest/tests/test_build_cleanup.py | 49 +++++++++++++++++++++++++++++++
+ 2 files changed, 63 insertions(+), 3 deletions(-)
+ create mode 100644 guest/tests/test_build_cleanup.py
+
+diff --git a/guest/build.sh b/guest/build.sh
+index 6cdd032..1b68763 100755
+--- a/guest/build.sh
++++ b/guest/build.sh
+@@ -94,15 +94,26 @@ root=$(mktemp -d "$work/rootfs.XXXXXX")
+ resolution_db=$(mktemp -d "$work/pacman-db.XXXXXX")
+ pinned_repo=""
+ chmod 0755 "$resolution_db"
++# pacstrap and arch-chroot mount the kernel's devtmpfs, proc and sys inside the
++# root. A build stopped mid-pacstrap reaches this with them still mounted, and
++# the kernel's devtmpfs is the host's /dev even in a container, so unmount
++# everything below the root first and never let rm cross a filesystem.
++unmount_below() {
++  local target
++  while IFS= read -r target; do
++    umount -l -- "$target" || true
++  done < <(findmnt -rn -o TARGET | awk -v base="$1/" 'index($0, base) == 1' | sort -r)
++}
+ cleanup() {
+   if (( keep_rootfs )); then
+     echo "Staged rootfs retained at $root"
+   else
+-    rm -rf "$root"
++    unmount_below "$root"
++    rm -rf --one-file-system -- "$root"
+   fi
+-  rm -rf "$resolution_db"
++  rm -rf --one-file-system -- "$resolution_db"
+   if [[ -n $pinned_repo ]]; then
+-    rm -rf "$pinned_repo"
++    rm -rf --one-file-system -- "$pinned_repo"
+   fi
+ }
+ trap cleanup EXIT
+diff --git a/guest/tests/test_build_cleanup.py b/guest/tests/test_build_cleanup.py
+new file mode 100644
+index 0000000..248b602
+--- /dev/null
++++ b/guest/tests/test_build_cleanup.py
+@@ -0,0 +1,49 @@
++"""A stopped build must not delete through mounts left inside the staged root."""
++import os
++from pathlib import Path
++import re
++import subprocess
++import tempfile
++import unittest
++
++BUILD = (Path(__file__).resolve().parents[1] / 'build.sh').read_text()
++
++
++def function(name):
++    match = re.search(r'^' + name + r'\(\) \{\n.*?^\}\n', BUILD, re.M | re.S)
++    assert match, name
++    return match.group(0)
++
++
++class BuildCleanupTests(unittest.TestCase):
++    def test_mounts_below_the_root_are_unmounted_before_removal(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            work = Path(temporary)
++            root, db = work / 'rootfs.x', work / 'pacman-db.x'
++            (root / 'dev').mkdir(parents=True)
++            db.mkdir()
++            tools = work / 'bin'
++            tools.mkdir()
++            calls = work / 'calls'
++            mounts = '\n'.join(['/', f'{root}/proc', f'{root}/dev', f'{root}/dev/pts', f'{work}/rootfs.xy/dev'])
++            (tools / 'findmnt').write_text(f'#!/bin/bash\nprintf "%s\\n" {" ".join(repr(m) for m in mounts.split())}\n')
++            (tools / 'umount').write_text(f'#!/bin/bash\necho "umount $*" >>{calls}\n')
++            (tools / 'rm').write_text(f'#!/bin/bash\necho "rm $*" >>{calls}\n')
++            for tool in tools.iterdir():
++                tool.chmod(0o755)
++            script = function('unmount_below') + function('cleanup')
++            script += f'keep_rootfs=0 root={root} resolution_db={db} pinned_repo=\ncleanup\n'
++            subprocess.run(['bash', '-c', script], check=True, env=dict(os.environ, PATH=f'{tools}:{os.environ["PATH"]}'))
++            log = calls.read_text().splitlines()
++            self.assertEqual(log[:3], [f'umount -l -- {root}/proc', f'umount -l -- {root}/dev/pts', f'umount -l -- {root}/dev'])
++            self.assertNotIn(f'umount -l -- {work}/rootfs.xy/dev', log)
++            self.assertEqual(log[3:], [f'rm -rf --one-file-system -- {root}', f'rm -rf --one-file-system -- {db}'])
++
++    def test_every_removal_in_the_build_stays_on_one_filesystem(self):
++        for line in BUILD.splitlines():
++            if re.search(r'\brm -rf\b', line):
++                self.assertIn('--one-file-system', line, line)
++
++
++if __name__ == '__main__':
++    unittest.main()
+-- 
+2.56.0
+

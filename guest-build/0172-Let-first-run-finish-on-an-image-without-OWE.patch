@@ -1,0 +1,154 @@
+From df2281e1827781c74083a336a272a883b74d34e6 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Mon, 9 Nov 2026 19:00:55 -0500
+Subject: [PATCH] Let first-run finish on an image without OWE
+
+Omarchy 4.5's first-run units step enables owed.service and installs OWE's
+theme-set hook. The image leaves OWE out, so the step always failed and
+first-run repeated at every login, sending its welcome notifications again.
+Drop those two lines only, guarded by the reviewed digests; the other units
+are still enabled and a failing one still fails the step.
+---
+ guest/scripts/materialize-omarchy.sh          | 12 ++++
+ .../user/first-run/enable-user-units.sh       | 33 ++++++++++
+ guest/tests/test_omarchy_migrations.py        | 61 +++++++++++++++++++
+ 3 files changed, 106 insertions(+)
+ create mode 100755 guest/tests/fixtures/omarchy-4.5.0/install/user/first-run/enable-user-units.sh
+
+diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
+index 9f9acf8..25286a3 100755
+--- a/guest/scripts/materialize-omarchy.sh
++++ b/guest/scripts/materialize-omarchy.sh
+@@ -190,6 +190,18 @@ vm_appearance="$omarchy_root/install/user/hardware/vm-no-animations.sh"
+   fail "Omarchy's VM appearance step changed; review it before replacing it: $vm_appearance"
+ printf '%s\n' 'echo "Keep Omarchy'"'"'s animations and transparency"' >"$vm_appearance"
+ 
++# Omarchy 4.5's first-run step enables OWE's background daemon and installs its
++# theme-set hook. The image leaves OWE out, so both fail, the step exits 1 and
++# first-run repeats at every login, sending its welcome notifications again.
++# Drop those two lines only: every other unit is still enabled and started, and
++# one that fails still fails the step. Both digests are reviewed.
++user_units="$omarchy_root/install/user/first-run/enable-user-units.sh"
++[[ -f $user_units && $(sha256sum "$user_units" | cut -d' ' -f1) == ff523ef888fc4ed0654045f863a0de4db096d763674f9c2b477b02e1a552bced ]] ||
++  fail "Omarchy's first-run user units step changed; review it before editing it: $user_units"
++sed -i -e '/^  owed\.service \\$/d' -e '\|^omarchy-hook-install theme-set /usr/share/owe/10-owe-sync$|d' "$user_units"
++[[ $(sha256sum "$user_units" | cut -d' ' -f1) == b96e1d4e0700fd1bb52f1b206bb1d10ee2d519882b8bb7ae3540954cbb9ba90b ]] ||
++  fail "Omarchy's first-run user units step still names OWE: $user_units"
++
+ # The guest disk is ext4 and has neither Snapper nor a Limine bootloader.
+ # Keep the upstream migration runner intact, but make this bare-metal setup
+ # step inert, including when a future migration or setup command sources it.
+diff --git a/guest/tests/fixtures/omarchy-4.5.0/install/user/first-run/enable-user-units.sh b/guest/tests/fixtures/omarchy-4.5.0/install/user/first-run/enable-user-units.sh
+new file mode 100755
+index 0000000..0f73262
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.5.0/install/user/first-run/enable-user-units.sh
+@@ -0,0 +1,33 @@
++#!/bin/bash
++
++# Enable AND start the user systemd units we ship. Runs at first-run rather
++# than at finalize-user time because the user manager isn't live during the
++# ISO chroot — by first-run, the Hyprland/uwsm session is up and
++# `systemctl --user enable --now` both writes the correct .wants symlinks
++# (based on each unit's [Install]/WantedBy) and starts the services so the
++# first session has bluetooth pairing, sleep lock, etc. live immediately
++# instead of waiting for the next login. ConditionPath* in the unit files
++# keep the enabled units inert on hardware they don't apply to.
++
++set -euo pipefail
++
++omarchy-input-method configure --defaults || echo "Input method defaults deferred; run omarchy setup input after login." >&2
++
++systemctl --user daemon-reload
++
++# One at a time: given a list, systemctl enables none of it when it cannot find
++# one unit, and that should not cost the session its bluetooth agent as well.
++failed=0
++for unit in \
++  bt-agent.service \
++  owed.service \
++  omarchy-recover-internal-monitor.service \
++  omarchy-sleep-lock.service \
++  omarchy-migrate-notify.service \
++  omarchy-fcitx5.service \
++  omarchy-crash-watch.service; do
++  systemctl --user enable --now "$unit" || failed=1
++done
++
++omarchy-hook-install theme-set /usr/share/owe/10-owe-sync
++exit "$failed"
+diff --git a/guest/tests/test_omarchy_migrations.py b/guest/tests/test_omarchy_migrations.py
+index 3b22808..aea1bc2 100644
+--- a/guest/tests/test_omarchy_migrations.py
++++ b/guest/tests/test_omarchy_migrations.py
+@@ -121,6 +121,67 @@ class SkippedMigrationTests(unittest.TestCase):
+             self.assertEqual(ran.returncode, 0, ran.stderr)
+             self.assertEqual(ran.stdout, "Keep Omarchy's animations and transparency\n")
+ 
++    def test_first_run_units_step_passes_without_owe(self):
++        # The image leaves OWE out. If its unit or hook stays in this step, it
++        # exits 1 and first-run repeats, with its notifications, at every login.
++        upstream = GUEST / 'tests/fixtures/omarchy-4.5.0/install/user/first-run/enable-user-units.sh'
++        block = MATERIALIZE.split('user_units="$omarchy_root/install/user/first-run/enable-user-units.sh"\n', 1)[1]
++        block = block.split('\n\n', 1)[0]
++        self.assertIn(digest(upstream.read_bytes()), block)
++        units = ['bt-agent.service', 'omarchy-recover-internal-monitor.service', 'omarchy-sleep-lock.service',
++                 'omarchy-migrate-notify.service', 'omarchy-fcitx5.service', 'omarchy-crash-watch.service']
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            step = root / 'install/user/first-run/enable-user-units.sh'
++            step.parent.mkdir(parents=True)
++            bin_dir = root / 'bin'
++            bin_dir.mkdir()
++            log = root / 'calls'
++            # systemctl knows only the units the image ships; FAIL_UNIT breaks one.
++            (bin_dir / 'systemctl').write_text(
++                '#!/bin/bash\necho "systemctl $*" >>"$CALLS"\nunit=${!#}\n'
++                '[[ $* == "--user daemon-reload" ]] && exit 0\n'
++                '[[ " $SHIPPED " == *" $unit "* && $unit != "${FAIL_UNIT:-}" ]]\n')
++            (bin_dir / 'omarchy-hook-install').write_text('#!/bin/bash\necho "hook $*" >>"$CALLS"\nexit 1\n')
++            (bin_dir / 'omarchy-input-method').write_text('#!/bin/bash\nexit 0\n')
++            for tool in bin_dir.iterdir():
++                tool.chmod(0o755)
++
++            def run_step(fail_unit=''):
++                log.write_text('')
++                env = {'PATH': f'{bin_dir}:/usr/bin:/bin', 'CALLS': str(log),
++                       'SHIPPED': ' '.join(units), 'FAIL_UNIT': fail_unit}
++                ran = subprocess.run(['bash', str(step)], text=True, capture_output=True, env=env, timeout=10)
++                return ran.returncode, log.read_text().splitlines()
++
++            def edit():
++                script = 'set -euo pipefail\nfail() { echo "$*" >&2; exit 1; }\nomarchy_root=$1\n'
++                script += 'user_units="$omarchy_root/install/user/first-run/enable-user-units.sh"\n' + block + '\n'
++                return subprocess.run(['bash', '-c', script, 'units', str(root)],
++                                      text=True, capture_output=True, timeout=10)
++
++            # Upstream's step fails on this image.
++            step.write_bytes(upstream.read_bytes())
++            self.assertNotEqual(run_step()[0], 0)
++
++            edited = edit()
++            self.assertEqual(edited.returncode, 0, edited.stderr)
++            status, calls = run_step()
++            self.assertEqual(status, 0, calls)
++            self.assertEqual(calls, ['systemctl --user daemon-reload'] +
++                             [f'systemctl --user enable --now {unit}' for unit in units])
++
++            # A shipped unit that fails still fails the step, after the rest are enabled.
++            status, calls = run_step('omarchy-sleep-lock.service')
++            self.assertNotEqual(status, 0)
++            self.assertEqual(len(calls), 1 + len(units))
++
++            step.write_text('changed upstream\n')
++            changed = edit()
++            self.assertNotEqual(changed.returncode, 0)
++            self.assertIn('changed; review it', changed.stderr)
++            self.assertEqual(step.read_text(), 'changed upstream\n')
++
+     def test_kernel_reboot_check_is_disabled_on_the_indented_line(self):
+         # The shape of Omarchy 4.5's omarchy-update-restart around the check.
+         restart = '''if [[ $mode != "--services-only" ]]; then
+-- 
+2.56.0
+

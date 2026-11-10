@@ -4,11 +4,6 @@ on:
   schedule:
     - cron: "43 6 * * *"
   workflow_dispatch:
-    inputs:
-      unfixed_palette:
-        description: Revert only the Qt 6.12 palette backport to prove detection (no issue updates)
-        type: boolean
-        default: false
   pull_request:
     paths:
       - .github/workflows/shell-canary.yml
@@ -33,8 +28,6 @@ jobs:
       - name: Export the guest builder
         run: scripts/release/build-guest.sh --source-only --output "$RUNNER_TEMP/guest-source"
       - name: Load the shell with current packages
-        env:
-          UNFIXED_PALETTE: ${{ inputs.unfixed_palette || false }}
         run: |
           mkdir -p canary-results
           # Use the guest's bootstrap image, then fully upgrade it. No package lock.
@@ -45,7 +38,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/repo:ro" \
             -v "$RUNNER_TEMP/guest-source:/guest-source:ro" \
             -v "$GITHUB_WORKSPACE/canary-results:/results" \
-            -e UNFIXED_PALETTE "$image" \
+            "$image" \
             bash /repo/scripts/shell-canary/run.sh 2>&1 | tee canary-results/setup.log
       - name: Summarize and check logs
         if: always()
