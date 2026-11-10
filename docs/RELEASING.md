@@ -218,8 +218,28 @@ infrequently used installations can still update.
 
 ## Following Omarchy releases
 
-The `Follow Omarchy releases` workflow checks upstream's latest published stable release daily at 07:37 UTC and can be started manually. It exports the patched builder, compares release versions numerically, and proposes a numbered guest patch with the release's commit, tree, normalized digest and literal version file. It keeps existing backports and authenticity checks: upstream changes that need a compatibility migration must fail rather than silently dropping Windows fixes.
+The `Follow Omarchy releases` workflow checks upstream's latest published stable
+release daily at 07:37 UTC and can be started manually. When that release is
+newer than the guest's pinned version, it exports the patched builder and adds
+one numbered guest patch that pins the release's commit, tree, normalized
+digest and literal version file, and resets `packageRelease` to 1. Existing
+backports and authenticity checks stay in place, so an upstream change that
+needs compatibility work fails validation instead of dropping a Windows fix.
 
-The workflow refreshes the package transaction lock and opens a draft PR on `omarchy-release/vX.Y.Z`. It explicitly dispatches CI with `build_guest=true`, because a PR created with `GITHUB_TOKEN` does not trigger pull-request workflows. Only a successful complete run, including the guest image build and boot, for the unchanged PR head can make the PR ready and request squash auto-merge under repository rules. A failed lock refresh or failed/skipped test leaves the draft for manual work. Windows hardware acceptance and signed release publication remain separate; merging does not update published downloads or existing VMs.
+The workflow refreshes the package transaction lock, pushes
+`omarchy-release/vX.Y.Z` and opens a draft PR. A PR created with
+`GITHUB_TOKEN` does not trigger pull-request workflows, so it dispatches CI with
+`build_guest=true` and the Shell canary for the same commit. Only when both
+complete runs pass for the unchanged PR head, including the guest image build
+and boot, does it mark the PR ready and run `gh pr merge --squash --auto`. If
+master requires no reviews or checks, that can merge the PR at once. A failed lock
+refresh or any failed, skipped or cancelled job leaves the draft for manual
+work. Windows hardware acceptance, the existing-disk upgrade check and signed
+release publication stay manual; merging does not update published downloads
+or existing VMs.
 
-Enable Actions permissions to create pull requests, and enable squash merging and auto-merge if permitted by repository policy. Required reviews and branch protections still apply. If bot PR creation is denied, the workflow retains the pushed branch and reports a compare link. If merge permission is denied, the tested PR remains available for a maintainer. Forks do not run the scheduled job. An existing open or closed PR for a release is never overwritten or recreated; after repairing it, dispatch CI with `build_guest=true` and merge it through the normal review process.
+Bot PR creation needs the Actions setting that allows it. If creation is
+denied, the workflow keeps the pushed branch and reports a compare link. Forks
+do not run the job. An existing open or closed PR, or a leftover branch, for a
+release is never overwritten or recreated; after repairing it, dispatch CI with
+`build_guest=true` and merge it through the normal review process.
