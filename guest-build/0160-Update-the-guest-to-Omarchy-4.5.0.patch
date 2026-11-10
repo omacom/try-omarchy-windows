@@ -1,0 +1,2816 @@
+From 45f58d79e6391cbb9a7289a3282000a0f2975ed9 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sun, 8 Nov 2026 00:11:47 -0500
+Subject: [PATCH] Update the guest to Omarchy 4.5.0
+
+Pin omacom/omarchy v4.5.0 (ac2690cd). It is not a descendant of the
+4.0.4 quattro commit, so every backport was checked against it again.
+
+Drop the hover-close and Qt 6.12 palette backports, which 4.5.0 already
+contains. Re-port the notification privacy, host time zone, first-run
+urgency, Windows power profile and virtio night light backports to the
+rewritten files, and rebase the rest, including the bell mute, which is
+still only on quattro. Feed the host time zone through the setup form's
+new preset slot.
+
+Existing disks run 4.5's new migrations on Update > Omarchy, while fresh
+users have them all marked done. Make the ones that install apps the
+image leaves out, reorder the package repositories, or tune bare-metal
+sysctls print a message instead, each guarded by the reviewed digest so
+an upstream change stops the build. The input-method migration keeps its
+shortcut defaults without adding Mozc and the Chinese add-ons. The
+kernel reboot check moved into an indented block; match it there.
+
+Ship 4.5's XKB option (its keyboard defaults need it), the language and
+sudo-timeout sudoers rules, the mise tool and agent account declarations
+and the shell keep-alive drop-in. Replace Osaka Jade with Jade Horse and
+add Starship, as upstream did.
+
+The factory overlay's 4.0.x repair payloads still serve disks on the old
+runtime, so their tests now check a frozen copy of the 4.0.4 backport
+registry.
+---
+ .../omarchy/clock-timezone-refresh.patch      |   2 +-
+ .../first-run-update-notification.patch       |   8 +-
+ .../patches/omarchy/mute-terminal-bell.patch  |   3 +-
+ .../omarchy/notification-screen-privacy.patch | 101 ++--
+ .../omarchy/screensaver-terminal-fit.patch    |  13 +-
+ .../patches/omarchy/setup-host-timezone.patch |  21 +-
+ .../omarchy/update-free-space-message.patch   |   3 +-
+ guest/patches/omarchy/virtio-nightlight.patch |  95 ++--
+ .../omarchy/windows-power-profile.patch       |  44 +-
+ guest/scripts/materialize-omarchy.sh          |  85 +++-
+ guest/spec.json                               | 381 ++------------
+ .../fixtures/omarchy-4.0.4/backports.json     | 469 ++++++++++++++++++
+ .../omarchy/clock-timezone-refresh.patch      |  11 +
+ .../first-run-update-notification.patch       |  10 +
+ .../patches/omarchy/mute-terminal-bell.patch  |  14 +
+ .../omarchy/notification-hover-close.patch    |   0
+ .../omarchy/notification-screen-privacy.patch | 235 +++++++++
+ .../patches/omarchy/qt612-palette.patch       |   0
+ .../omarchy/screensaver-terminal-fit.patch    |  39 ++
+ .../patches/omarchy/setup-host-timezone.patch |  20 +
+ .../omarchy/update-free-space-message.patch   |  15 +
+ .../patches/omarchy/virtio-nightlight.patch   | 146 ++++++
+ .../omarchy/windows-power-profile.patch       | 152 ++++++
+ guest/tests/test_guest_qol.py                 |  15 +-
+ guest/tests/test_native_nightlight.py         |   2 +-
+ guest/tests/test_notification_privacy.py      |   2 +-
+ guest/tests/test_omarchy_migrations.py        | 117 +++++
+ guest/tests/test_qt612_palette.py             |  12 +-
+ guest/tests/test_snapper_guest.py             |   2 +-
+ guest/tests/verify.py                         |   6 +-
+ 30 files changed, 1532 insertions(+), 491 deletions(-)
+ create mode 100644 guest/tests/fixtures/omarchy-4.0.4/backports.json
+ create mode 100644 guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/clock-timezone-refresh.patch
+ create mode 100644 guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/first-run-update-notification.patch
+ create mode 100644 guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/mute-terminal-bell.patch
+ rename guest/{ => tests/fixtures/omarchy-4.0.4}/patches/omarchy/notification-hover-close.patch (100%)
+ create mode 100644 guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/notification-screen-privacy.patch
+ rename guest/{ => tests/fixtures/omarchy-4.0.4}/patches/omarchy/qt612-palette.patch (100%)
+ create mode 100644 guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/screensaver-terminal-fit.patch
+ create mode 100644 guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/setup-host-timezone.patch
+ create mode 100644 guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/update-free-space-message.patch
+ create mode 100644 guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/virtio-nightlight.patch
+ create mode 100644 guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/windows-power-profile.patch
+ create mode 100644 guest/tests/test_omarchy_migrations.py
+
+diff --git a/guest/patches/omarchy/clock-timezone-refresh.patch b/guest/patches/omarchy/clock-timezone-refresh.patch
+index 27cb8c3..c6cb167 100644
+--- a/guest/patches/omarchy/clock-timezone-refresh.patch
++++ b/guest/patches/omarchy/clock-timezone-refresh.patch
+@@ -1,7 +1,7 @@
+ diff --git a/shell/plugins/panels/clock/BarWidget.qml b/shell/plugins/panels/clock/BarWidget.qml
+ --- a/shell/plugins/panels/clock/BarWidget.qml
+ +++ b/shell/plugins/panels/clock/BarWidget.qml
+-@@ -32,6 +32,7 @@
++@@ -36,6 +36,7 @@ BarWidget {
+    readonly property var verticalLines: displayText.split("\n")
+  
+    function refresh() {
+diff --git a/guest/patches/omarchy/first-run-update-notification.patch b/guest/patches/omarchy/first-run-update-notification.patch
+index 4fe046b..875d513 100644
+--- a/guest/patches/omarchy/first-run-update-notification.patch
++++ b/guest/patches/omarchy/first-run-update-notification.patch
+@@ -1,10 +1,10 @@
++diff --git a/install/user/first-run/wifi.sh b/install/user/first-run/wifi.sh
+ --- a/install/user/first-run/wifi.sh
+ +++ b/install/user/first-run/wifi.sh
+-@@ -1,5 +1,6 @@
++@@ -1,5 +1,5 @@
+  notify_update() {
+--  omarchy-notification-send -u critical -g  "Update System" "Click to update the system." \
+-+  omarchy-notification-send -u normal -g  "Update packages and finish setup" \
+-+    "Try Omarchy manages supported Linux packages. Click to update them." \
++-  omarchy-notification-send -u critical -g  "$(omarchy-i18n firstRun.updateTitle)" "$(omarchy-i18n firstRun.updateBody)" \
+++  omarchy-notification-send -u normal -g  "$(omarchy-i18n firstRun.updateTitle)" "$(omarchy-i18n firstRun.updateBody)" \
+      --exec omarchy-launch-floating-terminal-with-presentation omarchy-update
+  }
+  
+diff --git a/guest/patches/omarchy/mute-terminal-bell.patch b/guest/patches/omarchy/mute-terminal-bell.patch
+index 592cb85..16cc68f 100644
+--- a/guest/patches/omarchy/mute-terminal-bell.patch
++++ b/guest/patches/omarchy/mute-terminal-bell.patch
+@@ -1,6 +1,7 @@
++diff --git a/default/hypr/looknfeel.lua b/default/hypr/looknfeel.lua
+ --- a/default/hypr/looknfeel.lua
+ +++ b/default/hypr/looknfeel.lua
+-@@ -124,3 +124,11 @@
++@@ -132,3 +132,11 @@ hl.config({
+      hide_special_on_workspace_change = true,
+    },
+  })
+diff --git a/guest/patches/omarchy/notification-screen-privacy.patch b/guest/patches/omarchy/notification-screen-privacy.patch
+index 32c468f..e790de9 100644
+--- a/guest/patches/omarchy/notification-screen-privacy.patch
++++ b/guest/patches/omarchy/notification-screen-privacy.patch
+@@ -1,10 +1,12 @@
+ diff --git a/shell/plugins/notifications/Service.qml b/shell/plugins/notifications/Service.qml
+ --- a/shell/plugins/notifications/Service.qml
+ +++ b/shell/plugins/notifications/Service.qml
+-@@ -50,6 +50,18 @@
+-   readonly property int defaultBarSize: barVertical ? Style.bar.sizeVertical : Style.bar.sizeHorizontal
+-   readonly property int liveBarSize: shell && shell.bar && !shell.bar.barHidden ? Math.max(0, shell.bar.barSize) : defaultBarSize
+-   readonly property int barClearance: liveBarSize + Style.gapsOut
++@@ -48,6 +48,21 @@ Item {
++     return name === targetDisplayName
++   }
++ 
+++  // ------------------------------------------------------------- privacy
+++  //
+ +  // Notification surfaces live on the overlay layer, above the ordinary
+ +  // fullscreen terminal used by the screensaver. Hide them while either the
+ +  // screensaver or secure lock covers the session, and resume their remaining
+@@ -17,31 +19,32 @@ diff --git a/shell/plugins/notifications/Service.qml b/shell/plugins/notificatio
+ +    || idleService.screensaverWindowCount > 0
+ +    || !shell
+ +    || shell.lockScreenObscured !== false
+- 
+-   // Live Notification objects by originalId, kept OUT of the ListModels: a
+-   // QObject stored in a model role becomes a dangling C++ pointer when the
+-@@ -956,7 +968,7 @@
+-       id: popupWindow
+-       required property var modelData
+-       screen: modelData
+--      visible: popupModel.count > 0
+-+      visible: popupModel.count > 0 && !service.screenObscured
+++
++   // ------------------------------------------------------------- quiet
++   //
++   property bool doNotDisturb: false
++@@ -1509,7 +1524,7 @@ Item {
++       readonly property var margins: service.marginsFor(String(modelData.name))
++       readonly property bool stepAside: service.fullscreenOn(String(modelData.name))
++       readonly property bool hasSomethingToShow: showingNotifications && toasts.count > 0
++-      visible: !stepAside || hasSomethingToShow
+++      visible: (!stepAside || hasSomethingToShow) && !service.screenObscured
++       color: "transparent"
+  
+        WlrLayershell.namespace: "omarchy-notifications"
+-       WlrLayershell.layer: WlrLayer.Overlay
+-@@ -1012,7 +1024,7 @@
++@@ -1644,7 +1659,7 @@ Item {
++                         && service.openDeck === Layout.groupKeyFor(model)
++               // Hover opens the body only when there is nothing else to open.
++               sole: toasts.count === 1
++-              paused: service.expanded
+++              paused: service.expanded || service.screenObscured
+  
+-             readonly property real lifetime: service.durationFor(cardSlot.urgency, cardSlot.expireTimeout)
+-             property real remainingLifetime: 1.0
+--            readonly property bool ticking: cardSlot.lifetime > 0 && !card.hovered
+-+            readonly property bool ticking: cardSlot.lifetime > 0 && !card.hovered && !service.screenObscured
+- 
+-             // A client updating this notification in place rewrites the row
+-             // under the card (see refreshPopup). New text deserves a full look,
++               drawnHeight: service.at(model.key, "height")
++               // A hidden output collapses child visibility; its measurements
+ diff --git a/shell/plugins/services/idle/Service.qml b/shell/plugins/services/idle/Service.qml
+ --- a/shell/plugins/services/idle/Service.qml
+ +++ b/shell/plugins/services/idle/Service.qml
+-@@ -36,6 +36,8 @@
++@@ -40,6 +40,8 @@ Item {
+    property string lastEventAt: ""
+    property var screensaverWindows: ({})
+    property int screensaverWindowCount: 0
+@@ -50,7 +53,7 @@ diff --git a/shell/plugins/services/idle/Service.qml b/shell/plugins/services/id
+  
+    function secondsFromConfig(value, fallback) {
+      return IdleModel.secondsFromConfig(value, fallback)
+-@@ -116,15 +118,57 @@
++@@ -132,15 +134,57 @@ Item {
+      root.screensaverWindowCount = 0
+    }
+  
+@@ -109,7 +112,7 @@ diff --git a/shell/plugins/services/idle/Service.qml b/shell/plugins/services/id
+    }
+  
+    function handleScreensaverWindowClosed(address) {
+-@@ -150,7 +194,8 @@
++@@ -166,7 +210,8 @@ Item {
+        if (String(open[2] || "") === root.screensaverClass) root.handleScreensaverWindowOpened(open[0])
+      } else if (name === "closewindow") {
+        var close = eventParts(event, 1)
+@@ -119,7 +122,7 @@ diff --git a/shell/plugins/services/idle/Service.qml b/shell/plugins/services/id
+        if (root.screensaverWindows[address]) root.handleScreensaverWindowClosed(address)
+      }
+    }
+-@@ -281,6 +326,12 @@
++@@ -298,6 +343,12 @@ Item {
+      }
+    }
+  
+@@ -132,7 +135,7 @@ diff --git a/shell/plugins/services/idle/Service.qml b/shell/plugins/services/id
+    Connections {
+      target: Hyprland
+      function onRawEvent(event) { root.handleHyprlandEvent(event) }
+-@@ -294,6 +345,21 @@
++@@ -311,6 +362,21 @@ Item {
+      id: lockProcess
+      onExited: function(exitCode, exitStatus) { root.logEvent("process-exit", "lock exitCode=" + exitCode + " status=" + exitStatus) }
+    }
+@@ -154,20 +157,35 @@ diff --git a/shell/plugins/services/idle/Service.qml b/shell/plugins/services/id
+    Process {
+      id: wakeProcess
+      onExited: function(exitCode, exitStatus) { root.logEvent("process-exit", "wake exitCode=" + exitCode + " status=" + exitStatus) }
+-@@ -333,8 +399,8 @@
++@@ -350,8 +416,8 @@ Item {
+    Component.onCompleted: {
+      logEvent("service-ready")
+      refreshStayAwakeState()
+ +    screensaverStateProbe.running = true
+    }
+ -
+-   IpcHandler {
++   ShellIpc {
+      target: "idle"
+  
++diff --git a/shell/services/AuthServiceStore.js b/shell/services/AuthServiceStore.js
++--- a/shell/services/AuthServiceStore.js
+++++ b/shell/services/AuthServiceStore.js
++@@ -43,3 +43,11 @@ function destroyAll() {
++   var keys = ids()
++   for (var i = 0; i < keys.length; i++) destroy(keys[i])
++ }
+++
+++// Read in the host's QML binding so locked/preview changes invalidate it.
+++// Missing or malformed lock state remains private during startup and removal.
+++function lockScreenObscured() {
+++  var service = services["omarchy.lock"]
+++  return !service || typeof service.locked !== "boolean"
+++    || service.locked || service.previewVisible === true
+++}
+ diff --git a/shell/shell.qml b/shell/shell.qml
+ --- a/shell/shell.qml
+ +++ b/shell/shell.qml
+-@@ -887,6 +887,14 @@
++@@ -916,6 +916,14 @@ ShellRoot {
+      return _services[String(pluginId)] || null
+    }
+  
+@@ -182,7 +200,7 @@ diff --git a/shell/shell.qml b/shell/shell.qml
+    function firstPartyServiceFor(pluginId) {
+      return serviceFor(shell.pluginRegistry.resolveEnabledId(pluginId))
+    }
+-@@ -935,6 +943,7 @@
++@@ -964,6 +972,7 @@ ShellRoot {
+          // import retains their lifetime without adding a traversable property
+          // or QObject parent back to the host shell.
+          AuthServiceStore.put(key, inst)
+@@ -190,7 +208,7 @@ diff --git a/shell/shell.qml b/shell/shell.qml
+        } else {
+          var snext = ({})
+          for (var sk in _services) snext[sk] = _services[sk]
+-@@ -986,6 +995,7 @@
++@@ -1015,6 +1024,7 @@ ShellRoot {
+          // A service that loses its trusted authentication capability can move
+          // back to the ordinary service map only after the isolated copy dies.
+          AuthServiceStore.destroy(id)
+@@ -198,7 +216,7 @@ diff --git a/shell/shell.qml b/shell/shell.qml
+        }
+        ensureService(id)
+      }
+-@@ -1018,6 +1028,7 @@
++@@ -1047,6 +1057,7 @@ ShellRoot {
+        if (stillAuthenticationService && pluginRegistry.isEnabled(authenticationId)
+            && shell.isAuthenticationService(authenticationManifest, authenticationId)) continue
+        AuthServiceStore.destroy(authenticationId)
+@@ -206,7 +224,7 @@ diff --git a/shell/shell.qml b/shell/shell.qml
+      }
+    }
+  
+-@@ -1044,8 +1055,10 @@
++@@ -1073,8 +1084,10 @@ ShellRoot {
+      var authenticationIds = AuthServiceStore.ids()
+      for (var ai = 0; ai < authenticationIds.length; ai++) {
+        var authenticationId = authenticationIds[ai]
+@@ -218,18 +236,3 @@ diff --git a/shell/shell.qml b/shell/shell.qml
+      }
+    }
+  
+-diff --git a/shell/services/AuthServiceStore.js b/shell/services/AuthServiceStore.js
+---- a/shell/services/AuthServiceStore.js
+-+++ b/shell/services/AuthServiceStore.js
+-@@ -43,3 +43,11 @@
+-   var keys = ids()
+-   for (var i = 0; i < keys.length; i++) destroy(keys[i])
+- }
+-+
+-+// Read in the host's QML binding so locked/preview changes invalidate it.
+-+// Missing or malformed lock state remains private during startup and removal.
+-+function lockScreenObscured() {
+-+  var service = services["omarchy.lock"]
+-+  return !service || typeof service.locked !== "boolean"
+-+    || service.locked || service.previewVisible === true
+-+}
+diff --git a/guest/patches/omarchy/screensaver-terminal-fit.patch b/guest/patches/omarchy/screensaver-terminal-fit.patch
+index a17852a..3edfb4f 100644
+--- a/guest/patches/omarchy/screensaver-terminal-fit.patch
++++ b/guest/patches/omarchy/screensaver-terminal-fit.patch
+@@ -1,6 +1,7 @@
++diff --git a/bin/omarchy-screensaver b/bin/omarchy-screensaver
+ --- a/bin/omarchy-screensaver
+ +++ b/bin/omarchy-screensaver
+-@@ -8,7 +8,7 @@
++@@ -8,7 +8,7 @@ screensaver_in_focus() {
+  
+  exit_screensaver() {
+    hyprctl eval 'hl.config({ cursor = { invisible = false } })' &>/dev/null || hyprctl keyword cursor:invisible false &>/dev/null || true
+@@ -9,16 +10,16 @@
+    pkill -f '[o]rg.omarchy.screensaver' 2>/dev/null
+    exit 0
+  }
+-@@ -19,8 +19,6 @@
+- printf '\033]11;rgb:00/00/00\007'  # Set background color to black
++@@ -21,8 +21,6 @@ stty -echo 2>/dev/null  # Don't echo the key that stops the screensaver into the
+  
+  hyprctl eval 'hl.config({ cursor = { invisible = true } })' &>/dev/null || hyprctl keyword cursor:invisible true &>/dev/null
+--
+--tty=$(tty 2>/dev/null)
+  
++-tty=$(tty 2>/dev/null)
++-
+  # Terminals allocate the pty at the default 80x24 and only resize it once the
+  # compositor has told the window how big it is. ttfx measures the terminal once,
+-@@ -36,13 +34,16 @@
++ # at startup, so starting it before the resize lands sizes an 80x24 canvas and
++@@ -37,13 +35,16 @@ wait_for_terminal_resize() {
+  wait_for_terminal_resize
+  
+  while true; do
+diff --git a/guest/patches/omarchy/setup-host-timezone.patch b/guest/patches/omarchy/setup-host-timezone.patch
+index c106a9d..62bed07 100644
+--- a/guest/patches/omarchy/setup-host-timezone.patch
++++ b/guest/patches/omarchy/setup-host-timezone.patch
+@@ -1,20 +1,17 @@
+ diff --git a/install/provisioning/setup-form.sh b/install/provisioning/setup-form.sh
+ --- a/install/provisioning/setup-form.sh
+ +++ b/install/provisioning/setup-form.sh
+-@@ -170,7 +170,15 @@
+- # often; guard it or a `set -e` caller dies before the filter fallback.
+- omarchy_prompt_timezone() {
+-   local guess status
+--  guess=$(tzupdate -p 2>/dev/null) || guess=""
+-+  # The VM launcher supplies a validated host hint. Keep geolocation as a
+-+  # fallback for environments without a host time-zone integration.
+-+  guess=""
++@@ -233,6 +233,13 @@ omarchy_prompt_timezone() {
++   # Omarchy's own lookup of where this network is, and failing that take the
++   # caller's fallback, like the language's capital.
++   guess=${OMARCHY_FORM_TIMEZONE_DEFAULT:-}
+++  # The VM launcher supplies a validated host hint. It comes after a preset and
+++  # before geolocation, which stays the fallback without a host integration.
+ +  local host_hint=${TRY_OMARCHY_HOST_ZONE:-/run/try-omarchy/host-timezone}
+-+  if [[ -f $host_hint ]]; then
+++  if [[ -z $guess && -f $host_hint ]]; then
+ +    guess=$(cat "$host_hint")
+ +    if ! timedatectl list-timezones | grep -Fx -- "$guess" >/dev/null; then guess=""; fi
+ +  fi
+-+  if [[ -z $guess ]]; then guess=$(tzupdate -p 2>/dev/null) || guess=""; fi
++   [[ -n $guess ]] || guess=$(curl -fsS --max-time 5 https://geo.omarchy.org/ 2>/dev/null | jq -r '.timezone // empty' 2>/dev/null) || guess=""
++   [[ -n $guess ]] || guess=${OMARCHY_FORM_TIMEZONE_FALLBACK:-}
+  
+-   if [[ -n $guess ]]; then
+-     timezone=$(timedatectl list-timezones | gum choose --height 10 --selected "$guess" --header "Timezone") && status=0 || status=$?
+diff --git a/guest/patches/omarchy/update-free-space-message.patch b/guest/patches/omarchy/update-free-space-message.patch
+index c9d4627..bd2868a 100644
+--- a/guest/patches/omarchy/update-free-space-message.patch
++++ b/guest/patches/omarchy/update-free-space-message.patch
+@@ -1,6 +1,7 @@
++diff --git a/bin/omarchy-update-requires-free-space b/bin/omarchy-update-requires-free-space
+ --- a/bin/omarchy-update-requires-free-space
+ +++ b/bin/omarchy-update-requires-free-space
+-@@ -11,6 +11,12 @@
++@@ -11,6 +11,12 @@ elif read -r available_bytes < <(df --output=avail --block-size=1 / 2>/dev/null
+    [[ $available_bytes =~ ^[0-9]+$ ]] &&
+    (( available_bytes < 10 * 1024 * 1024 * 1024 )); then
+    echo "You need at least 10 GiB free to safely update Omarchy."
+diff --git a/guest/patches/omarchy/virtio-nightlight.patch b/guest/patches/omarchy/virtio-nightlight.patch
+index 9a20736..1c2c327 100644
+--- a/guest/patches/omarchy/virtio-nightlight.patch
++++ b/guest/patches/omarchy/virtio-nightlight.patch
+@@ -1,12 +1,14 @@
++diff --git a/bin/omarchy-toggle-nightlight b/bin/omarchy-toggle-nightlight
+ --- a/bin/omarchy-toggle-nightlight
+ +++ b/bin/omarchy-toggle-nightlight
+-@@ -2,6 +2,18 @@
++@@ -1,9 +1,21 @@
++ #!/bin/bash
+  
+  # omarchy:summary=Toggle nightlight screen temperature
+ -# omarchy:args=[--status]
+ +# omarchy:args=[--status | --temperature 4000|6500]
+  # omarchy:examples=omarchy toggle nightlight
+-+
++ 
+ +# The Windows guest has no DRM CTM. Keep the command and shell on one backend.
+ +case " $(cat /proc/cmdline) " in
+ +  *" omarchy.qemu=1 "*) exec omarchy-native-nightlight "$@" ;;
+@@ -18,26 +20,49 @@
+ +    exit 2
+ +  fi
+ +fi
+- 
+++
+  ON_TEMP=4000
+-@@ -43,5 +55,7 @@
++ OFF_TEMP=6500
++ IDENTITY_TEMP=6000
++@@ -47,7 +59,9 @@ fi
++ # Query the current temperature
+  CURRENT_TEMP=$(current_temp)
+  
+--if [[ -z $CURRENT_TEMP || $CURRENT_TEMP == $OFF_TEMP ]]; then
++-if [[ -n $CURRENT_TEMP ]] && (( CURRENT_TEMP < IDENTITY_TEMP )); then
+ +if [[ ${1:-} == --temperature ]]; then
+ +  TARGET_TEMP=$2
+-+elif [[ -z $CURRENT_TEMP || $CURRENT_TEMP == $OFF_TEMP ]]; then
+-   TARGET_TEMP=$ON_TEMP
+++elif [[ -n $CURRENT_TEMP ]] && (( CURRENT_TEMP < IDENTITY_TEMP )); then
++   TARGET_TEMP=$OFF_TEMP
+  else
++   TARGET_TEMP=$ON_TEMP
++diff --git a/bin/omarchy-update-system-pkgs-when-conflicted b/bin/omarchy-update-system-pkgs-when-conflicted
++--- a/bin/omarchy-update-system-pkgs-when-conflicted
+++++ b/bin/omarchy-update-system-pkgs-when-conflicted
++@@ -87,9 +87,10 @@ fi
++ #
++ # "pkg: /path exists in filesystem" is unowned; the same line plus "(owned by
++ # x)" is not, so the end anchor takes only ours. -Qo re-checks the live database
++-# before anything moves.
+++# before anything moves. The night-light backend arrives through compatibility
+++# catch-up before the runtime package owns it; adopt only those two paths.
++ mapfile -t leftovers < <(
++-  grep -oP '^omarchy(-dev|-settings|-settings-dev)?: \K.+(?= exists in filesystem$)' "$errors" |
+++  grep -oP '^(omarchy(-dev|-settings|-settings-dev)?: \K.+|try-omarchy-runtime: \K/usr/local/(bin/omarchy-native-nightlight|share/try-omarchy/nightlight\.frag))(?= exists in filesystem$)' "$errors" |
++     while IFS= read -r path; do pacman -Qo "$path" &>/dev/null || echo "$path"; done
++ )
++ ((${#leftovers[@]})) || exit 1
++diff --git a/shell/plugins/services/nightlight/Service.qml b/shell/plugins/services/nightlight/Service.qml
+ --- a/shell/plugins/services/nightlight/Service.qml
+ +++ b/shell/plugins/services/nightlight/Service.qml
+-@@ -1,4 +1,5 @@
++@@ -1,5 +1,6 @@
+  import QtQuick
+  import Quickshell.Io
+ +import Quickshell.Hyprland
+  import "NightlightModel.js" as NightlightModel
++ import qs.Commons
+  
+-@@ -18,9 +19,18 @@
++@@ -18,11 +19,20 @@ Item {
++   property var temperature: null
+    readonly property bool enabled: stateLoaded && NightlightModel.isNightlight(temperature)
+  
+ +  // Requested intent is separate from the last confirmed compositor state.
+@@ -57,7 +82,9 @@
+ +    statusProbe.running = true
+    }
+  
+-@@ -30,11 +40,12 @@
++   function setNightlight(value) {
++@@ -30,13 +40,14 @@ Item {
++   }
+  
+    function toggle() {
+ -    setNightlight(!enabled)
+@@ -74,16 +101,20 @@
+ +    root.requestedTemperature = temp
+      if (applyProcess.running) {
+        root.pendingTemperature = temp
+-@@ -47,7 +58,5 @@
++       root.hasPendingTemperature = true
++@@ -47,21 +58,22 @@ Item {
++   }
+  
+    function runApply(temp) {
+ -    applyProcess.command = ["bash", "-lc",
+ -      "pgrep -x hyprsunset >/dev/null || { setsid uwsm-app -- hyprsunset >/dev/null 2>&1 & sleep 1; }; " +
+--      "hyprctl hyprsunset temperature " + Number(temp)]
++-      "hyprctl hyprsunset temperature " + Number(temp) +
++-      // Even daylight tints the screen, so off also restores the identity matrix
++-      (temp === dayTemperature ? " && hyprctl hyprsunset identity" : "")]
+ +    applyProcess.command = ["omarchy-toggle-nightlight", "--temperature", String(temp)]
+      applyProcess.running = true
+    }
+-@@ -55,9 +64,14 @@
++ 
+    Process {
+      id: statusProbe
+ -    command: ["hyprctl", "hyprsunset", "temperature"]
+@@ -100,7 +131,9 @@
+ +        }
+          root.stateLoaded = true
+        }
+-@@ -68,4 +82,8 @@
++     }
++@@ -70,6 +82,10 @@ Item {
++         root.temperature = null
+          root.stateLoaded = true
+        }
+ +      if (applyProcess.running) return
+@@ -109,19 +142,23 @@
+ +      else root.requestedTemperature = null
+      }
+    }
+-@@ -81,4 +99,11 @@
+  
+-       root.refresh()
+-+    }
+-+  }
+-+
++@@ -86,6 +102,13 @@ Item {
++     }
++   }
++ 
+ +  Connections {
+ +    target: Hyprland
+ +    function onRawEvent(event) {
+ +      if (event.name === "configreloaded") root.refresh()
+++    }
+++  }
+++
++   Component.onCompleted: refresh()
++ 
++   ShellIpc {
++@@ -110,8 +133,7 @@ Item {
+      }
+-   }
+-@@ -108,6 +133,5 @@
+  
+      function toggle(): string {
+ -      var enabling = !root.enabled
+@@ -129,18 +166,4 @@
+ +      var enabling = root.toggle()
+        return enabling ? "enabled" : "disabled"
+      }
+---- a/bin/omarchy-update-system-pkgs-when-conflicted
+-+++ b/bin/omarchy-update-system-pkgs-when-conflicted
+-@@ -87,9 +87,10 @@
+- #
+- # "pkg: /path exists in filesystem" is unowned; the same line plus "(owned by
+- # x)" is not, so the end anchor takes only ours. -Qo re-checks the live database
+--# before anything moves.
+-+# before anything moves. The night-light backend arrives through compatibility
+-+# catch-up before the runtime package owns it; adopt only those two paths.
+- mapfile -t leftovers < <(
+--  grep -oP '^omarchy(-dev|-settings|-settings-dev)?: \K.+(?= exists in filesystem$)' "$errors" |
+-+  grep -oP '^(omarchy(-dev|-settings|-settings-dev)?: \K.+|try-omarchy-runtime: \K/usr/local/(bin/omarchy-native-nightlight|share/try-omarchy/nightlight\.frag))(?= exists in filesystem$)' "$errors" |
+-     while IFS= read -r path; do pacman -Qo "$path" &>/dev/null || echo "$path"; done
+- )
+- ((${#leftovers[@]})) || exit 1
++   }
+diff --git a/guest/patches/omarchy/windows-power-profile.patch b/guest/patches/omarchy/windows-power-profile.patch
+index f83dcf4..bae25a2 100644
+--- a/guest/patches/omarchy/windows-power-profile.patch
++++ b/guest/patches/omarchy/windows-power-profile.patch
+@@ -1,6 +1,7 @@
++diff --git a/bin/omarchy-powerprofiles-list b/bin/omarchy-powerprofiles-list
+ --- a/bin/omarchy-powerprofiles-list
+ +++ b/bin/omarchy-powerprofiles-list
+-@@ -8,10 +8,9 @@
++@@ -8,10 +8,9 @@ if [[ ${1:-} != "" && ${1:-} != "--active-state" ]]; then
+    exit 1
+  fi
+  
+@@ -17,9 +18,10 @@
+ +else
+ +  printf 'default\n'
+ +fi
++diff --git a/bin/omarchy-powerprofiles-set b/bin/omarchy-powerprofiles-set
+ --- a/bin/omarchy-powerprofiles-set
+ +++ b/bin/omarchy-powerprofiles-set
+-@@ -1,63 +1,27 @@
++@@ -1,64 +1,27 @@
+  #!/bin/bash
+  
+ -# omarchy:summary=Set and remember the power profile for AC or battery use
+@@ -74,41 +76,49 @@
+ -  profile="$requested_profile"
+ -elif [[ -r $state_file ]]; then
+ -  profile=$(<"$state_file")
+-+  fi
+-+  echo "Managed by Windows"
+- fi
++-fi
+ -
+ -if [[ -z ${profile:-} ]] || ! profile_available "$profile"; then
+ -  if [[ $action == "ac" ]] && profile_available performance; then
+ -    profile=performance
+ -  else
+ -    profile=balanced
+--  fi
++   fi
+ -fi
+ -
+ -powerprofilesctl set "$profile" || exit
++-omarchy-shell -q battery refreshPowerProfile >/dev/null 2>&1 || true
+ -
+ -if [[ -n $requested_profile ]]; then
+ -  mkdir -p "$state_dir"
+ -  printf '%s\n' "$requested_profile" >"$state_file"
+--fi
+++  echo "Managed by Windows"
++ fi
++diff --git a/shell/plugins/menu/Menu.qml b/shell/plugins/menu/Menu.qml
+ --- a/shell/plugins/menu/Menu.qml
+ +++ b/shell/plugins/menu/Menu.qml
+-@@ -274,9 +274,9 @@
++@@ -328,7 +328,7 @@ Item {
+        actionFor: function(value) { return "omarchy-font-set " + Util.shellQuote(value) }
+      },
+      "power-profiles": {
+ -      script: "current=$(powerprofilesctl get 2>/dev/null); omarchy-powerprofiles-list 2>/dev/null | while read -r p; do [[ -z $p ]] && continue; printf '%s\\t%s\\t%s\\n' \"$p\" \"$p\" \"$current\"; done",
+ +      script: "printf 'Managed by Windows\\tdefault\\tdefault\\n'",
+        icon: "\udb81\udc0b",
++       // Profile names are powerprofilesctl ids; only the label is translated,
++       // and the id stays searchable through searchTerms.
++@@ -338,7 +338,7 @@ Item {
++         if (value === "performance") return Commons.I18n.t("menu.powerProfilePerformance")
++         return value
++       },
+ -      actionFor: function(value) { return "omarchy-powerprofiles-set autodetect " + Util.shellQuote(value) }
+ +      actionFor: function(value) { return "" }
+-     }
+-   })
+- 
++     },
++     // Kernel names are package names, the same in every language.
++     "kernels": {
++diff --git a/shell/plugins/panels/power/Panel.qml b/shell/plugins/panels/power/Panel.qml
+ --- a/shell/plugins/panels/power/Panel.qml
+ +++ b/shell/plugins/panels/power/Panel.qml
+-@@ -17,6 +17,7 @@
++@@ -18,6 +18,7 @@ Panel {
+    property var systemInfo: ({})
+    property var profiles: []
+    property string activeProfile: ""
+@@ -116,7 +126,7 @@
+    property int profileIndex: 0
+    property bool cursorActive: false
+    readonly property bool showPercentage: setting("showPercentage", false) === true
+-@@ -164,7 +165,7 @@
++@@ -171,7 +172,7 @@ Panel {
+    }
+  
+    function setProfile(profile) {
+@@ -125,7 +135,7 @@
+      actionProc.command = ["omarchy-powerprofiles-set", root.discharging ? "battery" : "ac", profile]
+      actionProc.running = true
+    }
+-@@ -480,10 +481,10 @@
++@@ -492,10 +493,10 @@ Panel {
+                Button {
+                  required property var modelData
+                  required property int index
+@@ -134,12 +144,12 @@
+ +                width: root.managedByWindows ? implicitWidth : profileRow.cellWidth
+ +                iconText: root.managedByWindows ? "\uf17a" : root.profileIcon(String(modelData))
+                  iconSize: Style.font.title
+--                text: String(modelData).charAt(0).toUpperCase() + String(modelData).slice(1)
+-+                text: root.managedByWindows ? "Managed by Windows" : String(modelData).charAt(0).toUpperCase() + String(modelData).slice(1)
++-                text: Model.profileLabel(modelData, Commons.I18n.t)
+++                text: root.managedByWindows ? "Managed by Windows" : Model.profileLabel(modelData, Commons.I18n.t)
+                  fontSize: Style.font.bodySmall
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+-@@ -491,7 +492,9 @@
++@@ -503,7 +504,9 @@ Panel {
+                  verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
+                  bordered: true
+                  active: root.activeProfile === modelData
+diff --git a/guest/scripts/materialize-omarchy.sh b/guest/scripts/materialize-omarchy.sh
+index 66f1c82..3387be7 100755
+--- a/guest/scripts/materialize-omarchy.sh
++++ b/guest/scripts/materialize-omarchy.sh
+@@ -128,15 +128,62 @@ for tree in config default install migrations shell applications; do
+   copy_tree "$source_dir/$tree" "$omarchy_root/$tree"
+ done
+ 
+-# Omarchy 4.0.4 moves bare-metal installs to its own kernel and adds it to the
+-# Limine boot menu. This guest has no bootloader: the Windows launcher boots the
+-# kernel it supplies, with matching modules, and the guest's linux package stays
+-# held. Left alone, the migration would download a kernel that can never boot
+-# here, then fail on every update and login. It completes without changes instead.
+-kernel_migration="$omarchy_root/migrations/1789325478.sh"
+-[[ -f $kernel_migration ]] || fail "Omarchy's kernel migration moved; review it before skipping: $kernel_migration"
+-cat >"$kernel_migration" <<'MIGRATION'
+-echo "Keep the kernel the Try Omarchy launcher supplies; this guest has no bootloader"
++# Replace one reviewed upstream migration with a message, so it completes
++# without changes. Existing disks run new migrations on Update > Omarchy and
++# fresh users have every migration marked done, so a migration that installs
++# something the image leaves out, or touches bare-metal setup, must be inert
++# here or the two would differ. The digest stops the build when upstream
++# changes a migration, so the new version is reviewed before it is skipped.
++skip_migration() {
++  local name=$1 reviewed=$2 message=$3 migration="$omarchy_root/migrations/$1.sh"
++  [[ -f $migration ]] || fail "Omarchy migration $name moved; review it before skipping: $migration"
++  [[ $(sha256sum "$migration" | cut -d' ' -f1) == "$reviewed" ]] ||
++    fail "Omarchy migration $name changed; review it before skipping: $migration"
++  [[ $message != *[\"\$\`\\]* ]] || fail "unsafe migration message for $name"
++  printf 'echo "%s"\n' "$message" >"$migration"
++}
++
++# Omarchy moves bare-metal installs to its own kernel and adds it to the Limine
++# boot menu. This guest has no bootloader: the Windows launcher boots the kernel
++# it supplies, with matching modules, and the guest's linux package stays held.
++skip_migration 1789325478 290c3652b45be05f27ebe5ab7b3de519c952dabe2fb3ebdc4d83d885defe53ba \
++  "Keep the kernel the Try Omarchy launcher supplies; this guest has no bootloader"
++# Moving [omarchy] above core and extra would let its builds replace the guest's
++# locked, patched aquamarine (hardware cursor) and leave fresh and updated disks
++# with different repository orders. Update > Omarchy already upgrades packages.
++skip_migration 1791403252 fb380a285eca3a1f7e38cf3cc88c523f2cf93c6559486ec8bb17302f923aa0e6 \
++  "Keep the Try Omarchy package repository order"
++# The guest leaves out the BBR, swap and ARP sysctl files: the VM's network and
++# memory are managed by the host. Without them these would only ask for a reboot.
++skip_migration 1789294350 e969fcd056d4e3f80fb08b53695c8282430af5d62b6acfd31407687cfc72ae13 \
++  "Keep the Try Omarchy network settings; the host manages the VM's network"
++skip_migration 1791147791 255a715b285ed269df68a03e2a04e2f236d2d670eda50e482cc93c99d061d0cc \
++  "Keep the Try Omarchy network settings; the VM has a single network device"
++# Optional apps the guest image leaves out, so Update > Omarchy does not add
++# them to existing disks either. A user can still install them with pacman.
++skip_migration 1789764927 f36d4cd5a4edb4d7324d2e137e0beecdf67f78242cc999b8cf3647489f995bdf \
++  "Try Omarchy keeps still backgrounds; video backgrounds need a GPU the VM does not have"
++skip_migration 1790539857 e609427197feb2f278c0004724f8e8b871f9ed5322ebd2d0cc7df3658d5384f4 \
++  "Monologue is not part of the Try Omarchy image"
++skip_migration 1790542069 6702d6af07615ffbb6c3161afb15af135cebb9e4a2f915921ae66c0709600ef8 \
++  "Hype is not part of the Try Omarchy image"
++skip_migration 1791403310 b67c6aac8febe17f00f92beb5fbbc31feaa61c4a6ec2418f57d8d39b5947b2b2 \
++  "Floating titlebars are not part of the Try Omarchy image"
++skip_migration 1791542175 9cac2b985d0777c607768e46742c07f4a055b8824e6be5815095d6b234e57536 \
++  "Gliff is not part of the Try Omarchy image"
++skip_migration 1791708587 1dcc1df34b40fddb4d76ecde6caee03ef91603bc132e901d2b89873088a4759b \
++  "Signed is not part of the Try Omarchy image"
++
++# The guest ships Chewing and Hangul (selected on Korean Windows) and leaves out
++# Mozc and the Chinese add-ons. Keep the shared shortcut defaults this migration
++# applies, without installing the input methods the image does not carry.
++input_migration="$omarchy_root/migrations/1791367434.sh"
++[[ -f $input_migration && $(sha256sum "$input_migration" | cut -d' ' -f1) == b5dc5a2ef3ea113896c0a0bb9569228ebb1bd93f856fe13a8e24346c7b9bfed6 ]] ||
++  fail "Omarchy's input-method migration changed; review it before replacing it: $input_migration"
++cat >"$input_migration" <<'MIGRATION'
++echo "Configure shared input-method defaults and free desktop shortcuts"
++
++omarchy-input-method configure --defaults
+ MIGRATION
+ 
+ # The guest disk is ext4 and has neither Snapper nor a Limine bootloader.
+@@ -172,9 +219,11 @@ done < <(find "$source_dir/bin" -maxdepth 1 -type f | sort)
+ # guest's linux package stays held, so on any disk older than its launcher that
+ # question came after every Update > Omarchy, and rebooting changed nothing.
+ restart_check="$root/usr/bin/omarchy-update-restart"
+-grep -qx 'kernel_updated=true' "$restart_check" ||
++[[ $(grep -cx '  kernel_updated=true' "$restart_check") == 1 ]] ||
+   fail "Omarchy's kernel reboot check moved; review it before changing it: $restart_check"
+-sed -i 's|^kernel_updated=true$|kernel_updated=false # Try Omarchy: the launcher supplies the kernel|' "$restart_check"
++sed -i 's|^  kernel_updated=true$|  kernel_updated=false # Try Omarchy: the launcher supplies the kernel|' "$restart_check"
++grep -qx '  kernel_updated=false # Try Omarchy: the launcher supplies the kernel' "$restart_check" ||
++  fail "could not disable Omarchy's kernel reboot check: $restart_check"
+ 
+ # Seed new users exactly like omarchy-settings does, but keep the packaged
+ # omarchy-nvim skeleton. The package seeds /etc/skel/.config/nvim, including
+@@ -240,14 +289,28 @@ install_file 0644 "$source_dir/etc/fastfetch/config.jsonc" "$root/etc/fastfetch/
+ # These upstream system defaults are needed by menu actions and security
+ # fixes even though this guest does not run the bare-metal installer.
+ # Keep the list explicit: bootloader, hardware and Docker settings are not VM defaults.
++# Omarchy 4.5's keyboard defaults need its XKB option, and its default mise
++# tools and agent accounts are lazy declarations that download nothing until a
++# tool is run. Left out: initramfs, sysctl tuning, I/O scheduler, binfmt and
++# mount-rate drop-ins (the launcher supplies kernel and boot; the host manages
++# disk, memory and network), the mpv hardware decoding default (the guest
++# wraps mpv for CPU rendering) and NetworkManager's connectivity probe (QEMU's
++# user network has no captive portal).
+ managed_configs=(
+   sudoers.d/omarchy-theme-browser
+   sudoers.d/omarchy-dns
+   sudoers.d/omarchy-tzupdate
+   sudoers.d/omarchy-passwd-tries
++  sudoers.d/omarchy-locale-generate
++  sudoers.d/omarchy-sudo-timeout
+   tmpfiles.d/omarchy-nopasswd-sudo.conf
+   xdg/kitty/kitty.conf
+   mise/conf.d/omarchy.toml
++  mise/conf.d/omarchy-tools.toml
++  mise/conf.d/omarchy-agent-accounts.toml
++  xkb/rules/evdev
++  xkb/symbols/omarchy
++  systemd/user/wayland-wm@hyprland.desktop.service.d/10-keep-shell.conf
+   systemd/system/plocate-updatedb.service.d/ac-only.conf
+   systemd/resolved.conf.d/10-disable-multicast.conf
+   sysctl.d/90-omarchy-file-watchers.conf
+diff --git a/guest/spec.json b/guest/spec.json
+index d7d3b60..b982f0f 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -23,14 +23,14 @@
+   },
+   "upstream": {
+     "repository": "https://github.com/omacom/omarchy",
+-    "commit": "c668141e9c42b13c80c9ca4ea108e11708c5e8a5",
+-    "tree": "1d48adc1ba8636fd9362f7b9bf8819f3ac3258a4",
+-    "treeSha256": "c7ae35645b64a205a3ac7af094b17ea0f406a710eb00185470a76f3ae8367952",
+-    "version": "4.0.4",
++    "commit": "ac2690cd7be4f47e4a255f5e2e78d904d436b068",
++    "tree": "43fbdfc8e861ea5a2d9864e9c7cad279da98e974",
++    "treeSha256": "97b54094f89882d7e9990c9728770c1a6aa9d20452e3bc632964d67153e8ba63",
++    "version": "4.5.0",
+     "versionFile": "4.0.0.alpha",
+-    "channel": "quattro",
++    "channel": "stable",
+     "license": "MIT",
+-    "packageRelease": 13,
++    "packageRelease": 14,
+     "integrationDepends": [
+       "fcitx5",
+       "fcitx5-chewing",
+@@ -91,6 +91,7 @@
+     "flexoki-light",
+     "gruvbox",
+     "hackerman",
++    "jade-horse",
+     "kanagawa",
+     "last-horizon",
+     "lumon",
+@@ -98,11 +99,11 @@
+     "matte-black",
+     "miasma",
+     "nord",
+-    "osaka-jade",
+     "retro-82",
+     "ristretto",
+     "rose-pine",
+     "solitude",
++    "starship",
+     "tokyo-night",
+     "vantablack",
+     "white"
+@@ -125,41 +126,27 @@
+       "default"
+     ],
+     "backports": [
+-      {
+-        "id": "notification-hover-close",
+-        "description": "Restore the upstream hover-revealed notification dismiss control omitted from v4.0.2.",
+-        "reference": "https://github.com/basecamp/omarchy/commit/9b72edcc94513cba016f145b1ac4ffdaea54b577",
+-        "patch": "patches/omarchy/notification-hover-close.patch",
+-        "patchSha256": "d6f5bb507bf7bee10df310bf5fe5218ec3bf9ca7e134896ee3b8527ca4a85312",
+-        "targets": [
+-          {
+-            "path": "shell/plugins/notifications/components/NotificationCard.qml",
+-            "beforeSha256": "3f023446cfe26b9f70570d7088baab31e56ca374c4a206a7c098b09d36cdff3d",
+-            "afterSha256": "7522c2f6453a5db357c80132da53e8aa6d2881519ade10818dca0ca6355e7d51"
+-          }
+-        ]
+-      },
+       {
+         "id": "notification-screen-privacy",
+         "description": "Hide and pause notification popups while the screensaver or private lock state obscures the session.",
+         "reference": "https://github.com/basecamp/omarchy/pull/8247",
+         "patch": "patches/omarchy/notification-screen-privacy.patch",
+-        "patchSha256": "64cd3b8d4fbb4091b9c4984a8ce5279e22165d94659700c0ae9fc38cf8ad1090",
++        "patchSha256": "25618fcc93a2168e85ef98c6cf7c734e424d22c7faa0d6c3e93e46ad2f6a1a79",
+         "targets": [
+           {
+             "path": "shell/plugins/notifications/Service.qml",
+-            "beforeSha256": "11665542e70df80ccd3c785a6143dee2daefd2082e4f75c740adc2c9947cf7c2",
+-            "afterSha256": "7b74608429e1cb538283b29c80d288ad6a0c5f1707fa8bd1df4567775bc10c8f"
++            "beforeSha256": "35a5dfcad2687af5201bf9ec52faadad9b4a5000fb74e43756ed02299385c6b6",
++            "afterSha256": "60c4c3174b645ecb57e9d1a7378db565b083d136ff78425e04ac08f4a37f34d7"
+           },
+           {
+             "path": "shell/plugins/services/idle/Service.qml",
+-            "beforeSha256": "50f5c81e2e94fab32395a5bc3cce982e30a10ab1b3f56cc58f29055951518a51",
+-            "afterSha256": "02512cc96ecb82005b82e947ed891549d1721cbefad14fdb2eca9ab50e88c9eb"
++            "beforeSha256": "37bc82e65a772744d1e80538d2b15d945d259f53293dabc2a38a633dd4590d85",
++            "afterSha256": "4ce31d02ef013a0e34736268b9375bbc21a0e0645189fa45eed0765392947d0b"
+           },
+           {
+             "path": "shell/shell.qml",
+-            "beforeSha256": "4a4b7694e5b9e0bd952ce0efa2d6dc2cea44cdfa98cc2f442e40fe41cbc1beab",
+-            "afterSha256": "7a30685e7c82c0fc3366ee8f079d1d224f9e8eb4daf79df0aedaa0e30f541b89"
++            "beforeSha256": "d6d99af10ca020ca2c578bc7f67bf674d954efc206012a71af6769c662c37c37",
++            "afterSha256": "0bd307e279b0024b7381f2e23be4c3f44316a74466c718015638791f8031376f"
+           },
+           {
+             "path": "shell/services/AuthServiceStore.js",
+@@ -173,12 +160,12 @@
+         "description": "Select the validated Windows time-zone hint in the first-boot personal setup form.",
+         "reference": "https://github.com/omacom/try-omarchy/commit/e1a0dbe9820a8f7554ac3b930c2f13e1f41b25a1",
+         "patch": "patches/omarchy/setup-host-timezone.patch",
+-        "patchSha256": "eb29717db81c9c55be4755b5e00648169ae53c8ecc4feac11da74628bef01efc",
++        "patchSha256": "9f9f3f924a31ecd36470a0ebf5e372aabea2e18cb44facfae9cd6c66262d5697",
+         "targets": [
+           {
+             "path": "install/provisioning/setup-form.sh",
+-            "beforeSha256": "0fbb8c3c8b151e5ff884c16d381e12fda53cc16adfd08a684d41e7327250665d",
+-            "afterSha256": "1c22eee021850489fb46b2ca4a50a7398fb9c15c1c70a7ecb36a18574ff46636"
++            "beforeSha256": "c52864ee7b983508a390480ac8380e0f0453a1e543877ccaddfead558ae63c1a",
++            "afterSha256": "2cae14ed0ede334bf5b38c3339af9224fb4806e79e44ad9cb76d5f73a65ac226"
+           }
+         ]
+       },
+@@ -187,12 +174,12 @@
+         "description": "Refresh the QML date engine time-zone cache before refreshing the guest clock.",
+         "reference": "https://doc.qt.io/qt-6/qml-qtqml-date.html#timeZoneUpdated-method",
+         "patch": "patches/omarchy/clock-timezone-refresh.patch",
+-        "patchSha256": "1f42c15449c3a308e0c66f55c264b79910055efb18f26df73829b348341a6a1d",
++        "patchSha256": "db2c82004938b28439ba72fba53c026953581f40d2141b228d8d40b274f12ec1",
+         "targets": [
+           {
+             "path": "shell/plugins/panels/clock/BarWidget.qml",
+-            "beforeSha256": "cfcdaeedc4ae5832b37271a84bb92ee762301022e2443a0f769992fa792acf28",
+-            "afterSha256": "29cd6b0c67dd97f18f9f5f9ee7e402f13d79d4ddc5e78dc08a838a3e03565a51"
++            "beforeSha256": "e73f7a17f74ade40711dffa8262c1773b7bf74fd65a3047011317f588af9f3f6",
++            "afterSha256": "0dc1028a2c842bd59dd0da176be335fadd3957b637218bc6b66c02b4054d6871"
+           }
+         ]
+       },
+@@ -201,12 +188,12 @@
+         "description": "Fit screensaver branding to the terminal and track the launched effect.",
+         "reference": "https://github.com/omacom/try-omarchy/commit/6bb13591f954df193430a5c0cc7eab650af5111d",
+         "patch": "patches/omarchy/screensaver-terminal-fit.patch",
+-        "patchSha256": "c915013c163d97d794393ea7945357cbe6a1c98d55e93cd72dc248aa3f13498e",
++        "patchSha256": "172393cbad5b9beb02e2db6162d2f3926d7b1ff49d49f8ec798e0364ffabc14b",
+         "targets": [
+           {
+             "path": "bin/omarchy-screensaver",
+-            "beforeSha256": "9ad1b57d322b5ed04112824ef48c98b7f14f1f08a60b583395558afbfd9fb7d2",
+-            "afterSha256": "364921e409c890e500f832437fbd986464ca36dce8d811f8ad63b940855338d5"
++            "beforeSha256": "85643100337f21d408692a520bfaba0f12b62bbc84952db9beed95efc218b2db",
++            "afterSha256": "027e9481c6f14b2e60e7c6d0a73d1a333fba2b9a46f8742fc99fbc16b8fd163f"
+           }
+         ]
+       },
+@@ -215,7 +202,7 @@
+         "description": "Explain guest disk free space and Windows disk growth.",
+         "reference": "https://github.com/omacom/try-omarchy/commit/a3a85e3e94f9cef5bf1b42c029434b0622e9ce9c",
+         "patch": "patches/omarchy/update-free-space-message.patch",
+-        "patchSha256": "0f0089aa7e86d32af3e3917c7b2e4d367c576076e0e6ffe38b300b90899216bc",
++        "patchSha256": "e3c75625621fd405e17489a3e6b639a99a5cea177215d5d9fdccbf0217d08610",
+         "targets": [
+           {
+             "path": "bin/omarchy-update-requires-free-space",
+@@ -229,12 +216,12 @@
+         "description": "Offer first-run package updates with normal urgency.",
+         "reference": "https://github.com/omacom/try-omarchy/commit/e546fee9aa3ed15739c8fc5b7eaa1c5f235cee7b",
+         "patch": "patches/omarchy/first-run-update-notification.patch",
+-        "patchSha256": "a2d980ec3c2720e2eabf84c22b18763a5b61ed2eb79b5a0a16d510ccf20f8444",
++        "patchSha256": "d6a38900843e6dc7a2bd6d2936db2e7553f3b9dfd16c079060400c88947b3f0a",
+         "targets": [
+           {
+             "path": "install/user/first-run/wifi.sh",
+-            "beforeSha256": "4cc2621157be1efe6d449d1daa7b28d588e4a8e46127de493da03749af1ae5a7",
+-            "afterSha256": "64ea34a6acaca232f2292e3786512b3398d8f33983c9a2e7582cf4a0d0ae04ad"
++            "beforeSha256": "af88e353b3ff5d347a2399c9bcbe1be134540329362125aa29e5b2084d9eaa25",
++            "afterSha256": "dba41b1295d62aaa566104fef05f2fb83fa7780f5380747eec67fbb3260b408f"
+           }
+         ]
+       },
+@@ -243,7 +230,7 @@
+         "description": "Show Windows-managed power policy instead of Linux profiles.",
+         "reference": "https://github.com/omacom/try-omarchy/commit/78346907a266ea6532e1685165a5d060f8838858",
+         "patch": "patches/omarchy/windows-power-profile.patch",
+-        "patchSha256": "5a3adf777acfdc3e6ad90476a486bc79c25362a52a32b76ced654eb63d451388",
++        "patchSha256": "77f12142af4e724c09806b264ef721e0030608ccbb2dfe2c9dd709613e46477a",
+         "targets": [
+           {
+             "path": "bin/omarchy-powerprofiles-list",
+@@ -252,18 +239,18 @@
+           },
+           {
+             "path": "bin/omarchy-powerprofiles-set",
+-            "beforeSha256": "4595bb75e4000e2fc01bd3c7f1e578d07aecfa54e9dcd4e2d32d653c35bc66a9",
++            "beforeSha256": "3dd63e539a26d1a8bc1338394ef0c2ba29920ef76db5dfdd85b54d67af35e98a",
+             "afterSha256": "715bbefd4fdb3eff368dce4c8a3fd87b219976fa5de453e04afd48ea786488ce"
+           },
+           {
+             "path": "shell/plugins/menu/Menu.qml",
+-            "beforeSha256": "0154d0ec3855fbb48aa06eaa724a19f3c07c377494d4a3de65daed2d7d9100e3",
+-            "afterSha256": "6f266b3a7acd5ee97d5ea5446aa8c45306371586fc55f0ad4d93a6b2789dba3c"
++            "beforeSha256": "f76b25be69e80fbb139d29ca8e4bca8a98078f559d203750c3ced0f86f6d5f21",
++            "afterSha256": "ada1930f90f5214e5a0d8ffe955736cdaaa2a0665abd36ee3a0463102a25f9b4"
+           },
+           {
+             "path": "shell/plugins/panels/power/Panel.qml",
+-            "beforeSha256": "560e17a5144d3e2ea1e0ad36c2aec563909b535551e1e66e061f5fb25f1d4ec0",
+-            "afterSha256": "c9b9519df8ecfae51f3073c15c1c1ef5481973d5ac8d941190e75fcb57246b65"
++            "beforeSha256": "145cd9632d8caa3a9b390b27cb6e7382b2ccb83610ae4bda04a2755c52a75068",
++            "afterSha256": "d2bd4eb2953be338e7b0d3ac9b2039a6d407412b87c31f693b4d24e04adadde8"
+           }
+         ]
+       },
+@@ -272,301 +259,22 @@
+         "description": "Apply manual night light through a screen shader on the Windows virtio GPU, preserving custom shaders and serialized toggle intent. Adopt only the two unowned compatibility-delivered backend files during runtime upgrades, with failed-retry recovery.",
+         "reference": "https://github.com/omacom/try-omarchy/commit/54a222371eddb9d2c5286f0431302fd16bea9054",
+         "patch": "patches/omarchy/virtio-nightlight.patch",
+-        "patchSha256": "38e20de5825cf6131bbf7762ec519a7f43326275b944c145c3f9d7d2d3d6ad92",
++        "patchSha256": "1ad3fff4d02024bf2279ac676e593692e2a0d8b0312ccdd6439b4430351cdd60",
+         "targets": [
+           {
+             "path": "bin/omarchy-toggle-nightlight",
+-            "beforeSha256": "da1a268c58df3633441a13c2f7d0e45a04c479bcc678d3fc545c2405848c4ac8",
+-            "afterSha256": "70425df8d4336f27d3c28c6808e15c232e6855d7a8aa707f7874cc3d58f67c39"
++            "beforeSha256": "31335986e0bfd5b93703e1fefec9602b2e90d9604660911fb88b735a128ecb95",
++            "afterSha256": "0900f8178e160800be3145c0f5a4b33c5193a22167cd4ef46f90749431c468ef"
+           },
+           {
+             "path": "shell/plugins/services/nightlight/Service.qml",
+-            "beforeSha256": "721cd63d2404859918e28f92420e87369328c26fcef7df821443baa16d0b1897",
+-            "afterSha256": "7b50c10f2975fb264707374a752ddc00040c8416891451e76846c211f39c852a"
++            "beforeSha256": "ec085620410f13b16fde2cba4e9aaaa2e8fe8e1b81576b17498e379e04cbb6e1",
++            "afterSha256": "2fd4c91afec63e148a44d6a4d0e4f2225ae12105447b6cb9487472afc9f25151"
+           },
+           {
+             "path": "bin/omarchy-update-system-pkgs-when-conflicted",
+-            "beforeSha256": "dae1379216754e372f749ce4a4f3232b20225d08e2d0784d7607bba113ebbc62",
+-            "afterSha256": "496a4d7e07a3af365d5f6669c348452fa6303c1db9950095bc2b259e66d2537a"
+-          }
+-        ]
+-      },
+-      {
+-        "id": "qt612-palette",
+-        "description": "Qualify the shell palette for Qt 6.12 without changing existing guest backports.",
+-        "reference": "https://github.com/omacom/omarchy/pull/14553",
+-        "patch": "patches/omarchy/qt612-palette.patch",
+-        "patchSha256": "071d0171726c6e4d2a0df3463c5efdceba9209a945fc7b51ab499452c47798d9",
+-        "targets": [
+-          {
+-            "path": "shell/Commons/Border.qml",
+-            "beforeSha256": "b98c82530126fc10a287845e8df574ae26fa05b6064d93451d93d0ee9c3f7166",
+-            "afterSha256": "4062986c0226eed4a7e054381ddf3f5bdbe20081a0c2f5efd7803a8606ea4b07"
+-          },
+-          {
+-            "path": "shell/Commons/Style.qml",
+-            "beforeSha256": "f5901092617ae62645597199270afd4dfb0644d596bdfff16e1834fca6ad7243",
+-            "afterSha256": "68616995d44b4790e3b2653d0390140b569a6a3b2b9dde66d79b97911a12ea39"
+-          },
+-          {
+-            "path": "shell/Ui/Button.qml",
+-            "beforeSha256": "fda48672cc11dba109acea1cc98eb4b29746e5ce09f90a47f487b776ff99e799",
+-            "afterSha256": "8237b16b740eb54c8ef3b1007dd30bf00b92bc1dc68e2b3644a06978a15c5158"
+-          },
+-          {
+-            "path": "shell/Ui/ButtonGroup.qml",
+-            "beforeSha256": "4af792f394534b7d61b270fcb44203bba8d88ed25f8822e0b90e456e35487542",
+-            "afterSha256": "daecdccb8529c9d17e61b470571dac3fa41b2b0e6a888c5b7ca10205b17d4428"
+-          },
+-          {
+-            "path": "shell/Ui/ConfirmDialog.qml",
+-            "beforeSha256": "969cafe0580acb66d47947b7b6e9fa5103e1911b3a7dee03b84f2b154afc2762",
+-            "afterSha256": "96ae48c0f4df28ff3b0ef9391ad8f24d3e252b416fa79a28b5bd801e71b1ac4f"
+-          },
+-          {
+-            "path": "shell/Ui/CursorSurface.qml",
+-            "beforeSha256": "27844a40fbe378e84c0aea35654dd8b396afb7e331c86be80852e1529da4f5b2",
+-            "afterSha256": "4c3a8eb239d05b1e1d9261ba389c8ec0feb2811fae2a382c0f1d2c442e86d1c5"
+-          },
+-          {
+-            "path": "shell/Ui/Dropdown.qml",
+-            "beforeSha256": "6e2b847a33f5dedb96f65757d284f40b90073b3b34fd31abb84b2d471814fc5c",
+-            "afterSha256": "67991822c07aaa8a64bacc2292eabea135ac3a4d1e47a8b798d8c46a04126890"
+-          },
+-          {
+-            "path": "shell/Ui/KeyboardPanel.qml",
+-            "beforeSha256": "96245f2da8d38baa0017caa285d596c485bd19a3a4d2cd1675bee9d84ffba42d",
+-            "afterSha256": "c8b3b0fd52d8a79469675e925ff851e1dd0588eb1eeb90bd4df004a4c7d72a0a"
+-          },
+-          {
+-            "path": "shell/Ui/MultiSelect.qml",
+-            "beforeSha256": "ed85c2bf48ca17a059611b582d3d650eb2a1ad37cff2b700ca0c6c441a4c52df",
+-            "afterSha256": "d21d5b480b8e8e55683b49f7f83effc317b8242cc63f6be702c36e3b8ffce8bd"
+-          },
+-          {
+-            "path": "shell/Ui/NumberField.qml",
+-            "beforeSha256": "b3584b513ee720f9f3e0f098d19ca1b129a02270c140528455d88fe04e2f2c8b",
+-            "afterSha256": "ace8efa37fd1f423eb8046066b7ebd6d8b14cbbb113205353df820e73f9ef1f6"
+-          },
+-          {
+-            "path": "shell/Ui/OpticalGlyph.qml",
+-            "beforeSha256": "293e2863c7ff18998a7aea651fa952a564a860df125bf8900b7e739500b3c352",
+-            "afterSha256": "1e1a3f545d409814b1673be6c20512ef1ca01a4d5ad653f77ff0433fefa0ec00"
+-          },
+-          {
+-            "path": "shell/Ui/Panel.qml",
+-            "beforeSha256": "e6588b3d7c1075d68c6392d028483fcc5d4d2bcb29180758fe265a957cbdc71d",
+-            "afterSha256": "c5c9fff24d3fd294efc23aff8000c39542228d481837f79d2b5f82af7f1ed1ae"
+-          },
+-          {
+-            "path": "shell/Ui/PanelActionButton.qml",
+-            "beforeSha256": "6c94ff62997f18d1712a741e8ae24ed98a6fa5c6350b266c631ff92f26cffdc7",
+-            "afterSha256": "89c440a0fc2d5a04b5640d9a2ad9eca32930f786e57bddb50fb13ad8a4aa084d"
+-          },
+-          {
+-            "path": "shell/Ui/PanelHero.qml",
+-            "beforeSha256": "bf0753e69c91c906b8f1e1a46cfbbd4326228e9d9abde1b4007ee86c0bf78f05",
+-            "afterSha256": "ce9b264b071448d37a71dbda3a60627be18b679098ea7f5326ea59a65df2d3cf"
+-          },
+-          {
+-            "path": "shell/Ui/PanelSectionHeader.qml",
+-            "beforeSha256": "ede63ff97dd3d4d2198b771cbb33dcd07b7026d64d92f1c624e71465d000115d",
+-            "afterSha256": "7747685a102cb8a5f8f239acb72ce43c7c3a0326eb884db71e8427ab9c62e597"
+-          },
+-          {
+-            "path": "shell/Ui/PanelSeparator.qml",
+-            "beforeSha256": "667cd49e89c5911fbe564904720b3d4073057e0b6fa38f03e55fa5949ccd195c",
+-            "afterSha256": "54b970d6a6e5683583906517c808f271227f5b47a3a1ac3a58faa3f41d822316"
+-          },
+-          {
+-            "path": "shell/Ui/PanelSlider.qml",
+-            "beforeSha256": "aa8fcf167324ff9eb60a219f037004482adbe2a30369af123d53956a81a93068",
+-            "afterSha256": "e1a56b744e89ccb9abee22557e062e23f6ba11b18b081508577165178bb49841"
+-          },
+-          {
+-            "path": "shell/Ui/PanelToolTip.qml",
+-            "beforeSha256": "5520685c2d160002cb4bd62c9e5da193003c071fca69b90e6012ebf0c8ee4ca3",
+-            "afterSha256": "fa62fbdbe132bb90d9fca95b97b3ed7c5f0f7ca345fa9bac643ab15fce03f2ca"
+-          },
+-          {
+-            "path": "shell/Ui/PopupCard.qml",
+-            "beforeSha256": "b3751c78dba9d3b6383c072c915c3d1ecf5e2227cc8417127323077df1f0af5a",
+-            "afterSha256": "e29abfcde9db314a9ebce3c7640ff6be996badc168ad5a862f63678dabfdd809"
+-          },
+-          {
+-            "path": "shell/Ui/SearchableDropdown.qml",
+-            "beforeSha256": "a30cff5297ba595235ead18c956b1268d140b3962375b5ed14d98f6ed0eecc10",
+-            "afterSha256": "98e71d4fc3679d9a260db2ca29b6935db18447faecf190a8122ee31ef4a1384b"
+-          },
+-          {
+-            "path": "shell/Ui/SpeedTestOverlay.qml",
+-            "beforeSha256": "f7b37ccf6e641c3a607d91b824f7df15aac6177e5004462718842c686325af48",
+-            "afterSha256": "536a939d5160b5802b74cd194023ef274c0146b54765581a55e505e74437dc2f"
+-          },
+-          {
+-            "path": "shell/Ui/TextField.qml",
+-            "beforeSha256": "b3ad72f56f86c2df164e347d64205c099f77c5fb90933fabea3b0f2a9e2b3778",
+-            "afterSha256": "08c8141e74b7791060461939626f08453a28fe97eed4f4339dabde9d6a6edb3b"
+-          },
+-          {
+-            "path": "shell/Ui/Toggle.qml",
+-            "beforeSha256": "158aaa84cf1fff771b932bb1c79e00be19bee1bfeef2d27bfbd8aa4f1c416e6b",
+-            "afterSha256": "a51d10bc49d283ba837ce84f511d8cd5ef26c47e261e9ccf9e67acc59b594b93"
+-          },
+-          {
+-            "path": "shell/Ui/ToggleSwitch.qml",
+-            "beforeSha256": "6bfae25396c1d03979efd9a27130e03f11edc2c7062d1f0c0c252b30e60a9898",
+-            "afterSha256": "97ef05b8a752ededda041485f42a57bc578e0a58acd4a3696ac0d253c77c8741"
+-          },
+-          {
+-            "path": "shell/Ui/WidgetButton.qml",
+-            "beforeSha256": "a3cc74adca517b73a176eae0f93e976c24a3ec73b4b5855340b61b1ed2dcd08f",
+-            "afterSha256": "576f2ade5c9e746131d63ae88f1bbc12cd71081764cecff43d3e36afcad354ac"
+-          },
+-          {
+-            "path": "shell/plugins/agents/Panel.qml",
+-            "beforeSha256": "0e5ecdb45eaff618963851c16a1f5066307c13195526890d2cbb6ddb5a1aa7c1",
+-            "afterSha256": "805507f950480bee99c552a10086f90ca3005b8f605525248cf356da0fdc20c2"
+-          },
+-          {
+-            "path": "shell/plugins/background/Background.qml",
+-            "beforeSha256": "505c7d4af8323bdb201cd816aa8332248dcfd4c056ec8f64b5c0a2ae1776c58a",
+-            "afterSha256": "6135a06b4c17c9a5a251053c294a657ecd80eb3a339f6eea146455b3925fd65b"
+-          },
+-          {
+-            "path": "shell/plugins/bar/Bar.qml",
+-            "beforeSha256": "9874c0f36271840b43002890ae333c83097df7f4cff0bade81536a41ed83590b",
+-            "afterSha256": "94c85d1a776933053c54e56317662e520805e5d78ff24bc65d4305a18351ce5e"
+-          },
+-          {
+-            "path": "shell/plugins/bar/widgets/ActiveWindow.qml",
+-            "beforeSha256": "e53bbf968f78a9c4748c1872d6b34e1914070fc170641730bc2f7b4bce4e0173",
+-            "afterSha256": "a1750665ab005efec042da80390c58f8b9337e8b7800bb80dad88e3e2d62877f"
+-          },
+-          {
+-            "path": "shell/plugins/bar/widgets/Tray.qml",
+-            "beforeSha256": "6566c548c76e56315589a126965eb686a6be812b1106d618045fee01a5095dd0",
+-            "afterSha256": "dbdd6dddd739c74c00c7e68d1a5c738acddc4dafff92559dc26607463cfcc85d"
+-          },
+-          {
+-            "path": "shell/plugins/clipboard/Clipboard.qml",
+-            "beforeSha256": "7fcc8abf8ba142d81c79e265a662769e4c101826b4716ef8a976ee333cbbfa81",
+-            "afterSha256": "a17f4a67a68ece6176b854cc548078e5b21b3964acd56f02136d95cc4e7caba3"
+-          },
+-          {
+-            "path": "shell/plugins/dev-gallery/GalleryPanel.qml",
+-            "beforeSha256": "4fa15562d85fd021a7cfe46474e0bdda4b063c3f4f56c6c61dbb5148b6f5aaa8",
+-            "afterSha256": "ee7e0477865b8ca92d86847d9558d139379d1882d8ffc508a1051a92a07dbd1b"
+-          },
+-          {
+-            "path": "shell/plugins/emojis/Emojis.qml",
+-            "beforeSha256": "ff49e2e8174e0c0925d76c9b686f4de1e7297aa256c9dcc7320ed00c39dafeda",
+-            "afterSha256": "8e7cf2e6ba1c156574a7034b7510aa8cae901776e58d68b8218cf5c8e659d661"
+-          },
+-          {
+-            "path": "shell/plugins/image-picker/ImagePicker.qml",
+-            "beforeSha256": "0bcb5e97a06f5dd14ce8265b16039f01cb5a1e99f64d01165e66786a1aa175e0",
+-            "afterSha256": "9799f9cb52ffc4bd6d3089a50b73386b017e1c726b786e193e12d83561385ca8"
+-          },
+-          {
+-            "path": "shell/plugins/lock/LockView.qml",
+-            "beforeSha256": "9b174cf3ba8569dede528968be38994491ac73d9ca708f7e9451beeec7b4d066",
+-            "afterSha256": "8cfb7acbe062086ae90939f1e9b925ed2beac18e903b5e7f9d14a638d7cf5807"
+-          },
+-          {
+-            "path": "shell/plugins/lock/Service.qml",
+-            "beforeSha256": "3f0a265a09f7957e8f5d74666595d3136ec64899c414426190460f9e2098e701",
+-            "afterSha256": "79fe6348955047cd18183a4e2f5bbb020289a62d2f761ede13e71fb58d784f3b"
+-          },
+-          {
+-            "path": "shell/plugins/menu/Menu.qml",
+-            "beforeSha256": "6f266b3a7acd5ee97d5ea5446aa8c45306371586fc55f0ad4d93a6b2789dba3c",
+-            "afterSha256": "13fd49a8f0c5163e079a23bd5b0c0b9826ad051747caa1e80deee1210c70a77c"
+-          },
+-          {
+-            "path": "shell/plugins/notifications/components/NotificationCard.qml",
+-            "beforeSha256": "7522c2f6453a5db357c80132da53e8aa6d2881519ade10818dca0ca6355e7d51",
+-            "afterSha256": "d38a2fa8b4137f5b7735fb1b4a60eb5a4cde50ba5098044762f26c4b11bb3c50"
+-          },
+-          {
+-            "path": "shell/plugins/osd/Osd.qml",
+-            "beforeSha256": "a139b64d45f89a6b55ebcbd1233347f75b541b020e24b4286d6e00a6d5f5c50c",
+-            "afterSha256": "f7abf7e92286671bdef821be169b6d6b456fb6df014524cf4d227d6f2a49a1a3"
+-          },
+-          {
+-            "path": "shell/plugins/panels/audio/Panel.qml",
+-            "beforeSha256": "831efaa29097d06abed31480a9e54208552e3f4e529a5c4ecca9255b12c5a7b1",
+-            "afterSha256": "a683e771f495837170371da658e00cef1dacc89d0220d44d9e0e988ab2bbd2c0"
+-          },
+-          {
+-            "path": "shell/plugins/panels/bluetooth/Panel.qml",
+-            "beforeSha256": "f51654a00e3bfe5d6ccfd42bbd972d9436f70a27d152baa43ccdcbd8c66e1225",
+-            "afterSha256": "018af5e96d27fe1f09dca2b2f24904c06290e31d21d00974387e0d51de8ae4b2"
+-          },
+-          {
+-            "path": "shell/plugins/panels/clock/Panel.qml",
+-            "beforeSha256": "396d98c9696a64977166be99d3b70c102ca20ac30f41e073fe1d168fde61de75",
+-            "afterSha256": "1fc30583be12138f54d15300460b3db112165e1165842b53ea8f45d41bbb5286"
+-          },
+-          {
+-            "path": "shell/plugins/panels/dropbox/DropboxIcon.qml",
+-            "beforeSha256": "3367632df6a80998e377a085483deb61175bf572138db81bd8f71423d06ca349",
+-            "afterSha256": "82e161b779678ef45d1a3a663435e905b13e4dc9a362e79acd3088afd6778a36"
+-          },
+-          {
+-            "path": "shell/plugins/panels/dropbox/Panel.qml",
+-            "beforeSha256": "4bc3b9660fd84e57c170004e0840495aa5d95c6cf1be0f891b9b58e6cc232d7a",
+-            "afterSha256": "229747c5bf378adc722e4438a09872732c3ea3b55b47e926e48aa4ad4f361d23"
+-          },
+-          {
+-            "path": "shell/plugins/panels/monitor/Panel.qml",
+-            "beforeSha256": "2f3f95e5fc75af2af1f1af418a65469c37714b2bec38cfd2206bdd3f1f1b0e69",
+-            "afterSha256": "c83de19eb30b50a369be85753aeddabc82506dfabae8109f39ef2d17c79db69e"
+-          },
+-          {
+-            "path": "shell/plugins/panels/network/Panel.qml",
+-            "beforeSha256": "84d81680cfd2e06b4f07d40129c7e40e6e173e9d4794471c003e14a8f1b1e693",
+-            "afterSha256": "1e551a8d109535d2673ec9bb08faea01acdba27141c82aae6b7ae3be8da3c002"
+-          },
+-          {
+-            "path": "shell/plugins/panels/power/Panel.qml",
+-            "beforeSha256": "c9b9519df8ecfae51f3073c15c1c1ef5481973d5ac8d941190e75fcb57246b65",
+-            "afterSha256": "a263776fcf032e2858eb5ab094cd68d7c7156c57705bb818415c51c12062a1f6"
+-          },
+-          {
+-            "path": "shell/plugins/panels/tailscale/Panel.qml",
+-            "beforeSha256": "c1f343ba875e49031fd4133bc4bba224980207f08a991b9882f3c3ac8c70f5df",
+-            "afterSha256": "027c0777eecdcd4e9d4fb3614b14bc1fc54345eedd0d01a3a96b9eb5848d56b6"
+-          },
+-          {
+-            "path": "shell/plugins/panels/tailscale/TailscaleIcon.qml",
+-            "beforeSha256": "f3e35a849425b3400891726ca06a12681853a17599ccb66da2a788c0e0261beb",
+-            "afterSha256": "05142bf1863a671c3b6b39f4a2455d556e2a75b4a373aa1a559c36c918aa8329"
+-          },
+-          {
+-            "path": "shell/plugins/panels/weather/Panel.qml",
+-            "beforeSha256": "47e38b979a578b662428844d11707d29db7f7933fdf60b69bc955429fdf5c201",
+-            "afterSha256": "3a5b1345741f699e426ac08a2e4548a8bc0e0c4c82a54600402f716c20736de5"
+-          },
+-          {
+-            "path": "shell/plugins/polkit/PolkitAgent.qml",
+-            "beforeSha256": "dfd8e994bd774b9d6d5375f1380a51db1813ce2c060a37c3519c75f0c089dde6",
+-            "afterSha256": "33b31505ec127294eb906944bd2a15a97453229e78e22f816b4363ccb7d3e74c"
+-          },
+-          {
+-            "path": "shell/plugins/reminders/ReminderFlow.qml",
+-            "beforeSha256": "1ffb380e1b3d85539aae8b9407d271bd9e42ae936d3d853b543afcfd714c3857",
+-            "afterSha256": "d059a0788d9b258b12fdbc0774953790c797791ca314428bff2c1d157dc47b54"
+-          },
+-          {
+-            "path": "shell/plugins/services/media/BarWidget.qml",
+-            "beforeSha256": "05b9bca8673facb447d7b10b513865c80b5de7dc61828efc41026de4bb960d42",
+-            "afterSha256": "ce61de66e6204a049ce6f35af8cbb8d8ef2f5211fd1bc690b2018cf45d75837e"
+-          },
+-          {
+-            "path": "shell/shell.qml",
+-            "beforeSha256": "7a30685e7c82c0fc3366ee8f079d1d224f9e8eb4daf79df0aedaa0e30f541b89",
+-            "afterSha256": "b0bb7b418cced7331953615b4d6cec49fecaed65a573ce09da5cbe9f49eb41b1"
++            "beforeSha256": "2670895ac6e9933e9554c10c65a1ad41aaffbd41ecda81e592df36d8f2a2c4ec",
++            "afterSha256": "aa458bd2653ee45d23d4f217cb69bd03e452c5275663f8ba7d523167f38f5b65"
+           }
+         ]
+       },
+@@ -575,12 +283,12 @@
+         "description": "Mute Hyprland 0.57's sound for every terminal bell, which opens the Windows audio device on each Tab or Backspace.",
+         "reference": "https://github.com/basecamp/omarchy/commit/c019850d7aef4ade679829d78223cd2eb1ecdac2",
+         "patch": "patches/omarchy/mute-terminal-bell.patch",
+-        "patchSha256": "c798560e76bba4764a9ce00d81d12cd366eed6b433319ca094afc5b1c6ccef0b",
++        "patchSha256": "d8c86041fa029cf8e11c4872cecd0335d30015fda3108ea56d3f7d5a0e4163be",
+         "targets": [
+           {
+             "path": "default/hypr/looknfeel.lua",
+-            "beforeSha256": "d257ea9864abb9cac124083bef88374659e759144a3d2028ec9486e578978804",
+-            "afterSha256": "2bc0bc64b243f63b43c9e4261c013ac79a22346cf33ab4bc070dca5675063f49"
++            "beforeSha256": "3b4791fe54497a907f361eb379c2d180c03a450a699c716404321f8fbd0712c1",
++            "afterSha256": "d0abfe0ac5ebf363c656c0ed6d543d3443e7654f3266c8a7144364a950eb33af"
+           }
+         ]
+       }
+@@ -606,7 +314,6 @@
+       "install/provisioning/omarchy-provision-owner.service",
+       "install/provisioning/setup-form.sh",
+       "install/user/all.sh",
+-      "shell/plugins/notifications/components/NotificationCard.qml",
+       "shell/plugins/notifications/Service.qml",
+       "shell/plugins/services/idle/Service.qml",
+       "shell/shell.qml",
+diff --git a/guest/tests/fixtures/omarchy-4.0.4/backports.json b/guest/tests/fixtures/omarchy-4.0.4/backports.json
+new file mode 100644
+index 0000000..7d35529
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.0.4/backports.json
+@@ -0,0 +1,469 @@
++{
++  "note": "Backport registry of the Omarchy 4.0.4 runtime (spec.json before the 4.5.0 update). The factory-overlay repair payloads still serve disks on that runtime, so their tests check against this frozen copy.",
++  "upstream": {
++    "commit": "c668141e9c42b13c80c9ca4ea108e11708c5e8a5",
++    "version": "4.0.4",
++    "packageRelease": 12
++  },
++  "backports": [
++    {
++      "id": "notification-hover-close",
++      "description": "Restore the upstream hover-revealed notification dismiss control omitted from v4.0.2.",
++      "reference": "https://github.com/basecamp/omarchy/commit/9b72edcc94513cba016f145b1ac4ffdaea54b577",
++      "patch": "patches/omarchy/notification-hover-close.patch",
++      "patchSha256": "d6f5bb507bf7bee10df310bf5fe5218ec3bf9ca7e134896ee3b8527ca4a85312",
++      "targets": [
++        {
++          "path": "shell/plugins/notifications/components/NotificationCard.qml",
++          "beforeSha256": "3f023446cfe26b9f70570d7088baab31e56ca374c4a206a7c098b09d36cdff3d",
++          "afterSha256": "7522c2f6453a5db357c80132da53e8aa6d2881519ade10818dca0ca6355e7d51"
++        }
++      ]
++    },
++    {
++      "id": "notification-screen-privacy",
++      "description": "Hide and pause notification popups while the screensaver or private lock state obscures the session.",
++      "reference": "https://github.com/basecamp/omarchy/pull/8247",
++      "patch": "patches/omarchy/notification-screen-privacy.patch",
++      "patchSha256": "64cd3b8d4fbb4091b9c4984a8ce5279e22165d94659700c0ae9fc38cf8ad1090",
++      "targets": [
++        {
++          "path": "shell/plugins/notifications/Service.qml",
++          "beforeSha256": "11665542e70df80ccd3c785a6143dee2daefd2082e4f75c740adc2c9947cf7c2",
++          "afterSha256": "7b74608429e1cb538283b29c80d288ad6a0c5f1707fa8bd1df4567775bc10c8f"
++        },
++        {
++          "path": "shell/plugins/services/idle/Service.qml",
++          "beforeSha256": "50f5c81e2e94fab32395a5bc3cce982e30a10ab1b3f56cc58f29055951518a51",
++          "afterSha256": "02512cc96ecb82005b82e947ed891549d1721cbefad14fdb2eca9ab50e88c9eb"
++        },
++        {
++          "path": "shell/shell.qml",
++          "beforeSha256": "4a4b7694e5b9e0bd952ce0efa2d6dc2cea44cdfa98cc2f442e40fe41cbc1beab",
++          "afterSha256": "7a30685e7c82c0fc3366ee8f079d1d224f9e8eb4daf79df0aedaa0e30f541b89"
++        },
++        {
++          "path": "shell/services/AuthServiceStore.js",
++          "beforeSha256": "f47026ea2b8a0f23d5d4b3f0a9f47f60e94d7d81d2930b4486334c92575c8ccc",
++          "afterSha256": "92b16bfcf12de8a83043a6002acb637d2535ba6512d499c3ce856717e8af0792"
++        }
++      ]
++    },
++    {
++      "id": "setup-host-timezone",
++      "description": "Select the validated Windows time-zone hint in the first-boot personal setup form.",
++      "reference": "https://github.com/omacom/try-omarchy/commit/e1a0dbe9820a8f7554ac3b930c2f13e1f41b25a1",
++      "patch": "patches/omarchy/setup-host-timezone.patch",
++      "patchSha256": "eb29717db81c9c55be4755b5e00648169ae53c8ecc4feac11da74628bef01efc",
++      "targets": [
++        {
++          "path": "install/provisioning/setup-form.sh",
++          "beforeSha256": "0fbb8c3c8b151e5ff884c16d381e12fda53cc16adfd08a684d41e7327250665d",
++          "afterSha256": "1c22eee021850489fb46b2ca4a50a7398fb9c15c1c70a7ecb36a18574ff46636"
++        }
++      ]
++    },
++    {
++      "id": "clock-timezone-refresh",
++      "description": "Refresh the QML date engine time-zone cache before refreshing the guest clock.",
++      "reference": "https://doc.qt.io/qt-6/qml-qtqml-date.html#timeZoneUpdated-method",
++      "patch": "patches/omarchy/clock-timezone-refresh.patch",
++      "patchSha256": "1f42c15449c3a308e0c66f55c264b79910055efb18f26df73829b348341a6a1d",
++      "targets": [
++        {
++          "path": "shell/plugins/panels/clock/BarWidget.qml",
++          "beforeSha256": "cfcdaeedc4ae5832b37271a84bb92ee762301022e2443a0f769992fa792acf28",
++          "afterSha256": "29cd6b0c67dd97f18f9f5f9ee7e402f13d79d4ddc5e78dc08a838a3e03565a51"
++        }
++      ]
++    },
++    {
++      "id": "screensaver-terminal-fit",
++      "description": "Fit screensaver branding to the terminal and track the launched effect.",
++      "reference": "https://github.com/omacom/try-omarchy/commit/6bb13591f954df193430a5c0cc7eab650af5111d",
++      "patch": "patches/omarchy/screensaver-terminal-fit.patch",
++      "patchSha256": "c915013c163d97d794393ea7945357cbe6a1c98d55e93cd72dc248aa3f13498e",
++      "targets": [
++        {
++          "path": "bin/omarchy-screensaver",
++          "beforeSha256": "9ad1b57d322b5ed04112824ef48c98b7f14f1f08a60b583395558afbfd9fb7d2",
++          "afterSha256": "364921e409c890e500f832437fbd986464ca36dce8d811f8ad63b940855338d5"
++        }
++      ]
++    },
++    {
++      "id": "update-free-space-message",
++      "description": "Explain guest disk free space and Windows disk growth.",
++      "reference": "https://github.com/omacom/try-omarchy/commit/a3a85e3e94f9cef5bf1b42c029434b0622e9ce9c",
++      "patch": "patches/omarchy/update-free-space-message.patch",
++      "patchSha256": "0f0089aa7e86d32af3e3917c7b2e4d367c576076e0e6ffe38b300b90899216bc",
++      "targets": [
++        {
++          "path": "bin/omarchy-update-requires-free-space",
++          "beforeSha256": "50a5ddef021dac5e79f789a53643fa91a6b8d7193b4d27786516d142525eca93",
++          "afterSha256": "c9b0349d3a13980b382a89d41bedb407ec0572121f04315fdbccdb7885eab7a0"
++        }
++      ]
++    },
++    {
++      "id": "first-run-update-notification",
++      "description": "Offer first-run package updates with normal urgency.",
++      "reference": "https://github.com/omacom/try-omarchy/commit/e546fee9aa3ed15739c8fc5b7eaa1c5f235cee7b",
++      "patch": "patches/omarchy/first-run-update-notification.patch",
++      "patchSha256": "a2d980ec3c2720e2eabf84c22b18763a5b61ed2eb79b5a0a16d510ccf20f8444",
++      "targets": [
++        {
++          "path": "install/user/first-run/wifi.sh",
++          "beforeSha256": "4cc2621157be1efe6d449d1daa7b28d588e4a8e46127de493da03749af1ae5a7",
++          "afterSha256": "64ea34a6acaca232f2292e3786512b3398d8f33983c9a2e7582cf4a0d0ae04ad"
++        }
++      ]
++    },
++    {
++      "id": "windows-power-profile",
++      "description": "Show Windows-managed power policy instead of Linux profiles.",
++      "reference": "https://github.com/omacom/try-omarchy/commit/78346907a266ea6532e1685165a5d060f8838858",
++      "patch": "patches/omarchy/windows-power-profile.patch",
++      "patchSha256": "5a3adf777acfdc3e6ad90476a486bc79c25362a52a32b76ced654eb63d451388",
++      "targets": [
++        {
++          "path": "bin/omarchy-powerprofiles-list",
++          "beforeSha256": "3d2e4b3d5ad974aa78c97a653d3fe937bd263063369a57f14918748502d1f609",
++          "afterSha256": "d27a9b6f2988719db911585f971d8963ad6da7f70210941a3f4734d8e90d921c"
++        },
++        {
++          "path": "bin/omarchy-powerprofiles-set",
++          "beforeSha256": "4595bb75e4000e2fc01bd3c7f1e578d07aecfa54e9dcd4e2d32d653c35bc66a9",
++          "afterSha256": "715bbefd4fdb3eff368dce4c8a3fd87b219976fa5de453e04afd48ea786488ce"
++        },
++        {
++          "path": "shell/plugins/menu/Menu.qml",
++          "beforeSha256": "0154d0ec3855fbb48aa06eaa724a19f3c07c377494d4a3de65daed2d7d9100e3",
++          "afterSha256": "6f266b3a7acd5ee97d5ea5446aa8c45306371586fc55f0ad4d93a6b2789dba3c"
++        },
++        {
++          "path": "shell/plugins/panels/power/Panel.qml",
++          "beforeSha256": "560e17a5144d3e2ea1e0ad36c2aec563909b535551e1e66e061f5fb25f1d4ec0",
++          "afterSha256": "c9b9519df8ecfae51f3073c15c1c1ef5481973d5ac8d941190e75fcb57246b65"
++        }
++      ]
++    },
++    {
++      "id": "virtio-nightlight",
++      "description": "Apply manual night light through a screen shader on the Windows virtio GPU, preserving custom shaders and serialized toggle intent. Adopt only the two unowned compatibility-delivered backend files during runtime upgrades, with failed-retry recovery.",
++      "reference": "https://github.com/omacom/try-omarchy/commit/54a222371eddb9d2c5286f0431302fd16bea9054",
++      "patch": "patches/omarchy/virtio-nightlight.patch",
++      "patchSha256": "38e20de5825cf6131bbf7762ec519a7f43326275b944c145c3f9d7d2d3d6ad92",
++      "targets": [
++        {
++          "path": "bin/omarchy-toggle-nightlight",
++          "beforeSha256": "da1a268c58df3633441a13c2f7d0e45a04c479bcc678d3fc545c2405848c4ac8",
++          "afterSha256": "70425df8d4336f27d3c28c6808e15c232e6855d7a8aa707f7874cc3d58f67c39"
++        },
++        {
++          "path": "shell/plugins/services/nightlight/Service.qml",
++          "beforeSha256": "721cd63d2404859918e28f92420e87369328c26fcef7df821443baa16d0b1897",
++          "afterSha256": "7b50c10f2975fb264707374a752ddc00040c8416891451e76846c211f39c852a"
++        },
++        {
++          "path": "bin/omarchy-update-system-pkgs-when-conflicted",
++          "beforeSha256": "dae1379216754e372f749ce4a4f3232b20225d08e2d0784d7607bba113ebbc62",
++          "afterSha256": "496a4d7e07a3af365d5f6669c348452fa6303c1db9950095bc2b259e66d2537a"
++        }
++      ]
++    },
++    {
++      "id": "qt612-palette",
++      "description": "Qualify the shell palette for Qt 6.12 without changing existing guest backports.",
++      "reference": "https://github.com/omacom/omarchy/pull/14553",
++      "patch": "patches/omarchy/qt612-palette.patch",
++      "patchSha256": "071d0171726c6e4d2a0df3463c5efdceba9209a945fc7b51ab499452c47798d9",
++      "targets": [
++        {
++          "path": "shell/Commons/Border.qml",
++          "beforeSha256": "b98c82530126fc10a287845e8df574ae26fa05b6064d93451d93d0ee9c3f7166",
++          "afterSha256": "4062986c0226eed4a7e054381ddf3f5bdbe20081a0c2f5efd7803a8606ea4b07"
++        },
++        {
++          "path": "shell/Commons/Style.qml",
++          "beforeSha256": "f5901092617ae62645597199270afd4dfb0644d596bdfff16e1834fca6ad7243",
++          "afterSha256": "68616995d44b4790e3b2653d0390140b569a6a3b2b9dde66d79b97911a12ea39"
++        },
++        {
++          "path": "shell/Ui/Button.qml",
++          "beforeSha256": "fda48672cc11dba109acea1cc98eb4b29746e5ce09f90a47f487b776ff99e799",
++          "afterSha256": "8237b16b740eb54c8ef3b1007dd30bf00b92bc1dc68e2b3644a06978a15c5158"
++        },
++        {
++          "path": "shell/Ui/ButtonGroup.qml",
++          "beforeSha256": "4af792f394534b7d61b270fcb44203bba8d88ed25f8822e0b90e456e35487542",
++          "afterSha256": "daecdccb8529c9d17e61b470571dac3fa41b2b0e6a888c5b7ca10205b17d4428"
++        },
++        {
++          "path": "shell/Ui/ConfirmDialog.qml",
++          "beforeSha256": "969cafe0580acb66d47947b7b6e9fa5103e1911b3a7dee03b84f2b154afc2762",
++          "afterSha256": "96ae48c0f4df28ff3b0ef9391ad8f24d3e252b416fa79a28b5bd801e71b1ac4f"
++        },
++        {
++          "path": "shell/Ui/CursorSurface.qml",
++          "beforeSha256": "27844a40fbe378e84c0aea35654dd8b396afb7e331c86be80852e1529da4f5b2",
++          "afterSha256": "4c3a8eb239d05b1e1d9261ba389c8ec0feb2811fae2a382c0f1d2c442e86d1c5"
++        },
++        {
++          "path": "shell/Ui/Dropdown.qml",
++          "beforeSha256": "6e2b847a33f5dedb96f65757d284f40b90073b3b34fd31abb84b2d471814fc5c",
++          "afterSha256": "67991822c07aaa8a64bacc2292eabea135ac3a4d1e47a8b798d8c46a04126890"
++        },
++        {
++          "path": "shell/Ui/KeyboardPanel.qml",
++          "beforeSha256": "96245f2da8d38baa0017caa285d596c485bd19a3a4d2cd1675bee9d84ffba42d",
++          "afterSha256": "c8b3b0fd52d8a79469675e925ff851e1dd0588eb1eeb90bd4df004a4c7d72a0a"
++        },
++        {
++          "path": "shell/Ui/MultiSelect.qml",
++          "beforeSha256": "ed85c2bf48ca17a059611b582d3d650eb2a1ad37cff2b700ca0c6c441a4c52df",
++          "afterSha256": "d21d5b480b8e8e55683b49f7f83effc317b8242cc63f6be702c36e3b8ffce8bd"
++        },
++        {
++          "path": "shell/Ui/NumberField.qml",
++          "beforeSha256": "b3584b513ee720f9f3e0f098d19ca1b129a02270c140528455d88fe04e2f2c8b",
++          "afterSha256": "ace8efa37fd1f423eb8046066b7ebd6d8b14cbbb113205353df820e73f9ef1f6"
++        },
++        {
++          "path": "shell/Ui/OpticalGlyph.qml",
++          "beforeSha256": "293e2863c7ff18998a7aea651fa952a564a860df125bf8900b7e739500b3c352",
++          "afterSha256": "1e1a3f545d409814b1673be6c20512ef1ca01a4d5ad653f77ff0433fefa0ec00"
++        },
++        {
++          "path": "shell/Ui/Panel.qml",
++          "beforeSha256": "e6588b3d7c1075d68c6392d028483fcc5d4d2bcb29180758fe265a957cbdc71d",
++          "afterSha256": "c5c9fff24d3fd294efc23aff8000c39542228d481837f79d2b5f82af7f1ed1ae"
++        },
++        {
++          "path": "shell/Ui/PanelActionButton.qml",
++          "beforeSha256": "6c94ff62997f18d1712a741e8ae24ed98a6fa5c6350b266c631ff92f26cffdc7",
++          "afterSha256": "89c440a0fc2d5a04b5640d9a2ad9eca32930f786e57bddb50fb13ad8a4aa084d"
++        },
++        {
++          "path": "shell/Ui/PanelHero.qml",
++          "beforeSha256": "bf0753e69c91c906b8f1e1a46cfbbd4326228e9d9abde1b4007ee86c0bf78f05",
++          "afterSha256": "ce9b264b071448d37a71dbda3a60627be18b679098ea7f5326ea59a65df2d3cf"
++        },
++        {
++          "path": "shell/Ui/PanelSectionHeader.qml",
++          "beforeSha256": "ede63ff97dd3d4d2198b771cbb33dcd07b7026d64d92f1c624e71465d000115d",
++          "afterSha256": "7747685a102cb8a5f8f239acb72ce43c7c3a0326eb884db71e8427ab9c62e597"
++        },
++        {
++          "path": "shell/Ui/PanelSeparator.qml",
++          "beforeSha256": "667cd49e89c5911fbe564904720b3d4073057e0b6fa38f03e55fa5949ccd195c",
++          "afterSha256": "54b970d6a6e5683583906517c808f271227f5b47a3a1ac3a58faa3f41d822316"
++        },
++        {
++          "path": "shell/Ui/PanelSlider.qml",
++          "beforeSha256": "aa8fcf167324ff9eb60a219f037004482adbe2a30369af123d53956a81a93068",
++          "afterSha256": "e1a56b744e89ccb9abee22557e062e23f6ba11b18b081508577165178bb49841"
++        },
++        {
++          "path": "shell/Ui/PanelToolTip.qml",
++          "beforeSha256": "5520685c2d160002cb4bd62c9e5da193003c071fca69b90e6012ebf0c8ee4ca3",
++          "afterSha256": "fa62fbdbe132bb90d9fca95b97b3ed7c5f0f7ca345fa9bac643ab15fce03f2ca"
++        },
++        {
++          "path": "shell/Ui/PopupCard.qml",
++          "beforeSha256": "b3751c78dba9d3b6383c072c915c3d1ecf5e2227cc8417127323077df1f0af5a",
++          "afterSha256": "e29abfcde9db314a9ebce3c7640ff6be996badc168ad5a862f63678dabfdd809"
++        },
++        {
++          "path": "shell/Ui/SearchableDropdown.qml",
++          "beforeSha256": "a30cff5297ba595235ead18c956b1268d140b3962375b5ed14d98f6ed0eecc10",
++          "afterSha256": "98e71d4fc3679d9a260db2ca29b6935db18447faecf190a8122ee31ef4a1384b"
++        },
++        {
++          "path": "shell/Ui/SpeedTestOverlay.qml",
++          "beforeSha256": "f7b37ccf6e641c3a607d91b824f7df15aac6177e5004462718842c686325af48",
++          "afterSha256": "536a939d5160b5802b74cd194023ef274c0146b54765581a55e505e74437dc2f"
++        },
++        {
++          "path": "shell/Ui/TextField.qml",
++          "beforeSha256": "b3ad72f56f86c2df164e347d64205c099f77c5fb90933fabea3b0f2a9e2b3778",
++          "afterSha256": "08c8141e74b7791060461939626f08453a28fe97eed4f4339dabde9d6a6edb3b"
++        },
++        {
++          "path": "shell/Ui/Toggle.qml",
++          "beforeSha256": "158aaa84cf1fff771b932bb1c79e00be19bee1bfeef2d27bfbd8aa4f1c416e6b",
++          "afterSha256": "a51d10bc49d283ba837ce84f511d8cd5ef26c47e261e9ccf9e67acc59b594b93"
++        },
++        {
++          "path": "shell/Ui/ToggleSwitch.qml",
++          "beforeSha256": "6bfae25396c1d03979efd9a27130e03f11edc2c7062d1f0c0c252b30e60a9898",
++          "afterSha256": "97ef05b8a752ededda041485f42a57bc578e0a58acd4a3696ac0d253c77c8741"
++        },
++        {
++          "path": "shell/Ui/WidgetButton.qml",
++          "beforeSha256": "a3cc74adca517b73a176eae0f93e976c24a3ec73b4b5855340b61b1ed2dcd08f",
++          "afterSha256": "576f2ade5c9e746131d63ae88f1bbc12cd71081764cecff43d3e36afcad354ac"
++        },
++        {
++          "path": "shell/plugins/agents/Panel.qml",
++          "beforeSha256": "0e5ecdb45eaff618963851c16a1f5066307c13195526890d2cbb6ddb5a1aa7c1",
++          "afterSha256": "805507f950480bee99c552a10086f90ca3005b8f605525248cf356da0fdc20c2"
++        },
++        {
++          "path": "shell/plugins/background/Background.qml",
++          "beforeSha256": "505c7d4af8323bdb201cd816aa8332248dcfd4c056ec8f64b5c0a2ae1776c58a",
++          "afterSha256": "6135a06b4c17c9a5a251053c294a657ecd80eb3a339f6eea146455b3925fd65b"
++        },
++        {
++          "path": "shell/plugins/bar/Bar.qml",
++          "beforeSha256": "9874c0f36271840b43002890ae333c83097df7f4cff0bade81536a41ed83590b",
++          "afterSha256": "94c85d1a776933053c54e56317662e520805e5d78ff24bc65d4305a18351ce5e"
++        },
++        {
++          "path": "shell/plugins/bar/widgets/ActiveWindow.qml",
++          "beforeSha256": "e53bbf968f78a9c4748c1872d6b34e1914070fc170641730bc2f7b4bce4e0173",
++          "afterSha256": "a1750665ab005efec042da80390c58f8b9337e8b7800bb80dad88e3e2d62877f"
++        },
++        {
++          "path": "shell/plugins/bar/widgets/Tray.qml",
++          "beforeSha256": "6566c548c76e56315589a126965eb686a6be812b1106d618045fee01a5095dd0",
++          "afterSha256": "dbdd6dddd739c74c00c7e68d1a5c738acddc4dafff92559dc26607463cfcc85d"
++        },
++        {
++          "path": "shell/plugins/clipboard/Clipboard.qml",
++          "beforeSha256": "7fcc8abf8ba142d81c79e265a662769e4c101826b4716ef8a976ee333cbbfa81",
++          "afterSha256": "a17f4a67a68ece6176b854cc548078e5b21b3964acd56f02136d95cc4e7caba3"
++        },
++        {
++          "path": "shell/plugins/dev-gallery/GalleryPanel.qml",
++          "beforeSha256": "4fa15562d85fd021a7cfe46474e0bdda4b063c3f4f56c6c61dbb5148b6f5aaa8",
++          "afterSha256": "ee7e0477865b8ca92d86847d9558d139379d1882d8ffc508a1051a92a07dbd1b"
++        },
++        {
++          "path": "shell/plugins/emojis/Emojis.qml",
++          "beforeSha256": "ff49e2e8174e0c0925d76c9b686f4de1e7297aa256c9dcc7320ed00c39dafeda",
++          "afterSha256": "8e7cf2e6ba1c156574a7034b7510aa8cae901776e58d68b8218cf5c8e659d661"
++        },
++        {
++          "path": "shell/plugins/image-picker/ImagePicker.qml",
++          "beforeSha256": "0bcb5e97a06f5dd14ce8265b16039f01cb5a1e99f64d01165e66786a1aa175e0",
++          "afterSha256": "9799f9cb52ffc4bd6d3089a50b73386b017e1c726b786e193e12d83561385ca8"
++        },
++        {
++          "path": "shell/plugins/lock/LockView.qml",
++          "beforeSha256": "9b174cf3ba8569dede528968be38994491ac73d9ca708f7e9451beeec7b4d066",
++          "afterSha256": "8cfb7acbe062086ae90939f1e9b925ed2beac18e903b5e7f9d14a638d7cf5807"
++        },
++        {
++          "path": "shell/plugins/lock/Service.qml",
++          "beforeSha256": "3f0a265a09f7957e8f5d74666595d3136ec64899c414426190460f9e2098e701",
++          "afterSha256": "79fe6348955047cd18183a4e2f5bbb020289a62d2f761ede13e71fb58d784f3b"
++        },
++        {
++          "path": "shell/plugins/menu/Menu.qml",
++          "beforeSha256": "6f266b3a7acd5ee97d5ea5446aa8c45306371586fc55f0ad4d93a6b2789dba3c",
++          "afterSha256": "13fd49a8f0c5163e079a23bd5b0c0b9826ad051747caa1e80deee1210c70a77c"
++        },
++        {
++          "path": "shell/plugins/notifications/components/NotificationCard.qml",
++          "beforeSha256": "7522c2f6453a5db357c80132da53e8aa6d2881519ade10818dca0ca6355e7d51",
++          "afterSha256": "d38a2fa8b4137f5b7735fb1b4a60eb5a4cde50ba5098044762f26c4b11bb3c50"
++        },
++        {
++          "path": "shell/plugins/osd/Osd.qml",
++          "beforeSha256": "a139b64d45f89a6b55ebcbd1233347f75b541b020e24b4286d6e00a6d5f5c50c",
++          "afterSha256": "f7abf7e92286671bdef821be169b6d6b456fb6df014524cf4d227d6f2a49a1a3"
++        },
++        {
++          "path": "shell/plugins/panels/audio/Panel.qml",
++          "beforeSha256": "831efaa29097d06abed31480a9e54208552e3f4e529a5c4ecca9255b12c5a7b1",
++          "afterSha256": "a683e771f495837170371da658e00cef1dacc89d0220d44d9e0e988ab2bbd2c0"
++        },
++        {
++          "path": "shell/plugins/panels/bluetooth/Panel.qml",
++          "beforeSha256": "f51654a00e3bfe5d6ccfd42bbd972d9436f70a27d152baa43ccdcbd8c66e1225",
++          "afterSha256": "018af5e96d27fe1f09dca2b2f24904c06290e31d21d00974387e0d51de8ae4b2"
++        },
++        {
++          "path": "shell/plugins/panels/clock/Panel.qml",
++          "beforeSha256": "396d98c9696a64977166be99d3b70c102ca20ac30f41e073fe1d168fde61de75",
++          "afterSha256": "1fc30583be12138f54d15300460b3db112165e1165842b53ea8f45d41bbb5286"
++        },
++        {
++          "path": "shell/plugins/panels/dropbox/DropboxIcon.qml",
++          "beforeSha256": "3367632df6a80998e377a085483deb61175bf572138db81bd8f71423d06ca349",
++          "afterSha256": "82e161b779678ef45d1a3a663435e905b13e4dc9a362e79acd3088afd6778a36"
++        },
++        {
++          "path": "shell/plugins/panels/dropbox/Panel.qml",
++          "beforeSha256": "4bc3b9660fd84e57c170004e0840495aa5d95c6cf1be0f891b9b58e6cc232d7a",
++          "afterSha256": "229747c5bf378adc722e4438a09872732c3ea3b55b47e926e48aa4ad4f361d23"
++        },
++        {
++          "path": "shell/plugins/panels/monitor/Panel.qml",
++          "beforeSha256": "2f3f95e5fc75af2af1f1af418a65469c37714b2bec38cfd2206bdd3f1f1b0e69",
++          "afterSha256": "c83de19eb30b50a369be85753aeddabc82506dfabae8109f39ef2d17c79db69e"
++        },
++        {
++          "path": "shell/plugins/panels/network/Panel.qml",
++          "beforeSha256": "84d81680cfd2e06b4f07d40129c7e40e6e173e9d4794471c003e14a8f1b1e693",
++          "afterSha256": "1e551a8d109535d2673ec9bb08faea01acdba27141c82aae6b7ae3be8da3c002"
++        },
++        {
++          "path": "shell/plugins/panels/power/Panel.qml",
++          "beforeSha256": "c9b9519df8ecfae51f3073c15c1c1ef5481973d5ac8d941190e75fcb57246b65",
++          "afterSha256": "a263776fcf032e2858eb5ab094cd68d7c7156c57705bb818415c51c12062a1f6"
++        },
++        {
++          "path": "shell/plugins/panels/tailscale/Panel.qml",
++          "beforeSha256": "c1f343ba875e49031fd4133bc4bba224980207f08a991b9882f3c3ac8c70f5df",
++          "afterSha256": "027c0777eecdcd4e9d4fb3614b14bc1fc54345eedd0d01a3a96b9eb5848d56b6"
++        },
++        {
++          "path": "shell/plugins/panels/tailscale/TailscaleIcon.qml",
++          "beforeSha256": "f3e35a849425b3400891726ca06a12681853a17599ccb66da2a788c0e0261beb",
++          "afterSha256": "05142bf1863a671c3b6b39f4a2455d556e2a75b4a373aa1a559c36c918aa8329"
++        },
++        {
++          "path": "shell/plugins/panels/weather/Panel.qml",
++          "beforeSha256": "47e38b979a578b662428844d11707d29db7f7933fdf60b69bc955429fdf5c201",
++          "afterSha256": "3a5b1345741f699e426ac08a2e4548a8bc0e0c4c82a54600402f716c20736de5"
++        },
++        {
++          "path": "shell/plugins/polkit/PolkitAgent.qml",
++          "beforeSha256": "dfd8e994bd774b9d6d5375f1380a51db1813ce2c060a37c3519c75f0c089dde6",
++          "afterSha256": "33b31505ec127294eb906944bd2a15a97453229e78e22f816b4363ccb7d3e74c"
++        },
++        {
++          "path": "shell/plugins/reminders/ReminderFlow.qml",
++          "beforeSha256": "1ffb380e1b3d85539aae8b9407d271bd9e42ae936d3d853b543afcfd714c3857",
++          "afterSha256": "d059a0788d9b258b12fdbc0774953790c797791ca314428bff2c1d157dc47b54"
++        },
++        {
++          "path": "shell/plugins/services/media/BarWidget.qml",
++          "beforeSha256": "05b9bca8673facb447d7b10b513865c80b5de7dc61828efc41026de4bb960d42",
++          "afterSha256": "ce61de66e6204a049ce6f35af8cbb8d8ef2f5211fd1bc690b2018cf45d75837e"
++        },
++        {
++          "path": "shell/shell.qml",
++          "beforeSha256": "7a30685e7c82c0fc3366ee8f079d1d224f9e8eb4daf79df0aedaa0e30f541b89",
++          "afterSha256": "b0bb7b418cced7331953615b4d6cec49fecaed65a573ce09da5cbe9f49eb41b1"
++        }
++      ]
++    },
++    {
++      "id": "mute-terminal-bell",
++      "description": "Mute Hyprland 0.57's sound for every terminal bell, which opens the Windows audio device on each Tab or Backspace.",
++      "reference": "https://github.com/basecamp/omarchy/commit/c019850d7aef4ade679829d78223cd2eb1ecdac2",
++      "patch": "patches/omarchy/mute-terminal-bell.patch",
++      "patchSha256": "c798560e76bba4764a9ce00d81d12cd366eed6b433319ca094afc5b1c6ccef0b",
++      "targets": [
++        {
++          "path": "default/hypr/looknfeel.lua",
++          "beforeSha256": "d257ea9864abb9cac124083bef88374659e759144a3d2028ec9486e578978804",
++          "afterSha256": "2bc0bc64b243f63b43c9e4261c013ac79a22346cf33ab4bc070dca5675063f49"
++        }
++      ]
++    }
++  ]
++}
+diff --git a/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/clock-timezone-refresh.patch b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/clock-timezone-refresh.patch
+new file mode 100644
+index 0000000..27cb8c3
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/clock-timezone-refresh.patch
+@@ -0,0 +1,11 @@
++diff --git a/shell/plugins/panels/clock/BarWidget.qml b/shell/plugins/panels/clock/BarWidget.qml
++--- a/shell/plugins/panels/clock/BarWidget.qml
+++++ b/shell/plugins/panels/clock/BarWidget.qml
++@@ -32,6 +32,7 @@
++   readonly property var verticalLines: displayText.split("\n")
++ 
++   function refresh() {
+++    Date.timeZoneUpdated()
++     displayDate = new Date()
++     if (panelLoader.item && panelLoader.item.refresh) panelLoader.item.refresh()
++   }
+diff --git a/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/first-run-update-notification.patch b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/first-run-update-notification.patch
+new file mode 100644
+index 0000000..4fe046b
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/first-run-update-notification.patch
+@@ -0,0 +1,10 @@
++--- a/install/user/first-run/wifi.sh
+++++ b/install/user/first-run/wifi.sh
++@@ -1,5 +1,6 @@
++ notify_update() {
++-  omarchy-notification-send -u critical -g  "Update System" "Click to update the system." \
+++  omarchy-notification-send -u normal -g  "Update packages and finish setup" \
+++    "Try Omarchy manages supported Linux packages. Click to update them." \
++     --exec omarchy-launch-floating-terminal-with-presentation omarchy-update
++ }
++ 
+diff --git a/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/mute-terminal-bell.patch b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/mute-terminal-bell.patch
+new file mode 100644
+index 0000000..592cb85
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/mute-terminal-bell.patch
+@@ -0,0 +1,14 @@
++--- a/default/hypr/looknfeel.lua
+++++ b/default/hypr/looknfeel.lua
++@@ -124,3 +124,11 @@
++     hide_special_on_workspace_change = true,
++   },
++ })
+++
+++-- Hyprland 0.57 plays a sound for every terminal bell (tab-completion misses,
+++-- TUI alerts). Mute it, as Omarchy does upstream; older Hyprland releases
+++-- reject the unknown option, so only set it where it exists.
+++local hyprland_major, hyprland_minor = hl.version():match("^(%d+)%.(%d+)")
+++if hyprland_major and (tonumber(hyprland_major) > 0 or tonumber(hyprland_minor) >= 57) then
+++  hl.config({ misc = { bell_sound = "none" } })
+++end
+diff --git a/guest/patches/omarchy/notification-hover-close.patch b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/notification-hover-close.patch
+similarity index 100%
+rename from guest/patches/omarchy/notification-hover-close.patch
+rename to guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/notification-hover-close.patch
+diff --git a/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/notification-screen-privacy.patch b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/notification-screen-privacy.patch
+new file mode 100644
+index 0000000..32c468f
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/notification-screen-privacy.patch
+@@ -0,0 +1,235 @@
++diff --git a/shell/plugins/notifications/Service.qml b/shell/plugins/notifications/Service.qml
++--- a/shell/plugins/notifications/Service.qml
+++++ b/shell/plugins/notifications/Service.qml
++@@ -50,6 +50,18 @@
++   readonly property int defaultBarSize: barVertical ? Style.bar.sizeVertical : Style.bar.sizeHorizontal
++   readonly property int liveBarSize: shell && shell.bar && !shell.bar.barHidden ? Math.max(0, shell.bar.barSize) : defaultBarSize
++   readonly property int barClearance: liveBarSize + Style.gapsOut
+++  // Notification surfaces live on the overlay layer, above the ordinary
+++  // fullscreen terminal used by the screensaver. Hide them while either the
+++  // screensaver or secure lock covers the session, and resume their remaining
+++  // lifetime only once the user can see them again. Startup remains private
+++  // until the idle service reconciles windows that predate a shell reload.
+++  readonly property var idleService: shell ? shell.firstPartyServiceFor("omarchy.idle") : null
+++  readonly property bool screenObscured:
+++    !idleService
+++    || !idleService.screensaverStateKnown
+++    || idleService.screensaverWindowCount > 0
+++    || !shell
+++    || shell.lockScreenObscured !== false
++ 
++   // Live Notification objects by originalId, kept OUT of the ListModels: a
++   // QObject stored in a model role becomes a dangling C++ pointer when the
++@@ -956,7 +968,7 @@
++       id: popupWindow
++       required property var modelData
++       screen: modelData
++-      visible: popupModel.count > 0
+++      visible: popupModel.count > 0 && !service.screenObscured
++ 
++       WlrLayershell.namespace: "omarchy-notifications"
++       WlrLayershell.layer: WlrLayer.Overlay
++@@ -1012,7 +1024,7 @@
++ 
++             readonly property real lifetime: service.durationFor(cardSlot.urgency, cardSlot.expireTimeout)
++             property real remainingLifetime: 1.0
++-            readonly property bool ticking: cardSlot.lifetime > 0 && !card.hovered
+++            readonly property bool ticking: cardSlot.lifetime > 0 && !card.hovered && !service.screenObscured
++ 
++             // A client updating this notification in place rewrites the row
++             // under the card (see refreshPopup). New text deserves a full look,
++diff --git a/shell/plugins/services/idle/Service.qml b/shell/plugins/services/idle/Service.qml
++--- a/shell/plugins/services/idle/Service.qml
+++++ b/shell/plugins/services/idle/Service.qml
++@@ -36,6 +36,8 @@
++   property string lastEventAt: ""
++   property var screensaverWindows: ({})
++   property int screensaverWindowCount: 0
+++  property bool screensaverStateKnown: false
+++  property var screensaverWindowsClosedDuringProbe: ({})
++ 
++   function secondsFromConfig(value, fallback) {
++     return IdleModel.secondsFromConfig(value, fallback)
++@@ -116,15 +118,57 @@
++     root.screensaverWindowCount = 0
++   }
++ 
+++  function normalizeWindowAddress(address) {
+++    var normalized = String(address || "").toLowerCase()
+++    return normalized.indexOf("0x") === 0 ? normalized.slice(2) : normalized
+++  }
++   function setScreensaverWindow(address, visible) {
++-    var next = IdleModel.screensaverWindowsAfter(root.screensaverWindows, address, visible)
+++    var next = IdleModel.screensaverWindowsAfter(root.screensaverWindows, normalizeWindowAddress(address), visible)
++     root.screensaverWindows = next.windows
++     root.screensaverWindowCount = next.count
++   }
++ 
+++  function setScreensaverProbeClosed(address, closed) {
+++    var normalized = normalizeWindowAddress(address)
+++    if (!normalized) return
+++
+++    var next = ({})
+++    for (var existing in root.screensaverWindowsClosedDuringProbe) {
+++      if (existing !== normalized && root.screensaverWindowsClosedDuringProbe[existing]) next[existing] = true
+++    }
+++    if (closed) next[normalized] = true
+++    root.screensaverWindowsClosedDuringProbe = next
+++  }
+++  function reconcileScreensaverWindows(payload) {
+++    var clients
+++    try {
+++      clients = JSON.parse(String(payload || ""))
+++    } catch (error) {
+++      logEvent("screensaver-state-probe-invalid", error)
+++      screensaverStateProbeRetry.restart()
+++      return
+++    }
+++    if (!Array.isArray(clients)) {
+++      logEvent("screensaver-state-probe-invalid", "expected client array")
+++      screensaverStateProbeRetry.restart()
+++      return
+++    }
+++
+++    for (var index = 0; index < clients.length; index++) {
+++      var client = clients[index] || ({})
+++      if (String(client.class || "") !== root.screensaverClass) continue
+++      var address = normalizeWindowAddress(client.address)
+++      if (address && !root.screensaverWindowsClosedDuringProbe[address]) setScreensaverWindow(address, true)
+++    }
+++    root.screensaverWindowsClosedDuringProbe = ({})
+++    root.screensaverStateKnown = true
+++    logEvent("screensaver-state-ready", root.screensaverWindowCount + " window(s)")
+++  }
+++
++   function handleScreensaverWindowOpened(address) {
++     setScreensaverWindow(address, true)
++     screensaverLaunchGraceTimer.stop()
+++    if (!root.screensaverStateKnown) setScreensaverProbeClosed(address, false)
++   }
++ 
++   function handleScreensaverWindowClosed(address) {
++@@ -150,7 +194,8 @@
++       if (String(open[2] || "") === root.screensaverClass) root.handleScreensaverWindowOpened(open[0])
++     } else if (name === "closewindow") {
++       var close = eventParts(event, 1)
++-      var address = String(close[0] || "")
+++      var address = normalizeWindowAddress(close[0])
+++      if (!root.screensaverStateKnown) setScreensaverProbeClosed(address, true)
++       if (root.screensaverWindows[address]) root.handleScreensaverWindowClosed(address)
++     }
++   }
++@@ -281,6 +326,12 @@
++     }
++   }
++ 
+++  Timer {
+++    id: screensaverStateProbeRetry
+++    interval: 2000
+++    repeat: false
+++    onTriggered: if (!root.screensaverStateKnown && !screensaverStateProbe.running) screensaverStateProbe.running = true
+++  }
++   Connections {
++     target: Hyprland
++     function onRawEvent(event) { root.handleHyprlandEvent(event) }
++@@ -294,6 +345,21 @@
++     id: lockProcess
++     onExited: function(exitCode, exitStatus) { root.logEvent("process-exit", "lock exitCode=" + exitCode + " status=" + exitStatus) }
++   }
+++
+++  Process {
+++    id: screensaverStateProbe
+++    command: ["hyprctl", "-j", "clients"]
+++    stdout: StdioCollector {
+++      waitForEnd: true
+++      onStreamFinished: root.reconcileScreensaverWindows(text)
+++    }
+++    onExited: function(exitCode, exitStatus) {
+++      if (!root.screensaverStateKnown) {
+++        root.logEvent("screensaver-state-probe-failed", "exitCode=" + exitCode + " status=" + exitStatus)
+++        screensaverStateProbeRetry.restart()
+++      }
+++    }
+++  }
++   Process {
++     id: wakeProcess
++     onExited: function(exitCode, exitStatus) { root.logEvent("process-exit", "wake exitCode=" + exitCode + " status=" + exitStatus) }
++@@ -333,8 +399,8 @@
++   Component.onCompleted: {
++     logEvent("service-ready")
++     refreshStayAwakeState()
+++    screensaverStateProbe.running = true
++   }
++-
++   IpcHandler {
++     target: "idle"
++ 
++diff --git a/shell/shell.qml b/shell/shell.qml
++--- a/shell/shell.qml
+++++ b/shell/shell.qml
++@@ -887,6 +887,14 @@
++     return _services[String(pluginId)] || null
++   }
++ 
+++  // Authentication QObjects stay in the private JS store. This counter only
+++  // invalidates the boolean binding when services enter or leave that store.
+++  property int _authenticationServiceRevision: 0
+++  readonly property bool lockScreenObscured: {
+++    _authenticationServiceRevision
+++    return AuthServiceStore.lockScreenObscured()
+++  }
+++
++   function firstPartyServiceFor(pluginId) {
++     return serviceFor(shell.pluginRegistry.resolveEnabledId(pluginId))
++   }
++@@ -935,6 +943,7 @@
++         // import retains their lifetime without adding a traversable property
++         // or QObject parent back to the host shell.
++         AuthServiceStore.put(key, inst)
+++        shell._authenticationServiceRevision += 1
++       } else {
++         var snext = ({})
++         for (var sk in _services) snext[sk] = _services[sk]
++@@ -986,6 +995,7 @@
++         // A service that loses its trusted authentication capability can move
++         // back to the ordinary service map only after the isolated copy dies.
++         AuthServiceStore.destroy(id)
+++        shell._authenticationServiceRevision += 1
++       }
++       ensureService(id)
++     }
++@@ -1018,6 +1028,7 @@
++       if (stillAuthenticationService && pluginRegistry.isEnabled(authenticationId)
++           && shell.isAuthenticationService(authenticationManifest, authenticationId)) continue
++       AuthServiceStore.destroy(authenticationId)
+++      shell._authenticationServiceRevision += 1
++     }
++   }
++ 
++@@ -1044,8 +1055,10 @@
++     var authenticationIds = AuthServiceStore.ids()
++     for (var ai = 0; ai < authenticationIds.length; ai++) {
++       var authenticationId = authenticationIds[ai]
++-      if (!serviceKeepLoaded(authenticationId))
+++      if (!serviceKeepLoaded(authenticationId)) {
++         AuthServiceStore.destroy(authenticationId)
+++        shell._authenticationServiceRevision += 1
+++      }
++     }
++   }
++ 
++diff --git a/shell/services/AuthServiceStore.js b/shell/services/AuthServiceStore.js
++--- a/shell/services/AuthServiceStore.js
+++++ b/shell/services/AuthServiceStore.js
++@@ -43,3 +43,11 @@
++   var keys = ids()
++   for (var i = 0; i < keys.length; i++) destroy(keys[i])
++ }
+++
+++// Read in the host's QML binding so locked/preview changes invalidate it.
+++// Missing or malformed lock state remains private during startup and removal.
+++function lockScreenObscured() {
+++  var service = services["omarchy.lock"]
+++  return !service || typeof service.locked !== "boolean"
+++    || service.locked || service.previewVisible === true
+++}
+diff --git a/guest/patches/omarchy/qt612-palette.patch b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/qt612-palette.patch
+similarity index 100%
+rename from guest/patches/omarchy/qt612-palette.patch
+rename to guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/qt612-palette.patch
+diff --git a/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/screensaver-terminal-fit.patch b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/screensaver-terminal-fit.patch
+new file mode 100644
+index 0000000..a17852a
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/screensaver-terminal-fit.patch
+@@ -0,0 +1,39 @@
++--- a/bin/omarchy-screensaver
+++++ b/bin/omarchy-screensaver
++@@ -8,7 +8,7 @@
++ 
++ exit_screensaver() {
++   hyprctl eval 'hl.config({ cursor = { invisible = false } })' &>/dev/null || hyprctl keyword cursor:invisible false &>/dev/null || true
++-  pkill -x ttfx 2>/dev/null
+++  [[ -z ${effect_pid:-} ]] || kill "$effect_pid" 2>/dev/null || true
++   pkill -f '[o]rg.omarchy.screensaver' 2>/dev/null
++   exit 0
++ }
++@@ -19,8 +19,6 @@
++ printf '\033]11;rgb:00/00/00\007'  # Set background color to black
++ 
++ hyprctl eval 'hl.config({ cursor = { invisible = true } })' &>/dev/null || hyprctl keyword cursor:invisible true &>/dev/null
++-
++-tty=$(tty 2>/dev/null)
++ 
++ # Terminals allocate the pty at the default 80x24 and only resize it once the
++ # compositor has told the window how big it is. ttfx measures the terminal once,
++@@ -36,13 +34,16 @@
++ wait_for_terminal_resize
++ 
++ while true; do
++-  ttfx -i ~/.config/omarchy/branding/screensaver.txt \
+++  ttfx <<< "$(/usr/local/bin/omarchy-native-screensaver-text ~/.config/omarchy/branding/screensaver.txt)" \
++     --frame-rate 120 --canvas-width 0 --canvas-height 0 --reuse-canvas --anchor-canvas c --anchor-text c\
++     --random-effect --no-eol --no-restore-cursor &
++ 
++-  while pgrep -t "${tty#/dev/}" -x ttfx >/dev/null; do
+++  # Track this launch, including text preparation, instead of probing process names.
+++  effect_pid=$!
+++  while kill -0 "$effect_pid" 2>/dev/null; do
++     if read -n1 -t 1 || ! screensaver_in_focus; then
++       exit_screensaver
++     fi
++   done
+++  wait "$effect_pid" || sleep 1
++ done
+diff --git a/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/setup-host-timezone.patch b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/setup-host-timezone.patch
+new file mode 100644
+index 0000000..c106a9d
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/setup-host-timezone.patch
+@@ -0,0 +1,20 @@
++diff --git a/install/provisioning/setup-form.sh b/install/provisioning/setup-form.sh
++--- a/install/provisioning/setup-form.sh
+++++ b/install/provisioning/setup-form.sh
++@@ -170,7 +170,15 @@
++ # often; guard it or a `set -e` caller dies before the filter fallback.
++ omarchy_prompt_timezone() {
++   local guess status
++-  guess=$(tzupdate -p 2>/dev/null) || guess=""
+++  # The VM launcher supplies a validated host hint. Keep geolocation as a
+++  # fallback for environments without a host time-zone integration.
+++  guess=""
+++  local host_hint=${TRY_OMARCHY_HOST_ZONE:-/run/try-omarchy/host-timezone}
+++  if [[ -f $host_hint ]]; then
+++    guess=$(cat "$host_hint")
+++    if ! timedatectl list-timezones | grep -Fx -- "$guess" >/dev/null; then guess=""; fi
+++  fi
+++  if [[ -z $guess ]]; then guess=$(tzupdate -p 2>/dev/null) || guess=""; fi
++ 
++   if [[ -n $guess ]]; then
++     timezone=$(timedatectl list-timezones | gum choose --height 10 --selected "$guess" --header "Timezone") && status=0 || status=$?
+diff --git a/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/update-free-space-message.patch b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/update-free-space-message.patch
+new file mode 100644
+index 0000000..c9d4627
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/update-free-space-message.patch
+@@ -0,0 +1,15 @@
++--- a/bin/omarchy-update-requires-free-space
+++++ b/bin/omarchy-update-requires-free-space
++@@ -11,6 +11,12 @@
++   [[ $available_bytes =~ ^[0-9]+$ ]] &&
++   (( available_bytes < 10 * 1024 * 1024 * 1024 )); then
++   echo "You need at least 10 GiB free to safely update Omarchy."
+++  echo "This is free space inside the Omarchy disk, not on your PC."
+++  echo
+++  df -h / 2>/dev/null || true
+++  echo
+++  echo "Free space with: sudo pacman -Scc or remove unused packages."
+++  echo "Or increase Disk capacity (GiB) in Try Omarchy Settings > General > Storage and relaunch."
++   exit 1
++ else
++   exit 0
+diff --git a/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/virtio-nightlight.patch b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/virtio-nightlight.patch
+new file mode 100644
+index 0000000..9a20736
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/virtio-nightlight.patch
+@@ -0,0 +1,146 @@
++--- a/bin/omarchy-toggle-nightlight
+++++ b/bin/omarchy-toggle-nightlight
++@@ -2,6 +2,18 @@
++ 
++ # omarchy:summary=Toggle nightlight screen temperature
++-# omarchy:args=[--status]
+++# omarchy:args=[--status | --temperature 4000|6500]
++ # omarchy:examples=omarchy toggle nightlight
+++
+++# The Windows guest has no DRM CTM. Keep the command and shell on one backend.
+++case " $(cat /proc/cmdline) " in
+++  *" omarchy.qemu=1 "*) exec omarchy-native-nightlight "$@" ;;
+++esac
+++
+++if (( $# > 0 )) && [[ ${1:-} != --status ]]; then
+++  if (( $# != 2 )) || [[ $1 != --temperature || ! $2 =~ ^(4000|6500)$ ]]; then
+++    echo "Usage: omarchy-toggle-nightlight [--status | --temperature 4000|6500]" >&2
+++    exit 2
+++  fi
+++fi
++ 
++ ON_TEMP=4000
++@@ -43,5 +55,7 @@
++ CURRENT_TEMP=$(current_temp)
++ 
++-if [[ -z $CURRENT_TEMP || $CURRENT_TEMP == $OFF_TEMP ]]; then
+++if [[ ${1:-} == --temperature ]]; then
+++  TARGET_TEMP=$2
+++elif [[ -z $CURRENT_TEMP || $CURRENT_TEMP == $OFF_TEMP ]]; then
++   TARGET_TEMP=$ON_TEMP
++ else
++--- a/shell/plugins/services/nightlight/Service.qml
+++++ b/shell/plugins/services/nightlight/Service.qml
++@@ -1,4 +1,5 @@
++ import QtQuick
++ import Quickshell.Io
+++import Quickshell.Hyprland
++ import "NightlightModel.js" as NightlightModel
++ 
++@@ -18,9 +19,18 @@
++   readonly property bool enabled: stateLoaded && NightlightModel.isNightlight(temperature)
++ 
+++  // Requested intent is separate from the last confirmed compositor state.
+++  property var requestedTemperature: null
+++  property bool refreshPending: false
++   property bool hasPendingTemperature: false
++   property int pendingTemperature: 0
++ 
++   function refresh() {
++-    if (!statusProbe.running) statusProbe.running = true
+++    if (applyProcess.running) return
+++    if (statusProbe.running) {
+++      root.refreshPending = true
+++      return
+++    }
+++    root.refreshPending = false
+++    statusProbe.running = true
++   }
++ 
++@@ -30,11 +40,12 @@
++ 
++   function toggle() {
++-    setNightlight(!enabled)
+++    var enabling = !(requestedTemperature !== null
+++      ? NightlightModel.isNightlight(requestedTemperature) : enabled)
+++    setNightlight(enabling)
+++    return enabling
++   }
++ 
++   function applyTemperature(temp) {
++-    root.temperature = temp
++-    root.stateLoaded = true
++-
+++    root.requestedTemperature = temp
++     if (applyProcess.running) {
++       root.pendingTemperature = temp
++@@ -47,7 +58,5 @@
++ 
++   function runApply(temp) {
++-    applyProcess.command = ["bash", "-lc",
++-      "pgrep -x hyprsunset >/dev/null || { setsid uwsm-app -- hyprsunset >/dev/null 2>&1 & sleep 1; }; " +
++-      "hyprctl hyprsunset temperature " + Number(temp)]
+++    applyProcess.command = ["omarchy-toggle-nightlight", "--temperature", String(temp)]
++     applyProcess.running = true
++   }
++@@ -55,9 +64,14 @@
++   Process {
++     id: statusProbe
++-    command: ["hyprctl", "hyprsunset", "temperature"]
+++    command: ["omarchy-toggle-nightlight", "--status"]
++     stdout: StdioCollector {
++       waitForEnd: true
++       onStreamFinished: {
++-        root.temperature = NightlightModel.temperatureFromOutput(text)
+++        try {
+++          var state = JSON.parse(text)
+++          root.temperature = typeof state.temperature === "number" ? state.temperature : null
+++        } catch (error) {
+++          root.temperature = null
+++        }
++         root.stateLoaded = true
++       }
++@@ -68,4 +82,8 @@
++         root.stateLoaded = true
++       }
+++      if (applyProcess.running) return
+++      // A probe already in flight when an apply finished may be stale.
+++      if (root.refreshPending) root.refresh()
+++      else root.requestedTemperature = null
++     }
++   }
++@@ -81,4 +99,11 @@
++ 
++       root.refresh()
+++    }
+++  }
+++
+++  Connections {
+++    target: Hyprland
+++    function onRawEvent(event) {
+++      if (event.name === "configreloaded") root.refresh()
++     }
++   }
++@@ -108,6 +133,5 @@
++ 
++     function toggle(): string {
++-      var enabling = !root.enabled
++-      root.setNightlight(enabling)
+++      var enabling = root.toggle()
++       return enabling ? "enabled" : "disabled"
++     }
++--- a/bin/omarchy-update-system-pkgs-when-conflicted
+++++ b/bin/omarchy-update-system-pkgs-when-conflicted
++@@ -87,9 +87,10 @@
++ #
++ # "pkg: /path exists in filesystem" is unowned; the same line plus "(owned by
++ # x)" is not, so the end anchor takes only ours. -Qo re-checks the live database
++-# before anything moves.
+++# before anything moves. The night-light backend arrives through compatibility
+++# catch-up before the runtime package owns it; adopt only those two paths.
++ mapfile -t leftovers < <(
++-  grep -oP '^omarchy(-dev|-settings|-settings-dev)?: \K.+(?= exists in filesystem$)' "$errors" |
+++  grep -oP '^(omarchy(-dev|-settings|-settings-dev)?: \K.+|try-omarchy-runtime: \K/usr/local/(bin/omarchy-native-nightlight|share/try-omarchy/nightlight\.frag))(?= exists in filesystem$)' "$errors" |
++     while IFS= read -r path; do pacman -Qo "$path" &>/dev/null || echo "$path"; done
++ )
++ ((${#leftovers[@]})) || exit 1
+diff --git a/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/windows-power-profile.patch b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/windows-power-profile.patch
+new file mode 100644
+index 0000000..f83dcf4
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.0.4/patches/omarchy/windows-power-profile.patch
+@@ -0,0 +1,152 @@
++--- a/bin/omarchy-powerprofiles-list
+++++ b/bin/omarchy-powerprofiles-list
++@@ -8,10 +8,9 @@
++   exit 1
++ fi
++ 
++-powerprofilesctl list 2>/dev/null |
++-  awk -v with_state="${1:+1}" '/^\s*[* ]\s*[a-zA-Z0-9-]+:$/ {
++-    active = ($1 == "*") ? 1 : 0
++-    gsub(/^[*[:space:]]+|:$/, "")
++-    print $0 (with_state ? "\t" active : "")
++-  }' |
++-  tac
+++# The VM uses Windows power management; there is no Linux profile driver.
+++if [[ ${1:-} == "--active-state" ]]; then
+++  printf 'default\t1\n'
+++else
+++  printf 'default\n'
+++fi
++--- a/bin/omarchy-powerprofiles-set
+++++ b/bin/omarchy-powerprofiles-set
++@@ -1,63 +1,27 @@
++ #!/bin/bash
++ 
++-# omarchy:summary=Set and remember the power profile for AC or battery use
++-# omarchy:args=[autodetect|ac|battery] [power-saver|balanced|performance]
+++# omarchy:summary=Report the VM power profile managed by Windows
+++# omarchy:args=[autodetect|ac|battery] [default]
++ 
++ action="${1:-autodetect}"
++ requested_profile="${2:-}"
++ 
++ usage() {
++-  echo "Usage: omarchy-powerprofiles-set [autodetect|ac|battery] [power-saver|balanced|performance]" >&2
+++  echo "Usage: omarchy-powerprofiles-set [autodetect|ac|battery] [default]" >&2
++   exit 1
++ }
++ 
++ (( $# <= 2 )) || usage
++-
++ case "$action" in
++-  autodetect)
++-    # Use the same signal as the shell (UPower.onBattery) so every entry point
++-    # saves and restores the profile under the same ac/battery key.
++-    if [[ $(busctl get-property org.freedesktop.UPower /org/freedesktop/UPower org.freedesktop.UPower OnBattery 2>/dev/null) == "b true" ]]; then
++-      action=battery
++-    else
++-      action=ac
++-    fi
++-    ;;
++-  ac | battery) ;;
+++  autodetect | ac | battery) ;;
++   *) usage ;;
++ esac
++ 
++-mapfile -t profiles < <(omarchy-powerprofiles-list)
++-
++-profile_available() {
++-  [[ " ${profiles[*]} " == *" $1 "* ]]
++-}
++-
++-state_dir="${OMARCHY_POWERPROFILES_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/powerprofiles}"
++-state_file="$state_dir/$action"
++-
+++# Startup and AC transitions are no-ops. The guest cannot select a Windows mode.
++ if [[ -n $requested_profile ]]; then
++-  profile_available "$requested_profile" || {
++-    echo "Power profile is not available: $requested_profile" >&2
+++  if [[ $requested_profile != default ]]; then
+++    echo "Power profiles are managed by Windows; only default is available." >&2
++     exit 1
++-  }
++-
++-  profile="$requested_profile"
++-elif [[ -r $state_file ]]; then
++-  profile=$(<"$state_file")
+++  fi
+++  echo "Managed by Windows"
++ fi
++-
++-if [[ -z ${profile:-} ]] || ! profile_available "$profile"; then
++-  if [[ $action == "ac" ]] && profile_available performance; then
++-    profile=performance
++-  else
++-    profile=balanced
++-  fi
++-fi
++-
++-powerprofilesctl set "$profile" || exit
++-
++-if [[ -n $requested_profile ]]; then
++-  mkdir -p "$state_dir"
++-  printf '%s\n' "$requested_profile" >"$state_file"
++-fi
++--- a/shell/plugins/menu/Menu.qml
+++++ b/shell/plugins/menu/Menu.qml
++@@ -274,9 +274,9 @@
++       actionFor: function(value) { return "omarchy-font-set " + Util.shellQuote(value) }
++     },
++     "power-profiles": {
++-      script: "current=$(powerprofilesctl get 2>/dev/null); omarchy-powerprofiles-list 2>/dev/null | while read -r p; do [[ -z $p ]] && continue; printf '%s\\t%s\\t%s\\n' \"$p\" \"$p\" \"$current\"; done",
+++      script: "printf 'Managed by Windows\\tdefault\\tdefault\\n'",
++       icon: "\udb81\udc0b",
++-      actionFor: function(value) { return "omarchy-powerprofiles-set autodetect " + Util.shellQuote(value) }
+++      actionFor: function(value) { return "" }
++     }
++   })
++ 
++--- a/shell/plugins/panels/power/Panel.qml
+++++ b/shell/plugins/panels/power/Panel.qml
++@@ -17,6 +17,7 @@
++   property var systemInfo: ({})
++   property var profiles: []
++   property string activeProfile: ""
+++  readonly property bool managedByWindows: profiles.length === 1 && profiles[0] === "default"
++   property int profileIndex: 0
++   property bool cursorActive: false
++   readonly property bool showPercentage: setting("showPercentage", false) === true
++@@ -164,7 +165,7 @@
++   }
++ 
++   function setProfile(profile) {
++-    if (!profile || actionProc.running) return
+++    if (managedByWindows || !profile || actionProc.running) return
++     actionProc.command = ["omarchy-powerprofiles-set", root.discharging ? "battery" : "ac", profile]
++     actionProc.running = true
++   }
++@@ -480,10 +481,10 @@
++               Button {
++                 required property var modelData
++                 required property int index
++-                width: profileRow.cellWidth
++-                iconText: root.profileIcon(String(modelData))
+++                width: root.managedByWindows ? implicitWidth : profileRow.cellWidth
+++                iconText: root.managedByWindows ? "\uf17a" : root.profileIcon(String(modelData))
++                 iconSize: Style.font.title
++-                text: String(modelData).charAt(0).toUpperCase() + String(modelData).slice(1)
+++                text: root.managedByWindows ? "Managed by Windows" : String(modelData).charAt(0).toUpperCase() + String(modelData).slice(1)
++                 fontSize: Style.font.bodySmall
++                 foreground: root.bar.foreground
++                 fontFamily: root.bar.fontFamily
++@@ -491,7 +492,9 @@
++                 verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
++                 bordered: true
++                 active: root.activeProfile === modelData
++-                hasCursor: root.cursorActive && root.profileIndex === index
+++                selected: root.managedByWindows
+++                enabled: !root.managedByWindows
+++                hasCursor: !root.managedByWindows && root.cursorActive && root.profileIndex === index
++                 onClicked: root.setProfile(modelData)
++                 onHovered: function(h) {
++                   if (h) {
+diff --git a/guest/tests/test_guest_qol.py b/guest/tests/test_guest_qol.py
+index 0a69de5..e791cc6 100644
+--- a/guest/tests/test_guest_qol.py
++++ b/guest/tests/test_guest_qol.py
+@@ -19,6 +19,9 @@ GUEST = Path(__file__).resolve().parents[1]
+ OVERLAY = GUEST / "factory-overlay"
+ PAYLOAD = OVERLAY / "usr/share/try-omarchy/guest-qol"
+ FIXTURES = GUEST / "tests/fixtures/guest-qol"
++# The payload serves disks still on the Omarchy 4.0.4 runtime; check it against
++# that runtime's frozen backport registry and patches.
++LEGACY = GUEST / "tests/fixtures/omarchy-4.0.4"
+ INSTALLER = OVERLAY / "usr/local/lib/try-omarchy/install-guest-qol"
+ loader = importlib.machinery.SourceFileLoader("guest_qol", str(INSTALLER))
+ spec = importlib.util.spec_from_loader(loader.name, loader)
+@@ -60,20 +63,20 @@ class GuestQolTests(unittest.TestCase):
+                               text=True, capture_output=True, timeout=5)
+ 
+     def test_factory_backports_match_persistent_disk_payload(self):
+-        build_spec = json.loads((GUEST / "spec.json").read_text())
+-        for backport in [b for b in build_spec["authenticity"]["backports"] if b["id"] in {"screensaver-terminal-fit", "update-free-space-message", "first-run-update-notification", "windows-power-profile"}]:
++        backports = json.loads((LEGACY / "backports.json").read_text())["backports"]
++        for backport in [b for b in backports if b["id"] in {"screensaver-terminal-fit", "update-free-space-message", "first-run-update-notification", "windows-power-profile"}]:
+             stage = self.root / backport["id"]
+             for target in backport["targets"]:
+                 dest = stage / target["path"]
+                 dest.parent.mkdir(parents=True, exist_ok=True)
+                 dest.write_bytes((FIXTURES / target["path"]).read_bytes())
+-            subprocess.run(["git", "apply", "--no-index", str(GUEST / backport["patch"])],
++            subprocess.run(["git", "apply", "--no-index", str(LEGACY / backport["patch"])],
+                            cwd=stage, check=True, capture_output=True)
+-            palette = next(b for b in build_spec["authenticity"]["backports"] if b["id"] == "qt612-palette")
++            palette = next(b for b in backports if b["id"] == "qt612-palette")
+             for target in backport["targets"]:
+                 if target["path"].endswith(".qml"):
+                     subprocess.run(["git", "apply", "--no-index", "--include=" + target["path"],
+-                                    str(GUEST / palette["patch"])], cwd=stage, check=True, capture_output=True)
++                                    str(LEGACY / palette["patch"])], cwd=stage, check=True, capture_output=True)
+             for target in backport["targets"]:
+                 path = target["path"]
+                 installed = self.root / ("usr/" + path if path.startswith("bin/") else "usr/share/omarchy/" + path)
+@@ -269,7 +272,7 @@ class GuestQolTests(unittest.TestCase):
+             target.parent.mkdir(parents=True, exist_ok=True)
+             target.write_bytes(old)
+         subprocess.run(["git", "apply", "--no-index", "--include=shell/*",
+-                        str(GUEST / "patches/omarchy/windows-power-profile.patch")],
++                        str(LEGACY / "patches/omarchy/windows-power-profile.patch")],
+                        cwd=stage, check=True, capture_output=True)
+         installer.install(self.root, self.homes, PAYLOAD)
+         for hook in self.hooks:
+diff --git a/guest/tests/test_native_nightlight.py b/guest/tests/test_native_nightlight.py
+index 57be74b..ef3fd41 100644
+--- a/guest/tests/test_native_nightlight.py
++++ b/guest/tests/test_native_nightlight.py
+@@ -183,7 +183,7 @@ class PersistentNightlightTests(unittest.TestCase):
+     def test_factory_patch_matches_delivered_payload_and_queue(self):
+         stage = self.root / 'patched'
+         shutil.copytree(GUEST / 'tests/fixtures/nightlight', stage)
+-        subprocess.run(['git', 'apply', '--no-index', str(GUEST / 'patches/omarchy/virtio-nightlight.patch')], cwd=stage, check=True)
++        subprocess.run(['git', 'apply', '--no-index', str(GUEST / 'tests/fixtures/omarchy-4.0.4/patches/omarchy/virtio-nightlight.patch')], cwd=stage, check=True)
+         for hook in self.hooks:
+             relative = hook['path'].removeprefix('usr/share/omarchy/').removeprefix('usr/')
+             self.assertEqual((stage / relative).read_bytes(), (self.payload / hook['asset']).read_bytes())
+diff --git a/guest/tests/test_notification_privacy.py b/guest/tests/test_notification_privacy.py
+index 685344c..c035941 100644
+--- a/guest/tests/test_notification_privacy.py
++++ b/guest/tests/test_notification_privacy.py
+@@ -120,4 +120,4 @@ for (const state of [null, {screensaverStateKnown:false}, {screensaverStateKnown
+         self.assertIn('usr/share/try-omarchy/notifications', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-notifications', finalizer)
+         self.assertIn('previous_revision < 52', catch_up)
+-        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 13)
++        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 14)
+diff --git a/guest/tests/test_omarchy_migrations.py b/guest/tests/test_omarchy_migrations.py
+new file mode 100644
+index 0000000..212e81c
+--- /dev/null
++++ b/guest/tests/test_omarchy_migrations.py
+@@ -0,0 +1,117 @@
++"""Omarchy migrations the guest makes inert, and the kernel reboot check."""
++import hashlib
++from pathlib import Path
++import re
++import subprocess
++import tempfile
++import unittest
++
++GUEST = Path(__file__).resolve().parents[1]
++MATERIALIZE = (GUEST / 'scripts/materialize-omarchy.sh').read_text()
++
++
++def digest(data):
++    return hashlib.sha256(data).hexdigest()
++
++
++def function(name):
++    match = re.search(r'^' + name + r'\(\) \{\n.*?^\}\n', MATERIALIZE, re.M | re.S)
++    assert match, name
++    return match.group(0)
++
++
++def skipped():
++    return re.findall(r'^skip_migration (\d+) ([0-9a-f]{64}) \\\n  "([^"]+)"$', MATERIALIZE, re.M)
++
++
++class SkippedMigrationTests(unittest.TestCase):
++    def run_skip(self, root, *args):
++        script = 'set -euo pipefail\nfail() { echo "$*" >&2; exit 1; }\nomarchy_root=$1\nshift\n'
++        script += function('skip_migration') + 'skip_migration "$@"\n'
++        return subprocess.run(['bash', '-c', script, 'skip', str(root), *args],
++                              text=True, capture_output=True, timeout=10)
++
++    def test_reviewed_migrations_are_replaced_by_their_message(self):
++        entries = skipped()
++        self.assertEqual(
++            [name for name, _, _ in entries],
++            ['1789325478', '1791403252', '1789294350', '1791147791', '1789764927',
++             '1790539857', '1790542069', '1791403310', '1791542175', '1791708587'])
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            (root / 'migrations').mkdir()
++            for name, _, message in entries:
++                original = f'echo "upstream {name}"\nomarchy-pkg-add something\n'.encode()
++                migration = root / 'migrations' / f'{name}.sh'
++                migration.write_bytes(original)
++                result = self.run_skip(root, name, digest(original), message)
++                self.assertEqual(result.returncode, 0, result.stderr)
++                ran = subprocess.run(['bash', '-euo', 'pipefail', str(migration)],
++                                     text=True, capture_output=True, timeout=10)
++                self.assertEqual(ran.returncode, 0, ran.stderr)
++                self.assertEqual(ran.stdout, message + '\n')
++
++    def test_a_changed_or_missing_migration_stops_the_build(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            (root / 'migrations').mkdir()
++            migration = root / 'migrations/1791403252.sh'
++            migration.write_text('echo "changed upstream"\n')
++            result = self.run_skip(root, '1791403252', digest(b'reviewed\n'), 'Keep it')
++            self.assertNotEqual(result.returncode, 0)
++            self.assertIn('changed; review it', result.stderr)
++            self.assertEqual(migration.read_text(), 'echo "changed upstream"\n')
++            result = self.run_skip(root, '1700000000', digest(b''), 'Keep it')
++            self.assertNotEqual(result.returncode, 0)
++            self.assertIn('moved; review it', result.stderr)
++
++    def test_messages_cannot_carry_shell_syntax(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            (root / 'migrations').mkdir()
++            original = b'echo upstream\n'
++            (root / 'migrations/1.sh').write_bytes(original)
++            for message in ['say "hi"', 'run $(id)', 'tick `id`', 'back\\slash']:
++                result = self.run_skip(root, '1', digest(original), message)
++                self.assertNotEqual(result.returncode, 0, message)
++                self.assertEqual((root / 'migrations/1.sh').read_bytes(), original)
++
++    def test_input_method_migration_keeps_only_the_shortcut_defaults(self):
++        block = MATERIALIZE.split('input_migration="$omarchy_root/migrations/1791367434.sh"', 1)[1]
++        block = block.split("<<'MIGRATION'\n", 1)[1].split('\nMIGRATION\n', 1)[0]
++        self.assertIn('omarchy-input-method configure --defaults', block)
++        self.assertNotIn('omarchy-pkg-add', block)
++        self.assertIn('b5dc5a2ef3ea113896c0a0bb9569228ebb1bd93f856fe13a8e24346c7b9bfed6', MATERIALIZE)
++
++    def test_kernel_reboot_check_is_disabled_on_the_indented_line(self):
++        # The shape of Omarchy 4.5's omarchy-update-restart around the check.
++        restart = '''if [[ $mode != "--services-only" ]]; then
++  running_kernel=$(uname -r)
++  kernel_updated=true
++
++  for kernel in "$kernel_modules_path"/*/modules.builtin; do
++        kernel_updated=false
++  done
++'''
++        block = MATERIALIZE.split('restart_check="$root/usr/bin/omarchy-update-restart"\n', 1)[1]
++        block = block.split('\n\n', 1)[0]
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            (root / 'usr/bin').mkdir(parents=True)
++            target = root / 'usr/bin/omarchy-update-restart'
++            for text, ok in [(restart, True), (restart.replace('  kernel_updated=true', 'kernel_updated=true'), False),
++                             (restart + '  kernel_updated=true\n', False)]:
++                target.write_text(text)
++                script = 'set -euo pipefail\nfail() { echo "$*" >&2; exit 1; }\nroot=$1\n'
++                script += 'restart_check="$root/usr/bin/omarchy-update-restart"\n' + block + '\n'
++                result = subprocess.run(['bash', '-c', script, 'restart', str(root)],
++                                        text=True, capture_output=True, timeout=10)
++                self.assertEqual(result.returncode == 0, ok, (text, result.stderr))
++                if ok:
++                    self.assertIn('  kernel_updated=false # Try Omarchy: the launcher supplies the kernel\n',
++                                  target.read_text())
++                    self.assertNotIn('kernel_updated=true', target.read_text())
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/guest/tests/test_qt612_palette.py b/guest/tests/test_qt612_palette.py
+index 3d513cf..f068ae9 100644
+--- a/guest/tests/test_qt612_palette.py
++++ b/guest/tests/test_qt612_palette.py
+@@ -16,6 +16,9 @@ GUEST = Path(__file__).resolve().parents[1]
+ OVERLAY = GUEST / 'factory-overlay'
+ PAYLOAD = OVERLAY / 'usr/share/try-omarchy/qt612-palette'
+ SCRIPT = OVERLAY / 'usr/local/lib/try-omarchy/install-qt612-palette'
++# The repair targets disks still on the Omarchy 4.0.4 runtime, so it is checked
++# against that runtime's frozen backport registry, not the current spec.
++LEGACY = GUEST / 'tests/fixtures/omarchy-4.0.4'
+ loader = importlib.machinery.SourceFileLoader('palette_installer', str(SCRIPT))
+ spec = importlib.util.spec_from_loader(loader.name, loader)
+ installer = importlib.util.module_from_spec(spec)
+@@ -33,7 +36,8 @@ class Qt612PaletteTests(unittest.TestCase):
+         self.root = Path(self.temp.name)
+         self.hooks = json.loads((PAYLOAD / 'manifest.json').read_text())
+         self.build_spec = json.loads((GUEST / 'spec.json').read_text())
+-        self.backport = next(b for b in self.build_spec['authenticity']['backports'] if b['id'] == 'qt612-palette')
++        self.legacy = json.loads((LEGACY / 'backports.json').read_text())
++        self.backport = next(b for b in self.legacy['backports'] if b['id'] == 'qt612-palette')
+         self.tree = self.root / 'usr/share/omarchy'
+         for hook in self.hooks:
+             target = self.root / hook['path']
+@@ -48,7 +52,7 @@ class Qt612PaletteTests(unittest.TestCase):
+         args = ['git', 'apply', '--no-index']
+         if reverse:
+             args.append('--reverse')
+-        subprocess.run([*args, str(GUEST / self.backport['patch'])], cwd=self.tree,
++        subprocess.run([*args, str(LEGACY / self.backport['patch'])], cwd=self.tree,
+                        check=True, capture_output=True)
+ 
+     def test_factory_backport_qualifies_every_declared_shell_file(self):
+@@ -74,7 +78,7 @@ class Qt612PaletteTests(unittest.TestCase):
+                 digest for v in [h, *h.get('previousVersions', [])] for digest in v['beforeSha256']
+             } for h in self.hooks
+         }
+-        for backport in self.build_spec['authenticity']['backports']:
++        for backport in self.legacy['backports']:
+             if backport['id'] == 'qt612-palette':
+                 continue
+             for target in backport['targets']:
+@@ -169,7 +173,7 @@ class Qt612PaletteTests(unittest.TestCase):
+         self.assertIn('compat_revision=67', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-qt612-palette', paths)
+         self.assertIn('usr/share/try-omarchy/qt612-palette', paths)
+-        self.assertEqual(self.build_spec['upstream']['packageRelease'], 13)
++        self.assertEqual(self.build_spec['upstream']['packageRelease'], 14)
+         service = (OVERLAY / 'etc/systemd/system/try-omarchy-catch-up.service').read_text()
+         self.assertIn('Before=display-manager.service', service)
+         catch_up = OVERLAY / 'usr/local/lib/try-omarchy/catch-up'
+diff --git a/guest/tests/test_snapper_guest.py b/guest/tests/test_snapper_guest.py
+index 9b98a3f..d069dbe 100644
+--- a/guest/tests/test_snapper_guest.py
++++ b/guest/tests/test_snapper_guest.py
+@@ -45,4 +45,4 @@ class GuestSnapperTests(unittest.TestCase):
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn(TARGET, paths)
+         self.assertIn('compat_revision=67', finalizer)
+-        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 13)
++        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 14)
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index a90e2bc..5d74c1a 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -68,7 +68,7 @@ def main() -> None:
+     backports = authenticity["backports"]
+     check(
+         [backport.get("id") for backport in backports]
+-        == ["notification-hover-close", "notification-screen-privacy", "setup-host-timezone", "clock-timezone-refresh", "screensaver-terminal-fit", "update-free-space-message", "first-run-update-notification", "windows-power-profile", "virtio-nightlight", "qt612-palette", "mute-terminal-bell"],
++        == ["notification-screen-privacy", "setup-host-timezone", "clock-timezone-refresh", "screensaver-terminal-fit", "update-free-space-message", "first-run-update-notification", "windows-power-profile", "virtio-nightlight", "mute-terminal-bell"],
+         "Omarchy backports are explicitly ordered and identified",
+     )
+     for backport in backports:
+@@ -141,8 +141,8 @@ def main() -> None:
+     check("omarchy-provision-owner.service" in configure, "first boot uses upstream owner provisioning")
+     materialize = read(GUEST / "scripts/materialize-omarchy.sh")
+     check(
+-        "grep -qx 'kernel_updated=true' \"$restart_check\" ||" in materialize
+-        and "s|^kernel_updated=true$|kernel_updated=false # Try Omarchy: the launcher supplies the kernel|" in materialize
++        "[[ $(grep -cx '  kernel_updated=true' \"$restart_check\") == 1 ]] ||" in materialize
++        and "s|^  kernel_updated=true$|  kernel_updated=false # Try Omarchy: the launcher supplies the kernel|" in materialize
+         and materialize.index('restart_check="$root/usr/bin/omarchy-update-restart"')
+         > materialize.index('done < <(find "$source_dir/bin" -maxdepth 1 -type f | sort)'),
+         "updates do not ask to reboot for a kernel the guest never boots",
+-- 
+2.56.0
+

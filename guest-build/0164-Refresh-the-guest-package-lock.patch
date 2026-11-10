@@ -1,0 +1,82 @@
+From 58ab8e813092e73e00e2ed9b36108d7a36a13a22 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 00:44:30 -0500
+Subject: [PATCH] Refresh the guest package lock
+
+disktree-bin 0.11.0-3 (new)
+layer-shell-qt 6.8.2-1 (new)
+omasnap 1.25.0-1 (new)
+vi 1:070224-9 (new)
+xorg-xsetroot 1.1.4-1 (new)
+dua-cli (removed)
+tensaku (removed)
+---
+ guest/packages.lock.json | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index 0d4ecc9..3cc7d8c 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -60,9 +60,9 @@
+     "desktop-file-utils": "0.28-1",
+     "device-mapper": "2.03.44-1",
+     "diffutils": "3.12-2",
++    "disktree-bin": "0.11.0-3",
+     "dkms": "3.4.4-1",
+     "double-conversion": "3.4.0-1",
+-    "dua-cli": "3.0.0-1",
+     "duktape": "2.7.0-7",
+     "e2fsprogs": "1.47.4-1",
+     "elfutils": "0.197-1",
+@@ -205,6 +205,7 @@
+     "krb5": "1.22.2-1",
+     "l-smash": "2.14.5-4",
+     "lame": "4.0-1",
++    "layer-shell-qt": "6.8.2-1",
+     "lcms2": "2.20-1",
+     "leancrypto": "1.9.1-1",
+     "leptonica": "1.87.0-2",
+@@ -485,6 +486,7 @@
+     "omacut": "0.7.2-1",
+     "omarchy-keyring": "20251027-1",
+     "omarchy-nvim": "2026.9.21-5",
++    "omasnap": "1.25.0-1",
+     "omawrite": "0.7.2-1",
+     "oniguruma": "6.9.10-3",
+     "openal": "1.25.2-2",
+@@ -591,7 +593,6 @@
+     "systemd-sysvcompat": "262.1-1",
+     "tar": "1.35-5",
+     "tdb": "1.4.15-2",
+-    "tensaku": "0.29.0-2",
+     "tesseract": "5.5.4-1",
+     "tesseract-data-eng": "2:4.1.0-5",
+     "tesseract-data-osd": "2:4.1.0-5",
+@@ -626,6 +627,7 @@
+     "v4l-utils": "1.32.0-2",
+     "v4l2loopback-dkms": "0.15.4-2",
+     "vapoursynth": "81-1",
++    "vi": "1:070224-9",
+     "vid.stab": "1.1.2-1",
+     "vmaf": "3.2.1-1",
+     "volume_key": "0.3.12-12",
+@@ -669,6 +671,7 @@
+     "xorg-xauth": "1.1.5-1",
+     "xorg-xkbcomp": "1.5.0-1",
+     "xorg-xprop": "1.2.8-1",
++    "xorg-xsetroot": "1.1.4-1",
+     "xorg-xwayland": "24.1.14-1",
+     "xorgproto": "2026.1-1",
+     "xvidcore": "1.3.7-4",
+@@ -687,6 +690,6 @@
+     "zram-generator": "1.2.1-1",
+     "zstd": "1.5.7-3"
+   },
+-  "requestedFileSha256": "5ff88f13602d723e05e87b917f54144c74c05eeeb79755bc20e6300e871ce647",
++  "requestedFileSha256": "e769f066048803270d1d936c2b1ec4b418003a74971642e6cb7de98a9adb2b20",
+   "schemaVersion": 1
+ }
+-- 
+2.56.0
+

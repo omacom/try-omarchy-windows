@@ -1,0 +1,54 @@
+From 0515cb064620b6056567411d9d10b016d2c8a9b6 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sun, 8 Nov 2026 00:11:47 -0500
+Subject: [PATCH] Pin mise 2026.10.25 for Omarchy 4.5's lazy tools
+
+Omarchy 4.5 declares its default CLI tools as mise lazy tools and builds
+their shims with mise reshim --system at first login. Both need mise
+2026.10.11 or later; 2026.8.11 rejects --system, which stopped user
+setup. Newer release archives list their members in another order, so
+compare the member set instead of the listing order.
+---
+ guest/scripts/register-pinned-mise.sh |  4 +++-
+ guest/spec.json                       | 10 +++++-----
+ 2 files changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/guest/scripts/register-pinned-mise.sh b/guest/scripts/register-pinned-mise.sh
+index 15985c4..53644cb 100755
+--- a/guest/scripts/register-pinned-mise.sh
++++ b/guest/scripts/register-pinned-mise.sh
+@@ -148,7 +148,9 @@ cleanup() {
+ trap cleanup EXIT
+ 
+ expected_members=$'mise/\nmise/README.md\nmise/bin/\nmise/bin/mise\nmise/bin/mise.d\nmise/LICENSE\nmise/share/\nmise/share/fish/\nmise/share/fish/vendor_conf.d/\nmise/share/fish/vendor_conf.d/mise-activate.fish\nmise/man/\nmise/man/man1/\nmise/man/man1/mise.1'
+-actual_members=$(tar -tf "$asset_cache")
++# Releases list the same members in different orders.
++expected_members=$(LC_ALL=C sort <<<"$expected_members")
++actual_members=$(tar -tf "$asset_cache" | LC_ALL=C sort)
+ [[ $actual_members == "$expected_members" ]] || fail "mise archive has an unexpected member set"
+ install -d -m 0755 "$stage/extracted"
+ tar -xJf "$asset_cache" --no-same-owner -C "$stage/extracted"
+diff --git a/guest/spec.json b/guest/spec.json
+index b982f0f..5aee2be 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -59,11 +59,11 @@
+     "omarchyPackagesRepository": "https://github.com/omacom-io/omarchy-pkgs",
+     "omarchyPackagesCommit": "7e448b90313fea4fb78da9a78607287691d3b241",
+     "mise": {
+-      "version": "2026.8.11",
+-      "url": "https://github.com/jdx/mise/releases/download/v2026.8.11/mise-v2026.8.11-linux-x64.tar.xz",
+-      "sha256": "8e0c3d18e71956a0fb15f55069966bbf1d6139aa8f809f1b88897ea7ef6cf196",
+-      "binarySha256": "3d825b8341925abb398fba6fd8dcd7d6e92ade6820d892da62992e0765638e66",
+-      "reportedVersion": "2026.8.11 linux-x64 (2026-08-23)",
++      "version": "2026.10.25",
++      "url": "https://github.com/jdx/mise/releases/download/v2026.10.25/mise-v2026.10.25-linux-x64.tar.xz",
++      "sha256": "3c4d4abd8950e722543aa2ffe58dd9ee84430fc03c8a94d318f64b279229d8ff",
++      "binarySha256": "5d362ecc578dc7c146679b841dda949d6472cbf86ff5635db7afdca1b6b3fd87",
++      "reportedVersion": "2026.10.25 linux-x64 (2026-10-31)",
+       "license": "MIT"
+     },
+     "aquamarine": {
+-- 
+2.56.0
+

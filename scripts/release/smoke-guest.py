@@ -170,6 +170,14 @@ def main() -> None:
         EXPECTED_FACTS["nvim-theme-user"] = "yes"
         FACT_CHECKS["omarchy-nvim-files"] = "sudo pacman -Qk omarchy-nvim >/dev/null 2>&1 && echo yes || echo no"
         EXPECTED_FACTS["omarchy-nvim-files"] = "yes"
+    if args.compat_revision >= 68:
+        # Omarchy 4.5's first-install VM step would turn off animations and
+        # transparency for new users only; the image keeps the step inert so
+        # new and updated disks look alike.
+        FACT_CHECKS["vm-appearance-flags"] = (
+            "ls ~/.local/state/omarchy/toggles/hypr 2>/dev/null | grep -cxE 'no-animations[.]lua|window-opaque[.]lua' || true"
+        )
+        EXPECTED_FACTS["vm-appearance-flags"] = "0"
 
     login_delay = args.login_delay if args.login_delay is not None else (60 if args.accel == "tcg" else 0)
     if login_delay < 0:
