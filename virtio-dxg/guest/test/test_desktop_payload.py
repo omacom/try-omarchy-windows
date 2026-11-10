@@ -61,6 +61,9 @@ class DesktopData(unittest.TestCase):
 
     def test_valid_cohort(self):
         self.assertEqual(self.extract(), '26.2.6')
+        # The session user loads these libraries: the staged directory must
+        # not keep mkdtemp's owner-only mode.
+        self.assertEqual((self.root / 'installed').stat().st_mode & 0o055, 0o055)
         data = json.loads((self.root / 'installed/share/vulkan/icd.d/dzn_icd.x86_64.json').read_text())
         self.assertEqual(data['ICD']['library_path'], str(self.root / 'installed/lib/libvulkan_dzn.so'))
         self.assertEqual((self.root / 'installed/lib/libgbm.so').read_bytes(),

@@ -90,6 +90,9 @@ def extract(archive, destination, recipe):
             data = json.loads(icd.read_text(encoding='utf-8'))
             data['ICD']['library_path'] = str(destination / 'lib/libvulkan_dzn.so')
             icd.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+            # mkdtemp makes the stage 0700: the session's (unprivileged)
+            # processes must be able to enter it to load these libraries.
+            os.chmod(stage, 0o755)
             os.rename(stage, destination)
             # TemporaryDirectory tolerates its renamed source disappearing.
     return version
