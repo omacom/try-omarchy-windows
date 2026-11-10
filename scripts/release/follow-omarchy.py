@@ -24,7 +24,7 @@ def gh(*args):
 
 
 def version(value):
-    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", value)
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", value, re.ASCII)
     if not match:
         raise ValueError(f"Not a stable release version: {value!r}")
     return tuple(map(int, match.groups()))
@@ -121,9 +121,15 @@ def main():
     tag = release["tag_name"]
     version(tag)
     branch = f"omarchy-release/{tag}"
-    existing = gh("pr", "list", "--repo", repo, "--head", branch, "--state", "all", "--json", "number,state,url")
+    existing = gh("pr", "list", "--repo", repo, "--head", branch, "--state", "all",
+                  "--json", "number,state,url,isCrossRepository")
+    # A fork can open a PR from a branch with the same name; only ours counts.
+    existing = [item for item in existing if not item.get("isCrossRepository")]
     if existing:
         summary(f"Release already proposed: {existing[0]['url']}. Repair or validate that PR instead of overwriting it.")
+        return
+    if run("git", "ls-remote", "--heads", "origin", f"refs/heads/{branch}"):
+        summary(f"Branch {branch} already exists without a PR. Open a PR from it or delete it to retry.")
         return
     run("git", "config", "user.name", "github-actions[bot]")
     run("git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com")

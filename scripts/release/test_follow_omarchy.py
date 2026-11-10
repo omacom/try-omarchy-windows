@@ -21,7 +21,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertFalse(follow.newer_release({"tag_name": "v4.5.0", flag: True}, "4.0.5"))
 
     def test_rejects_untrusted_or_prerelease_tags(self):
-        for tag in ("v4.5.0-rc1", "main", "v4.5.0;true", "../v4.5.0", "v4.5", "v4.5.0\n"):
+        for tag in ("v4.5.0-rc1", "main", "v4.5.0;true", "../v4.5.0", "v4.5", "v4.5.0\n", "v\u0664.5.0"):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 follow.version(tag)
 
@@ -129,6 +129,22 @@ class IdempotenceTests(unittest.TestCase):
         ), patch.object(follow, "run") as run, patch.object(follow, "summary"):
             follow.main()
         run.assert_not_called()
+
+    def test_fork_pr_with_same_branch_name_is_ignored(self):
+        fork_pr = [{"url": "fork-pr", "state": "CLOSED", "isCrossRepository": True}]
+        with patch.dict(follow.os.environ, {"GITHUB_REPOSITORY": "omacom/try-omarchy-windows"}), patch.object(
+            follow, "gh", side_effect=[{"tag_name": "v4.5.0"}, fork_pr]
+        ), patch.object(follow, "run", return_value="abc\trefs/heads/omarchy-release/v4.5.0") as run, patch.object(follow, "summary"):
+            follow.main()
+        run.assert_called_once_with("git", "ls-remote", "--heads", "origin", "refs/heads/omarchy-release/v4.5.0")
+
+    def test_leftover_branch_without_pr_is_not_pushed_again(self):
+        with patch.dict(follow.os.environ, {"GITHUB_REPOSITORY": "omacom/try-omarchy-windows"}), patch.object(
+            follow, "gh", side_effect=[{"tag_name": "v4.5.0"}, []]
+        ), patch.object(follow, "run", return_value="abc\trefs/heads/omarchy-release/v4.5.0") as run, patch.object(follow, "summary") as summary:
+            follow.main()
+        self.assertEqual(run.call_count, 1)
+        self.assertIn("already exists without a PR", summary.call_args.args[0])
 
     def test_forks_cannot_publish_or_merge(self):
         with patch.dict(follow.os.environ, {"GITHUB_REPOSITORY": "fork/try-omarchy-windows"}), patch.object(follow, "gh") as gh:
