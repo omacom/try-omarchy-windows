@@ -91,6 +91,23 @@ bridges and the profile to existing disks whose `monitors.lua` is still the
 default, and runtime `4.5.0-15` carries the toggle.
 Patch 0177 refreshes the package lock for graphviz and hyprcursor.
 
+Patch 0178 holds `linux-headers` with `linux`. Only the kernel was held, so
+once Arch moved past the launcher's kernel (7.2.15 against 7.2.14),
+**Update > Omarchy** upgraded the headers, the DKMS hooks removed the camera
+and battery modules from the running kernel, and could not rebuild them for a
+kernel that is not installed. After the next boot there was no Windows camera
+and no battery mirror. Compatibility revision 70 adds the package to the
+`IgnorePkg` line that holds `linux` on existing disks, and the initramfs puts
+back the modules an Update removed, since a new revision re-extracts the
+complete module tree. When a release moves the launcher to a new kernel, that
+tree still brings the new kernel's DKMS modules; the held headers stay with the
+installed `linux` package, so DKMS keeps building against a kernel that has its
+modules. Disks that already lost the modules keep the newer headers, which
+have no matching kernel, until a release boots that kernel. The camera bridge
+now stops and shows as failed when its device is missing, instead of waiting
+as active.
+Patch 0179 refreshes the package lock, which brings in kernel 7.2.15.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME

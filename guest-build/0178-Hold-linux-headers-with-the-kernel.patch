@@ -1,0 +1,733 @@
+From 00f6831a99af299485ca682d6a450406bfec5810 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Tue, 10 Nov 2026 09:53:03 -0500
+Subject: [PATCH] Hold linux-headers with the kernel
+
+Only linux was held, so once Arch moved past the launcher's kernel, Update > Omarchy upgraded linux-headers and the DKMS hooks removed the camera and battery modules from the running kernel, then could not rebuild them for a kernel that is not installed. Hold the headers in new images, and have catch-up add them to the IgnorePkg line that holds linux on existing disks. Revision 70 also makes the initramfs extract the module tree again, which puts back the modules an Update removed.
+
+The camera bridge waited forever for /dev/video42 and showed as active with no camera. It now gives up after 30 seconds, and the unit stays failed.
+---
+ guest/build.sh                                |   1 +
+ .../omarchy-windows-camera-bridge.service     |   2 +
+ .../local/bin/omarchy-windows-camera-bridge   |  28 +-
+ .../usr/local/lib/try-omarchy/catch-up        |  10 +
+ .../local/lib/try-omarchy/hold-kernel-headers |  47 +++
+ guest/pacman-x86_64.conf                      |   5 +-
+ guest/scripts/finalize-rootfs.sh              |   6 +-
+ guest/tests/test_aquamarine_contract.py       |   2 +-
+ guest/tests/test_battery_details.py           |   2 +-
+ guest/tests/test_camera_bridge.py             |  24 ++
+ guest/tests/test_clipboard_pull.py            |   2 +-
+ guest/tests/test_compositor_health.py         |   2 +-
+ guest/tests/test_guest_qol.py                 |   2 +-
+ guest/tests/test_kernel_headers_hold.py       | 273 ++++++++++++++++++
+ guest/tests/test_live_update.py               |   2 +-
+ guest/tests/test_native_nightlight.py         |   2 +-
+ guest/tests/test_notification_privacy.py      |   2 +-
+ guest/tests/test_qt612_palette.py             |   2 +-
+ guest/tests/test_snapper_guest.py             |   2 +-
+ guest/tests/test_url_schemes.py               |   2 +-
+ guest/tests/test_windows_volume_sync.py       |   2 +-
+ guest/tests/verify.py                         |   9 +-
+ 22 files changed, 410 insertions(+), 19 deletions(-)
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/hold-kernel-headers
+ create mode 100644 guest/tests/test_kernel_headers_hold.py
+
+diff --git a/guest/build.sh b/guest/build.sh
+index 1b68763..6dc7a31 100755
+--- a/guest/build.sh
++++ b/guest/build.sh
+@@ -80,6 +80,7 @@ done
+ 
+ # Real libalpm resilience tests require Arch/root and run before staging.
+ REQUIRE_ALPM_TESTS=1 python3 -m unittest discover -s "$guest_dir/tests" -p 'test_aquamarine_upgrade.py'
++REQUIRE_ALPM_TESTS=1 python3 -m unittest discover -s "$guest_dir/tests" -p 'test_kernel_headers_hold.py'
+ 
+ output=$(mkdir -p "$output" && cd "$output" && pwd)
+ work=$(mkdir -p "$work" && cd "$work" && pwd)
+diff --git a/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service b/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+index 3660d11..d7d7bb9 100644
+--- a/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
++++ b/guest/factory-overlay/usr/lib/systemd/user/omarchy-windows-camera-bridge.service
+@@ -7,6 +7,8 @@ After=graphical-session-pre.target
+ ExecStart=/usr/local/bin/omarchy-windows-camera-bridge
+ Restart=always
+ RestartSec=1
++# The bridge exits 3 when the camera device is missing; stay failed then.
++RestartPreventExitStatus=3
+ 
+ [Install]
+ WantedBy=graphical-session.target
+diff --git a/guest/factory-overlay/usr/local/bin/omarchy-windows-camera-bridge b/guest/factory-overlay/usr/local/bin/omarchy-windows-camera-bridge
+index 4c3607a..eba20d2 100755
+--- a/guest/factory-overlay/usr/local/bin/omarchy-windows-camera-bridge
++++ b/guest/factory-overlay/usr/local/bin/omarchy-windows-camera-bridge
+@@ -18,6 +18,12 @@ from typing import Any
+ 
+ PORT = Path("/dev/virtio-ports/dev.tryomarchy.camera")
+ CAMERA = Path("/dev/video42")
++# v4l2loopback creates the device during early boot, long before the desktop
++# starts this service. Still missing after this long means the module is not
++# loaded, and the service should say so rather than wait forever as active.
++CAMERA_WAIT_SECONDS = 30
++# The unit's RestartPreventExitStatus, so a missing device leaves it failed.
++EXIT_NO_CAMERA = 3
+ MAGIC = b"TOCM"
+ VERSION = 1
+ HEADER = struct.Struct("<4sBBHII")
+@@ -263,11 +269,18 @@ def open_port() -> int:
+             time.sleep(1)
+ 
+ 
+-def open_camera() -> int:
++class CameraMissing(Exception):
++    pass
++
++
++def open_camera(wait: float = CAMERA_WAIT_SECONDS) -> int:
++    deadline = time.monotonic() + wait
+     while True:
+         try:
+             return os.open(CAMERA, os.O_RDWR | os.O_CLOEXEC)
+         except FileNotFoundError:
++            if time.monotonic() >= deadline:
++                raise CameraMissing from None
+             time.sleep(1)
+ 
+ 
+@@ -315,12 +328,19 @@ def main() -> int:
+         os.close(camera)
+ 
+ 
+-if __name__ == "__main__":
++def run() -> int:
+     try:
+-        raise SystemExit(main())
++        return main()
++    except CameraMissing:
++        log(f"{CAMERA} is missing because the v4l2loopback module is not loaded")
++        return EXIT_NO_CAMERA
+     except Exception as error:
+         if isinstance(error, OSError) and error.errno == errno.ENODEV:
+             log("the virtual camera device disappeared")
+         else:
+             log(str(error))
+-        raise SystemExit(1)
++        return 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(run())
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+index efeabe2..6d5c611 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+@@ -14,6 +14,7 @@
+ #     is public, once per disk
+ #   - remove the Foot-only xdg-terminal-exec an older image put in
+ #     /usr/local/bin, when it is still our unchanged copy
++#   - hold linux-headers with the linux package, once per disk
+ # Runs once per integration revision, before the display manager.
+ set -euo pipefail
+ 
+@@ -47,6 +48,15 @@ if [[ -x $battery_installer ]] && { [[ ! $previous_revision =~ ^[0-9]+$ ]] || ((
+   "$battery_installer"
+ fi
+ 
++# Hold linux-headers with the kernel. Disks from before revision 70 hold only
++# linux, so Update > Omarchy moved the headers past the kernel the launcher
++# boots and the DKMS hooks removed the camera and battery modules from it.
++# The initramfs puts those modules back whenever the revision changes.
++headers_hold=${TRY_OMARCHY_HEADERS_HOLD:-/usr/local/lib/try-omarchy/hold-kernel-headers}
++if [[ -x $headers_hold ]] && { [[ ! $previous_revision =~ ^[0-9]+$ ]] || (( previous_revision < 70 )); }; then
++  "$headers_hold"
++fi
++
+ # Upgrade reviewed night-light defaults and their package-conflict recovery,
+ # preserving custom commands and services.
+ nightlight_installer=${TRY_OMARCHY_NIGHTLIGHT_INSTALLER:-/usr/local/lib/try-omarchy/install-nightlight}
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/hold-kernel-headers b/guest/factory-overlay/usr/local/lib/try-omarchy/hold-kernel-headers
+new file mode 100755
+index 0000000..67b477f
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/hold-kernel-headers
+@@ -0,0 +1,47 @@
++#!/bin/bash
++# Holds linux-headers with the linux package on disks created before the
++# image held both. Without the hold, Update > Omarchy moved the headers to
++# Arch's newer kernel, and the DKMS hooks removed the camera and battery
++# modules from the kernel the launcher boots. The package goes on the
++# IgnorePkg line that already holds linux. A configuration without that hold
++# is the administrator's and is left alone.
++set -euo pipefail
++
++config=${TRY_OMARCHY_PACMAN_CONF:-/etc/pacman.conf}
++
++if [[ ! -f $config || -L $config ]]; then
++  echo "left $config alone: not a regular file"
++  exit 0
++fi
++
++# Prints the line number of the [options] IgnorePkg line that holds linux, or
++# "held" when [options] already holds linux-headers.
++target=$(awk '
++  /^[[:space:]]*\[.*\][[:space:]]*$/ { options = ($0 ~ /^[[:space:]]*\[options\][[:space:]]*$/); next }
++  options && /^[[:space:]]*IgnorePkg[[:space:]]*=/ {
++    value = $0; sub(/^[^=]*=/, "", value)
++    count = split(value, names, /[[:space:]]+/)
++    for (i = 1; i <= count; i++) {
++      if (names[i] == "linux-headers") held = 1
++      if (names[i] == "linux" && !line) line = NR
++    }
++  }
++  END { if (held) print "held"; else if (line) print line }
++' "$config")
++
++if [[ $target == held ]]; then
++  exit 0
++fi
++if [[ -z $target ]]; then
++  echo "left $config alone: it does not hold the linux package"
++  exit 0
++fi
++
++tmp=$(mktemp "$(dirname "$config")/.pacman.conf.XXXXXX")
++trap 'rm -f "$tmp"' EXIT
++awk -v line="$target" 'NR == line { sub(/[[:space:]]*$/, " linux-headers") } { print }' "$config" >"$tmp"
++chown --reference="$config" "$tmp"
++chmod --reference="$config" "$tmp"
++mv -f "$tmp" "$config"
++trap - EXIT
++echo "held linux-headers with the kernel in $config"
+diff --git a/guest/pacman-x86_64.conf b/guest/pacman-x86_64.conf
+index facfdeb..bf2fa46 100644
+--- a/guest/pacman-x86_64.conf
++++ b/guest/pacman-x86_64.conf
+@@ -10,7 +10,10 @@ HoldPkg = pacman glibc
+ # QEMU direct-boots the immutable kernel and initramfs beside the guest disk.
+ # Keep the installed modules on that exact ABI until the native launcher can
+ # atomically promote a matching external kernel and initramfs after updates.
+-IgnorePkg = linux
++# The headers stay with it: when an upgrade replaces them, DKMS removes the
++# camera and battery modules from the running kernel and cannot rebuild them
++# against headers for a kernel the launcher does not boot.
++IgnorePkg = linux linux-headers
+ Architecture = auto
+ CheckSpace
+ ParallelDownloads = 5
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 16cde8b..81ace91 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -181,6 +181,7 @@ compat_paths=(
+   usr/local/lib/try-omarchy/agent
+   usr/local/lib/try-omarchy/compositor-health
+   usr/local/lib/try-omarchy/update-battery-dkms
++  usr/local/lib/try-omarchy/hold-kernel-headers
+   usr/local/lib/try-omarchy/battery-apply
+   usr/local/lib/try-omarchy/apply-host-locale
+   usr/local/lib/try-omarchy/catch-up
+@@ -261,7 +262,10 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # It also delivers the audio bridge that waits on PipeWire events.
+ # It also refreshes the QEMU profile so Appearance can turn animations back on
+ # when rendering on the CPU.
+-compat_revision=69
++# Revision 70 holds linux-headers with the kernel, puts back the camera and
++# battery modules an Update had removed, and stops the camera bridge when
++# its device is missing.
++compat_revision=70
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_aquamarine_contract.py b/guest/tests/test_aquamarine_contract.py
+index 5165300..fc821de 100644
+--- a/guest/tests/test_aquamarine_contract.py
++++ b/guest/tests/test_aquamarine_contract.py
+@@ -76,7 +76,7 @@ class AquamarineContractTests(unittest.TestCase):
+         runtime = (GUEST / 'scripts/register-omarchy-runtime.sh').read_text()
+         self.assertIn('depend = aquamarine>={version}', runtime)
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=69', finalizer)
++        self.assertIn('compat_revision=70', finalizer)
+         self.assertIn('cp /usr/share/try-omarchy/repo/*.pkg.tar.zst', finalizer)
+         self.assertIn('usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua', finalizer)
+         repo = (GUEST / 'scripts/register-local-repository.sh').read_text()
+diff --git a/guest/tests/test_battery_details.py b/guest/tests/test_battery_details.py
+index ce14ee4..34cd11e 100644
+--- a/guest/tests/test_battery_details.py
++++ b/guest/tests/test_battery_details.py
+@@ -204,7 +204,7 @@ class BatteryDetailsFlowTests(unittest.TestCase):
+     def test_compatibility_delivery_and_dkms_version(self):
+         overlay = GUEST / "factory-overlay"
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=69", finalize)
++        self.assertIn("compat_revision=70", finalize)
+         self.assertIn("usr/src/try-omarchy-battery-1.1.0", finalize)
+         self.assertIn("usr/local/lib/try-omarchy/update-battery-dkms", finalize)
+         self.assertIn('PACKAGE_VERSION="1.1.0"', (MODULE_SOURCE.parent / "dkms.conf").read_text())
+diff --git a/guest/tests/test_camera_bridge.py b/guest/tests/test_camera_bridge.py
+index fb8ca06..7fad086 100644
+--- a/guest/tests/test_camera_bridge.py
++++ b/guest/tests/test_camera_bridge.py
+@@ -30,6 +30,30 @@ class WindowsCameraBridgeTests(unittest.TestCase):
+         rules = (OVERLAY / 'etc/udev/rules.d/70-try-omarchy-camera.rules').read_text()
+         self.assertEqual(rules.count('TAG+="uaccess"'), 2)
+ 
++    def test_missing_camera_device_leaves_the_service_failed(self) -> None:
++        clock = iter(range(0, 1000, 10))
++        with mock.patch.object(bridge.os, "open", side_effect=FileNotFoundError), \
++                mock.patch.object(bridge.time, "monotonic", side_effect=lambda: next(clock)), \
++                mock.patch.object(bridge.time, "sleep") as sleep:
++            with self.assertRaises(bridge.CameraMissing):
++                bridge.open_camera()
++        # Checked at 0, 10 and 20 seconds, given up at 30.
++        self.assertEqual(sleep.call_count, 2)
++        with mock.patch.object(bridge, "open_camera", side_effect=bridge.CameraMissing), \
++                mock.patch.object(bridge, "log") as log:
++            result = bridge.run()
++        self.assertEqual(result, bridge.EXIT_NO_CAMERA)
++        self.assertIn("v4l2loopback", log.call_args.args[0])
++        unit = (OVERLAY / "usr/lib/systemd/user/omarchy-windows-camera-bridge.service").read_text()
++        self.assertIn(f"RestartPreventExitStatus={bridge.EXIT_NO_CAMERA}\n", unit)
++        self.assertIn("Restart=always\n", unit)
++
++    def test_camera_device_that_appears_late_is_opened(self) -> None:
++        with mock.patch.object(bridge.os, "open", side_effect=[FileNotFoundError, FileNotFoundError, 7]), \
++                mock.patch.object(bridge.time, "sleep") as sleep:
++            self.assertEqual(bridge.open_camera(), 7)
++        self.assertEqual(sleep.call_count, 2)
++
+     def message(self, kind: int, payload: bytes, sequence: int = 0) -> bytes:
+         return bridge.HEADER.pack(
+             bridge.MAGIC,
+diff --git a/guest/tests/test_clipboard_pull.py b/guest/tests/test_clipboard_pull.py
+index df79d40..efb6a60 100644
+--- a/guest/tests/test_clipboard_pull.py
++++ b/guest/tests/test_clipboard_pull.py
+@@ -71,4 +71,4 @@ class ClipboardPullTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn('usr/local/bin/clipboard-bridge', paths)
+-        self.assertIn('compat_revision=69', finalizer)
++        self.assertIn('compat_revision=70', finalizer)
+diff --git a/guest/tests/test_compositor_health.py b/guest/tests/test_compositor_health.py
+index f53fad8..1bc9793 100644
+--- a/guest/tests/test_compositor_health.py
++++ b/guest/tests/test_compositor_health.py
+@@ -55,7 +55,7 @@ class CompositorHealthTests(unittest.TestCase):
+ 
+     def test_existing_disks_receive_health_files(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=69', finalizer)
++        self.assertIn('compat_revision=70', finalizer)
+         for name in ['agent', 'compositor-health']:
+             self.assertIn('  usr/local/lib/try-omarchy/' + name, finalizer)
+         self.assertTrue(HELPER.stat().st_mode & 0o111)
+diff --git a/guest/tests/test_guest_qol.py b/guest/tests/test_guest_qol.py
+index b888b71..626fd12 100644
+--- a/guest/tests/test_guest_qol.py
++++ b/guest/tests/test_guest_qol.py
+@@ -225,7 +225,7 @@ class GuestQolTests(unittest.TestCase):
+     def test_compatibility_delivers_guarded_payload_once_per_revision(self):
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalize.split("compat_paths=(", 1)[1].split(")", 1)[0]
+-        self.assertIn("compat_revision=69", finalize)
++        self.assertIn("compat_revision=70", finalize)
+         for path in ("usr/local/bin/omarchy-native-screensaver-text", "usr/local/lib/try-omarchy/install-guest-qol", "usr/share/try-omarchy/guest-qol", "usr/local/bin/omarchy-windows-audio-bridge"):
+             self.assertIn(path, paths)
+         self.assertNotIn("etc/fonts/conf.d/30-try-omarchy.conf", paths)
+diff --git a/guest/tests/test_kernel_headers_hold.py b/guest/tests/test_kernel_headers_hold.py
+new file mode 100644
+index 0000000..bfa0c99
+--- /dev/null
++++ b/guest/tests/test_kernel_headers_hold.py
+@@ -0,0 +1,273 @@
++"""linux-headers stays with the kernel the launcher boots.
++
++Update > Omarchy used to move linux-headers past the held linux package, and
++the DKMS hooks then removed the camera and battery modules from the running
++kernel. These tests cover the image's hold, the catch-up step that adds it to
++existing disks, the module repair on the next revision, and a later kernel
++change with the hold in place. The pacman tests run real libalpm transactions
++on Arch builders and are skipped elsewhere.
++"""
++import io
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import tarfile
++import tempfile
++import unittest
++
++GUEST = Path(__file__).resolve().parents[1]
++OVERLAY = GUEST / 'factory-overlay'
++HOLD = OVERLAY / 'usr/local/lib/try-omarchy/hold-kernel-headers'
++CATCH_UP = OVERLAY / 'usr/local/lib/try-omarchy/catch-up'
++HOOK = OVERLAY / 'etc/initcpio/hooks/tryomarchy_compat'
++
++# /etc/pacman.conf's [options] as v0.14.0 and earlier images shipped it.
++OLD_OPTIONS = '''[options]
++Color
++HoldPkg = pacman glibc
++# QEMU direct-boots the immutable kernel and initramfs beside the guest disk.
++IgnorePkg = linux
++Architecture = auto
++'''
++REPOSITORIES = '''
++[omarchy]
++Server = https://pkgs.omarchy.org/stable/$arch
++
++[core]
++Include = /etc/pacman.d/mirrorlist
++'''
++
++ALPM = os.geteuid() == 0 and all(shutil.which(x) for x in ('pacman', 'repo-add'))
++if os.environ.get('REQUIRE_ALPM_TESTS') == '1' and not ALPM:
++    raise RuntimeError('required Arch transaction tools unavailable')
++
++
++def ignored(config):
++    """Package names pacman ignores, read the way pacman reads [options]."""
++    names, options = [], False
++    for line in config.splitlines():
++        line = line.strip()
++        if line.startswith('['):
++            options = line == '[options]'
++        elif options and line.split('=')[0].strip() == 'IgnorePkg':
++            names += line.split('=', 1)[1].split()
++    return names
++
++
++class HoldTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.root = Path(self.tmp.name)
++        self.config = self.root / 'pacman.conf'
++
++    def hold(self, text, mode=0o644):
++        self.config.write_text(text)
++        self.config.chmod(mode)
++        result = subprocess.run([str(HOLD)], env={**os.environ, 'TRY_OMARCHY_PACMAN_CONF': str(self.config)},
++                                text=True, capture_output=True)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        return result.stdout
++
++    def test_image_holds_headers_with_the_kernel(self):
++        config = (GUEST / 'pacman-x86_64.conf').read_text()
++        self.assertEqual(ignored(config), ['linux', 'linux-headers'])
++
++    def test_existing_disk_gets_the_hold_once(self):
++        output = self.hold(OLD_OPTIONS + REPOSITORIES, 0o640)
++        text = self.config.read_text()
++        self.assertIn('held linux-headers', output)
++        self.assertEqual(ignored(text), ['linux', 'linux-headers'])
++        self.assertEqual(text, (OLD_OPTIONS + REPOSITORIES).replace('IgnorePkg = linux\n', 'IgnorePkg = linux linux-headers\n'))
++        self.assertEqual(self.config.stat().st_mode & 0o777, 0o640)
++        self.assertEqual(self.hold(text, 0o640), '')
++        self.assertEqual(self.config.read_text(), text)
++
++    def test_keeps_other_held_packages(self):
++        self.hold(OLD_OPTIONS.replace('IgnorePkg = linux\n', 'IgnorePkg = firefox\nIgnorePkg = linux  mesa \n') + REPOSITORIES)
++        self.assertEqual(ignored(self.config.read_text()), ['firefox', 'linux', 'mesa', 'linux-headers'])
++
++    def test_leaves_a_configuration_that_already_holds_headers(self):
++        text = OLD_OPTIONS.replace('IgnorePkg = linux\n', 'IgnorePkg = linux\nIgnorePkg=linux-headers\n') + REPOSITORIES
++        self.assertEqual(self.hold(text), '')
++        self.assertEqual(self.config.read_text(), text)
++
++    def test_leaves_a_configuration_without_the_kernel_hold(self):
++        for text in [OLD_OPTIONS.replace('IgnorePkg = linux\n', '') + REPOSITORIES,
++                     OLD_OPTIONS.replace('IgnorePkg = linux\n', 'IgnorePkg = linux-lts\n#IgnorePkg = linux\n') + REPOSITORIES,
++                     OLD_OPTIONS.replace('IgnorePkg = linux\n', '') + REPOSITORIES + 'IgnorePkg = linux\n']:
++            self.assertIn('does not hold the linux package', self.hold(text))
++            self.assertEqual(self.config.read_text(), text)
++
++    def test_catch_up_runs_the_hold_below_revision_70(self):
++        state = self.root / 'state'
++        version = self.root / 'compat-version'
++        version.write_text('70:7.2.14-arch1-1\n')
++        homes = self.root / 'home'
++        homes.mkdir()
++        log = self.root / 'held'
++        hold = self.root / 'hold'
++        hold.write_text(f'#!/bin/sh\necho run >> {log}\n')
++        hold.chmod(0o755)
++        env = {**os.environ, 'TRY_OMARCHY_COMPAT_VERSION': str(version), 'TRY_OMARCHY_STATE_DIR': str(state),
++               'TRY_OMARCHY_HOMES': str(homes), 'TRY_OMARCHY_HEADERS_HOLD': str(hold)}
++        for name in ('QOL', 'BATTERY', 'NIGHTLIGHT', 'NOTIFICATIONS', 'PALETTE'):
++            env[f'TRY_OMARCHY_{name}_INSTALLER'] = '/nonexistent'
++        env['TRY_OMARCHY_SSHD_CONFIG_DIR'] = str(self.root / 'sshd')
++        env['TRY_OMARCHY_TERMINAL_SHIM'] = str(self.root / 'shim')
++        runs = []
++        for previous in ['', '67', '69', '70']:
++            state.mkdir(exist_ok=True)
++            marker = state / 'catch-up-revision'
++            marker.unlink(missing_ok=True)
++            if previous:
++                marker.write_text(previous + '\n')
++            log.unlink(missing_ok=True)
++            result = subprocess.run(['bash', str(CATCH_UP)], env=env, text=True, capture_output=True)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            runs.append(log.exists())
++        self.assertEqual(runs, [True, True, True, False])
++
++    def test_revision_70_delivers_the_hold(self):
++        finalize = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
++        paths = finalize.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
++        self.assertIn('usr/local/lib/try-omarchy/hold-kernel-headers', paths)
++        self.assertIn('compat_revision=70', finalize)
++        self.assertTrue(os.access(HOLD, os.X_OK))
++
++
++class ModuleRepairTests(unittest.TestCase):
++    """The initramfs hook on a disk whose Update removed the DKMS modules."""
++
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.root = Path(self.tmp.name)
++        self.guest = self.root / 'guest'
++
++    def files(self, base, files):
++        for name, value in files.items():
++            path = base / name
++            path.parent.mkdir(parents=True, exist_ok=True)
++            path.write_text(value)
++
++    def boot(self, kernel, version, modules):
++        """Run the latehook as the launcher's initramfs for kernel would."""
++        (self.root / 'version').write_text(version + '\n')
++        with tarfile.open(self.root / 'overlay.tar', 'w'):
++            pass
++        with tarfile.open(self.root / 'modules.tar', 'w') as out:
++            for name, value in modules.items():
++                data = value.encode()
++                info = tarfile.TarInfo(f'{kernel}/{name}')
++                info.size = len(data)
++                out.addfile(info, io.BytesIO(data))
++        script = HOOK.read_text().replace('root=/new_root', 'root=' + str(self.guest))
++        for before, after in [('tryomarchy-compat-version', 'version'), ('tryomarchy-compat-overlay.tar', 'overlay.tar'),
++                              ('tryomarchy-kernel-modules.tar', 'modules.tar')]:
++            script = script.replace('/' + before, str(self.root / after))
++        script = script.replace('kernel=$(uname -r)', 'kernel=' + kernel)
++        result = subprocess.run(['sh', '-c', script + '\nrun_latehook'], text=True, capture_output=True)
++        self.assertEqual(result.returncode, 0, result.stderr)
++
++    def delivered(self, tag):
++        return {'modules.dep.bin': f'dep {tag}', 'kernel/drivers/net/tun.ko': f'tun {tag}',
++                'updates/dkms/v4l2loopback.ko.zst': f'camera {tag}',
++                'updates/dkms/try_omarchy_battery.ko.zst': f'battery {tag}'}
++
++    def test_next_revision_puts_back_modules_an_update_removed(self):
++        old = 'old-kernel'
++        tree = self.guest / 'usr/lib/modules' / old
++        self.files(tree, self.delivered('image'))
++        self.files(tree, {'.tryomarchy-complete': f'69:{old}\n'})
++        self.files(self.guest, {'usr/share/try-omarchy/compat-version': f'69:{old}\n'})
++        # What the DKMS remove hook left behind after the headers upgrade.
++        for name in ('v4l2loopback.ko.zst', 'try_omarchy_battery.ko.zst'):
++            (tree / 'updates/dkms' / name).unlink()
++        (tree / 'modules.dep.bin').write_text('dep without dkms')
++        self.boot(old, f'69:{old}', self.delivered('image'))
++        self.assertFalse((tree / 'updates/dkms/v4l2loopback.ko.zst').exists())
++        self.boot(old, f'70:{old}', self.delivered('image'))
++        for name, value in self.delivered('image').items():
++            self.assertEqual((tree / name).read_text(), value)
++
++    def test_kernel_change_with_the_hold_in_place(self):
++        # The disk keeps linux and linux-headers for the image's kernel. A
++        # release that moves the launcher to a new kernel delivers that
++        # kernel's complete tree, DKMS modules included, without headers.
++        old, new = 'old-kernel', 'new-kernel'
++        old_tree = self.guest / 'usr/lib/modules' / old
++        self.files(old_tree, {**self.delivered('old'), 'build/include/linux/version.h': 'headers'})
++        self.boot(new, f'70:{new}', self.delivered('new'))
++        new_tree = self.guest / 'usr/lib/modules' / new
++        for name, value in self.delivered('new').items():
++            self.assertEqual((new_tree / name).read_text(), value)
++        self.assertFalse((new_tree / 'build').exists())
++        self.assertEqual((old_tree / 'build/include/linux/version.h').read_text(), 'headers')
++        self.assertEqual((old_tree / 'updates/dkms/v4l2loopback.ko.zst').read_text(), 'camera old')
++
++
++@unittest.skipUnless(ALPM, 'requires an Arch builder as root')
++class TransactionTests(unittest.TestCase):
++    """Real pacman -Syu runs with the image's and a caught-up disk's options."""
++
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.base = Path(self.tmp.name)
++        self.root = self.base / 'root'
++        for name in ('var/lib/pacman/local', 'var/lib/pacman/sync', 'var/cache/pacman/pkg', 'var/log', 'tmp'):
++            (self.root / name).mkdir(parents=True, exist_ok=True)
++        self.repo = self.base / 'arch'
++        self.repo.mkdir()
++
++    def package(self, name, version):
++        stage = self.base / f'{name}-{version}'
++        stage.mkdir()
++        (stage / '.PKGINFO').write_text(f'pkgname = {name}\npkgver = {version}\npkgdesc = fixture\narch = x86_64\nsize = 1\n')
++        archive = self.repo / f'{name}-{version}-x86_64.pkg.tar.gz'
++        with tarfile.open(archive, 'w:gz') as tar:
++            tar.add(stage / '.PKGINFO', arcname='.PKGINFO')
++        return archive
++
++    def pacman(self, config, *args):
++        result = subprocess.run(['pacman', '--noconfirm', '--config', str(config), '--root', str(self.root),
++                                 '--dbpath', str(self.root / 'var/lib/pacman'),
++                                 '--logfile', str(self.root / 'var/log/pacman.log'), *args],
++                                text=True, capture_output=True)
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++        return result.stdout
++
++    def upgrade_with(self, options):
++        config = self.base / 'pacman.conf'
++        config.write_text(f'''{options}CacheDir = {self.root}/var/cache/pacman/pkg
++SigLevel = Never
++LocalFileSigLevel = Never
++DisableSandbox
++[arch]
++Server = file://{self.repo}
++''')
++        names = ('linux', 'linux-headers', 'v4l2loopback-dkms')
++        self.pacman(config, '-U', '--noscriptlet', *(str(self.package(n, '1-1')) for n in names))
++        new = [self.package(n, '2-1') for n in names]
++        subprocess.run(['repo-add', '-q', str(self.repo / 'arch.db.tar.gz'), *map(str, new)], check=True, capture_output=True)
++        self.pacman(config, '-Syu')
++        return dict(line.split() for line in self.pacman(config, '-Q').splitlines())
++
++    def test_image_options_keep_kernel_and_headers_and_upgrade_the_rest(self):
++        conf = (GUEST / 'pacman-x86_64.conf').read_text()
++        options = ''.join(f'IgnorePkg = {name}\n' for name in ignored(conf))
++        installed = self.upgrade_with('[options]\nArchitecture = x86_64\n' + options)
++        self.assertEqual(installed, {'linux': '1-1', 'linux-headers': '1-1', 'v4l2loopback-dkms': '2-1'})
++
++    def test_caught_up_disk_keeps_kernel_and_headers(self):
++        config = self.base / 'old.conf'
++        config.write_text(OLD_OPTIONS.replace('Architecture = auto', 'Architecture = x86_64'))
++        subprocess.run([str(HOLD)], env={**os.environ, 'TRY_OMARCHY_PACMAN_CONF': str(config)}, check=True, capture_output=True)
++        installed = self.upgrade_with(config.read_text())
++        self.assertEqual(installed, {'linux': '1-1', 'linux-headers': '1-1', 'v4l2loopback-dkms': '2-1'})
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/guest/tests/test_live_update.py b/guest/tests/test_live_update.py
+index 99cbad7..a6cbe8c 100644
+--- a/guest/tests/test_live_update.py
++++ b/guest/tests/test_live_update.py
+@@ -176,7 +176,7 @@ class LiveUpdateTests(unittest.TestCase):
+ 
+     def test_delivery_and_best_effort_hook(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=69', finalizer)
++        self.assertIn('compat_revision=70', finalizer)
+         for path in ['usr/local/lib/try-omarchy/live-update', 'etc/pacman.d/hooks/00-try-omarchy-live-update.hook', 'etc/pacman.d/hooks/zz-try-omarchy-live-update.hook']:
+             self.assertIn(path, finalizer)
+         pre = (GUEST / 'factory-overlay/etc/pacman.d/hooks/00-try-omarchy-live-update.hook').read_text()
+diff --git a/guest/tests/test_native_nightlight.py b/guest/tests/test_native_nightlight.py
+index 193858c..00565d8 100644
+--- a/guest/tests/test_native_nightlight.py
++++ b/guest/tests/test_native_nightlight.py
+@@ -214,5 +214,5 @@ class PersistentNightlightTests(unittest.TestCase):
+         catch_up = (self.overlay / 'usr/local/lib/try-omarchy/catch-up').read_text()
+         for path in ['usr/local/bin/omarchy-native-nightlight', 'usr/local/share/try-omarchy/nightlight.frag', 'usr/local/lib/try-omarchy/install-nightlight', 'usr/share/try-omarchy/nightlight']:
+             self.assertIn(path, finalizer)
+-        self.assertIn('compat_revision=69', finalizer)
++        self.assertIn('compat_revision=70', finalizer)
+         self.assertIn('previous_revision < 55', catch_up)
+diff --git a/guest/tests/test_notification_privacy.py b/guest/tests/test_notification_privacy.py
+index bc1c107..532cbb5 100644
+--- a/guest/tests/test_notification_privacy.py
++++ b/guest/tests/test_notification_privacy.py
+@@ -116,7 +116,7 @@ for (const state of [null, {screensaverStateKnown:false}, {screensaverStateKnown
+     def test_compatibility_overlay_and_catch_up_revision(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         catch_up = (GUEST / 'factory-overlay/usr/local/lib/try-omarchy/catch-up').read_text()
+-        self.assertIn('compat_revision=69', finalizer)
++        self.assertIn('compat_revision=70', finalizer)
+         self.assertIn('usr/share/try-omarchy/notifications', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-notifications', finalizer)
+         self.assertIn('previous_revision < 52', catch_up)
+diff --git a/guest/tests/test_qt612_palette.py b/guest/tests/test_qt612_palette.py
+index 81ed532..cbb789b 100644
+--- a/guest/tests/test_qt612_palette.py
++++ b/guest/tests/test_qt612_palette.py
+@@ -170,7 +170,7 @@ class Qt612PaletteTests(unittest.TestCase):
+     def test_compatibility_delivery_runs_after_older_repairs_and_before_login(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+-        self.assertIn('compat_revision=69', finalizer)
++        self.assertIn('compat_revision=70', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-qt612-palette', paths)
+         self.assertIn('usr/share/try-omarchy/qt612-palette', paths)
+         self.assertEqual(self.build_spec['upstream']['packageRelease'], 15)
+diff --git a/guest/tests/test_snapper_guest.py b/guest/tests/test_snapper_guest.py
+index 905ff82..3a6ca63 100644
+--- a/guest/tests/test_snapper_guest.py
++++ b/guest/tests/test_snapper_guest.py
+@@ -44,5 +44,5 @@ class GuestSnapperTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn(TARGET, paths)
+-        self.assertIn('compat_revision=69', finalizer)
++        self.assertIn('compat_revision=70', finalizer)
+         self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 15)
+diff --git a/guest/tests/test_url_schemes.py b/guest/tests/test_url_schemes.py
+index b3a4ab8..3b98363 100644
+--- a/guest/tests/test_url_schemes.py
++++ b/guest/tests/test_url_schemes.py
+@@ -398,7 +398,7 @@ class DeliveryTests(unittest.TestCase):
+     def test_revision_62_delivers_the_link_helper(self) -> None:
+         finalizer = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalizer.split("compat_paths=(", 1)[1].split(")", 1)[0].split()
+-        self.assertIn("compat_revision=69", finalizer)
++        self.assertIn("compat_revision=70", finalizer)
+         self.assertIn("# Revision 62 opens links from Windows for approved URL schemes.", finalizer)
+         for path in ("usr/local/lib/try-omarchy/url-schemes", "usr/local/lib/try-omarchy/agent"):
+             self.assertIn(path, paths)
+diff --git a/guest/tests/test_windows_volume_sync.py b/guest/tests/test_windows_volume_sync.py
+index c3703de..0ad3e76 100644
+--- a/guest/tests/test_windows_volume_sync.py
++++ b/guest/tests/test_windows_volume_sync.py
+@@ -285,7 +285,7 @@ class VolumeSyncTests(unittest.TestCase):
+ 
+     def test_revision_delivers_bridge_to_existing_disks(self):
+         finalize = (Path(__file__).resolve().parents[1] / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=69", finalize)
++        self.assertIn("compat_revision=70", finalize)
+         self.assertIn("usr/local/bin/omarchy-windows-audio-bridge", finalize)
+ 
+ 
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index e860bdf..9f4d36a 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -319,13 +319,20 @@ def main() -> None:
+         == ["v4l2loopback_version-override", "try-omarchy-battery_version-override"],
+         "DKMS takes over the delivered camera and battery modules",
+     )
++    # An upgrade that moves the headers past the launcher's kernel makes DKMS
++    # remove the camera and battery modules from the kernel that is running.
++    check(
++        "\nIgnorePkg = linux linux-headers\n" in read(GUEST / "pacman-x86_64.conf")
++        and "usr/local/lib/try-omarchy/hold-kernel-headers" in compat_paths,
++        "linux-headers stays with the kernel the launcher boots on new and existing disks",
++    )
+     watchdog_dropin = read(GUEST / "factory-overlay/etc/systemd/system/service.d/10-try-omarchy-watchdog.conf")
+     check(
+         "[Service]\nWatchdogSec=0\n" in watchdog_dropin,
+         "system services run without watchdogs, which fire after Windows sleeps",
+     )
+     check(
+-        "compat_revision=69" in finalize_rootfs
++        "compat_revision=70" in finalize_rootfs
+         and "usr/local/bin/mpv" in compat_paths
+         and "usr/share/dkms/modules_to_force_install/try-omarchy" in compat_paths
+         and "usr/local/lib/try-omarchy/try-omarchy-import.pyz" in compat_paths
+-- 
+2.56.0
+
