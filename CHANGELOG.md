@@ -7,6 +7,10 @@
   shows progress while it checks an existing system image. shell.log records
   when each long setup step and each setup question started and how long it
   took.
+- A first boot that runs while the PC's displays are off or the session is
+  locked no longer ends at the blank-window prompt. The launcher stops
+  checking the Omarchy window until the screen can be seen again, and records
+  GPU rendering as working once it does.
 
 ## v0.14.0 - 2026-11-08
 

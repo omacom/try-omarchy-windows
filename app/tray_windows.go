@@ -223,6 +223,7 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 
 	var hwnd uintptr
 	unregisterPower := func() {}
+	unregisterCapture := func() {}
 	var nid notifyIconData
 	var aboutOpen atomic.Bool
 	var settingsOpen, diagnosticsOpen, devicesOpen atomic.Bool
@@ -421,6 +422,12 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 	}
 
 	wndProc := syscall.NewCallback(func(window, message, wParam, lParam uintptr) uintptr {
+		if captureWindowMessage(uint32(message), wParam, lParam) {
+			if message == wmPowerbroadcast {
+				return 1
+			}
+			return 0
+		}
 		if taskbarCreated != 0 && message == uintptr(taskbarCreated) {
 			retry = trayAddRetry{}
 			retryAdd()
@@ -507,6 +514,7 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 		case wmDestroy:
 			user32.NewProc("KillTimer").Call(window, retryTimer)
 			unregisterPower()
+			unregisterCapture()
 			trayWindow.CompareAndSwap(window, 0)
 			procShellNotifyIconW.Call(nimDelete, uintptr(unsafe.Pointer(&nid)))
 			procPostQuitMessage.Call(0)
@@ -543,6 +551,8 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 		logf("power: %v; ordinary sleep broadcasts remain available", err)
 	}
 	defer unregisterPower()
+	unregisterCapture = registerCaptureNotifications(hwnd)
+	defer unregisterCapture()
 	nid.size = uint32(unsafe.Sizeof(nid))
 	nid.id = trayIconID
 	nid.flags = nifMessage | nifIcon | nifTip | nifShowTip

@@ -215,10 +215,14 @@ func curtainTick(primary uintptr) {
 			uiStatus("%s", status)
 		}
 	}
-	if primary != 0 && times.checkPaint() && curtainCapturing.CompareAndSwap(false, true) {
+	if primary != 0 && times.checkPaint() && hostCapture.usable() && curtainCapturing.CompareAndSwap(false, true) {
 		go func() {
 			defer curtainCapturing.Store(false)
 			painted := windowShowsDesktop(primary)
+			// The screen went dark during the capture: it saw nothing.
+			if !hostCapture.usable() {
+				return
+			}
 			if painted {
 				curtainPainted.Add(1)
 			} else {
@@ -254,6 +258,12 @@ func watchDesktop(primary uintptr) {
 		desktopShown.reset()
 		return
 	}
+	// While the display is off or the session is locked every capture is
+	// black. Those looks neither count nor break into the streak's timing.
+	if !hostCapture.usable() {
+		desktopShown.reset()
+		return
+	}
 	if !curtainCapturing.CompareAndSwap(false, true) {
 		return
 	}
@@ -261,6 +271,10 @@ func watchDesktop(primary uintptr) {
 	go func() {
 		defer curtainCapturing.Store(false)
 		painted := windowShowsDesktop(primary)
+		if !hostCapture.usable() {
+			desktopShown.reset()
+			return
+		}
 		desktopLooks.Add(1)
 		if desktopShown.look(time.Now(), painted) {
 			desktopSeen.Store(true)
