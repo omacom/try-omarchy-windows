@@ -89,6 +89,7 @@ Hyprland's real state, so a choice in `looknfeel.lua` still wins and the
 notification says what happened. Compatibility revision 69 delivers both
 bridges and the profile to existing disks whose `monitors.lua` is still the
 default, and runtime `4.5.0-15` carries the toggle.
+Patch 0177 refreshes the package lock for graphviz and hyprcursor.
 
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
