@@ -67,6 +67,12 @@ still fails the step. Disks updated from 4.0.4 finished first-run before and
 never run it again. Patch 0173 refreshes the package lock, which brings in
 Hyprland 0.57.2.
 
+Patch 0174 copies text from Windows to the guest clipboard as
+`text/plain;charset=utf-8` (#396). Left to guess, wl-copy asked libmagic, which
+reads a PowerShell prompt (`PS C:\...`) as an HP-GL plotter file, so the guest
+offered only `application/vnd.hp-HPGL` and nothing could paste it. wl-copy
+still offers the text as `text/plain`, `UTF8_STRING`, `TEXT` and `STRING`.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME
