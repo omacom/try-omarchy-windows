@@ -44,6 +44,8 @@ var (
 	curtainUp      atomic.Bool
 	curtainMu      sync.Mutex
 	curtainWindows = map[uintptr]*curtainWindow{}
+	// Windows the lifting curtain has not given their frame back yet.
+	curtainLifting = map[uintptr]bool{}
 	// The disk this launch boots and its folder, for recording that it
 	// reached the desktop.
 	curtainDiskID, curtainVMDir string
@@ -196,6 +198,12 @@ func concealForCurtain(hwnd uintptr) {
 	if hidden && !current && isQemuDisplayWindow(hwnd, qemuPid.Load()) {
 		showCurtainWindow(hwnd, window)
 	}
+	if !current {
+		curtainMu.Lock()
+		delete(curtainLifting, hwnd)
+		curtainMu.Unlock()
+		wakeTitleEnforcer()
+	}
 }
 
 // curtainConcealed reports whether the curtain is hiding hwnd now, so the
@@ -204,7 +212,7 @@ func curtainConcealed(hwnd uintptr) bool {
 	curtainMu.Lock()
 	defer curtainMu.Unlock()
 	_, ok := curtainWindows[hwnd]
-	return ok && curtainUp.Load()
+	return ok && curtainUp.Load() || curtainLifting[hwnd]
 }
 
 func hideCurtainWindow(hwnd uintptr, window *curtainWindow) bool {
@@ -306,6 +314,7 @@ func refreshWindowFrame(hwnd uintptr) {
 func forgetCurtainWindow(hwnd uintptr) {
 	curtainMu.Lock()
 	delete(curtainWindows, hwnd)
+	delete(curtainLifting, hwnd)
 	curtainMu.Unlock()
 }
 
@@ -429,6 +438,7 @@ func liftCurtain(reason string) {
 		if window.ready {
 			windows[hwnd] = window
 		}
+		curtainLifting[hwnd] = true
 	}
 	curtainWindows = map[uintptr]*curtainWindow{}
 	curtainMu.Unlock()
@@ -439,6 +449,9 @@ func liftCurtain(reason string) {
 	for hwnd := range windows {
 		if !isQemuDisplayWindow(hwnd, pid) {
 			delete(windows, hwnd)
+			curtainMu.Lock()
+			delete(curtainLifting, hwnd)
+			curtainMu.Unlock()
 		}
 	}
 	for hwnd, window := range windows {
@@ -447,7 +460,13 @@ func liftCurtain(reason string) {
 		if window.tabRemoved {
 			taskbarTab(hwnd, true)
 		}
+		// Only now may the title enforcer put the window back where it
+		// belongs: its frame is part of the remembered placement.
+		curtainMu.Lock()
+		delete(curtainLifting, hwnd)
+		curtainMu.Unlock()
 	}
+	wakeTitleEnforcer()
 	if hwnd := qemuHwnd.Load(); hwnd != 0 {
 		procSetForegroundWindow.Call(hwnd)
 	}
