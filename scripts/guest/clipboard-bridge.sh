@@ -75,7 +75,11 @@ case "${1:-}" in
     elif [ "$kind" = png ]; then
       wl-copy --type image/png < "$outgoing" 9>&-
     else
-      wl-copy < "$outgoing" 9>&-
+      # Windows text arrives as UTF-8. Left to guess the type, wl-copy can fall
+      # back to libmagic, which reads a PowerShell prompt ("PS C:\...") as an
+      # HP-GL plotter file and offers nothing an app can paste. A text type
+      # keeps the usual text/plain, UTF8_STRING, TEXT and STRING offers too.
+      wl-copy --type 'text/plain;charset=utf-8' < "$outgoing" 9>&-
     fi || {
       rm -f "$STATE/last_content"
       exit 1
