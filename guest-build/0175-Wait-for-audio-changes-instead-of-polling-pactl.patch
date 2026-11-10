@@ -1,0 +1,414 @@
+From 1b809a8bb8212cd11aa367b7f67f14fee2213e65 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Mon, 9 Nov 2026 20:31:38 -0500
+Subject: [PATCH 175/176] Wait for audio changes instead of polling pactl
+
+The Windows audio bridge ran pactl get-default-sink and get-default-source
+every quarter second, about 14 new PipeWire clients a second, which kept
+QEMU, WirePlumber and PipeWire busy at idle. It now holds one pactl
+subscribe and checks the defaults, volume and mute when a server, sink,
+source or module event arrives, with a check every five seconds as a
+safety net. A subscription that ends is restarted after a second, and
+the check that follows catches what it missed. Compatibility revision 69
+delivers the bridge to existing disks.
+---
+ .../local/bin/omarchy-windows-audio-bridge    | 147 ++++++++++++++++-
+ guest/scripts/finalize-rootfs.sh              |   1 +
+ guest/tests/test_windows_audio_bridge.py      | 151 ++++++++++++++++++
+ 3 files changed, 292 insertions(+), 7 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/local/bin/omarchy-windows-audio-bridge b/guest/factory-overlay/usr/local/bin/omarchy-windows-audio-bridge
+index d2c48eb..a8d81f4 100755
+--- a/guest/factory-overlay/usr/local/bin/omarchy-windows-audio-bridge
++++ b/guest/factory-overlay/usr/local/bin/omarchy-windows-audio-bridge
+@@ -8,6 +8,7 @@ import json
+ import math
+ import os
+ from pathlib import Path
++import re
+ import select
+ import signal
+ import subprocess
+@@ -494,7 +495,7 @@ class VolumeMirror:
+         if not self.mirror.sync_enabled:
+             return
+         self.local()
+-        if self.pending is not None and not self.inflight and time.monotonic() - self.changed_at >= 0.04:
++        if self.pending is not None and not self.inflight and time.monotonic() - self.changed_at >= VOLUME_SETTLE:
+             volume, muted = self.pending
+             self.send({"type": "set-volume", "endpointID": self.endpoint,
+                        "volume": volume, "muted": muted, "origin": "guest", "sequence": self.sequence})
+@@ -574,6 +575,112 @@ class VolumeMirror:
+             pass
+ 
+ 
++# Default devices, volume and mute are watched through one long-lived pactl
++# subscription instead of polling. Each pactl call is a new PipeWire client, and
++# polling them four times a second kept the guest's audio stack awake.
++SAFETY_INTERVAL = 5.0
++SUBSCRIBE_RETRY = 1.0
++VOLUME_SETTLE = 0.04
++# The server event covers default sink and source changes, sink and source
++# events volume and mute, module events the mirror's own routes. Client and
++# stream events are ignored: every pactl call the bridge makes is a new client.
++WATCHED_FACILITIES = frozenset({"server", "sink", "source", "module"})
++EVENT_LINE = re.compile(r"^Event '([a-z]+)' on ([a-z-]+)(?: #\d+)?$")
++
++
++class PulseEvents:
++    """Read `pactl subscribe` without blocking, restarting it when it ends."""
++
++    def __init__(self) -> None:
++        self.process: subprocess.Popen[bytes] | None = None
++        self.buffer = bytearray()
++        self.retry_at = 0.0
++
++    def fileno(self) -> int | None:
++        if self.process is None or self.process.stdout is None:
++            return None
++        return self.process.stdout.fileno()
++
++    def next_retry(self) -> float:
++        return math.inf if self.process is not None else self.retry_at
++
++    def ensure(self) -> bool:
++        """Start the subscription if it is not running. True when it started."""
++        if self.process is not None or time.monotonic() < self.retry_at:
++            return False
++        self.retry_at = time.monotonic() + SUBSCRIBE_RETRY
++        try:
++            # The event line is translated; the facility names are not.
++            process = subprocess.Popen(
++                ["pactl", "subscribe"],
++                stdin=subprocess.DEVNULL,
++                stdout=subprocess.PIPE,
++                stderr=subprocess.DEVNULL,
++                env={**os.environ, "LC_ALL": "C"},
++            )
++        except OSError as error:
++            log(f"pactl subscribe: {error}")
++            return False
++        assert process.stdout is not None
++        os.set_blocking(process.stdout.fileno(), False)
++        self.process = process
++        self.buffer.clear()
++        return True
++
++    def read(self) -> set[str]:
++        """Drain waiting events and return the watched facilities they name.
++
++        An ended subscription reports "lost": events may have been missed.
++        """
++        descriptor = self.fileno()
++        if descriptor is None:
++            return set()
++        facilities: set[str] = set()
++        while True:
++            try:
++                chunk = os.read(descriptor, 65536)
++            except BlockingIOError:
++                break
++            except OSError:
++                chunk = b""
++            if not chunk:
++                self.close()
++                facilities.add("lost")
++                break
++            self.buffer.extend(chunk)
++        *lines, rest = self.buffer.split(b"\n")
++        self.buffer = bytearray(rest[-4096:])
++        for line in lines:
++            match = EVENT_LINE.match(line.decode(errors="replace").strip())
++            if match is None:
++                facilities.add("unknown")
++            elif match.group(2) in WATCHED_FACILITIES:
++                facilities.add(match.group(2))
++        return facilities
++
++    def close(self) -> None:
++        process, self.process = self.process, None
++        if process is None:
++            return
++        process.kill()
++        try:
++            process.wait(timeout=1)
++        except subprocess.TimeoutExpired:
++            pass
++        if process.stdout is not None:
++            process.stdout.close()
++
++
++def volume_deadline(volume: VolumeMirror) -> float:
++    """When the volume mirror next needs a check without any event."""
++    deadline = math.inf
++    if volume.mirror.sync_enabled:
++        deadline = volume.last_host_state + VOLUME_HOST_TIMEOUT
++        if volume.pending is not None and not volume.inflight:
++            deadline = min(deadline, volume.changed_at + VOLUME_SETTLE)
++    return deadline
++
++
+ def open_port() -> int:
+     while True:
+         try:
+@@ -597,19 +704,39 @@ def main() -> int:
+ 
+     mirror = PipeWireMirror(send)
+     volume = VolumeMirror(mirror, send)
++    events = PulseEvents()
+     try:
+         while True:
+             descriptor = open_port()
+             buffer = bytearray()
+             volume_requested = False
++            next_check = 0.0
++            # A failed check is retried no sooner than the old poll interval.
++            retry_after = 0.0
+             try:
+                 send({"type": "get-catalog"})
+                 while True:
+                     if not volume.check_host():
+                         volume_requested = False
+                         send({"type": "get-catalog"})
+-                    ready, _, _ = select.select([descriptor], [], [], 0.25)
+-                    if ready:
++                    if events.ensure():
++                        # Changes while no subscription ran were not seen, and
++                        # a restarted PipeWire has dropped the mirror's routes.
++                        next_check = 0.0
++                        mirror.last_health_check = 0.0
++                    subscription = events.fileno()
++                    deadline = max(min(next_check, volume_deadline(volume)), retry_after)
++                    deadline = min(deadline, events.next_retry())
++                    timeout = min(SAFETY_INTERVAL, max(0.0, deadline - time.monotonic()))
++                    watched = [descriptor] if subscription is None else [descriptor, subscription]
++                    ready, _, _ = select.select(watched, [], [], timeout)
++                    if subscription is not None and subscription in ready:
++                        facilities = events.read()
++                        if facilities:
++                            next_check = 0.0
++                        if facilities & {"module", "lost", "unknown"}:
++                            mirror.last_health_check = 0.0
++                    if descriptor in ready:
+                         chunk = os.read(descriptor, 65536)
+                         if not chunk:
+                             break
+@@ -626,6 +753,7 @@ def main() -> int:
+                                 if message["type"] == "volume":
+                                     volume.apply(message)
+                                 else:
++                                    next_check = 0.0
+                                     applied = False
+                                     while not applied:
+                                         try:
+@@ -642,10 +770,14 @@ def main() -> int:
+                                         volume_requested = True
+                             except RuntimeError as error:
+                                 log(str(error))
+-                    try:
+-                        mirror.poll_selection()
+-                    except RuntimeError as error:
+-                        log(str(error))
++                    now = time.monotonic()
++                    if now >= max(min(next_check, volume_deadline(volume)), retry_after):
++                        next_check = now + SAFETY_INTERVAL
++                        try:
++                            mirror.poll_selection()
++                        except RuntimeError as error:
++                            log(str(error))
++                            retry_after = time.monotonic() + 0.25
+             except (OSError, ValueError) as error:
+                 log(str(error))
+             finally:
+@@ -656,6 +788,7 @@ def main() -> int:
+                 descriptor = None
+             time.sleep(1)
+     finally:
++        events.close()
+         mirror.close()
+         if descriptor is not None:
+             os.close(descriptor)
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index aa5d195..0be6005 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -258,6 +258,7 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 67 offers aquamarine 0.16.0 with the cursor hotspot patch.
+ # Revision 68 offers the Omarchy 4.5.0 runtime and mise 2026.10.25.
+ # Revision 69 delivers the clipboard bridge that types Windows text.
++# It also delivers the audio bridge that waits on PipeWire events.
+ compat_revision=69
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+diff --git a/guest/tests/test_windows_audio_bridge.py b/guest/tests/test_windows_audio_bridge.py
+index 78f76d3..4375de6 100644
+--- a/guest/tests/test_windows_audio_bridge.py
++++ b/guest/tests/test_windows_audio_bridge.py
+@@ -24,6 +24,31 @@ bridge = importlib.util.module_from_spec(SPEC)
+ SPEC.loader.exec_module(bridge)
+ 
+ 
++class NoPulseEvents:
++    """A pactl subscription that never starts."""
++
++    def fileno(self):
++        return None
++
++    def next_retry(self):
++        return float("inf")
++
++    def ensure(self):
++        return False
++
++    def read(self):
++        return set()
++
++    def close(self):
++        pass
++
++
++# main() tests drive select() with fixed descriptors. Keep a real pactl
++# subscription out of them; SubscriptionTests use the real class.
++RealPulseEvents = bridge.PulseEvents
++bridge.PulseEvents = NoPulseEvents
++
++
+ class PactlFailureTests(unittest.TestCase):
+     def test_timeout_and_missing_program_are_reported_as_command_errors(self) -> None:
+         for error in (subprocess.TimeoutExpired("pactl", 10), FileNotFoundError("pactl")):
+@@ -551,6 +576,132 @@ class TransportDefaultRedirectTests(unittest.TestCase):
+         log.assert_not_called()
+ 
+ 
++class SubscriptionTests(unittest.TestCase):
++    def fake_pactl(self, body: str) -> dict[str, str]:
++        import os
++        import tempfile
++        directory = tempfile.TemporaryDirectory()
++        self.addCleanup(directory.cleanup)
++        script = Path(directory.name) / "pactl"
++        script.write_text("#!/bin/sh\n" + body + "\n")
++        script.chmod(0o755)
++        return {"PATH": directory.name + os.pathsep + os.environ["PATH"]}
++
++    def wait_for(self, events, expected):
++        import select
++        import time
++        seen: set[str] = set()
++        deadline = time.monotonic() + 5
++        while expected - seen and time.monotonic() < deadline and events.fileno() is not None:
++            select.select([events.fileno()], [], [], 0.5)
++            seen |= events.read()
++        return seen
++
++    def test_only_device_and_server_events_wake_the_bridge(self):
++        env = self.fake_pactl(
++            '[ "$1" = subscribe ] || exit 2\n'
++            '[ "$LC_ALL" = C ] || exit 3\n'
++            "echo \"Event 'new' on client #5\"\n"
++            "echo \"Event 'remove' on client #5\"\n"
++            "echo \"Event 'change' on sink-input #3\"\n"
++            "echo \"Event 'change' on server\"\n"
++            "echo \"Event 'change' on sink #45\"\n"
++            "echo \"Event 'remove' on module #12\"\n"
++            "exec sleep 30")
++        events = RealPulseEvents()
++        self.addCleanup(events.close)
++        with mock.patch.dict(bridge.os.environ, env):
++            self.assertTrue(events.ensure())
++        self.assertFalse(events.ensure())
++        self.assertEqual(self.wait_for(events, {"server", "sink", "module"}), {"server", "sink", "module"})
++        self.assertIsNotNone(events.fileno())
++        self.assertEqual(events.next_retry(), float("inf"))
++
++    def test_ended_subscription_is_reported_and_restarted_later(self):
++        env = self.fake_pactl("echo \"Event 'new' on client #1\"; exit 1")
++        events = RealPulseEvents()
++        self.addCleanup(events.close)
++        with mock.patch.dict(bridge.os.environ, env):
++            self.assertTrue(events.ensure())
++            self.assertEqual(self.wait_for(events, {"lost"}), {"lost"})
++            self.assertIsNone(events.fileno())
++            # Not before the retry interval, so a server that is still down is
++            # not hammered.
++            self.assertFalse(events.ensure())
++            retry = events.next_retry()
++            with mock.patch.object(bridge.time, "monotonic", return_value=retry):
++                self.assertTrue(events.ensure())
++
++    def test_missing_pactl_is_retried(self):
++        events = RealPulseEvents()
++        with mock.patch.object(bridge.subprocess, "Popen", side_effect=FileNotFoundError("pactl")), \
++                mock.patch.object(bridge, "log") as log:
++            self.assertFalse(events.ensure())
++        log.assert_called_once()
++        self.assertIsNone(events.fileno())
++        self.assertLess(events.next_retry(), float("inf"))
++
++
++class IdleTests(unittest.TestCase):
++    """The bridge waits on events at idle instead of polling pactl."""
++
++    def run_main(self, events, iterations):
++        timeouts = []
++
++        def select(watched, _write, _error, timeout):
++            timeouts.append(timeout)
++            if len(timeouts) > iterations:
++                raise SystemExit(0)
++            descriptor = events.fileno()
++            return ([descriptor] if descriptor in watched else []), [], []
++
++        with mock.patch.object(bridge, "PulseEvents", return_value=events), \
++                mock.patch.object(bridge, "run_pactl", side_effect=PactlStub()), \
++                mock.patch.object(bridge.PipeWireMirror, "poll_selection") as poll, \
++                mock.patch.object(bridge, "open_port", return_value=17), \
++                mock.patch.object(bridge.os, "write", side_effect=lambda fd, data: len(data)), \
++                mock.patch.object(bridge.os, "close"), \
++                mock.patch.object(bridge.select, "select", side_effect=select), \
++                mock.patch.object(bridge.signal, "signal"):
++            with self.assertRaises(SystemExit):
++                bridge.main()
++        return poll.call_count, timeouts
++
++    def test_idle_bridge_checks_once_then_waits_for_the_safety_interval(self):
++        polls, timeouts = self.run_main(NoPulseEvents(), 3)
++        self.assertEqual(polls, 1)
++        self.assertEqual(timeouts[0], 0)
++        for timeout in timeouts[1:]:
++            self.assertGreater(timeout, bridge.SAFETY_INTERVAL - 0.5)
++
++    def test_server_event_checks_the_defaults_at_once(self):
++        class Events(NoPulseEvents):
++            def __init__(self):
++                self.batches = [set(), {"server"}, set()]
++
++            def fileno(self):
++                return 99
++
++            def read(self):
++                return self.batches.pop(0) if self.batches else set()
++
++        polls, timeouts = self.run_main(Events(), 3)
++        # The initial check, then one for the server event only.
++        self.assertEqual(polls, 2)
++        self.assertGreater(timeouts[-1], bridge.SAFETY_INTERVAL - 0.5)
++
++    def test_volume_gesture_is_sent_after_it_settles(self):
++        volume = bridge.VolumeMirror(bridge.PipeWireMirror(lambda _: None), lambda _: None)
++        self.assertEqual(bridge.volume_deadline(volume), float("inf"))
++        volume.mirror.sync_enabled = True
++        volume.last_host_state = 100.0
++        self.assertEqual(bridge.volume_deadline(volume), 100.0 + bridge.VOLUME_HOST_TIMEOUT)
++        volume.pending, volume.changed_at = (0.5, False), 101.0
++        self.assertEqual(bridge.volume_deadline(volume), 101.0 + bridge.VOLUME_SETTLE)
++        volume.inflight = True
++        self.assertEqual(bridge.volume_deadline(volume), 100.0 + bridge.VOLUME_HOST_TIMEOUT)
++
++
+ class CatalogRetryTests(unittest.TestCase):
+     def test_main_retries_startup_catalog_until_transport_is_ready(self):
+         for capable in (False, True):
+-- 
+2.56.0
+

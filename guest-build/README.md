@@ -73,6 +73,13 @@ reads a PowerShell prompt (`PS C:\...`) as an HP-GL plotter file, so the guest
 offered only `application/vnd.hp-HPGL` and nothing could paste it. wl-copy
 still offers the text as `text/plain`, `UTF8_STRING`, `TEXT` and `STRING`.
 
+Patch 0175 has the Windows audio bridge wait on one `pactl subscribe` instead
+of running `pactl` four times a second, which kept QEMU, WirePlumber and
+PipeWire busy at idle. It checks the default sink and source, volume and mute
+when a server, sink, source or module event arrives, and every five seconds as
+a safety net. A subscription that ends is restarted a second later and followed
+by a full check.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME
