@@ -80,6 +80,16 @@ when a server, sink, source or module event arrives, and every five seconds as
 a safety net. A subscription that ends is restarted a second later and followed
 by a full check.
 
+Patch 0176 lets Appearance > Animations turn animations back on when the
+launcher renders on the CPU. The QEMU profile still starts those sessions with
+animations off, and GPU rendering keeps Omarchy's full look. Turning them on
+leaves Omarchy's `animations-without-gpu` flag, as upstream does, and the
+profile then leaves them on in later sessions. The toggle and the menu go by
+Hyprland's real state, so a choice in `looknfeel.lua` still wins and the
+notification says what happened. Compatibility revision 69 delivers both
+bridges and the profile to existing disks whose `monitors.lua` is still the
+default, and runtime `4.5.0-15` carries the toggle.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME

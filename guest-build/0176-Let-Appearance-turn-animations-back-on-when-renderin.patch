@@ -1,0 +1,531 @@
+From 90d0bcc9def087aff28ea98673c4ff3d7b39ac28 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Mon, 9 Nov 2026 20:35:08 -0500
+Subject: [PATCH 176/176] Let Appearance turn animations back on when rendering
+ on the CPU
+
+The QEMU profile turns animations off when the launcher renders on the
+CPU, and Omarchy 4.5's toggle could not lift that: it said animations
+were enabled while they stayed off. As Omarchy does upstream, turning them
+on in a CPU session now leaves the animations-without-gpu flag, and the
+profile keeps them on while it is there, in later sessions too. The toggle
+and the Appearance menu go by Hyprland's real state, so a choice in
+looknfeel.lua still wins and the notification says what happened. GPU
+rendering is unchanged. Runtime 4.5.0-15 carries the toggle and
+compatibility revision 69 refreshes untouched QEMU profiles.
+---
+ .../hypr-monitors-qemu.append.lua             |  24 ++-
+ guest/fragments/hypr-monitors-qemu.append.lua |  24 ++-
+ .../omarchy/cpu-animations-toggle.patch       |  69 ++++++
+ guest/scripts/finalize-rootfs.sh              |   2 +
+ guest/spec.json                               |  21 +-
+ .../bin/omarchy-toggle-animations             |  22 ++
+ guest/tests/test_cpu_animations.py            | 201 ++++++++++++++++++
+ guest/tests/test_notification_privacy.py      |   2 +-
+ guest/tests/test_qt612_palette.py             |   2 +-
+ guest/tests/test_snapper_guest.py             |   2 +-
+ guest/tests/test_terminal_bell.py             |   4 +-
+ guest/tests/verify.py                         |   2 +-
+ 12 files changed, 362 insertions(+), 13 deletions(-)
+ create mode 100644 guest/patches/omarchy/cpu-animations-toggle.patch
+ create mode 100755 guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-toggle-animations
+ create mode 100644 guest/tests/test_cpu_animations.py
+
+diff --git a/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua b/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
+index 2ad8475..2a6c363 100644
+--- a/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
++++ b/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
+@@ -110,10 +110,28 @@ if omarchy_kernel_option_enabled("omarchy.qemu=1") then
+   o.exec_on_start("/usr/local/bin/omarchy-native-display-sync")
+ end
+ 
++-- Appearance > Animations records turning animations on in a CPU-rendered
++-- session with this flag, as Omarchy does upstream (omarchy-toggle-animations).
++local function omarchy_animations_without_gpu()
++  if type(os) ~= "table" or type(os.getenv) ~= "function" or type(io) ~= "table" or type(io.open) ~= "function" then
++    return false
++  end
++  local home = os.getenv("HOME")
++  if type(home) ~= "string" or home == "" then
++    return false
++  end
++  local opened, flag = pcall(io.open, home .. "/.local/state/omarchy/toggles/animations-without-gpu", "r")
++  if not opened or not flag then
++    return false
++  end
++  pcall(flag.close, flag)
++  return true
++end
++
+ -- On CPU rendering (llvmpipe) every animation frame is CPU time the desktop
+--- feels. Start with animations off; looknfeel.lua loads after this file, so
+--- an explicit choice there still wins.
+-if omarchy_kernel_option_enabled("tryomarchy.render=cpu") then
++-- feels. Start with animations off until Appearance turns them back on;
++-- looknfeel.lua loads after this file, so an explicit choice there still wins.
++if omarchy_kernel_option_enabled("tryomarchy.render=cpu") and not omarchy_animations_without_gpu() then
+   hl.config({ animations = { enabled = false } })
+ end
+ -- END OMARCHY QEMU PROFILE
+diff --git a/guest/fragments/hypr-monitors-qemu.append.lua b/guest/fragments/hypr-monitors-qemu.append.lua
+index 2ad8475..2a6c363 100644
+--- a/guest/fragments/hypr-monitors-qemu.append.lua
++++ b/guest/fragments/hypr-monitors-qemu.append.lua
+@@ -110,10 +110,28 @@ if omarchy_kernel_option_enabled("omarchy.qemu=1") then
+   o.exec_on_start("/usr/local/bin/omarchy-native-display-sync")
+ end
+ 
++-- Appearance > Animations records turning animations on in a CPU-rendered
++-- session with this flag, as Omarchy does upstream (omarchy-toggle-animations).
++local function omarchy_animations_without_gpu()
++  if type(os) ~= "table" or type(os.getenv) ~= "function" or type(io) ~= "table" or type(io.open) ~= "function" then
++    return false
++  end
++  local home = os.getenv("HOME")
++  if type(home) ~= "string" or home == "" then
++    return false
++  end
++  local opened, flag = pcall(io.open, home .. "/.local/state/omarchy/toggles/animations-without-gpu", "r")
++  if not opened or not flag then
++    return false
++  end
++  pcall(flag.close, flag)
++  return true
++end
++
+ -- On CPU rendering (llvmpipe) every animation frame is CPU time the desktop
+--- feels. Start with animations off; looknfeel.lua loads after this file, so
+--- an explicit choice there still wins.
+-if omarchy_kernel_option_enabled("tryomarchy.render=cpu") then
++-- feels. Start with animations off until Appearance turns them back on;
++-- looknfeel.lua loads after this file, so an explicit choice there still wins.
++if omarchy_kernel_option_enabled("tryomarchy.render=cpu") and not omarchy_animations_without_gpu() then
+   hl.config({ animations = { enabled = false } })
+ end
+ -- END OMARCHY QEMU PROFILE
+diff --git a/guest/patches/omarchy/cpu-animations-toggle.patch b/guest/patches/omarchy/cpu-animations-toggle.patch
+new file mode 100644
+index 0000000..ddcb88e
+--- /dev/null
++++ b/guest/patches/omarchy/cpu-animations-toggle.patch
+@@ -0,0 +1,69 @@
++diff --git a/bin/omarchy-toggle-animations b/bin/omarchy-toggle-animations
++--- a/bin/omarchy-toggle-animations
+++++ b/bin/omarchy-toggle-animations
++@@ -4,18 +4,46 @@
++ # omarchy:args=[toggle|on|off]
++ # omarchy:examples=omarchy toggle animations | omarchy toggle animations off | omarchy toggle animations on
++ 
++-# The flag records animations being off, so on and off swap on the way through.
+++# Try Omarchy starts a session that renders on the CPU (tryomarchy.render=cpu)
+++# with animations off, from the QEMU profile in ~/.config/hypr/monitors.lua.
+++# Turning them on there is remembered for later sessions too, with the flag
+++# Omarchy uses upstream, and has to be in place before the toggle reloads.
+++without_gpu="$HOME/.local/state/omarchy/toggles/animations-without-gpu"
+++
+++# Off by the toggle, or by that profile or the user's own looknfeel.lua.
+++animations_off() {
+++  omarchy-hyprland-toggle-enabled no-animations ||
+++    [[ $(hyprctl -j getoption animations:enabled 2>/dev/null | jq -r '.bool' 2>/dev/null) == "false" ]]
+++}
+++
++ case ${1:-toggle} in
++-toggle) omarchy-hyprland-toggle no-animations toggle ;;
++-on) omarchy-hyprland-toggle no-animations off ;;
++-off) omarchy-hyprland-toggle no-animations on ;;
+++toggle)
+++  if animations_off; then
+++    animations=on
+++  else
+++    animations=off
+++  fi
+++  ;;
+++on | off) animations=$1 ;;
++ *)
++   echo "Usage: omarchy-toggle-animations [toggle|on|off]" >&2
++   exit 1
++   ;;
++ esac
++ 
++-if omarchy-hyprland-toggle-enabled no-animations; then
+++# The flag records animations being off, so on and off swap on the way through.
+++if [[ $animations == "on" ]]; then
+++  if [[ " $(</proc/cmdline) " == *" tryomarchy.render=cpu "* ]]; then
+++    mkdir -p "${without_gpu%/*}"
+++    touch "$without_gpu"
+++  fi
+++  omarchy-hyprland-toggle no-animations off
+++else
+++  rm -f "$without_gpu"
+++  omarchy-hyprland-toggle no-animations on
+++fi
+++
+++if animations_off; then
++   omarchy-notification-send -g 󰗘 "$(omarchy-i18n animations.disabled)"
++ else
++   omarchy-notification-send -g 󰗘 "$(omarchy-i18n animations.enabled)"
++diff --git a/default/omarchy/omarchy-menu.jsonc b/default/omarchy/omarchy-menu.jsonc
++--- a/default/omarchy/omarchy-menu.jsonc
+++++ b/default/omarchy/omarchy-menu.jsonc
++@@ -120,8 +120,8 @@
++   "appearance.workspace-layout.dwindle": {"icon":"󱓻","label":"Tiling","checked":"[[ $(omarchy-hyprland-workspace-layout-default) == \"dwindle\" ]]","action":"omarchy-hyprland-workspace-layout-default dwindle"},
++   "appearance.workspace-layout.scrolling": {"icon":"󰝥","label":"Scrolling","checked":"[[ $(omarchy-hyprland-workspace-layout-default) == \"scrolling\" ]]","action":"omarchy-hyprland-workspace-layout-default scrolling"},
++   "appearance.workspace-layout.floating": {"icon":"󰔶","label":"Floating","checked":"[[ $(omarchy-hyprland-workspace-layout-default) == \"floating\" ]]","action":"omarchy-hyprland-workspace-layout-default floating"},
++-  "appearance.animations-on": {"icon":"󰗘","label":"Animations On","when":"omarchy-hyprland-toggle-enabled no-animations","action":"omarchy-toggle-animations"},
++-  "appearance.animations-off": {"icon":"󰗘","label":"Animations Off","when":"! omarchy-hyprland-toggle-enabled no-animations","action":"omarchy-toggle-animations"},
+++  "appearance.animations-on": {"icon":"󰗘","label":"Animations On","when":"omarchy-hyprland-toggle-enabled no-animations || [[ $(hyprctl -j getoption animations:enabled 2>/dev/null | jq -r .bool 2>/dev/null) == false ]]","action":"omarchy-toggle-animations"},
+++  "appearance.animations-off": {"icon":"󰗘","label":"Animations Off","when":"! { omarchy-hyprland-toggle-enabled no-animations || [[ $(hyprctl -j getoption animations:enabled 2>/dev/null | jq -r .bool 2>/dev/null) == false ]]; }","action":"omarchy-toggle-animations"},
++   "appearance.unlock": {"icon":"󰟵","label":"Unlock","aliases":["unlock"],"action":"unlock=$(omarchy-plymouth-switcher); if [[ $unlock == default ]]; then omarchy-launch-floating-terminal-with-presentation omarchy-plymouth-reset; elif [[ -n $unlock ]]; then omarchy-launch-floating-terminal-with-presentation \"omarchy-plymouth-set-by-theme $(printf %q \"$unlock\")\"; fi"},
++ 
++   // Trigger
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 0be6005..16cde8b 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -259,6 +259,8 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 68 offers the Omarchy 4.5.0 runtime and mise 2026.10.25.
+ # Revision 69 delivers the clipboard bridge that types Windows text.
+ # It also delivers the audio bridge that waits on PipeWire events.
++# It also refreshes the QEMU profile so Appearance can turn animations back on
++# when rendering on the CPU.
+ compat_revision=69
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+diff --git a/guest/spec.json b/guest/spec.json
+index 9081899..c4d3db0 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -30,7 +30,7 @@
+     "versionFile": "4.0.0.alpha",
+     "channel": "stable",
+     "license": "MIT",
+-    "packageRelease": 14,
++    "packageRelease": 15,
+     "integrationDepends": [
+       "disktree-bin",
+       "fcitx5",
+@@ -296,6 +296,25 @@
+             "afterSha256": "d0abfe0ac5ebf363c656c0ed6d543d3443e7654f3266c8a7144364a950eb33af"
+           }
+         ]
++      },
++      {
++        "id": "cpu-animations-toggle",
++        "description": "Let Appearance turn animations back on, for later sessions too, in a session that renders on the CPU, and show the menu and notification from the real state.",
++        "reference": "https://github.com/basecamp/omarchy/commit/cfd8106f",
++        "patch": "patches/omarchy/cpu-animations-toggle.patch",
++        "patchSha256": "b2cb77c92bd6eb89e3c9a26f3e1c37786985e666db690cf78d885e23463df8c1",
++        "targets": [
++          {
++            "path": "bin/omarchy-toggle-animations",
++            "beforeSha256": "911377069712ade3cded671a0a3d9ee118c10c23702e266486d330e6cf83f49e",
++            "afterSha256": "5a0d1fb1c2a8548ea8afe8ad0e1cd53f2d5df77ae1339b1a6a28186a541424ef"
++          },
++          {
++            "path": "default/omarchy/omarchy-menu.jsonc",
++            "beforeSha256": "972922578753255553f1ad1127f0fc0f21e0aad232b287c2d4890e10bcd8ffa4",
++            "afterSha256": "85a5b848a34d2366ece7539c48d41d60534e769ab1070028c283e2cb23b44cc5"
++          }
++        ]
+       }
+     ],
+     "requiredPaths": [
+diff --git a/guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-toggle-animations b/guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-toggle-animations
+new file mode 100755
+index 0000000..8aed1e8
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-toggle-animations
+@@ -0,0 +1,22 @@
++#!/bin/bash
++
++# omarchy:summary=Toggle animations, blur and shadows, which are slow without a GPU
++# omarchy:args=[toggle|on|off]
++# omarchy:examples=omarchy toggle animations | omarchy toggle animations off | omarchy toggle animations on
++
++# The flag records animations being off, so on and off swap on the way through.
++case ${1:-toggle} in
++toggle) omarchy-hyprland-toggle no-animations toggle ;;
++on) omarchy-hyprland-toggle no-animations off ;;
++off) omarchy-hyprland-toggle no-animations on ;;
++*)
++  echo "Usage: omarchy-toggle-animations [toggle|on|off]" >&2
++  exit 1
++  ;;
++esac
++
++if omarchy-hyprland-toggle-enabled no-animations; then
++  omarchy-notification-send -g 󰗘 "$(omarchy-i18n animations.disabled)"
++else
++  omarchy-notification-send -g 󰗘 "$(omarchy-i18n animations.enabled)"
++fi
+diff --git a/guest/tests/test_cpu_animations.py b/guest/tests/test_cpu_animations.py
+new file mode 100644
+index 0000000..69a6ada
+--- /dev/null
++++ b/guest/tests/test_cpu_animations.py
+@@ -0,0 +1,201 @@
++"""Appearance > Animations works both ways on CPU rendering and is remembered."""
++import hashlib
++import json
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import tempfile
++import unittest
++
++GUEST = Path(__file__).resolve().parents[1]
++PATCH = GUEST / 'patches/omarchy/cpu-animations-toggle.patch'
++UPSTREAM_TOGGLE = GUEST / 'tests/fixtures/omarchy-4.5.0/bin/omarchy-toggle-animations'
++FRAGMENT = GUEST / 'fragments/hypr-monitors-qemu.append.lua'
++FLAG = '.local/state/omarchy/toggles/animations-without-gpu'
++CPU = 'root=/dev/vda omarchy.qemu=1 tryomarchy.render=cpu quiet'
++GPU = 'root=/dev/vda omarchy.qemu=1 tryomarchy.render=gpu quiet'
++
++
++def digest(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def backport():
++    spec = json.loads((GUEST / 'spec.json').read_text())
++    return next(entry for entry in spec['authenticity']['backports'] if entry['id'] == 'cpu-animations-toggle')
++
++
++# Hyprland as the toggle sees it: each reload evaluates the QEMU profile, then
++# the user's looknfeel.lua choice (LOOKNFEEL), then the no-animations flag.
++FAKES = {
++    'hyprctl': '''#!/bin/bash
++[[ $* == "-j getoption animations:enabled" ]] || exit 2
++printf '{"option":"animations:enabled","bool":%s}\\n' "$(cat "$STATE")"
++''',
++    'omarchy-hyprland-toggle': '''#!/bin/bash
++flag=$HOME/.local/state/omarchy/toggles/hypr/$1.lua
++case $2 in on) mkdir -p "${flag%/*}"; : >"$flag" ;; off) rm -f "$flag" ;; *) exit 2 ;; esac
++enabled=true
++if [[ " $(cat "$CMDLINE") " == *" tryomarchy.render=cpu "* && ! -e $HOME/.local/state/omarchy/toggles/animations-without-gpu ]]; then
++  enabled=false
++fi
++[[ -z ${LOOKNFEEL:-} ]] || enabled=$LOOKNFEEL
++[[ ! -e $flag ]] || enabled=false
++echo "$enabled" >"$STATE"
++''',
++    'omarchy-hyprland-toggle-enabled': '''#!/bin/bash
++[[ -f $HOME/.local/state/omarchy/toggles/hypr/$1.lua ]]
++''',
++    'omarchy-i18n': '#!/bin/bash\necho "$1"\n',
++    'omarchy-notification-send': '#!/bin/bash\necho "${!#}" >>"$NOTIFIED"\n',
++}
++
++
++class BackportTests(unittest.TestCase):
++    def test_backport_is_reviewed_against_omarchy_4_5_0(self):
++        entry = backport()
++        self.assertEqual(entry['patchSha256'], digest(PATCH))
++        targets = {target['path']: target for target in entry['targets']}
++        self.assertEqual(set(targets), {'bin/omarchy-toggle-animations', 'default/omarchy/omarchy-menu.jsonc'})
++        self.assertEqual(targets['bin/omarchy-toggle-animations']['beforeSha256'], digest(UPSTREAM_TOGGLE))
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            (root / 'bin').mkdir()
++            shutil.copy(UPSTREAM_TOGGLE, root / 'bin/omarchy-toggle-animations')
++            toggle_only = PATCH.read_text().split('diff --git a/default/', 1)[0]
++            applied = subprocess.run(['git', 'apply', '--no-index', '--unidiff-zero', '--whitespace=error', '-'],
++                                     input=toggle_only, text=True, cwd=root, capture_output=True)
++            self.assertEqual(applied.returncode, 0, applied.stderr)
++            self.assertEqual(digest(root / 'bin/omarchy-toggle-animations'),
++                             targets['bin/omarchy-toggle-animations']['afterSha256'])
++
++    def test_menu_offers_the_choice_that_changes_the_real_state(self):
++        menu = [line[1:] for line in PATCH.read_text().splitlines()
++                if line.startswith('+  "appearance.animations-')]
++        self.assertEqual(len(menu), 2)
++        on = json.loads('{' + menu[0].rstrip(',') + '}')['appearance.animations-on']['when']
++        off = json.loads('{' + menu[1].rstrip(',') + '}')['appearance.animations-off']['when']
++        self.assertEqual(off, '! { ' + on + '; }')
++        self.assertIn('getoption animations:enabled', on)
++
++
++class ToggleTests(unittest.TestCase):
++    def setUp(self):
++        temporary = tempfile.TemporaryDirectory()
++        self.addCleanup(temporary.cleanup)
++        self.root = Path(temporary.name)
++        self.home = self.root / 'home'
++        self.home.mkdir()
++        bin_dir = self.root / 'bin'
++        bin_dir.mkdir()
++        for name, body in FAKES.items():
++            (bin_dir / name).write_text(body)
++            (bin_dir / name).chmod(0o755)
++        shutil.copy(UPSTREAM_TOGGLE, self.root / 'toggle')
++        toggle_only = PATCH.read_text().split('diff --git a/default/', 1)[0]
++        applied = subprocess.run(['git', 'apply', '--no-index', '--unidiff-zero', '-'],
++                                 input=toggle_only.replace('bin/omarchy-toggle-animations', 'toggle'),
++                                 text=True, cwd=self.root, capture_output=True)
++        self.assertEqual(applied.returncode, 0, applied.stderr)
++        script = (self.root / 'toggle').read_text()
++        self.assertIn('/proc/cmdline', script)
++        self.cmdline = self.root / 'cmdline'
++        (self.root / 'toggle').write_text(script.replace('/proc/cmdline', str(self.cmdline)))
++        self.state = self.root / 'state'
++        self.notified = self.root / 'notified'
++        self.env = {'PATH': f'{bin_dir}:/usr/bin:/bin', 'HOME': str(self.home), 'STATE': str(self.state),
++                    'CMDLINE': str(self.cmdline), 'NOTIFIED': str(self.notified)}
++
++    def boot(self, cmdline, looknfeel=None):
++        self.cmdline.write_text(cmdline + '\n')
++        if looknfeel is None:
++            self.env.pop('LOOKNFEEL', None)
++        else:
++            self.env['LOOKNFEEL'] = looknfeel
++        # A new session loads the config once, as a reload would.
++        enabled = 'true'
++        if 'tryomarchy.render=cpu' in cmdline.split() and not (self.home / FLAG).exists():
++            enabled = 'false'
++        enabled = looknfeel or enabled
++        if (self.home / '.local/state/omarchy/toggles/hypr/no-animations.lua').exists():
++            enabled = 'false'
++        self.state.write_text(enabled + '\n')
++
++    def toggle(self, *args):
++        ran = subprocess.run(['bash', str(self.root / 'toggle'), *args], env=self.env,
++                             text=True, capture_output=True, timeout=10)
++        self.assertEqual(ran.returncode, 0, ran.stderr)
++        return self.state.read_text().strip(), self.notified.read_text().splitlines()[-1]
++
++    def test_cpu_rendering_toggles_both_ways_and_remembers_on(self):
++        self.boot(CPU)
++        self.assertEqual(self.state.read_text().strip(), 'false')
++        self.assertEqual(self.toggle(), ('true', 'animations.enabled'))
++        self.assertTrue((self.home / FLAG).exists())
++        self.assertEqual(self.toggle(), ('false', 'animations.disabled'))
++        self.assertFalse((self.home / FLAG).exists())
++        self.assertEqual(self.toggle(), ('true', 'animations.enabled'))
++        # The next CPU session keeps them on.
++        self.boot(CPU)
++        self.assertEqual(self.state.read_text().strip(), 'true')
++        self.assertEqual(self.toggle('off'), ('false', 'animations.disabled'))
++        self.boot(CPU)
++        self.assertEqual(self.state.read_text().strip(), 'false')
++        self.assertEqual(self.toggle('on'), ('true', 'animations.enabled'))
++
++    def test_gpu_rendering_keeps_omarchy_s_toggle(self):
++        self.boot(GPU)
++        self.assertEqual(self.toggle(), ('false', 'animations.disabled'))
++        self.assertTrue((self.home / '.local/state/omarchy/toggles/hypr/no-animations.lua').exists())
++        self.assertEqual(self.toggle(), ('true', 'animations.enabled'))
++        self.assertFalse((self.home / FLAG).exists())
++
++    def test_looknfeel_choice_wins_and_the_notification_says_so(self):
++        self.boot(CPU, looknfeel='false')
++        self.assertEqual(self.toggle(), ('false', 'animations.disabled'))
++        self.boot(CPU, looknfeel='true')
++        self.assertEqual(self.state.read_text().strip(), 'true')
++        self.assertEqual(self.toggle(), ('false', 'animations.disabled'))
++        self.assertEqual(self.toggle(), ('true', 'animations.enabled'))
++
++
++@unittest.skipUnless(shutil.which('lua'), 'lua is not installed')
++class ProfileTests(unittest.TestCase):
++    HARNESS = '''
++local real_open = io.open
++io.open = function(path, mode)
++  if path == "/proc/cmdline" then return real_open(CMDLINE, mode) end
++  return real_open(path, mode)
++end
++local animations = "unset"
++hl = { config = function(t) if t.animations then animations = tostring(t.animations.enabled) end end,
++       monitor = function() end }
++o = { exec_on_start = function() end }
++CHUNK
++io.write(animations)
++'''
++
++    def profile(self, cmdline, flag):
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            (root / 'cmdline').write_text(cmdline + '\n')
++            if flag:
++                (root / FLAG).parent.mkdir(parents=True)
++                (root / FLAG).touch()
++            source = self.HARNESS.replace('CMDLINE', repr(str(root / 'cmdline'))).replace(
++                'CHUNK', FRAGMENT.read_text())
++            ran = subprocess.run(['lua', '-'], input=source, text=True, capture_output=True,
++                                 env=dict(os.environ, HOME=str(root), XDG_RUNTIME_DIR=str(root)))
++            self.assertEqual(ran.returncode, 0, ran.stderr)
++            return ran.stdout
++
++    def test_cpu_rendering_starts_with_animations_off_until_appearance_turns_them_on(self):
++        self.assertEqual(self.profile(CPU, flag=False), 'false')
++        self.assertEqual(self.profile(CPU, flag=True), 'unset')
++        self.assertEqual(self.profile(GPU, flag=False), 'unset')
++        self.assertEqual(self.profile(GPU, flag=True), 'unset')
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/guest/tests/test_notification_privacy.py b/guest/tests/test_notification_privacy.py
+index 8bd201d..bc1c107 100644
+--- a/guest/tests/test_notification_privacy.py
++++ b/guest/tests/test_notification_privacy.py
+@@ -120,4 +120,4 @@ for (const state of [null, {screensaverStateKnown:false}, {screensaverStateKnown
+         self.assertIn('usr/share/try-omarchy/notifications', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-notifications', finalizer)
+         self.assertIn('previous_revision < 52', catch_up)
+-        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 14)
++        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 15)
+diff --git a/guest/tests/test_qt612_palette.py b/guest/tests/test_qt612_palette.py
+index 608b049..81ed532 100644
+--- a/guest/tests/test_qt612_palette.py
++++ b/guest/tests/test_qt612_palette.py
+@@ -173,7 +173,7 @@ class Qt612PaletteTests(unittest.TestCase):
+         self.assertIn('compat_revision=69', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-qt612-palette', paths)
+         self.assertIn('usr/share/try-omarchy/qt612-palette', paths)
+-        self.assertEqual(self.build_spec['upstream']['packageRelease'], 14)
++        self.assertEqual(self.build_spec['upstream']['packageRelease'], 15)
+         service = (OVERLAY / 'etc/systemd/system/try-omarchy-catch-up.service').read_text()
+         self.assertIn('Before=display-manager.service', service)
+         catch_up = OVERLAY / 'usr/local/lib/try-omarchy/catch-up'
+diff --git a/guest/tests/test_snapper_guest.py b/guest/tests/test_snapper_guest.py
+index a20090f..905ff82 100644
+--- a/guest/tests/test_snapper_guest.py
++++ b/guest/tests/test_snapper_guest.py
+@@ -45,4 +45,4 @@ class GuestSnapperTests(unittest.TestCase):
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn(TARGET, paths)
+         self.assertIn('compat_revision=69', finalizer)
+-        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 14)
++        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 15)
+diff --git a/guest/tests/test_terminal_bell.py b/guest/tests/test_terminal_bell.py
+index 8c44bd9..f5f17c5 100644
+--- a/guest/tests/test_terminal_bell.py
++++ b/guest/tests/test_terminal_bell.py
+@@ -18,8 +18,8 @@ class TerminalBellTests(unittest.TestCase):
+     def test_backport_is_recorded_after_the_existing_ones(self):
+         spec = json.loads((GUEST / 'spec.json').read_text())
+         backports = spec['authenticity']['backports']
+-        self.assertEqual(backports[-1]['id'], 'mute-terminal-bell')
+-        self.assertEqual([target['path'] for target in backports[-1]['targets']], ['default/hypr/looknfeel.lua'])
++        bell = next(backport for backport in backports if backport['id'] == 'mute-terminal-bell')
++        self.assertEqual([target['path'] for target in bell['targets']], ['default/hypr/looknfeel.lua'])
+         self.assertIn('default', spec['authenticity']['backportedRuntimeTrees'])
+         self.assertNotIn('default', spec['authenticity']['verbatimRuntimeTrees'])
+ 
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 9462492..e860bdf 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -68,7 +68,7 @@ def main() -> None:
+     backports = authenticity["backports"]
+     check(
+         [backport.get("id") for backport in backports]
+-        == ["notification-screen-privacy", "setup-host-timezone", "clock-timezone-refresh", "screensaver-terminal-fit", "update-free-space-message", "first-run-update-notification", "windows-power-profile", "virtio-nightlight", "mute-terminal-bell"],
++        == ["notification-screen-privacy", "setup-host-timezone", "clock-timezone-refresh", "screensaver-terminal-fit", "update-free-space-message", "first-run-update-notification", "windows-power-profile", "virtio-nightlight", "mute-terminal-bell", "cpu-animations-toggle"],
+         "Omarchy backports are explicitly ordered and identified",
+     )
+     for backport in backports:
+-- 
+2.56.0
+
