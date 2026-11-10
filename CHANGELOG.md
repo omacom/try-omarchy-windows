@@ -1,16 +1,45 @@
 # Changelog
 
-## Unreleased
+## v0.15.0 - 2026-11-10
 
+- Omarchy 4.5.0 (Quattro RS). New installs start on it, and existing installs
+  move to it with their next **Update > Omarchy**. Omasnap takes over
+  screenshots from Tensaku and Disktree replaces dua-cli, as in Omarchy (#393).
+- **Update > Omarchy** no longer removes the camera and battery modules. Only
+  the kernel was held back, so once Arch moved ahead the update replaced the
+  kernel headers and the modules could not be rebuilt: after the next restart
+  Omarchy had no battery indicator and no camera. The headers are now held
+  with the kernel, and installs that already lost the modules get them back on
+  their first start with this release. If the camera device is ever missing,
+  the camera service now fails visibly instead of showing as running (#401).
+- Text copied in Windows always pastes in Omarchy as text. A PowerShell prompt
+  line was mistaken for a plotter file and pasted as nothing (#398, #396).
+- Omarchy uses less CPU while idle: the Windows audio bridge waits for audio
+  changes instead of asking PipeWire four times a second. Device changes,
+  volume and mute still follow in both directions (#398).
+- With CPU rendering, **Appearance > Animations** turns animations back on and
+  off, the choice lasts across restarts, and the notification says what
+  happened. CPU rendering still starts with animations off and GPU rendering
+  keeps Omarchy's look (#398).
+- Updated installs end up the same as new ones: Omarchy's package repository
+  comes first as 4.5 orders it, and the icon font, font rules, user services
+  and fastfetch layout follow each update (#393).
+- Left out of the image: OWE video backgrounds, Hype, Monologue, Signed, Gliff,
+  floating titlebars, and the Mozc and Chinese input add-ons (#393).
+- Catch-up no longer stops on early preview installs without DKMS, so later
+  repairs reach them (#393).
+- Runtime r27 draws Vulkan windows straight on Intel graphics at every window
+  width. They were skewed unless the width was a multiple of 64 pixels (#395,
+  #394).
 - During first setup, the setup window says when it is saving the new disk and
   registering Try Omarchy with Windows instead of showing an earlier step, and
   shows progress while it checks an existing system image. shell.log records
   when each long setup step and each setup question started and how long it
-  took.
+  took (#397).
 - A first boot that runs while the PC's displays are off or the session is
   locked no longer ends at the blank-window prompt. The launcher stops
   checking the Omarchy window until the screen can be seen again, and records
-  GPU rendering as working once it does.
+  GPU rendering as working once it does (#397).
 
 ## v0.14.0 - 2026-11-08
 
