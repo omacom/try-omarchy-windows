@@ -32,9 +32,14 @@ work, measured the same way:
 | Display mode | 1280×800 at 120 Hz, fixed | The host window's size and its monitor's refresh rate, followed live: 2496×1407 at 240 Hz in a window, the panel's 2560×1600 at 240 Hz fullscreen |
 | How a frame reaches the window | Three full-frame CPU copies (GPU readback into the virtio-gpu buffer, into QEMU's surface, into SDL's texture) | Zero-copy: the window draws the compositor's own D3D12 texture, one GPU blit (0.04–0.06 ms) |
 | Compositor at 2496×1407, 240 Hz | **61 FPS**, 16.4 ms per frame, 67 ms variance (Hyprland's overlay) | **238 page flips/s**; 99.1% of frames on time (1414 of 1427 in 6 s), 12 one frame late (kernel DRM trace, vkcube running) |
-| Browser animation test (testufo, Chromium) | — | about 200 fps, the owner's own test |
+| Browser animation test (testufo, Chromium) | — | 220–240 fps, the owner's own test (about 200 before the host-thread and window changes) |
 | Input polling (keyboard, pointer buttons, wheel) | every 10 ms when busy, 30 ms after a pause | every display frame: 4 ms at 240 Hz, 8 ms when quiet |
 | Compositor freezes | Hyprland froze for good after seconds to hours (Mesa 26.2.4 slab-lock self-deadlock) | Fixed (upstream Mesa fix backported); 180 s of overlay, vkcube and glmark2 together without a missed check |
+| How an application's frame reaches the compositor | `wl_shm`: a GPU readback in the application and an upload in the compositor | Zero-copy window buffers: the compositor samples the application's texture |
+| Opening the Omarchy menu at 240 Hz (kernel DRM trace, 1.53 s) | 311 frames, 26 late, longest gap 50 ms | 346 frames, 5 late, longest gap 16.7 ms |
+| Terminal window open / close animation | not played: the development VM booted with `tryomarchy.render=cpu`, for which Omarchy turns animations off | 111–114 frames over the 0.45 s animation, gaps of at most 8.3 ms |
+| Chromium | software rendering (no WebGL); then on the GPU only through an Xwayland wrapper (unscaled window, no window buttons) | native Wayland, default flags: ANGLE on D3D12 (RTX 5090), OpenGL ES 3.1 |
+| Time to a mapped window (test VM, 6 vCPUs) | — | foot 57–67 ms; Nautilus 1.2 s first, 0.21–0.25 s after; Chromium 1.4–2.0 s |
 
 The pointer itself moves with the Windows cursor (QEMU turns Hyprland's
 cursor into the host cursor), so it was never limited by these rates;
@@ -45,7 +50,7 @@ clicks, drags and keys were.
 | Test | Before | After | Notes |
 | --- | --- | --- | --- |
 | glmark2 1080p off-screen (OpenGL 4.6, Mesa d3d12) | 1289 (the first desktop build: 42, then a hang) | 2255–2522 | |
-| glmark2 720p windowed | 313 | 453–519 | Windowed clients still hand frames to the compositor through shared memory (below) |
+| glmark2 720p windowed | 313 | 1579–1757 (453–519 on `wl_shm`) | Zero-copy window buffers |
 | vkmark 720p (Vulkan 1.2, Dozen) | 491 | 1026–1211 | |
 | vkcube, Wayland | timed out | 300 frames in 0.8 s without vsync | |
 | vkcube with vsync at 240 Hz | — | 202 fps | Limited by vkcube's own present (a CPU readback per frame), not the compositor |
@@ -111,22 +116,6 @@ Other media:
 
 ## Where the rest of native performance goes
 
-- **Application windows.** Apps hand frames to Hyprland through shared
-  memory (`wl_shm`): a GPU readback in the app and an upload in the
-  compositor, about 14 MB each per frame at 2.5K. That is what keeps a
-  full-screen browser animation near 200 fps rather than 240. The fix is
-  the same sharing the compositor's scanout now uses, extended to client
-  buffers (OpenResource now works across processes, which it needs).
-- **Frame pacing.** The guest's vblank is a 240 Hz timer, not the host
-  panel's: a frame can land just after the host's refresh and wait one
-  more, felt as an uneven frame now and then.
-- **Per-call latency.** Every GPU call is a VM exit and a host call: CUDA
-  launch + synchronize costs 17 µs against 7 µs native, and NVDEC decode,
-  which synchronizes per frame, reaches 72–85% of native. Video encode
-  and compute bandwidth, which batch their work, are at 97–102%.
-- **Start-up.** Creating a hardware queue costs the host 5–11 ms; video
-  sessions start in 0.7–1.2 s against 0.3–0.45 s natively.
-- **Not exposed by the platform.** DXR ray tracing, feature level 12_2 and
-  DLSS for Linux applications need NVIDIA's Linux Vulkan or D3D12 driver
-  stack, which WSL's user-mode driver does not provide (WSL2 lacks them
-  the same way). OptiX ray tracing goes through CUDA and loads.
+- **Vulkan windows.** Dozen's window system integration still presents
+  through `wl_shm` (a readback per frame): vkcube with vsync reaches about
+  200 fps of 240. OpenGL, GTK, Qt and Chromium windows are zero-copy.
