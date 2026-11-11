@@ -1,0 +1,69 @@
+From d4fdfb84f4dd6dad343f4428222cc99aa9347370 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 22:59:52 +0000
+Subject: [PATCH] Refresh the guest package lock
+
+libbpf 1.7.0-1 -> 1.8.0-1
+lz4 1:1.11.0-1 -> 1:1.11.1-1
+minizip 1:1.3.2-4 -> 1:1.4-1
+xorg-server 21.1.25-2 -> 21.1.26-1
+xorg-server-common 21.1.25-2 -> 21.1.26-1
+zlib 1:1.3.2-4 -> 1:1.4-1
+---
+ guest/packages.lock.json | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index 26ad2fc..658df93 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -233,7 +233,7 @@
+     "libblockdev-smart": "3.5.0-2",
+     "libblockdev-swap": "3.5.0-2",
+     "libbluray": "1.5.1-1",
+-    "libbpf": "1.7.0-1",
++    "libbpf": "1.8.0-1",
+     "libbs2b": "3.1.0-11",
+     "libbsd": "0.12.2-2",
+     "libbytesize": "2.12-3",
+@@ -449,7 +449,7 @@
+     "lua54": "5.4.9-1",
+     "luajit": "2.1.1794214635+c4b1e2f-1",
+     "lv2": "1.18.10-2",
+-    "lz4": "1:1.11.0-1",
++    "lz4": "1:1.11.1-1",
+     "lzo": "2.10-5",
+     "m4": "1.4.21-2",
+     "make": "4.4.1-3",
+@@ -458,7 +458,7 @@
+     "mdadm": "4.6-2",
+     "mesa": "1:26.2.6-1",
+     "ministream": "0.99.1-1",
+-    "minizip": "1:1.3.2-4",
++    "minizip": "1:1.4-1",
+     "mkinitcpio": "42.2-1",
+     "mkinitcpio-busybox": "1.36.1-1",
+     "mobile-broadband-provider-info": "20251101-1",
+@@ -670,8 +670,8 @@
+     "xf86-input-libinput": "1.5.0-1",
+     "xkeyboard-config": "2.49-1",
+     "xorg-fonts-encodings": "1.1.0-2",
+-    "xorg-server": "21.1.25-2",
+-    "xorg-server-common": "21.1.25-2",
++    "xorg-server": "21.1.26-1",
++    "xorg-server-common": "21.1.26-1",
+     "xorg-setxkbmap": "1.3.5-1",
+     "xorg-xauth": "1.1.5-1",
+     "xorg-xkbcomp": "1.5.0-1",
+@@ -689,7 +689,7 @@
+     "zeromq": "4.3.5-3",
+     "zimg": "3.0.6-2",
+     "zix": "0.8.2-1",
+-    "zlib": "1:1.3.2-4",
++    "zlib": "1:1.4-1",
+     "zlib-ng": "2.3.3-1",
+     "zoxide": "0.10.0-1",
+     "zram-generator": "1.2.1-1",
+-- 
+2.56.0
+

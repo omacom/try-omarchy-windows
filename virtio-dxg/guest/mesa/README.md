@@ -1,5 +1,10 @@
 # virtio-dxg Mesa 26.2.6 candidate
 
+The November 11 recipe keeps one completed sync file per D3D12 screen and
+duplicates it for native-fence exports after producer completion. Rebuild the
+Mesa archive and initramfs together because the recipe digest has changed.
+The previous CI archive at `3718b3a` predates the native Wayland changes.
+
 This branch combines Claude's KMS mirrors and compositor zero-copy scanout with
 our resource-ownership, upload, constant-buffer, fence and Dozen FD guards.
 It uses the real guest dxg kernel ABI, not the older private userspace broker.

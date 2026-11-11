@@ -307,6 +307,8 @@
   "status.starting_desktop": "正在启动桌面...",
   "status.slow_start": "Omarchy 启动时间比平时长...",
   "status.preparing_disk": "正在准备 Omarchy 磁盘...",
+  "status.saving_disk": "正在保存 Omarchy 磁盘...",
+  "status.registering_launcher": "正在向 Windows 注册 Try Omarchy...",
   "status.preparing_image_update": "正在准备 Omarchy 镜像更新...",
   "status.downloading_omarchy": "正在下载 Omarchy（{part}/{total}）...",
   "status.downloading_system": "正在下载 Omarchy 系统镜像...",

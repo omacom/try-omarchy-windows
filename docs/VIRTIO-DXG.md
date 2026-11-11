@@ -1,8 +1,8 @@
 # virtio-dxg: driver-level NVIDIA virtualization on a Windows host
 
-Updated 2026-11-09. [New integration candidate and limits](VIRTIO-DXG-INTEGRATION.md).
-The runtime results below are inherited from Claude's November 8 snapshot;
-the new combined candidate has not been run. Code: [`virtio-dxg/`](../virtio-dxg).
+The integration includes native Wayland and shared application buffers through
+`8f1d75c`. See the [results](VIRTIO-DXG-RESULTS.md) and the
+[November 11 integration record](VIRTIO-DXG-INTEGRATION.md) for tested limits.
 
 ## The short version
 

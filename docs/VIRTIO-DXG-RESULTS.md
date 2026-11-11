@@ -1,9 +1,8 @@
 # virtio-dxg: results before and after
 
-> Historical runtime results inherited from Claude's November 8, 2026 snapshot
-> (`6d3524c`). The new [integration candidate](VIRTIO-DXG-INTEGRATION.md) has
-> not been run. These short samples do not establish daily-use stability,
-> correct 240 Hz animations, full Chromium acceleration or 4K performance.
+> Runtime measurements reported by Claude through `8f1d75c`. Hardware,
+> resolution, duration and workload matter when comparing these numbers.
+> The [November 11 candidate](VIRTIO-DXG-INTEGRATION.md) awaits hardware testing.
 
 
 Measured on one machine: an RTX 5090 Laptop GPU (driver 621.14) driving a

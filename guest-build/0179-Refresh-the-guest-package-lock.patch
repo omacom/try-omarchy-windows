@@ -1,0 +1,400 @@
+From d062e5a8b568ad413b7cc453429fcf7468a1f3f0 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 09:25:22 -0600
+Subject: [PATCH] Refresh the guest package lock
+
+alsa-card-profiles 1:1.6.10-1 -> 1:1.6.11-1
+bluez-libs 5.87-2 -> 5.88-1
+boost-libs 1.92.0-1 -> 1.92.0-2
+coreutils 9.12-2 -> 9.12-3
+cryptsetup 2.8.8-1 -> 2.8.8-2
+curl 8.23.0-1 -> 8.23.0-2
+ffmpeg 2:9.0.2-2 -> 2:9.0.2-3
+git 2.56.0-1 -> 2.56.0-2
+gst-plugins-bad-libs 1.28.8-1 -> 1.28.9-1
+gst-plugins-base-libs 1.28.8-1 -> 1.28.9-1
+gstreamer 1.28.8-1 -> 1.28.9-1
+herdr 0.9.1-2 -> 0.9.5-1
+kmod 34.3-1 -> 34.3-2
+krb5 1.22.2-1 -> 1.22.2-2
+libarchive 3.8.11-1 -> 3.8.11-2
+libevent 2.1.13-2 -> 2.1.13-3
+libgit2 1:1.9.7-1 -> 1:1.9.7-2
+libimobiledevice 1.4.0-2 -> 1.4.0-3
+libldap 2.7.2-2 -> 2.7.2-3
+libngtcp2 1.26.0-1 -> 1.26.0-2
+libnvme 1.16.2-2 -> 1.16.2-3
+libpipewire 1:1.6.10-1 -> 1:1.6.11-1
+libpulse 17.0+r134+g77d25a1e6-1 -> 17.0+r134+g77d25a1e6-2
+libsasl 2.1.28-5 -> 2.1.28-6
+libssh 0.12.2-1 -> 0.12.2-2
+libssh2 1.11.1-7 -> 1.11.1-8
+libwireplumber 0.5.18-1 -> 0.5.19-1
+libzip 1.11.4-1 -> 1.11.4-2
+linux 7.2.14.arch1-1 -> 7.2.15.arch1-1
+linux-headers 7.2.14.arch1-1 -> 7.2.15.arch1-1
+openssh 10.6p1-2 -> 10.6p1-3
+openssl 3.6.5-1 -> 4.1.0-1
+pacman 7.1.0.r9.g54d9411-3 -> 7.1.0.r9.g54d9411-4
+pipewire 1:1.6.10-1 -> 1:1.6.11-1
+pipewire-alsa 1:1.6.10-1 -> 1:1.6.11-1
+pipewire-audio 1:1.6.10-1 -> 1:1.6.11-1
+pipewire-pulse 1:1.6.10-1 -> 1:1.6.11-1
+python 3.14.9-1 -> 3.14.10-1
+qt6-base 6.12.0-3 -> 6.12.0-4
+socat 1.8.1.3-1 -> 1.8.1.3-2
+srt 1.5.7-2 -> 1.5.7-3
+sudo 1.9.17.p2-6 -> 1.9.17.p2-7
+systemd 262.1-1 -> 262.2-1
+systemd-libs 262.1-1 -> 262.2-1
+systemd-resolvconf 262.1-1 -> 262.2-1
+systemd-sysvcompat 262.1-1 -> 262.2-1
+tpm2-tss 4.2.0-2 -> 4.2.1-2
+uwsm 0.27.1-1 -> 0.27.2-1
+wireplumber 0.5.18-1 -> 0.5.19-1
+wpa_supplicant 2:2.12-1 -> 2:2.12-2
+xorg-xwayland 24.1.14-1 -> 24.1.15-1
+openssl-3 3.5.9-2 (new)
+---
+ guest/packages.lock.json | 103 ++++++++++++++++++++-------------------
+ 1 file changed, 52 insertions(+), 51 deletions(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index c4a86c1..26ad2fc 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -7,7 +7,7 @@
+     "adwaita-fonts": "51.0-2",
+     "adwaita-icon-theme": "51.0-1",
+     "adwaita-icon-theme-legacy": "46.2-3",
+-    "alsa-card-profiles": "1:1.6.10-1",
++    "alsa-card-profiles": "1:1.6.11-1",
+     "alsa-lib": "1.2.16.1-1",
+     "alsa-topology-conf": "1.2.5.1-4",
+     "alsa-ucm-conf": "1.2.16.1-1",
+@@ -27,8 +27,8 @@
+     "bat": "0.26.1-3",
+     "binutils": "2.47-4",
+     "bison": "3.8.2-8",
+-    "bluez-libs": "5.87-2",
+-    "boost-libs": "1.92.0-1",
++    "bluez-libs": "5.88-1",
++    "boost-libs": "1.92.0-2",
+     "brotli": "1.2.1-1",
+     "btop": "1.4.7-1",
+     "bubblewrap": "0.13.1-1",
+@@ -42,12 +42,12 @@
+     "clang-libs": "23.1.4-1",
+     "cmake": "4.4.5-1",
+     "compiler-rt": "23.1.4-1",
+-    "coreutils": "9.12-2",
++    "coreutils": "9.12-3",
+     "cpio": "2.15-3",
+     "cppdap": "1.58.0-3",
+     "cpptrace": "1.0.4-2",
+-    "cryptsetup": "2.8.8-1",
+-    "curl": "8.23.0-1",
++    "cryptsetup": "2.8.8-2",
++    "curl": "8.23.0-2",
+     "dav1d": "1.5.4-1",
+     "db5.3": "5.3.28-7",
+     "dbus": "1.16.2-2",
+@@ -80,7 +80,7 @@
+     "fcitx5-hangul": "5.1.11-1",
+     "fcitx5-qt": "5.1.16-2",
+     "fd": "10.5.0-3",
+-    "ffmpeg": "2:9.0.2-2",
++    "ffmpeg": "2:9.0.2-3",
+     "fftw": "3.3.11-1",
+     "file": "5.48-1",
+     "filesystem": "2025.10.12-1",
+@@ -111,7 +111,7 @@
+     "gexiv2-common": "0.16.2-2",
+     "ghostscript": "10.08.0-1",
+     "giflib": "6.1.3-2",
+-    "git": "2.56.0-1",
++    "git": "2.56.0-2",
+     "glib-networking": "1:2.90.1-1",
+     "glib2": "2.90.1-1",
+     "glibc": "2.44+r50+g1848099f063e-1",
+@@ -145,9 +145,9 @@
+     "gsfonts": "20200910-6",
+     "gsm": "1.0.24-1",
+     "gssdp": "1.6.6-1",
+-    "gst-plugins-bad-libs": "1.28.8-1",
+-    "gst-plugins-base-libs": "1.28.8-1",
+-    "gstreamer": "1.28.8-1",
++    "gst-plugins-bad-libs": "1.28.9-1",
++    "gst-plugins-base-libs": "1.28.9-1",
++    "gstreamer": "1.28.9-1",
+     "gtest": "1.18.0-1",
+     "gtk-update-icon-cache": "1:4.24.1-1",
+     "gtk3": "1:3.24.52-2",
+@@ -162,7 +162,7 @@
+     "gvfs": "1.62.0-3",
+     "gzip": "1.15-1",
+     "harfbuzz": "15.1.0-1",
+-    "herdr": "0.9.1-2",
++    "herdr": "0.9.5-1",
+     "hicolor-icon-theme": "0.18-1",
+     "hidapi": "0.15.0-1",
+     "highway": "1.4.0-1",
+@@ -203,8 +203,8 @@
+     "jsoncpp": "1.9.8-1",
+     "kbd": "2.10.0-1",
+     "keyutils": "1.6.3-4",
+-    "kmod": "34.3-1",
+-    "krb5": "1.22.2-1",
++    "kmod": "34.3-2",
++    "krb5": "1.22.2-2",
+     "l-smash": "2.14.5-4",
+     "lame": "4.0-1",
+     "layer-shell-qt": "6.8.2-1",
+@@ -213,7 +213,7 @@
+     "leptonica": "1.87.0-2",
+     "less": "1:710-1",
+     "libadwaita": "1:1.10.0-1",
+-    "libarchive": "3.8.11-1",
++    "libarchive": "3.8.11-2",
+     "libasan": "16.2.1+r23+gd564253eb6c8-1",
+     "libass": "0.17.5-1",
+     "libassuan": "3.0.0-1",
+@@ -264,7 +264,7 @@
+     "libelf": "0.197-1",
+     "libepoxy": "1.5.10-3",
+     "libevdev": "1.14.0-1",
+-    "libevent": "2.1.13-2",
++    "libevent": "2.1.13-3",
+     "libexif": "0.6.26-1",
+     "libfdk-aac": "3.0.0-1",
+     "libffi": "3.8.0-1",
+@@ -274,7 +274,7 @@
+     "libgcrypt": "1.12.4-1",
+     "libgfortran": "16.2.1+r23+gd564253eb6c8-1",
+     "libgirepository": "1.86.0-2",
+-    "libgit2": "1:1.9.7-1",
++    "libgit2": "1:1.9.7-2",
+     "libglvnd": "1.7.0-3",
+     "libgomp": "16.2.1+r23+gd564253eb6c8-1",
+     "libgpg-error": "1.61-1",
+@@ -288,7 +288,7 @@
+     "libidn": "1.44-1",
+     "libidn2": "2.3.8-1",
+     "libiec61883": "1.2.0-9",
+-    "libimobiledevice": "1.4.0-2",
++    "libimobiledevice": "1.4.0-3",
+     "libimobiledevice-glue": "1.3.2-1",
+     "libinih": "62-2",
+     "libinput": "1.32.0-1",
+@@ -299,7 +299,7 @@
+     "libksba": "1.8.1-1",
+     "liblc3": "1.1.3-2",
+     "libldac": "2.0.2.6-1",
+-    "libldap": "2.7.2-2",
++    "libldap": "2.7.2-3",
+     "liblqr": "0.4.3-1",
+     "liblsan": "16.2.1+r23+gd564253eb6c8-1",
+     "libluv": "1.53.0.1-1",
+@@ -321,7 +321,7 @@
+     "libnftnl": "1.3.2-1",
+     "libnghttp2": "1.71.0-1",
+     "libnghttp3": "1.19.0-1",
+-    "libngtcp2": "1.26.0-1",
++    "libngtcp2": "1.26.0-2",
+     "libnice": "0.1.24-1",
+     "libnl": "3.12.0-1",
+     "libnm": "1.58.1-3",
+@@ -329,7 +329,7 @@
+     "libnsbmp": "0.1.7-2",
+     "libnsgif": "1.0.0-2",
+     "libnsl": "2.0.1-2",
+-    "libnvme": "1.16.2-2",
++    "libnvme": "1.16.2-3",
+     "libobjc": "16.2.1+r23+gd564253eb6c8-1",
+     "libogg": "1.3.6-1",
+     "libopenmpt": "0.8.10-1",
+@@ -340,7 +340,7 @@
+     "libpciaccess": "0.19-1",
+     "libpgm": "5.3.128-4",
+     "libpipeline": "1.5.8-1",
+-    "libpipewire": "1:1.6.10-1",
++    "libpipewire": "1:1.6.11-1",
+     "libplacebo": "7.360.1-7",
+     "libplist": "2.7.0-3",
+     "libpng": "1.6.59-1",
+@@ -348,13 +348,13 @@
+     "libportal-gtk4": "0.11.0-1",
+     "libproxy": "0.5.12-1",
+     "libpsl": "0.21.5-2",
+-    "libpulse": "17.0+r134+g77d25a1e6-1",
++    "libpulse": "17.0+r134+g77d25a1e6-2",
+     "libquadmath": "16.2.1+r23+gd564253eb6c8-1",
+     "libraqm": "0.11.0-1",
+     "libraw1394": "2.1.2-4",
+     "librsvg": "2:2.63.4-1",
+     "libsamplerate": "0.2.2-3",
+-    "libsasl": "2.1.28-5",
++    "libsasl": "2.1.28-6",
+     "libseccomp": "2.6.0-1",
+     "libsecret": "0.21.8.2-1",
+     "libsixel": "1.10.5-1",
+@@ -363,8 +363,8 @@
+     "libsodium": "1.0.22-1",
+     "libsoup3": "3.8.1-1",
+     "libsoxr": "0.1.3-5",
+-    "libssh": "0.12.2-1",
+-    "libssh2": "1.11.1-7",
++    "libssh": "0.12.2-2",
++    "libssh2": "1.11.1-8",
+     "libstdc++": "16.2.1+r23+gd564253eb6c8-1",
+     "libstemmer": "3.2.0-1",
+     "libsysprof-capture": "51.0-1",
+@@ -396,7 +396,7 @@
+     "libvterm": "0.3.3-2",
+     "libwacom": "2.20.0-1",
+     "libwebp": "1.6.0-2",
+-    "libwireplumber": "0.5.18-1",
++    "libwireplumber": "0.5.19-1",
+     "libx11": "1.8.14-1",
+     "libxau": "1.0.12-1",
+     "libxcb": "1.17.0-1",
+@@ -431,12 +431,12 @@
+     "libyaml": "0.2.5-3",
+     "libyuv": "r2921+644251f25-1",
+     "libzen": "0.4.41-3",
+-    "libzip": "1.11.4-1",
++    "libzip": "1.11.4-2",
+     "licenses": "20240728-1",
+     "lilv": "0.28.0-1",
+-    "linux": "7.2.14.arch1-1",
++    "linux": "7.2.15.arch1-1",
+     "linux-api-headers": "7.3-1",
+-    "linux-headers": "7.2.14.arch1-1",
++    "linux-headers": "7.2.15.arch1-1",
+     "llhttp": "9.3.1-1",
+     "llvm": "23.1.4-1",
+     "llvm-libs": "23.1.4-1",
+@@ -496,13 +496,14 @@
+     "opencore-amr": "0.1.6-2",
+     "openh264": "2.7.0-1",
+     "openjpeg2": "2.5.4-1",
+-    "openssh": "10.6p1-2",
+-    "openssl": "3.6.5-1",
++    "openssh": "10.6p1-3",
++    "openssl": "4.1.0-1",
++    "openssl-3": "3.5.9-2",
+     "opus": "1.6.1-1",
+     "orc": "0.4.44-1",
+     "osinfo-db": "20260812-1",
+     "p11-kit": "0.26.5-1",
+-    "pacman": "7.1.0.r9.g54d9411-3",
++    "pacman": "7.1.0.r9.g54d9411-4",
+     "pacman-contrib": "1.13.1-1",
+     "pacman-mirrorlist": "20260610-1",
+     "pahole": "1:1.32-1",
+@@ -521,10 +522,10 @@
+     "perl-mailtools": "2.22-3",
+     "perl-timedate": "2.35-1",
+     "pinentry": "1.3.3-1",
+-    "pipewire": "1:1.6.10-1",
+-    "pipewire-alsa": "1:1.6.10-1",
+-    "pipewire-audio": "1:1.6.10-1",
+-    "pipewire-pulse": "1:1.6.10-1",
++    "pipewire": "1:1.6.11-1",
++    "pipewire-alsa": "1:1.6.11-1",
++    "pipewire-audio": "1:1.6.11-1",
++    "pipewire-pulse": "1:1.6.11-1",
+     "pixman": "0.46.4-1",
+     "pkgconf": "3.0.10-1",
+     "playerctl": "2.4.1-5",
+@@ -538,7 +539,7 @@
+     "procps-ng": "4.0.7-1",
+     "psmisc": "23.7-2",
+     "pugixml": "1.16-1",
+-    "python": "3.14.9-1",
++    "python": "3.14.10-1",
+     "python-dbus": "1.5.1-1",
+     "python-docopt": "0.6.2-16",
+     "python-gobject": "3.58.1-1",
+@@ -546,7 +547,7 @@
+     "python-yaml": "6.0.3-2",
+     "qoi": "r350.4461cc3-1",
+     "qrencode": "4.1.1-4",
+-    "qt6-base": "6.12.0-3",
++    "qt6-base": "6.12.0-4",
+     "qt6-declarative": "6.12.0-4",
+     "qt6-imageformats": "6.12.0-1",
+     "qt6-multimedia": "6.12.0-1",
+@@ -577,7 +578,7 @@
+     "slurp": "1.5.0-2",
+     "snappy": "1.3.1-1",
+     "sndio": "1.10.0-1",
+-    "socat": "1.8.1.3-1",
++    "socat": "1.8.1.3-2",
+     "sord": "0.16.22-1",
+     "sound-theme-freedesktop": "0.8-6",
+     "source-highlight": "3.1.9-19",
+@@ -587,14 +588,14 @@
+     "spirv-tools": "1:1.4.363.0-1",
+     "sqlite": "3.54.1-1",
+     "sratom": "0.6.22-1",
+-    "srt": "1.5.7-2",
++    "srt": "1.5.7-3",
+     "starship": "1.27.0-1",
+-    "sudo": "1.9.17.p2-6",
++    "sudo": "1.9.17.p2-7",
+     "svt-av1": "4.2.0-1",
+-    "systemd": "262.1-1",
+-    "systemd-libs": "262.1-1",
+-    "systemd-resolvconf": "262.1-1",
+-    "systemd-sysvcompat": "262.1-1",
++    "systemd": "262.2-1",
++    "systemd-libs": "262.2-1",
++    "systemd-resolvconf": "262.2-1",
++    "systemd-sysvcompat": "262.2-1",
+     "tar": "1.35-5",
+     "tdb": "1.4.15-2",
+     "tesseract": "5.5.4-1",
+@@ -606,7 +607,7 @@
+     "tmux": "3.8-1",
+     "tomlplusplus": "3.4.0-2",
+     "totem-pl-parser": "3.26.7-1",
+-    "tpm2-tss": "4.2.0-2",
++    "tpm2-tss": "4.2.1-2",
+     "tree-sitter": "0.26.9-1",
+     "tree-sitter-c": "0.24.1-2",
+     "tree-sitter-lua": "0.5.0-3",
+@@ -627,7 +628,7 @@
+     "upower": "1.91.5-1",
+     "util-linux": "2.42.4-1",
+     "util-linux-libs": "2.42.4-1",
+-    "uwsm": "0.27.1-1",
++    "uwsm": "0.27.2-1",
+     "v4l-utils": "1.32.0-2",
+     "v4l2loopback-dkms": "0.15.4-2",
+     "vapoursynth": "81-1",
+@@ -643,10 +644,10 @@
+     "wayland-protocols": "1.50-1",
+     "webrtc-audio-processing-1": "1.3-6",
+     "which": "2.25-1",
+-    "wireplumber": "0.5.18-1",
++    "wireplumber": "0.5.19-1",
+     "wl-clipboard": "1:2.3.0-1",
+     "woff2-font-awesome": "7.3.1-1",
+-    "wpa_supplicant": "2:2.12-1",
++    "wpa_supplicant": "2:2.12-2",
+     "wtype": "0.4-2",
+     "x264": "3:0.165.r3222.b35605a-2",
+     "x265": "4.3-1",
+@@ -676,7 +677,7 @@
+     "xorg-xkbcomp": "1.5.0-1",
+     "xorg-xprop": "1.2.8-1",
+     "xorg-xsetroot": "1.1.4-1",
+-    "xorg-xwayland": "24.1.14-1",
++    "xorg-xwayland": "24.1.15-1",
+     "xorgproto": "2026.1-1",
+     "xvidcore": "1.3.7-4",
+     "xxhash": "0.8.4-1",
+-- 
+2.56.0
+

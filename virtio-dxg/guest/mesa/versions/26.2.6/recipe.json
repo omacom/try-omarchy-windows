@@ -7,7 +7,7 @@
   "profiles": {
     "graphics": {
       "patchFile": "graphics.patch",
-      "patchSha256": "04a990c8644c59b5471f1392b2953b2229db1b657de0eeaa86cfa979f7d40c77",
+      "patchSha256": "a97237febe689f1a0264d88d73454c130ccefc263211e32a6d02407c2ad816a1",
       "files": {
         "VERSION": {
           "originalSha256": "982a353702e30cae7604c76ff1a99db8b959088c79b12dd1ea480141241f2e48",
@@ -43,7 +43,7 @@
         },
         "src/gallium/drivers/d3d12/d3d12_fence.cpp": {
           "originalSha256": "6e7f13fdab60012c5bdf262bbd1f60d36440dd155e95254eaa252703d30b6759",
-          "patchedSha256": "816a11547119753507045584c270b3345ce07f69ebda236e70920a4942f1d392"
+          "patchedSha256": "37aa6562ae87d306dc5df27b99c80fd455f049ec08f527b83eee271fb33c1ea1"
         },
         "src/gallium/drivers/d3d12/d3d12_fence.h": {
           "originalSha256": "c0dfb38246345f1572f0e777d6caaeb6aea95222539cca790875dac69a2d184a",
@@ -59,7 +59,7 @@
         },
         "src/gallium/drivers/d3d12/d3d12_screen.cpp": {
           "originalSha256": "b442477e3751012eba05e4b41c269501f0f682679c908850dac059e13dea9185",
-          "patchedSha256": "903fe6c033c87ed524f782ddbc624494312246bad45fd668b73dc8591159712a"
+          "patchedSha256": "d51e8e017231e60874aa47e2d643a2a69cb95e826a5bee57266cd3a1b1515293"
         },
         "src/mesa/state_tracker/st_atom_constbuf.c": {
           "originalSha256": "a0140c9954053b256f969f4e2d2074c83a91cbe221e2dab6c47d96f67d130856",
@@ -84,6 +84,10 @@
         "subprojects/DirectX-Headers.wrap": {
           "originalSha256": "cd7710ccaa92dc9dabe4c6040b47c701c48b22c179d435debd5f7409142fcbe1",
           "patchedSha256": "647775c4b94f0d5c0042f790aaca03667ab6ea8796d98416d2bb6c42e75f8070"
+        },
+        "src/gallium/drivers/d3d12/d3d12_screen.h": {
+          "originalSha256": "e4ee1a6673d8b17cb27fe6fb12670d386dcec737c579f1427bfebe0bc238aa62",
+          "patchedSha256": "2750d08e1ad9aaebd21cb1a612ee030b0943c7e97dba4a66a19527622a1cadea"
         }
       }
     }

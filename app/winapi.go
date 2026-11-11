@@ -230,6 +230,7 @@ type displayWindowState struct {
 	beforeFull     *windowPlacement // what to put back when fullscreen ends
 	previous       *windowPlacement // last before its most recent save
 	savedAt        time.Time
+	concealed      bool // the boot curtain hid it on an earlier pass
 }
 
 func (state *displayWindowState) repairTopology(now *windowPlacement, dragging bool, monitors []hostMonitor, apply func(*windowPlacement) bool) *windowPlacement {
@@ -341,6 +342,30 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	if enumTitleTopologyChanged {
 		state.topologyRepair = true
 	}
+	// While the curtain hides a window its frame is off, so its placement
+	// and fullscreen state are not what the user will see. A topology change
+	// is recorded above and repaired once the curtain lifts.
+	if curtainConcealed(hwnd) {
+		state.concealed = true
+		return 1
+	}
+	// The window goes back where it belongs before anything is saved; a
+	// minimized window or a refused call keeps that pending.
+	if state.concealed && !enumTitleFullscreen {
+		now := capturePlacement(hwnd)
+		if now == nil {
+			return 1
+		}
+		if p := placementAfterCurtain(now, state.target); p != nil {
+			if p.Maximized && !now.Maximized {
+				state.concealed = !applyPlacement(hwnd, p)
+			} else {
+				state.concealed = !correctPlacement(hwnd, p)
+			}
+			return 1
+		}
+	}
+	state.concealed = false
 	if !enumTitleFullscreen && !state.fullscreen {
 		if restored := state.repairTopology(capturePlacement(hwnd), beingDragged(hwnd), enumTitleMonitorDetails, func(p *windowPlacement) bool {
 			return correctPlacement(hwnd, p)

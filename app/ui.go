@@ -180,10 +180,8 @@ func (ui *progressUI) chooseInstantMode() bool {
 	if !ui.available.Load() {
 		return false
 	}
-	reply := make(chan setupPromptResult, 1)
-	ui.prompts <- setupPromptRequest{kind: setupPromptProvision, reply: reply}
 	// The first option is the user's own account, so quick start is the second.
-	instant := !(<-reply).primary
+	instant := !ui.ask(setupPromptProvision).primary
 	ui.setInstantMode(instant)
 	return instant
 }
@@ -192,9 +190,7 @@ func (ui *progressUI) chooseShortcuts() (bool, bool) {
 	if !ui.available.Load() {
 		return false, false
 	}
-	reply := make(chan setupPromptResult, 1)
-	ui.prompts <- setupPromptRequest{kind: setupPromptShortcuts, reply: reply}
-	result := <-reply
+	result := ui.ask(setupPromptShortcuts)
 	return result.primary, result.secondary
 }
 
@@ -202,9 +198,30 @@ func (ui *progressUI) chooseSharedFolder() bool {
 	if !ui.available.Load() {
 		return false
 	}
+	return ui.ask(setupPromptSharedFolder).primary
+}
+
+func setupPromptName(kind setupPromptKind) string {
+	switch kind {
+	case setupPromptProvision:
+		return "account"
+	case setupPromptSharedFolder:
+		return "shared folder"
+	case setupPromptShortcuts:
+		return "shortcut"
+	}
+	return "setup"
+}
+
+// ask shows a setup question and waits for the answer. Setup stands still
+// until someone answers, so the log says how long that took.
+func (ui *progressUI) ask(kind setupPromptKind) setupPromptResult {
+	phase := startSetupPhase(setupPromptName(kind) + " question")
 	reply := make(chan setupPromptResult, 1)
-	ui.prompts <- setupPromptRequest{kind: setupPromptSharedFolder, reply: reply}
-	return (<-reply).primary
+	ui.prompts <- setupPromptRequest{kind: kind, reply: reply}
+	result := <-reply
+	phase.end(nil)
+	return result
 }
 
 func (ui *progressUI) confirmCancel(hCancel uintptr) bool {

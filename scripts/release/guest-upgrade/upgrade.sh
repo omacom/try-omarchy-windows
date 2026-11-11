@@ -26,6 +26,10 @@ if grep -q "command failed to execute correctly" /tmp/upgrade-packages.log; then
 # Matching headers hand the delivered camera and battery modules to DKMS
 # without install errors.
 if grep -q "Installation aborted" /tmp/upgrade-packages.log; then cat /tmp/upgrade-packages.log; exit 1; fi
+# The headers stay with the held kernel. An upgrade past it made DKMS remove
+# the camera and battery modules from the running kernel.
+[[ $(pacman -Q linux-headers | cut -d' ' -f2) == "$(pacman -Q linux | cut -d' ' -f2)" ]]
+if grep -q "Missing .* kernel modules tree" /tmp/upgrade-packages.log; then cat /tmp/upgrade-packages.log; exit 1; fi
 # The launcher supplies the kernel, so the update never asks to reboot for the
 # held linux package. A stand-in gum records what would have been asked.
 restart_prompts=$(gum() { printf 'asked: %s\n' "$*"; return 1; }; export -f gum; omarchy-update-restart 2>&1 || true)

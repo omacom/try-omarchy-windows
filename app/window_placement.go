@@ -293,6 +293,18 @@ const (
 	placementRestore               // something else resized it: put it back
 )
 
+// placementAfterCurtain is where a window goes once the boot curtain stops
+// hiding it, or nil to leave it. QEMU resizes a hidden window to the guest's
+// boot display, and the title enforcer leaves hidden windows alone, so the
+// placement the window belongs at is put back before any later change can
+// be saved as the user's: the guest may already follow the window by then.
+func placementAfterCurtain(now, target *windowPlacement) *windowPlacement {
+	if now == nil || target == nil || now.sameAs(target) {
+		return nil
+	}
+	return target
+}
+
 // nextPlacementStep decides what the title enforcer does with a VM window
 // whose placement is now. last is the placement remembered for it and target
 // where it belongs. While the guest boots or shuts down (held), QEMU resizes

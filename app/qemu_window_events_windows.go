@@ -84,6 +84,7 @@ func qemuWindowEvent(_, event, hwnd, idObject, idChild, _, _ uintptr) uintptr {
 	}
 	// A destroyed HWND no longer has a live PID/class to filter against.
 	if event == eventObjectDestroy {
+		forgetCurtainWindow(hwnd)
 		_, titled := retitledDisplays.Load(hwnd)
 		_, dragged := draggedWindows.Load(hwnd)
 		_, moved := userMovedWindows.Load(hwnd)

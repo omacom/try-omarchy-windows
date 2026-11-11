@@ -75,6 +75,14 @@ class DesktopData(unittest.TestCase):
             self.extract()
         self.assertFalse((self.root / 'installed').exists())
 
+    def test_same_size_corruption_before_publication(self):
+        path = self.stage / 'lib/libvulkan_dzn.so'
+        original = path.read_bytes()
+        path.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+        with self.assertRaisesRegex(ValueError, 'Changed component'):
+            self.extract()
+        self.assertFalse((self.root / 'installed').exists())
+
     def test_receipt_covers_only_shipped_roots(self):
         inventory = json.loads((self.stage / 'lib/virtio-dxg-build.json').read_text())['files']
         self.assertNotIn('include/gbm.h', inventory)

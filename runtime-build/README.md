@@ -8,11 +8,11 @@ virglrenderer fork commits in `sources.lock.json`. It produces:
 - `SHA256SUMS`, hashes for both archives
 
 The portable archive includes source provenance, the MSYS2 package inventory,
-per-file hashes, and licenses. The Runtime workflow remains manual. Its r26
-output is published as `runtime-v1-r26` and is pinned for the next app release;
-r25 shipped in `v0.13.0`, r24 in `v0.12.0` and `v0.12.1`, r23 in `v0.11.0`, r22
-in `v0.10.0` and `v0.10.1`, r21 in `v0.9.0`, and r20c from `v0.3.0` through
-`v0.8.0`. Future runtime
+per-file hashes, and licenses. The Runtime workflow remains manual. Its r27
+output is published as `runtime-v1-r27` and is pinned for the next app release;
+r26 shipped in `v0.14.0`, r25 in `v0.13.0`, r24 in `v0.12.0` and `v0.12.1`, r23
+in `v0.11.0`, r22 in `v0.10.0` and `v0.10.1`, r21 in `v0.9.0`, and r20c from
+`v0.3.0` through `v0.8.0`. Future runtime
 replacements stay test artifacts until they pass physical Windows validation.
 
 To build in an MSYS2 UCRT64 shell with the packages in `packages.txt` installed:
