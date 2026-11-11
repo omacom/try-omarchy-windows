@@ -3488,19 +3488,30 @@ cleanup:
 }
 
 #ifdef DXG_VIRTIO
+/*
+ * A CPU wait on monitored fences first watches the fence pages for this
+ * long: the GPU finishes a desktop frame in a fraction of a millisecond,
+ * and the host's wake-up (its event, an interrupt, a wake-up of the
+ * sleeper) often took longer than the work itself. 0 asks the host at once.
+ */
+static unsigned int cpu_wait_spin_us = 300;
+module_param(cpu_wait_spin_us, uint, 0644);
+MODULE_PARM_DESC(cpu_wait_spin_us,
+		 "Longest time (us) a CPU wait watches its fences before asking the host");
+
 static bool fast_cpu_wait = true;
 module_param(fast_cpu_wait, bool, 0644);
 MODULE_PARM_DESC(fast_cpu_wait,
 		 "Answer CPU waits on reached monitored fences without the host");
 
 /*
- * True when every monitored fence of a CPU wait (any one of them with
+ * 1 when every monitored fence of a CPU wait (any one of them with
  * wait_any) has already reached its value, read from the fence page this
- * process has mapped. The wait then needs no host round trip. Anything
- * else (other object types, unmapped pages, a fault) takes the normal
- * path, which reports errors as before.
+ * process has mapped: the wait then needs no host round trip. 0 when they
+ * have not yet. -1 for anything else (other object types, unmapped pages,
+ * a fault), which takes the normal path and reports errors as before.
  */
-static bool dxg_fences_reached(struct dxgprocess *process,
+static int dxg_fences_reached(struct dxgprocess *process,
 	const struct d3dkmt_waitforsynchronizationobjectfromcpu *args)
 {
 	struct d3dkmthandle handles[D3DDDI_MAX_OBJECT_WAITED_ON];
@@ -3514,7 +3525,7 @@ static bool dxg_fences_reached(struct dxgprocess *process,
 			   n * sizeof(handles[0])) ||
 	    copy_from_user(values, (void __user *)args->fence_values,
 			   n * sizeof(values[0])))
-		return false;
+		return -1;
 	hmgrtable_lock(&process->handle_table, DXGLOCK_SHARED);
 	for (i = 0; i < n; i++) {
 		struct dxgsyncobject *syncobj = hmgrtable_get_object_by_type(
@@ -3530,20 +3541,46 @@ static bool dxg_fences_reached(struct dxgprocess *process,
 	}
 	hmgrtable_unlock(&process->handle_table, DXGLOCK_SHARED);
 	if (!reached)
-		return false;
+		return -1;
 	for (i = 0; i < n; i++) {
 		u64 value;
 
 		if (get_user(value, pages[i]))
-			return false;
+			return -1;
 		if (value >= values[i]) {
 			if (args->flags.wait_any)
-				return true;
+				return 1;
 		} else if (!args->flags.wait_any) {
-			return false;
+			return 0;
 		}
 	}
 	return !args->flags.wait_any;
+}
+#endif
+
+#ifdef DXG_VIRTIO
+/* dxg_fences_reached(), watching the fences for up to cpu_wait_spin_us. */
+static bool dxg_fences_wait(struct dxgprocess *process,
+	const struct d3dkmt_waitforsynchronizationobjectfromcpu *args)
+{
+	unsigned int spin = READ_ONCE(cpu_wait_spin_us);
+	ktime_t end;
+
+	int state = dxg_fences_reached(process, args);
+
+	if (state)
+		return state > 0;
+	if (!spin)
+		return false;
+	end = ktime_add_us(ktime_get(), spin);
+	while (!need_resched() && !signal_pending(current) &&
+	       ktime_before(ktime_get(), end)) {
+		cpu_relax();
+		state = dxg_fences_reached(process, args);
+		if (state)
+			return state > 0;
+	}
+	return false;
 }
 #endif
 
@@ -3575,7 +3612,7 @@ dxgkio_wait_sync_object_cpu(struct dxgprocess *process, void *__user inargs)
 	}
 
 #ifdef DXG_VIRTIO
-	if (dxg_fences_reached(process, &args)) {
+	if (dxg_fences_wait(process, &args)) {
 		if (args.async_event) {
 			event = eventfd_ctx_fdget((int)args.async_event);
 			if (IS_ERR(event)) {

@@ -85,6 +85,35 @@ static int find_adapter(struct dxghost *h)
 	return found;
 }
 
+/*
+ * The guest's whole desktop renders through this process. With the GPU
+ * scheduler's normal class its frames queue behind other normal work on
+ * the host (the host compositor's clients, a browser): a guest frame that
+ * renders in a fraction of a millisecond then completes several
+ * milliseconds later, past its 240 Hz slot. The high class is what
+ * full-screen applications get; it needs no privilege. DXGHOST_GPU_PRIORITY
+ * selects another class (0 idle .. 5 realtime; 2 is the default class).
+ */
+static void dxghost_gpu_priority(struct dxghost *h)
+{
+	typedef LONG (WINAPI *set_fn)(HANDLE, int);
+	HMODULE gdi = GetModuleHandleW(L"gdi32.dll");
+	set_fn set = gdi ? (set_fn)(void (*)(void))GetProcAddress(gdi,
+		"D3DKMTSetProcessSchedulingPriorityClass") : NULL;
+	const char *env = getenv("DXGHOST_GPU_PRIORITY");
+	int cls = env ? atoi(env) : 4;
+	LONG status;
+
+	if (!set || cls == 2)
+		return;
+	status = set(GetCurrentProcess(), cls);
+	if (status < 0)
+		dxghost_logf(h, "GPU scheduling class %d refused: 0x%08lx",
+			     cls, (unsigned long)status);
+	else
+		dxghost_logf(h, "GPU scheduling class %d", cls);
+}
+
 int dxghost_create(const struct dxghost_config *config,
 		   const struct dxghost_vmm *vmm, struct dxghost **out)
 {
@@ -133,6 +162,8 @@ int dxghost_create(const struct dxghost_config *config,
 		h->qpf = f.QuadPart;
 		h->stats_due = now.QuadPart + 10 * f.QuadPart;
 	}
+	if (!config->kmt)
+		dxghost_gpu_priority(h);
 	dxghost_logf(h, "host GPU ready");
 	*out = h;
 	return 0;

@@ -90,6 +90,20 @@ module_param(kick_delay_us, uint, 0644);
 MODULE_PARM_DESC(kick_delay_us,
 		 "Longest delay (us) of asynchronous messages, batched into one kick");
 
+/*
+ * A synchronous request's sender looks for its reply itself before it
+ * sleeps. The host runs most requests during the kick (the reply is in
+ * the ring when the kick returns) and the rest within tens of
+ * microseconds, while the completion interrupt has to reach a vCPU that
+ * may be idle on a parked host core and then wake the sender: measured in
+ * a desktop's frame, that cost 0.3 to 15 ms for calls the host answers in
+ * 2 us. 0 waits for the interrupt as before.
+ */
+static unsigned int sync_spin_us = 100;
+module_param(sync_spin_us, uint, 0644);
+MODULE_PARM_DESC(sync_spin_us,
+		 "Longest time (us) a sender polls for its reply before sleeping");
+
 static enum hrtimer_restart dxgvirtio_kick_timer(struct hrtimer *timer)
 {
 	struct dxgvirtio *dv = container_of(timer, struct dxgvirtio, kick_timer);
@@ -362,6 +376,17 @@ int dxgvirtio_send(struct dxgvirtio *dv, u32 channel, const void *command,
 	if (async)
 		goto out;
 
+	if (READ_ONCE(sync_spin_us)) {
+		ktime_t end = ktime_add_us(ktime_get(), READ_ONCE(sync_spin_us));
+
+		for (;;) {
+			dxgvirtio_ctrl_reap(dv);
+			if (completion_done(&req->done) || need_resched() ||
+			    ktime_after(ktime_get(), end))
+				break;
+			cpu_relax();
+		}
+	}
 	for (;;) {
 		long left = wait_for_completion_killable_timeout(&req->done,
 								 HZ / 10);
