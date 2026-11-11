@@ -321,6 +321,8 @@
   "status.starting_desktop": "데스크톱을 시작하는 중...",
   "status.slow_start": "Omarchy를 시작하는 데 평소보다 오래 걸리고 있습니다...",
   "status.preparing_disk": "Omarchy 디스크를 준비하는 중...",
+  "status.saving_disk": "Omarchy 디스크를 저장하는 중...",
+  "status.registering_launcher": "Windows에 Try Omarchy를 등록하는 중...",
   "status.preparing_image_update": "Omarchy 이미지 업데이트를 준비하는 중...",
   "status.downloading_omarchy": "Omarchy 다운로드 중({part}/{total})...",
   "status.downloading_system": "Omarchy 시스템 이미지를 다운로드하는 중...",

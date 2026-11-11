@@ -80,6 +80,33 @@ func TestOnlyTheUsersMovesAreRemembered(t *testing.T) {
 	}
 }
 
+func TestTheCurtainDoesNotChangeTheRememberedPlacement(t *testing.T) {
+	placed := &windowPlacement{Normal: screenRect{150, 40, 1150, 660}}
+	booted := &windowPlacement{Normal: screenRect{150, 40, 1174, 808}}
+	maximized := &windowPlacement{Normal: placed.Normal, Maximized: true}
+	cases := []struct {
+		name        string
+		now, target *windowPlacement
+		want        *windowPlacement
+	}{
+		{"QEMU resized it while hidden", booted, placed, placed},
+		{"QEMU un-maximized it while hidden", placed, maximized, maximized},
+		{"unchanged", placed, placed, nil},
+		{"nothing remembered", booted, nil, nil},
+		{"minimized", nil, placed, nil},
+	}
+	for _, c := range cases {
+		if got := placementAfterCurtain(c.now, c.target); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+	// Once put back, the guest following the window does not save the
+	// boot size over it.
+	if got := nextPlacementStep(placed, placed, placed, false, false, false); got != placementKeep {
+		t.Errorf("after the curtain: %v, want keep", got)
+	}
+}
+
 func TestRememberedWindowsAreFittedToTheirDisplay(t *testing.T) {
 	laptop := screenRect{0, 0, 1366, 720} // 1366x768 minus the taskbar
 	second := screenRect{1366, 0, 3286, 1040}

@@ -228,7 +228,7 @@ func ensureWHP(cfg *config) {
 
 // ensureRuntime downloads and unpacks the portable WINQ-EMU tree on first run.
 // Same trust chain as the image: fetched from the release, SHA256-verified.
-func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
+func ensureRuntime(cfg *config, release, sumsSHA256 string) (_ string, result error) {
 	if err := checkSetupCancelled(); err != nil {
 		return "", err
 	}
@@ -294,18 +294,27 @@ func ensureRuntime(cfg *config, release, sumsSHA256 string) (string, error) {
 		} else {
 			ui.setStatus("%s", uiTextWith("status.checking_cached_file", map[string]string{"file": runtimeZip}))
 		}
+		phase := startSetupPhase("graphics engine check")
 		ok, err := verifyFileSHA256(zipPath, sums[runtimeZip], ui.setProgress)
+		phase.end(err)
 		if err != nil {
 			return "", fmt.Errorf("checking %s: %w", runtimeZip, err)
 		}
 		if !ok {
 			return "", fmt.Errorf("checksum mismatch for %s", runtimeZip)
 		}
-	} else if err := ensureVerifiedDownload(client, normalizedRelease(release)+"/"+runtimeZip, zipPath,
-		archiveSHA, uiText("status.downloading_runtime"), ui); err != nil {
-		return "", fmt.Errorf("preparing %s: %w", runtimeZip, err)
+	} else {
+		phase := startSetupPhase("graphics engine download")
+		err := ensureVerifiedDownload(client, normalizedRelease(release)+"/"+runtimeZip, zipPath,
+			archiveSHA, uiText("status.downloading_runtime"), ui)
+		phase.end(err)
+		if err != nil {
+			return "", fmt.Errorf("preparing %s: %w", runtimeZip, err)
+		}
 	}
 	ui.setStatus("%s", uiText("status.unpacking_runtime"))
+	phase := startSetupPhase("graphics engine unpack")
+	defer func() { phase.end(result) }()
 	tmp := root + ".part"
 	if updating {
 		tmp = root + ".next"

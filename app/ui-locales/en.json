@@ -322,6 +322,8 @@
   "status.starting_desktop": "Starting the desktop...",
   "status.slow_start": "Omarchy is taking longer than usual to start...",
   "status.preparing_disk": "Preparing your Omarchy disk...",
+  "status.saving_disk": "Saving your Omarchy disk...",
+  "status.registering_launcher": "Registering Try Omarchy with Windows...",
   "status.preparing_image_update": "Preparing an Omarchy image update...",
   "status.downloading_omarchy": "Downloading Omarchy ({part} of {total})...",
   "status.downloading_system": "Downloading the Omarchy system image...",
