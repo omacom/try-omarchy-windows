@@ -17,34 +17,40 @@ import (
 
 // Windows side of the boot curtain (boot_curtain.go). Hiding QEMU's window
 // would let it be resized to whatever the guest's display is while nobody
-// watches, and a hidden window has no picture to look at. Instead the window
-// stays shown, in its real place and size, but fully transparent and
-// click-through, with no taskbar button. Windows still composes it, so its
-// picture can be read to tell when the wallpaper is drawn.
+// watches. Instead the window stays shown, in its real place and size, with
+// an empty window region, so nothing of it is drawn or clickable, and no
+// taskbar button. It is not made layered: on some AMD drivers an OpenGL
+// window that is layered while QEMU sets up its display never reaches the
+// screen again, even after the style is removed (#358). With an empty region
+// its picture cannot be read either, so the curtain lifts on the session
+// timers rather than on a drawn wallpaper.
 
 var (
-	procSetLayeredWindowAttributes = user32.NewProc("SetLayeredWindowAttributes")
-	procGetWindowLongW             = user32.NewProc("GetWindowLongW")
-	procSetWindowLongW             = user32.NewProc("SetWindowLongW")
-	procPrintWindow                = user32.NewProc("PrintWindow")
-	procGetDC                      = user32.NewProc("GetDC")
-	procReleaseDC                  = user32.NewProc("ReleaseDC")
-	gdi32                          = syscall.NewLazyDLL("gdi32.dll")
-	procCreateCompatibleDC         = gdi32.NewProc("CreateCompatibleDC")
-	procCreateDIBSection           = gdi32.NewProc("CreateDIBSection")
-	procDeleteDC                   = gdi32.NewProc("DeleteDC")
+	procSetWindowRgn       = user32.NewProc("SetWindowRgn")
+	procGetWindowLongW     = user32.NewProc("GetWindowLongW")
+	procSetWindowLongW     = user32.NewProc("SetWindowLongW")
+	procPrintWindow        = user32.NewProc("PrintWindow")
+	procGetDC              = user32.NewProc("GetDC")
+	procReleaseDC          = user32.NewProc("ReleaseDC")
+	gdi32                  = syscall.NewLazyDLL("gdi32.dll")
+	procCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
+	procCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
+	procDeleteDC           = gdi32.NewProc("DeleteDC")
+	procCreateRectRgn      = gdi32.NewProc("CreateRectRgn")
+	procClientToScreen     = user32.NewProc("ClientToScreen")
 
 	// curtainUp is true from launch until the window is shown for the first
 	// time. Reboots after that show the guest's window as they always did.
 	curtainUp      atomic.Bool
 	curtainMu      sync.Mutex
 	curtainWindows = map[uintptr]*curtainWindow{}
+	// Windows the lifting curtain has not given their frame back yet.
+	curtainLifting = map[uintptr]bool{}
 	// The disk this launch boots and its folder, for recording that it
 	// reached the desktop.
 	curtainDiskID, curtainVMDir string
 	// Consecutive frames that showed the desktop, and whether a capture is
 	// still running (a busy QEMU can hold one up).
-	curtainPainted   atomic.Int32
 	curtainCapturing atomic.Bool
 	curtainBoot      time.Time
 	curtainStatus    string
@@ -53,15 +59,23 @@ var (
 )
 
 type curtainWindow struct {
-	exStyle    uintptr
-	tabRemoved bool
+	// ready is set once the window is hidden. Until then the goroutine
+	// hiding it owns it, and undoes its work itself if the curtain lifts.
+	ready bool
+	// frame holds the frame style bits the curtain took off.
+	frame uintptr
+	// outer is the window's rectangle before its frame came off, when the
+	// curtain shrank it to its old client area; resized says it did.
+	outer, client screenRect
+	resized       bool
+	tabRemoved    bool
 }
 
+// Windows draws a window's title bar and border even when its region is
+// empty, so the curtain also takes the frame off while it is up.
+const curtainFrameStyles = 0x00C00000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000 // WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+
 const (
-	gwlExStyle          = ^uintptr(19) // GWL_EXSTYLE (-20)
-	wsExLayered         = 0x00080000
-	wsExTransparent     = 0x00000020
-	lwaAlpha            = 0x2
 	pwClientOnly        = 0x1
 	pwRenderFullContent = 0x2
 	rdwInvalidate       = 0x0001
@@ -90,7 +104,7 @@ func startBootCurtain(cfg *config) {
 	ui.cancelMessage.Store(uiText("startup.cancel.confirm"))
 	ui.cancelStatus.Store(uiText("startup.cancel.status"))
 	curtainUp.Store(true)
-	logf("startup: the window appears once the desktop is drawn")
+	logf("startup: the window appears once the desktop session has started")
 }
 
 // diskIdentity names the disk file itself, not its path: a disk replaced
@@ -147,23 +161,161 @@ func wakeTitleEnforcer() {
 	}
 }
 
-// concealForCurtain makes a QEMU window invisible and click-through. It runs
-// from the window hooks as QEMU creates and shows the window, before its
-// first frame, and again from the title enforcer.
+// concealForCurtain hides a QEMU window: an empty region makes it invisible
+// and click-through, and its frame comes off, because Windows still draws
+// the title bar and border of a window with an empty region. It is not made
+// layered (see the top of this file). It runs from the window hooks as QEMU
+// creates and shows the window, before its first frame, and again from the
+// title enforcer. The window calls run outside curtainMu, since they wait on
+// QEMU's window thread.
 func concealForCurtain(hwnd uintptr) {
 	if !curtainUp.Load() {
 		return
 	}
 	curtainMu.Lock()
-	defer curtainMu.Unlock()
 	// The curtain may have lifted while this waited for the lock.
-	if _, done := curtainWindows[hwnd]; done || !curtainUp.Load() {
+	if _, known := curtainWindows[hwnd]; known || !curtainUp.Load() {
+		curtainMu.Unlock()
 		return
 	}
-	style, _, _ := procGetWindowLongW.Call(hwnd, gwlExStyle)
-	curtainWindows[hwnd] = &curtainWindow{exStyle: style}
-	procSetWindowLongW.Call(hwnd, gwlExStyle, style|wsExLayered|wsExTransparent)
-	procSetLayeredWindowAttributes.Call(hwnd, 0, 0, lwaAlpha)
+	window := &curtainWindow{}
+	curtainWindows[hwnd] = window
+	curtainMu.Unlock()
+
+	hidden := hideCurtainWindow(hwnd, window)
+
+	curtainMu.Lock()
+	current := curtainWindows[hwnd] == window
+	if !hidden && current {
+		// Not recorded, so the next hook or title enforcer pass tries again.
+		delete(curtainWindows, hwnd)
+	}
+	if hidden && current {
+		window.ready = true
+	}
+	curtainMu.Unlock()
+	// The curtain lifted, or the window was destroyed, while this hid it.
+	if hidden && !current && isQemuDisplayWindow(hwnd, qemuPid.Load()) {
+		showCurtainWindow(hwnd, window)
+	}
+	if !current {
+		curtainMu.Lock()
+		delete(curtainLifting, hwnd)
+		curtainMu.Unlock()
+		wakeTitleEnforcer()
+	}
+}
+
+// curtainConcealed reports whether the curtain is hiding hwnd now, so the
+// title enforcer leaves its placement alone while its frame is off.
+func curtainConcealed(hwnd uintptr) bool {
+	curtainMu.Lock()
+	defer curtainMu.Unlock()
+	_, ok := curtainWindows[hwnd]
+	return ok && curtainUp.Load() || curtainLifting[hwnd]
+}
+
+func hideCurtainWindow(hwnd uintptr, window *curtainWindow) bool {
+	region, _, err := procCreateRectRgn.Call(0, 0, 0, 0)
+	if region == 0 {
+		logf("startup: cannot hide the window while Omarchy boots: %v", err)
+		return false
+	}
+	// The system owns the region once SetWindowRgn succeeds.
+	if ok, _, err := procSetWindowRgn.Call(hwnd, region, 1); ok == 0 {
+		procDeleteObject.Call(region)
+		logf("startup: cannot hide the window while Omarchy boots: %v", err)
+		return false
+	}
+	style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
+	window.frame = style & curtainFrameStyles
+	if window.frame == 0 {
+		return true
+	}
+	// Taking the frame off would grow the client area, and with it the
+	// guest's display. A window that is not maximized keeps its client
+	// area: the window shrinks to it. A maximized one cannot.
+	var outer screenRect
+	client, clientOK := clientScreenRect(hwnd)
+	zoomed, _, _ := procIsZoomed.Call(hwnd)
+	gotOuter, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&outer)))
+	procSetWindowLongW.Call(hwnd, gwlStyle, style&^curtainFrameStyles)
+	if zoomed == 0 && gotOuter != 0 && clientOK {
+		window.outer, window.client, window.resized = outer, client, true
+		setWindowFrameRect(hwnd, client)
+		return true
+	}
+	refreshWindowFrame(hwnd)
+	return true
+}
+
+// showCurtainWindow undoes hideCurtainWindow: the full region, the frame bits
+// the curtain took off (other style changes since are kept), and the window's
+// old rectangle unless something moved or sized it since.
+func showCurtainWindow(hwnd uintptr, window *curtainWindow) {
+	// An empty region left behind would keep the window invisible for the
+	// whole session, so retry before giving up.
+	restored := false
+	var err error
+	for try := 0; try < 3 && !restored; try++ {
+		if try > 0 {
+			time.Sleep(50 * time.Millisecond)
+		}
+		var ok uintptr
+		ok, _, err = procSetWindowRgn.Call(hwnd, 0, 1)
+		restored = ok != 0
+	}
+	if !restored {
+		logf("startup: cannot show the window again: %v", err)
+	}
+	if window.frame == 0 {
+		return
+	}
+	style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
+	procSetWindowLongW.Call(hwnd, gwlStyle, style|window.frame)
+	if window.resized {
+		var now screenRect
+		if ok, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&now))); ok != 0 && now == window.client {
+			setWindowFrameRect(hwnd, window.outer)
+			return
+		}
+	}
+	refreshWindowFrame(hwnd)
+}
+
+func clientScreenRect(hwnd uintptr) (screenRect, bool) {
+	var client screenRect
+	if ok, _, _ := procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&client))); ok == 0 {
+		return client, false
+	}
+	origin := struct{ x, y int32 }{}
+	if ok, _, _ := procClientToScreen.Call(hwnd, uintptr(unsafe.Pointer(&origin))); ok == 0 {
+		return client, false
+	}
+	return screenRect{Left: origin.x, Top: origin.y, Right: origin.x + client.width(), Bottom: origin.y + client.height()}, true
+}
+
+const swpNoOwnerZOrder = 0x200
+
+// setWindowFrameRect moves and sizes a window and makes Windows recompute its
+// frame, without activating or reordering it.
+func setWindowFrameRect(hwnd uintptr, r screenRect) {
+	procSetWindowPos.Call(hwnd, 0, uintptr(r.Left), uintptr(r.Top), uintptr(r.width()), uintptr(r.height()), swpNoZorder|swpNoActivate|swpFrameChanged|swpNoOwnerZOrder)
+}
+
+// refreshWindowFrame makes Windows redraw a window's frame after its region
+// or style changed, without moving, sizing, activating or reordering it.
+func refreshWindowFrame(hwnd uintptr) {
+	procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, swpNoSize|swpNoMove|swpNoZorder|swpNoActivate|swpFrameChanged|swpNoOwnerZOrder)
+}
+
+// forgetCurtainWindow drops a destroyed window, so a new window that Windows
+// gives the same handle is concealed again.
+func forgetCurtainWindow(hwnd uintptr) {
+	curtainMu.Lock()
+	delete(curtainWindows, hwnd)
+	delete(curtainLifting, hwnd)
+	curtainMu.Unlock()
 }
 
 // curtainTaskbar takes the concealed window's button off the taskbar. It
@@ -192,10 +344,9 @@ func curtainTick(primary uintptr) {
 	times := curtainTimes()
 	if !times.boot.Equal(curtainBoot) {
 		curtainBoot = times.boot
-		curtainPainted.Store(0)
 	}
 	now := time.Now()
-	if reason := times.liftReason(now, curtainPainted.Load() >= 2); reason != "" {
+	if reason := times.liftReason(now, false); reason != "" {
 		liftCurtain(reason)
 		return
 	}
@@ -215,25 +366,8 @@ func curtainTick(primary uintptr) {
 			uiStatus("%s", status)
 		}
 	}
-	if primary != 0 && times.checkPaint() && hostCapture.usable() && curtainCapturing.CompareAndSwap(false, true) {
-		go func() {
-			defer curtainCapturing.Store(false)
-			painted := windowShowsDesktop(primary)
-			// The screen went dark during the capture: it saw nothing.
-			if !hostCapture.usable() {
-				return
-			}
-			if painted {
-				curtainPainted.Add(1)
-			} else {
-				curtainPainted.Store(0)
-			}
-			if desktopShown.look(time.Now(), painted) {
-				desktopSeen.Store(true)
-			}
-			wakeTitleEnforcer()
-		}()
-	}
+	// The concealed window has an empty region, so there is no picture to
+	// look at until the curtain lifts; watchDesktop takes over from there.
 }
 
 // watchDesktop keeps looking at a shown window every few seconds until it
@@ -288,7 +422,7 @@ func curtainPolling() bool {
 	return curtainUp.Load() && curtainTimes().checkPaint()
 }
 
-// liftCurtain fades the guest's windows in, gives them back their taskbar
+// liftCurtain gives the guest's windows back their full region and taskbar
 // buttons and closes the setup window.
 func liftCurtain(reason string) {
 	curtainMu.Lock()
@@ -297,7 +431,15 @@ func liftCurtain(reason string) {
 		return
 	}
 	curtainUp.Store(false)
-	windows := curtainWindows
+	windows := map[uintptr]*curtainWindow{}
+	for hwnd, window := range curtainWindows {
+		// A window still being hidden is shown again by the goroutine
+		// hiding it, once it sees the curtain has lifted.
+		if window.ready {
+			windows[hwnd] = window
+		}
+		curtainLifting[hwnd] = true
+	}
 	curtainWindows = map[uintptr]*curtainWindow{}
 	curtainMu.Unlock()
 	logf("startup: showing Omarchy (%s)", reason)
@@ -307,21 +449,24 @@ func liftCurtain(reason string) {
 	for hwnd := range windows {
 		if !isQemuDisplayWindow(hwnd, pid) {
 			delete(windows, hwnd)
+			curtainMu.Lock()
+			delete(curtainLifting, hwnd)
+			curtainMu.Unlock()
 		}
-	}
-	for step := 1; step <= 8; step++ {
-		for hwnd := range windows {
-			procSetLayeredWindowAttributes.Call(hwnd, 0, uintptr(step*255/8), lwaAlpha)
-		}
-		time.Sleep(20 * time.Millisecond)
 	}
 	for hwnd, window := range windows {
-		procSetWindowLongW.Call(hwnd, gwlExStyle, window.exStyle)
+		showCurtainWindow(hwnd, window)
 		procRedrawWindow.Call(hwnd, 0, 0, rdwInvalidate|rdwAllChildren|rdwFrame)
 		if window.tabRemoved {
 			taskbarTab(hwnd, true)
 		}
+		// Only now may the title enforcer put the window back where it
+		// belongs: its frame is part of the remembered placement.
+		curtainMu.Lock()
+		delete(curtainLifting, hwnd)
+		curtainMu.Unlock()
 	}
+	wakeTitleEnforcer()
 	if hwnd := qemuHwnd.Load(); hwnd != 0 {
 		procSetForegroundWindow.Call(hwnd)
 	}

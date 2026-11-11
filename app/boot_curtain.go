@@ -12,7 +12,9 @@ import (
 // until the shell draws the wallpaper. The launcher keeps the window
 // invisible for that time and the setup window stays up with the starter
 // keys. The window appears once the wallpaper is on screen, or after one of
-// the waits below if it never seems to be.
+// the waits below if it never seems to be. On Windows the hidden window has
+// an empty region, so its picture cannot be read and it appears after the
+// waits (boot_curtain_windows.go).
 const (
 	// After the desktop session starts. The wallpaper took about 6 seconds
 	// on the test laptop; a few wallpapers cannot be told from an empty screen.
