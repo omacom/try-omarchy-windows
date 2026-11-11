@@ -61,7 +61,7 @@ class MergeGateTests(unittest.TestCase):
             ci = dict(self.ci, **{field: value})
             self.assertFalse(follow.full_ci_passed(ci, self.jobs, "tested"))
 
-    def exercise_merge(self, live_sha="tested", lock_ok=True, jobs=None, watch_fails=False,
+    def exercise_ready(self, live_sha="tested", lock_ok=True, jobs=None, watch_fails=False,
                        canary_changes=None, canary_jobs=None, canary_watch_fails=False,
                        canary_candidates=None):
         canary = dict(self.ci, id=13, **(canary_changes or {}))
@@ -78,24 +78,24 @@ class MergeGateTests(unittest.TestCase):
             return ""
         with patch.object(follow, "gh", side_effect=responses), patch.object(follow, "run", side_effect=command) as run, patch.object(follow, "summary"), patch.object(follow.time, "monotonic", side_effect=[0, 1, 0, 1, 181]):
             try:
-                follow.validate_and_merge("owner/repo", 1, "omarchy-release/v4.5.0", "tested", lock_ok)
+                follow.validate_and_ready("owner/repo", 1, "omarchy-release/v4.5.0", "tested", lock_ok)
             except (RuntimeError, follow.subprocess.CalledProcessError):
                 pass
         return [call.args for call in run.call_args_list]
 
-    def test_merge_uses_tested_sha_and_repository_rules(self):
-        commands = self.exercise_merge()
+    def test_ready_uses_tested_sha_and_never_merges(self):
+        commands = self.exercise_ready()
         self.assertIn(("gh", "pr", "ready", "1", "--repo", "owner/repo"), commands)
-        self.assertIn(("gh", "pr", "merge", "1", "--repo", "owner/repo", "--squash", "--auto", "--match-head-commit", "tested"), commands)
+        self.assertFalse(any(command[:3] == ("gh", "pr", "merge") for command in commands))
         self.assertIn(("gh", "workflow", "run", "ci.yml", "--repo", "owner/repo", "--ref", "omarchy-release/v4.5.0", "-f", "build_guest=true"), commands)
         self.assertIn(("gh", "workflow", "run", "shell-canary.yml", "--repo", "owner/repo", "--ref", "omarchy-release/v4.5.0", "-f", "unfixed_palette=false"), commands)
         canary_watch = ("gh", "run", "watch", "13", "--repo", "owner/repo", "--exit-status", "--interval", "30")
         self.assertLess(commands.index(canary_watch), commands.index(("gh", "pr", "ready", "1", "--repo", "owner/repo")))
 
-    def test_never_merges_failed_or_changed_candidates(self):
+    def test_never_readies_failed_or_changed_candidates(self):
         for options in ({"live_sha": "changed"}, {"lock_ok": False}, {"jobs": self.jobs[:1]}, {"watch_fails": True}):
             with self.subTest(options=options):
-                commands = self.exercise_merge(**options)
+                commands = self.exercise_ready(**options)
                 self.assertFalse(any(command[:3] in (("gh", "pr", "merge"), ("gh", "pr", "ready")) for command in commands))
 
     def test_never_readies_or_merges_without_successful_canary(self):
@@ -111,14 +111,14 @@ class MergeGateTests(unittest.TestCase):
             {"name": "Other job", "conclusion": "skipped"}]})
         for options in cases:
             with self.subTest(options=options):
-                commands = self.exercise_merge(**options)
+                commands = self.exercise_ready(**options)
                 self.assertFalse(any(command[:3] in (("gh", "pr", "merge"), ("gh", "pr", "ready")) for command in commands))
 
     def test_missing_stale_or_wrong_head_canary_leaves_draft(self):
         for candidates in ([], [dict(self.ci, head_sha="other")],
                            [dict(self.ci, created_at="2000-01-01T00:00:00Z")]):
             with self.subTest(candidates=candidates), patch.object(follow.time, "sleep"):
-                commands = self.exercise_merge(canary_candidates=candidates)
+                commands = self.exercise_ready(canary_candidates=candidates)
                 self.assertFalse(any(command[:3] in (("gh", "pr", "merge"), ("gh", "pr", "ready")) for command in commands))
 
 

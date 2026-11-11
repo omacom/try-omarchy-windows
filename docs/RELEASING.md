@@ -231,8 +231,8 @@ The workflow refreshes the package transaction lock, pushes
 `GITHUB_TOKEN` does not trigger pull-request workflows, so it dispatches CI with
 `build_guest=true` and the Shell canary for the same commit. Only when both
 complete runs pass for the unchanged PR head, including the guest image build
-and boot, does it mark the PR ready and run `gh pr merge --squash --auto`. If
-master requires no reviews or checks, that can merge the PR at once. A failed lock
+and boot, does it mark the PR ready for review. It never merges: a maintainer
+reviews the upstream changes and new migrations, then merges. A failed lock
 refresh or any failed, skipped or cancelled job leaves the draft for manual
 work. Windows hardware acceptance, the existing-disk upgrade check and signed
 release publication stay manual; merging does not update published downloads

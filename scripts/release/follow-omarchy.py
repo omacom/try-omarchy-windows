@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Propose pinned stable releases; merge only a fully validated candidate."""
+"""Propose pinned stable releases; mark only a fully validated candidate ready for review."""
 
 import datetime
 import importlib.util
@@ -98,7 +98,7 @@ def wait_for_candidate_workflow(repo, ci, sha, required_job):
         raise RuntimeError(f"Candidate workflow including {required_job} did not pass; leaving the PR as a draft")
 
 
-def validate_and_merge(repo, pr, branch, sha, lock_ok=True):
+def validate_and_ready(repo, pr, branch, sha, lock_ok=True):
     ci = dispatch_candidate_workflow(repo, branch, sha, "ci.yml", "-f", "build_guest=true")
     canary = dispatch_candidate_workflow(repo, branch, sha, "shell-canary.yml", "-f", "unfixed_palette=false")
     wait_for_candidate_workflow(repo, ci, sha, "Guest image candidate")
@@ -107,10 +107,9 @@ def validate_and_merge(repo, pr, branch, sha, lock_ok=True):
         raise RuntimeError("Package lock refresh failed; leaving the PR as a draft")
     live = gh("pr", "view", str(pr), "--repo", repo, "--json", "headRefOid,state,baseRefName")
     if live["headRefOid"] != sha or live["state"] != "OPEN" or live["baseRefName"] != "master":
-        raise RuntimeError("PR changed during validation; refusing to merge")
+        raise RuntimeError("PR changed during validation; leaving the PR as a draft")
     run("gh", "pr", "ready", str(pr), "--repo", repo)
-    run("gh", "pr", "merge", str(pr), "--repo", repo, "--squash", "--auto", "--match-head-commit", sha)
-    summary("Full CI and Shell canary passed. Requested merge of the tested commit under repository rules.")
+    summary("Full CI and Shell canary passed for the tested commit. Marked the PR ready for maintainer review.")
 
 
 def main():
@@ -174,7 +173,7 @@ def main():
             "## User check\n\nCreate a fresh VM and confirm its version and desktop. Upgrade a disposable older VM and verify files and Windows integrations.\n\n"
             f"## Validation\n\nPackage lock refresh: {'passed' if lock_ok else 'FAILED; manual compatibility work required'}. "
             "Full CI is explicitly dispatched with the guest image build and boot enabled, alongside Shell canary. "
-            "Automatic merge requires both entire runs to pass for this exact commit. Windows hardware acceptance and signed release publication remain separate.\n",
+            "The PR is marked ready for review only when both entire runs pass for this exact commit. A maintainer reviews the upstream changes and new migrations and merges it. Windows hardware acceptance and signed release publication remain separate.\n",
             encoding="utf-8")
         try:
             url = run("gh", "pr", "create", "--repo", repo, "--draft", "--title", f"Upgrade Omarchy to {tag}",
@@ -184,7 +183,7 @@ def main():
             raise
         summary(f"Upgrade draft: {url}")
         pr = gh("pr", "view", url, "--repo", repo, "--json", "number")["number"]
-        validate_and_merge(repo, pr, branch, sha, lock_ok)
+        validate_and_ready(repo, pr, branch, sha, lock_ok)
 
 
 if __name__ == "__main__":
