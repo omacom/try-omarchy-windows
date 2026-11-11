@@ -53,7 +53,9 @@ The renderer already swapped R and B in the sampler view for Linux dma-buf
 imports; the patch applies that to memory-object imports too, for views in a
 BGRA format, and swaps the channels each swizzle entry selects. GL writes into
 such an image (copies and uploads from the GL side) still store GL's own
-order. `TRYOMARCHY_BGRA_SWAP=off` restores the old sampling.
+order. `TRYOMARCHY_BGRA_SWAP=off` restores the old sampling. `test-bgra-swap.py
+<patched-renderer-source>` covers the switch, BGRA and RGBA views, swizzles with
+constants and the unchanged Linux path against fake sampler views.
 
 `test-image-capabilities.py <patched-renderer-source>` compiles the actual image
 dispatch against mocked Vulkan entry points. It runs on Linux or MSYS2 without
