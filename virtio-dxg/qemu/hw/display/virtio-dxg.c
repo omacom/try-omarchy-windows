@@ -910,15 +910,34 @@ static void dxg_follow_refresh(void *opaque)
         return;
     }
     EnumThreadWindows(GetCurrentThreadId(), dxg_find_window, (LPARAM)&hwnd);
-    if (!hwnd ||
-        !GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+    cur = dpy_get_ui_info(con);
+    if (!hwnd) {
+        /* No window (tests without a display): VIRTIO_DXG_REFRESH_HZ=240
+         * with VIRTIO_DXG_REFRESH_SIZE=1920x1080 gives the guest a mode. */
+        const char *hz = getenv("VIRTIO_DXG_REFRESH_HZ");
+        const char *size = getenv("VIRTIO_DXG_REFRESH_SIZE");
+        QemuUIInfo info = *cur;
+        unsigned w = 0, h = 0;
+
+        if (!hz || atoi(hz) < 24 || !size || sscanf(size, "%ux%u", &w, &h) != 2 ||
+            (uint32_t)atoi(hz) * 1000 == cur->refresh_rate) {
+            return;
+        }
+        qemu_edid_refresh_rate_mhz = atoi(hz) * 1000;
+        info.width = w;
+        info.height = h;
+        info.refresh_rate = qemu_edid_refresh_rate_mhz;
+        dpy_set_ui_info(con, &info, false);
+        info_report("virtio-dxg: no window; the guest's display runs at %s Hz", hz);
+        return;
+    }
+    if (!GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
                          (MONITORINFO *)&mi) ||
         !EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm) ||
         dm.dmDisplayFrequency < 24) {
         return;
     }
     mhz = dm.dmDisplayFrequency * 1000;
-    cur = dpy_get_ui_info(con);
     if (mhz == (cur->refresh_rate ?: qemu_edid_refresh_rate_mhz)) {
         return;
     }
