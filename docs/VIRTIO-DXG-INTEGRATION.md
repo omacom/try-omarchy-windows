@@ -1,10 +1,51 @@
 # virtio-dxg integration and desktop performance
 
-Updated November 9, 2026. Branch: `integration/virtio-dxg`. **Source candidate;
-the first remote batch has partial successes and retained failures; follow-up checks have not run. Daily-use stability, accurate 240 Hz animations and
-full Chromium acceleration are not established.**
+## November 11 Wayland candidate
 
-![Source merged; verification pending; daily-use gates pending](images/virtio-dxg-integration-progress.svg)
+This branch starts from Claude’s published `8f1d75c`, which contains our
+`3718b3a`. It incorporates the seven later official commits through `c08b94f`
+and the fork’s four synchronization commits. The native Wayland route addressed
+Chromium scaling and window decorations on Claude’s tested configuration. The
+boot hook now reads the value of the module’s window-buffer parameter so a
+disabled setting selects the Xwayland fallback even when its sysfs file exists.
+
+Previously, exporting a completed GPU fence required a render-node check and
+three DRM ioctls. The candidate retains the already-signaled sync file created
+during screen initialization and duplicates it with close-on-exec after producer
+completion. Imported fences continue to export their own sync files. The screen
+owns one additional descriptor until destruction. The per-frame GPU wait remains.
+A CPU fixture covers descriptor zero, failure, repeated exports and caller ownership.
+
+The boot helper hashes extracted library bytes in its private tmpfs stage.
+It avoids rereading large libraries over the host share and allocating a
+library-sized Python bytes object. It publishes the directory after validating
+the inventory, digests, loaders and aliases.
+
+### Measurements and limits
+
+- The single Mesa retry for `3718b3a` passed 16 inert boot/browser tests and
+  42 mirror/fence/reclaim CPU cases. The release build and archive inspection
+  passed (artifact `13842726587`). Linux and Windows launcher checks also passed
+  on that baseline. [Mesa job](https://github.com/7Wdev/try-omarchy-windows/actions/runs/42685600519/job/130426781362)
+- Claude reported a correctly scaled native Chromium window with a close button
+  and 117 fps in Aquarium. Claude also reported complete effects in Firefox and
+  visible VS Code rendering. Chrome zoom shortcuts, hardware raster/video per
+  browser and Electron app, and normal launcher behavior need separate checks.
+- The [offline browser workload](../virtio-dxg/bench/browser-pacing.html) draws
+  an animated WebGL 2 shader with four corner markers. It records renderer,
+  drawing-buffer size, callback rate, p95/p99/worst interval and gaps above
+  1.5 periods. Pair these results with host presentation timing and visible
+  output to assess the 4.17 ms budget at 240 Hz, clipping, zoom and controls.
+- Desktop acceptance requires the normal launcher, preserved input, wallpaper,
+  menu transitions, file manager, multiple windows through 4K, sustained resource
+  bounds and recovery. Vulkan window copies, browser VA-API encode, a real
+  ray-traced/DLSS game, editor playback/export and guest/native comparisons
+  remain open. The new candidate awaits hardware testing.
+
+## November 9 integration history
+
+The sections below record the original integration and outstanding items at
+that date. The November 11 entry above contains the subsequent results.
 
 ## What is combined
 

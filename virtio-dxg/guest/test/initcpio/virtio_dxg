@@ -64,7 +64,10 @@ setup_desktop() {
     # and Chromium runs on the GPU as a native Wayland client. Without them
     # applications use wl_shm, and Chromium needs its Xwayland wrapper.
     winbuf=
-    [ -e /sys/module/dxgkrnl_virtio/parameters/winbuf ] && winbuf=1
+    # A disabled bool module parameter still has a sysfs file.
+    case "$(cat /sys/module/dxgkrnl_virtio/parameters/winbuf 2>/dev/null)" in
+    Y|1) winbuf=1 ;;
+    esac
     case " $(cat /proc/cmdline) " in *" virtio_dxg.winbuf=0 "*) winbuf= ;; esac
     browser=
     case "$winbuf $(cat /proc/cmdline) " in

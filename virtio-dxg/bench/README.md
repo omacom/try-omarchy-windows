@@ -1,5 +1,13 @@
 # virtio-dxg benchmarks
 
+[Browser frame pacing](browser-pacing.html) is an offline page for a visible
+guest Chromium, Firefox or Electron window. Select the measured monitor rate
+and run at each window size and zoom level. Record the application build, GPU
+diagnostics, four corner markers and drawing-buffer dimensions with the JSON
+result. Browser callbacks measure scheduling inside the client. Use a separate
+host presentation trace to count delivered frames. Check browser decorations,
+close, zoom out and reset through the normal desktop input path.
+
 The scripts behind the numbers in [docs/VIRTIO-DXG-RESULTS.md](../../docs/VIRTIO-DXG-RESULTS.md).
 They run inside a development VM (`guest/test/initcpio`, kernel arguments
 `virtio_dxg.desktop=1 virtio_dxg.root=1`). That VM mounts a host folder at

@@ -306,11 +306,10 @@
 +{
 +   if (!debug_get_bool_option("D3D12_NATIVE_FENCE", true))
 +      return false;
-+   int fd = d3d12_signaled_sync_file(screen);
-+   if (fd < 0)
-+      return false;
-+   close(fd);
-+   return true;
++   /* The probe produces a permanently signaled sync_file. Keep it for
++    * this screen's lifetime. Each completed export gets its own fd. */
++   screen->completed_sync_fd = d3d12_signaled_sync_file(screen);
++   return screen->completed_sync_fd >= 0;
 +}
 +
 +static int
@@ -320,10 +319,11 @@
 +
 +   if (fence->sync_fd >= 0)
 +      return os_dupfd_cloexec(fence->sync_fd);
-+   if (fence->type != PIPE_FD_TYPE_NATIVE_SYNC ||
++   int completed_fd = d3d12_screen(pscreen)->completed_sync_fd;
++   if (completed_fd < 0 || fence->type != PIPE_FD_TYPE_NATIVE_SYNC ||
 +       !d3d12_fence_finish(fence, OS_TIMEOUT_INFINITE))
 +      return -1;
-+   return d3d12_signaled_sync_file(d3d12_screen(pscreen));
++   return os_dupfd_cloexec(completed_fd);
 +}
 +
 +void
@@ -351,10 +351,11 @@
  {
     pscreen->fence_reference = fence_reference;
     pscreen->fence_finish = fence_finish;
+-}
 +#ifndef _WIN32
 +   pscreen->fence_get_fd = fence_get_fd;
 +#endif
- }
++}
 --- a/src/gallium/drivers/d3d12/d3d12_fence.h
 +++ b/src/gallium/drivers/d3d12/d3d12_fence.h
 @@ -93,6 +93,9 @@
@@ -1445,19 +1446,52 @@
     caps->timeline_semaphore_import = true;
     caps->clip_halfz = true;
     caps->vs_layer_viewport = true;
-@@ -420,6 +423,12 @@
+@@ -419,6 +422,12 @@
+ #ifndef _GAMING_XBOX
     caps->query_memory_info = true;
  #endif
- 
++
 +   /* kms_swrast: scanout and shared images are dumb buffers mirrored from
 +    * GPU textures (see d3d12_resource.cpp), so they import and export as
 +    * dma-bufs like llvmpipe's. DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT. */
 +   if (screen->winsys && screen->winsys->get_fd)
 +      caps->dmabuf = 0x1 | 0x2;
-+
+ 
     caps->min_line_width =
     caps->min_line_width_aa =
-    caps->min_point_size =
+@@ -670,6 +679,10 @@
+ void
+ d3d12_destroy_screen(struct d3d12_screen *screen)
+ {
++#ifndef _WIN32
++   if (screen->completed_sync_fd >= 0)
++      close(screen->completed_sync_fd);
++#endif
+    slab_destroy_parent(&screen->transfer_pool);
+    mtx_destroy(&screen->submit_mutex);
+    mtx_destroy(&screen->pending_free_lock);
+@@ -1377,6 +1390,9 @@
+    d3d12_debug = static_cast<uint32_t>(debug_get_option_d3d12_debug());
+ 
+    screen->winsys = winsys;
++#ifndef _WIN32
++   screen->completed_sync_fd = -1;
++#endif
+    if (adapter_luid)
+       screen->adapter_luid = *adapter_luid;
+    mtx_init(&screen->descriptor_pool_mutex, mtx_plain);
+--- a/src/gallium/drivers/d3d12/d3d12_screen.h
++++ b/src/gallium/drivers/d3d12/d3d12_screen.h
+@@ -70,6 +70,9 @@
+ struct d3d12_screen {
+    struct pipe_screen base;
+    struct sw_winsys *winsys;
++#ifndef _WIN32
++   int completed_sync_fd;
++#endif
+    LUID adapter_luid;
+    char driver_uuid[PIPE_UUID_SIZE];
+    char device_uuid[PIPE_UUID_SIZE];
 --- a/src/mesa/state_tracker/st_atom_constbuf.c
 +++ b/src/mesa/state_tracker/st_atom_constbuf.c
 @@ -35,6 +35,7 @@

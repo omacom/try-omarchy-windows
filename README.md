@@ -4,25 +4,19 @@
 
 <h1 align="center">Try Omarchy for Windows</h1>
 
-**7Wdev development fork — virtio-dxg integration:** Claude's driver-level
-backend and our published work are combined on `integration/virtio-dxg`, with
-nine newer official upstream fixes. Claude's branch is kept untouched.
-[Integration, fixes and acceptance gates](docs/VIRTIO-DXG-INTEGRATION.md) ·
-[Reported virtio-dxg results](docs/VIRTIO-DXG-RESULTS.md) ·
-[Earlier development PR #2](https://github.com/7Wdev/try-omarchy-windows/pull/2).
+**NVIDIA desktop development** continues on `integration/wayland-frame-pacing`.
+It combines Claude’s native Wayland Chromium and shared application buffers
+at `8f1d75c` with upstream through `c08b94f`. This branch reduces work on
+completed fence exports and during Mesa staging. It includes an offline WebGL
+animation page for comparing Chromium, Firefox and Electron.
 
-The owner reports a working GPU desktop with remaining animation glitches.
-The new candidate addresses per-context frame publication, scanout lifetime,
-handle churn, matched Mesa 26.2.6 packaging and Chromium menu launches.
-The first remote batch at d717dfa passed host mocks, 39 actual-source Mesa
-fault cases and 13 boot/browser data tests; the full Mesa cohort compiled.
-Linux launcher compilation and runtime-archive acceptance then failed.
-Their source fixes and an additional submitted-fence guard are prepared for
-a separately approved follow-up. **This follow-up is untested. Stable daily
-use, accurate 240 Hz animation, full Chromium acceleration and 4K performance
-remain open.**
+Claude reported 117 fps in Chromium Aquarium on a 120 Hz development VM.
+Sustained 240 Hz on the Windows display, 4K multi-window operation, browser
+video acceleration and game/editor performance still need measurements.
+[Current changes and acceptance criteria](docs/VIRTIO-DXG-INTEGRATION.md) ·
+[Reported runtime measurements](docs/VIRTIO-DXG-RESULTS.md).
 
-![Integration source merged; verification pending; daily use 0/6](docs/images/virtio-dxg-integration-progress.svg)
+![Graphics build baseline and candidate desktop acceptance](docs/images/virtio-dxg-integration-progress.svg)
 
 <details>
 <summary>Earlier private-bridge development and evidence history (October–November 6)</summary>

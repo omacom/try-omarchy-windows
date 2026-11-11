@@ -62,8 +62,7 @@ def extract(archive, destination, recipe):
             if 'symlink' in record:
                 if not member.issym() or member.linkname != record['symlink']:
                     raise ValueError('Changed library alias: ' + name)
-            elif (not member.isfile() or member.size != record['bytes'] or
-                  hashlib.sha256(tar.extractfile(member).read()).hexdigest() != record['sha256']):
+            elif not member.isfile() or member.size != record['bytes']:
                 raise ValueError('Changed component: ' + name)
         version_member = members['lib/virtio-dxg-mesa-version']
         if not version_member.isfile() or version_member.size > 64:
@@ -74,10 +73,16 @@ def extract(archive, destination, recipe):
         with tempfile.TemporaryDirectory(prefix='.virtio-dxg-mesa-', dir=destination.parent) as temporary:
             stage = Path(temporary)
             tar.extractall(stage, members=entries, filter='data')
-            for name in inventory:
+            for name, record in inventory.items():
                 path = stage / name
                 if not path.resolve(strict=True).is_relative_to(stage):
                     raise ValueError('Alias leaves the payload: ' + name)
+                # Hash the bytes in tmpfs, so large libraries cross the 9p
+                # share only during extraction and use bounded hash buffers.
+                if 'symlink' not in record:
+                    with path.open('rb') as component:
+                        if hashlib.file_digest(component, 'sha256').hexdigest() != record['sha256']:
+                            raise ValueError('Changed component: ' + name)
             for name in expected['runtimeRequiredPaths']:
                 canonical(name)
                 if not (stage / name).is_file():

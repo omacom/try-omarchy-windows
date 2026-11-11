@@ -16,7 +16,7 @@ from apply_mesa_recipe import apply_recipe, load_recipe
 
 def function(text, name):
     # Anchor the definition; calls/comments are not source definitions.
-    match = re.search(r'(?m)^(?:static )?(?:inline )?(?:bool|void|struct pipe_resource \*)\s*\n' +
+    match = re.search(r'(?m)^(?:static )?(?:inline )?(?:bool|void|int|struct pipe_resource \*)\s*\n' +
                       re.escape(name) + r'\(', text)
     if not match:
         raise ValueError('Function definition missing: ' + name)
@@ -124,6 +124,11 @@ def main():
         text = (source / 'd3d12_fence.cpp').read_text(encoding='utf-8')
         actual = function(text, 'd3d12_fence_ensure_event_registered') + function(text, 'd3d12_fence_finish')
         run_fixture(out, label, fence_template, actual, expected, message)
+    export_source = (driver / 'd3d12_fence.cpp').read_text()
+    exports = '\n'.join(function(export_source, name) for name in (
+        'd3d12_screen_native_fences', 'fence_get_fd'))
+    run_fixture(out, 'native-export', (HERE / 'export_cases.cpp.in').read_text(),
+                exports, 0, 'NATIVE_EXPORT_CPU_PASS')
     reclaim_template = (HERE / 'reclaim_cases.cpp.in').read_text()
     for label, source, expected, message in (
         ('reclaim-patched', driver, 0, 'RECLAIM_CPU_PASS cases=10'),
@@ -134,7 +139,8 @@ def main():
         run_fixture(out, label, reclaim_template, actual, expected, message)
     receipt = {'schema': 1, 'recipeSha256': hashlib.sha256((recipe / 'recipe.json').read_bytes()).hexdigest(),
                'mesaVersion': manifest['mesaVersion'], 'recipeControls': 4,
-               'actualMirrorCpuCases': 17, 'actualFenceCpuCases': 15,
+               'actualMirrorCpuCases': 19, 'actualFenceCpuCases': 15,
+               'nativeExportCpuFixture': 'passed',
                'actualReclaimCpuCases': 10,
                'baselineDefectsReproduced': ['shared-dirty-bit', 'device-removal-completion', 'device-removal-reclaim'],
                'graphicsLibraryLoaded': False, 'hardwareIntegrationTested': False}
