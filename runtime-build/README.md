@@ -46,6 +46,17 @@ copied back into the memory straight afterwards, so Vulkan sees it too. It is on
 or `off` overrides that. `test-image-pitch.py <patched-renderer-source>` covers
 the decision, widths, bounds and refreshes against fake GL calls.
 
+`0007-swap-bgra-in-windows-memory-object-imports.patch` corrects the colors of
+those images (#400). A BGRA Venus image imported as a memory object is stored
+as `GL_RGBA8` and never uploaded, so sampling it returned red and blue swapped.
+The renderer already swapped R and B in the sampler view for Linux dma-buf
+imports; the patch applies that to memory-object imports too, for views in a
+BGRA format, and swaps the channels each swizzle entry selects. GL writes into
+such an image (copies and uploads from the GL side) still store GL's own
+order. `TRYOMARCHY_BGRA_SWAP=off` restores the old sampling. `test-bgra-swap.py
+<patched-renderer-source>` covers the switch, BGRA and RGBA views, swizzles with
+constants and the unchanged Linux path against fake sampler views.
+
 `test-image-capabilities.py <patched-renderer-source>` compiles the actual image
 dispatch against mocked Vulkan entry points. It runs on Linux or MSYS2 without
 a GPU or desktop and covers capability rejection, usable fallback masks,

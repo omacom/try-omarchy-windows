@@ -143,6 +143,10 @@
       {
         "file": "patches/virglrenderer/0006-honor-venus-row-pitch-in-windows-gl-imports.patch",
         "sha256": "775fd221c5a02eb641f6a6004da0e850e38914d51596e3131fb50ac23eadfd9d"
+      },
+      {
+        "file": "patches/virglrenderer/0007-swap-bgra-in-windows-memory-object-imports.patch",
+        "sha256": "916f9b653f9ed72730c9104f8e85df0ef61fd76679ce857d93b0e74da84f6bc1"
       }
     ]
   }

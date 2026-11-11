@@ -1,0 +1,72 @@
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -403,6 +403,8 @@ struct global_renderer_state {
+    /* Upload mutable buffers without mapping them (see below). */
+    bool intel_windows_buffer_uploads : 1;
+    bool pitch_copy_imports : 1;
++   /* Swap R and B when sampling BGRA images imported as memory objects. */
++   bool memobj_bgra_swap : 1;
+    /* these appeared broken on at least one driver */
+    bool use_explicit_locations : 1;
+    /* threaded sync */
+@@ -2764,26 +2766,36 @@ int vrend_create_sampler_view(struct vrend_context *ctx,
+    for (enum pipe_swizzle i = 0; i < 4; ++i)
+       view->gl_swizzle[i] = to_gl_swizzle(swizzle[i]);
+ 
++   const bool memobj = has_bit(res->storage_bits, VREND_STORAGE_GL_MEMOBJ);
+    if (res->is_imported && vrend_format_is_bgra(view->texture->base.format) &&
+-       !has_bit(res->storage_bits, VREND_STORAGE_GL_MEMOBJ)) {
++       (!memobj || (vrend_state.memobj_bgra_swap &&
++                    vrend_format_is_bgra(view->format)))) {
+       /*
+-       * Swap R/B channel for EGL-imported vulkan textures.
++       * Swap R/B channel for imported vulkan textures.
+        *
+        * On Linux, virgl_egl_image_from_dmabuf binds a BGRA dma-buf to a GL
+        * texture where EGL has renamed the channels into GL's RGBA layout,
+        * so a shader sampling `.r` returns the stored B byte. Swapping the
+        * view swizzle R↔B compensates.
+        *
+-       * This does NOT apply to Windows GL_EXT_memory_object_win32 imports
+-       * (VREND_STORAGE_GL_MEMOBJ set): there the host Vulkan ICD lays out
+-       * memory in DXGI_FORMAT_R8G8B8A8 byte order regardless of the
+-       * declared VkFormat, so a GL_RGBA8 sampler already returns
+-       * R-from-byte-0 correctly and this swap would produce an inverted
+-       * R/B output (observed: vkcube xcb / SuperTuxKart / Haruna+Zink).
++       * Windows GL_EXT_memory_object_win32 imports (VREND_STORAGE_GL_MEMOBJ)
++       * have the same problem: a BGRA image is stored as GL_RGBA8 and never
++       * goes through an upload that would convert it, so `.r` returns the
++       * stored B byte. A view in a non-BGRA format reads the bytes as they
++       * are, so only BGRA views are swapped there. With Mesa 26.2 Venus,
++       * vkcube and Zed on an AMD host and Zed, Tern and rex-linux on an
++       * Intel host showed red and blue swapped without this
++       * (omacom/try-omarchy-windows#400). TRYOMARCHY_BGRA_SWAP=off restores
++       * the old unswapped sampling (vrend_state.memobj_bgra_swap).
+        */
+-      GLenum tmp = view->gl_swizzle[0];
+-      view->gl_swizzle[0] = view->gl_swizzle[2];
+-      view->gl_swizzle[2] = tmp;
++      /* Swap the channels each entry selects, not the entries, so a
++       * swizzle such as RGB1 or one with constants stays as asked. */
++      for (int i = 0; i < 4; ++i) {
++         if (view->gl_swizzle[i] == GL_RED)
++            view->gl_swizzle[i] = GL_BLUE;
++         else if (view->gl_swizzle[i] == GL_BLUE)
++            view->gl_swizzle[i] = GL_RED;
++      }
+ 
+       /* Don't decode vulkan imported texture. */
+       view->srgb_decode = GL_SKIP_DECODE_EXT;
+@@ -7860,6 +7872,12 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+       vrend_pitch_copy_imports(vrend_state.intel_windows_buffer_uploads);
+    virgl_info("imported image pitch copy %s\n",
+               vrend_state.pitch_copy_imports ? "on" : "off");
++   /* See vrend_create_sampler_view. TRYOMARCHY_BGRA_SWAP=off samples
++    * imported BGRA memory objects without swapping R and B, as before. */
++   const char *bgra_swap = getenv("TRYOMARCHY_BGRA_SWAP");
++   vrend_state.memobj_bgra_swap = !(bgra_swap && !strcmp(bgra_swap, "off"));
++   virgl_info("imported BGRA memory object swizzle %s\n",
++              vrend_state.memobj_bgra_swap ? "on" : "off");
+ 
+    init_features(gles ? 0 : gl_ver,
+                  gles ? gl_ver : 0);
