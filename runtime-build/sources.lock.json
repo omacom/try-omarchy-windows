@@ -147,6 +147,10 @@
       {
         "file": "patches/virglrenderer/0007-swap-bgra-in-windows-memory-object-imports.patch",
         "sha256": "916f9b653f9ed72730c9104f8e85df0ef61fd76679ce857d93b0e74da84f6bc1"
+      },
+      {
+        "file": "patches/virglrenderer/0008-compile-storage-buffer-shaders-as-glsl-430.patch",
+        "sha256": "717350fa4fa96bff69c90b8b694eab4096054a311db0ff233ed18ff5a0062bbf"
       }
     ]
   }

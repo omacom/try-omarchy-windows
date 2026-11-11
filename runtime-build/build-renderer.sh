@@ -12,6 +12,7 @@ python "$recipe/test-image-capabilities.py" "$source"
 python "$recipe/test-buffer-upload.py" "$source"
 python "$recipe/test-image-pitch.py" "$source"
 python "$recipe/test-bgra-swap.py" "$source"
+python "$recipe/test-ssbo-glsl430.py" "$source"
 meson setup "$output/build" "$source" --buildtype=release --prefix=/ucrt64 -Dvenus=true -Dvideo=true -Dtests=false
 meson compile -C "$output/build"
 meson install -C "$output/build"
