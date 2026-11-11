@@ -3,11 +3,11 @@
 # boots, without root. Works on any x86_64 Linux (including WSL) with gcc,
 # make, curl and python3 >= 3.14 (for zstd).
 #
-#   virtio-dxg/guest/check-build.sh 7.2.9.arch1-1 [workdir]
+#   virtio-dxg/guest/check-build.sh 7.2.15.arch1-1 [workdir]
 #
 # The module is left in <workdir>/src/guest/dxgkrnl_virtio.ko.
 set -eu
-version=${1:?usage: check-build.sh <arch-linux-version, e.g. 7.2.9.arch1-1> [workdir]}
+version=${1:?usage: check-build.sh <arch-linux-version, e.g. 7.2.15.arch1-1> [workdir]}
 work=${2:-$HOME/.cache/virtio-dxg}
 here=$(cd "$(dirname "$0")/.." && pwd)
 release=$(echo "$version" | sed 's/\.arch/-arch/')

@@ -15,7 +15,7 @@ Design, feature matrix, status and roadmap: [docs/VIRTIO-DXG.md](../docs/VIRTIO-
 | `qemu/` | `virtio-dxg-pci` device for the WINQ-EMU QEMU | GPL-2.0-or-later |
 
 ```sh
-virtio-dxg/guest/check-build.sh 7.2.9.arch1-1     # guest module, no root
+virtio-dxg/guest/check-build.sh 7.2.15.arch1-1     # guest module, no root
 ```
 
 ```powershell

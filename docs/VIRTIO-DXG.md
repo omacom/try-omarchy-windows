@@ -194,7 +194,7 @@ but it does not establish native Linux Vulkan, DLSS or ray-traced games.
 | Piece | State |
 | --- | --- |
 | Wire contract `protocol/virtio_dxg.h` | Done |
-| Guest: `dxgkrnl` over virtio (`guest/`) | **Running in the Omarchy VM** (kernel `7.2.9-arch1-1`), loaded by the development boot hook. |
+| Guest: `dxgkrnl` over virtio (`guest/`) | **Running in the Omarchy VM** (kernels `7.2.9-arch1-1` and `7.2.15-arch1-1`, Omarchy 4.0.4 and 4.5.0 with Hyprland 0.56.2 and 0.57.2), loaded by the development boot hook. |
 | Host: `dxghost` executor (`host/`) | **Running against NVIDIA's driver** inside QEMU: CUDA, D3D12, OpenGL, Vulkan (Wine) and the whole desktop. |
 | QEMU device `virtio-dxg-pci` (`qemu/`) | **Built** (development build and the full winq-emu runtime via `qemu/build-runtime.sh`). |
 | NVIDIA Windows Vulkan driver in Linux (`wine/`) | **Working in the Omarchy VM over virtio-dxg** (and on WSL2's `/dev/dxg`): device creation, guest-side shader compile, compute verified, 96–97% GPU-bound like native. Every D3DKMT call the driver makes succeeds. Prototype hooks; to become a Wine/Proton patch. |
@@ -379,7 +379,7 @@ and keeps GPU virtual-address operations inside its own reservations.
 
 ```sh
 # Guest module against the exact Arch kernel (any x86_64 Linux, no root)
-virtio-dxg/guest/check-build.sh 7.2.9.arch1-1
+virtio-dxg/guest/check-build.sh 7.2.15.arch1-1
 ```
 
 ```powershell
