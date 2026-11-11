@@ -95,6 +95,7 @@ func TestBuildQemuArgsForDxg(t *testing.T) {
 	for _, want := range []string{
 		"-cpu host ",
 		"-device virtio-dxg-pci",
+		"-global virtio-gpu-device.max_hostmem=8589934592",
 		"-initrd " + filepath.Join("vdxg", "initramfs-linux.img") + " ",
 		"tryomarchy.render=gpu virtio_dxg.desktop=1",
 		"mount_tag=wsllib,security_model=none,readonly=on",

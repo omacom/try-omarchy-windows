@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -90,13 +91,24 @@ func prepareDxgLaunch(dataDir string) (dxgLaunch, string, error) {
 	return l, qemu, nil
 }
 
+// dxgDisplayHostMem is the virtio-gpu host memory limit in dxg mode.
+const dxgDisplayHostMem = 8 << 30
+
 // dxgQemuArgs adds the device and the read-only shares. The display stays
 // the 2D virtio-gpu of CPU mode: frames reach it from the GPU (KMS mirrors).
+//
+// Every application window buffer is also a virtio-gpu buffer (what the
+// compositor validates), although its pixels live in a GPU texture. The
+// display device accounts each one against its host memory limit, and the
+// stock 256 MiB is gone after a few large windows: creation then fails on
+// the host and the next scanout buffer cannot be made. The memory is only
+// reserved, never touched, so the limit can be generous.
 func dxgQemuArgs(l dxgLaunch) []string {
 	if !l.enabled {
 		return nil
 	}
-	args := []string{"-device", "virtio-dxg-pci"}
+	args := []string{"-device", "virtio-dxg-pci",
+		"-global", "virtio-gpu-device.max_hostmem=" + strconv.FormatUint(dxgDisplayHostMem, 10)}
 	for _, s := range l.shares {
 		args = append(args, "-virtfs",
 			"local,path="+qemuOptionValue(s.path)+",mount_tag="+s.tag+",security_model=none,readonly=on")

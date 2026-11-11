@@ -112,6 +112,10 @@ Other media:
 | Views went through QEMU's memory API (a flatview rebuild under the BQL each) | 3.3 ms per view, vCPUs stalled | Mapped straight into the WHPX partition: 0.1–0.3 ms |
 | OpenResource was not offered | The guest's D3D12 runtime removed the device when one Mesa screen opened another's texture | dxghost opens the resource on the guest device through an NT handle |
 | Expected adapter-info probe failures logged as errors | About 25 serial-console lines per process start, each byte a VM exit | Debug level; other ioctl failures rate limited |
+| No native fence descriptors (`EGL_ANDROID_native_fence_sync`) | Chromium ends a frame by asking EGL for a native fence, which is also what submits the frame; without the extension it passed its window buffer to the compositor with the drawing unsubmitted: an empty (black or transparent) native Wayland window | The D3D12 driver offers the extension to applications: a fence asked for its descriptor finishes the work and returns a signalled sync file |
+| A window buffer's texture pairing ended with the allocation that made it | Browsers allocate with GBM, import the dma-buf, free the allocation and only then pass the dma-buf on: the compositor found no texture | The pairing lives as long as the dma-buf (the module holds its inode, not the buffer) |
+| Window buffers gave GBM no KMS handle | Clients that export through `gbm_bo_get_handle` could not allocate | The buffer keeps its GEM handle |
+| virtio-gpu's 256 MiB host memory limit | Every window buffer is also a virtio-gpu buffer: after a few large windows creation failed on the host (656 errors in one session) | The limit is 8 GiB in dxg mode (reserved, never touched) |
 | The debug overlay and idle blanking in measurements | Throttled clients (display off, locked session); Hyprland's overlay can deadlock in hyprgraphics | Benchmarks keep the display on and do not use the overlay |
 
 ## Where the rest of native performance goes

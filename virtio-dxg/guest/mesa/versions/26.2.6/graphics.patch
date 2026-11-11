@@ -47,7 +47,7 @@
     uint8_t old_data = (uint8_t)*state;
     *state = (old_data | new_data);
 +
-+   if (write && res->dt_mirror && batch->ctx)
++   if (write && (res->dt_mirror || res->dxg_window) && batch->ctx)
 +      d3d12_mirror_reference(batch->ctx, res);
  }
  
@@ -125,16 +125,26 @@
     slab_destroy_child(&ctx->transfer_pool);
     slab_destroy_child(&ctx->transfer_pool_unsync);
     d3d12_context_state_table_destroy(ctx);
-@@ -199,6 +203,8 @@
- {
+@@ -200,6 +204,8 @@
     struct d3d12_context *ctx = d3d12_context(pipe);
     struct d3d12_batch *batch = d3d12_current_batch(ctx);
-+
-+   d3d12_mirror_sync(ctx);
  
++   d3d12_mirror_sync(ctx);
++
     bool flushed = d3d12_flush_cmdlist(ctx);
  
-@@ -726,9 +732,11 @@
+    if (fence) {
+@@ -606,6 +612,9 @@
+    ctx->base.flush_resource = d3d12_flush_resource;
+    ctx->base.fence_server_signal = d3d12_signal;
+    ctx->base.fence_server_sync = d3d12_wait;
++#ifndef _WIN32
++   ctx->base.create_fence_fd = d3d12_create_fence_fd;
++#endif
+    ctx->base.memory_barrier = d3d12_memory_barrier;
+    ctx->base.texture_barrier = d3d12_texture_barrier;
+ 
+@@ -726,9 +735,11 @@
        ctx->id = D3D12_CONTEXT_NO_ID;
     mtx_unlock(&screen->submit_mutex);
  
@@ -148,7 +158,64 @@
     if (flags & PIPE_CONTEXT_PREFER_THREADED) {
 --- a/src/gallium/drivers/d3d12/d3d12_fence.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_fence.cpp
-@@ -157,7 +157,10 @@
+@@ -27,12 +27,29 @@
+ #include "d3d12_screen.h"
+ 
+ #include "util/u_memory.h"
++#ifndef _WIN32
++#include "frontend/sw_winsys.h"
++#include "util/os_file.h"
++#include "util/u_debug.h"
++#include "drm-uapi/drm.h"
++#include <sys/ioctl.h>
++#include <sys/stat.h>
++#include <sys/sysmacros.h>
++#include <unistd.h>
++#endif
+ 
+ #include <dxguids/dxguids.h>
+ 
+ static void
+ destroy_fence(struct d3d12_fence *fence)
+ {
++#ifndef _WIN32
++   if (fence->sync_fd >= 0) {
++      close(fence->sync_fd);
++      FREE(fence);
++      return;
++   }
++#endif
+    if (fence->type == PIPE_FD_TYPE_NATIVE_SYNC)
+       d3d12_fence_close_event(fence->event, fence->event_fd);
+    else
+@@ -95,6 +112,7 @@
+    ret->event = NULL;
+    ret->event_fd = -1;
+    ret->signaled = false;
++   ret->sync_fd = -1;
+ 
+    pipe_reference_init(&ret->reference, 1);
+    return ret;
+@@ -123,6 +141,7 @@
+    }
+ 
+    ret->type = type;
++   ret->sync_fd = -1;
+    pipe_reference_init(&ret->reference, 1);
+    return ret;
+ }
+@@ -153,11 +172,21 @@
+ bool
+ d3d12_fence_finish(struct d3d12_fence *fence, uint64_t timeout_ns)
+ {
++#ifndef _WIN32
++   if (fence->sync_fd >= 0) {
++      if (!fence->signaled)
++         fence->signaled = d3d12_fence_wait_event(NULL, fence->sync_fd, timeout_ns);
++      return fence->signaled;
++   }
++#endif
+    assert(fence->type == PIPE_FD_TYPE_NATIVE_SYNC);
     if (fence->signaled)
        return true;
  
@@ -160,7 +227,7 @@
     if (!complete && timeout_ns) {
        if (timeout_ns == OS_TIMEOUT_INFINITE || timeout_ns > MaxTimeoutInNs) {
           complete = SUCCEEDED(fence->cmdqueue_fence->SetEventOnCompletion(fence->value, NULL));
-@@ -168,6 +171,10 @@
+@@ -168,6 +197,10 @@
        }
     }
  
@@ -171,6 +238,150 @@
     fence->signaled = complete;
     return complete;
  }
+@@ -189,6 +222,8 @@
+ void
+ d3d12_fence_signal_impl(struct d3d12_fence *fence, ID3D12CommandQueue *queue, uint64_t value)
+ {
++   if (fence->sync_fd >= 0)
++      return;
+    if (fence->type == PIPE_FD_TYPE_NATIVE_SYNC)
+       value = fence->value;
+    queue->Signal(fence->cmdqueue_fence, value);
+@@ -197,14 +232,107 @@
+ void
+ d3d12_fence_wait_impl(struct d3d12_fence *fence, ID3D12CommandQueue *queue, uint64_t value)
+ {
++   if (fence->sync_fd >= 0) {
++      /* Not a GPU fence: what is submitted next starts after it. */
++      d3d12_fence_finish(fence, OS_TIMEOUT_INFINITE);
++      return;
++   }
+    if (fence->type == PIPE_FD_TYPE_NATIVE_SYNC)
+       value = fence->value;
+    queue->Wait(fence->cmdqueue_fence, value);
+ }
+ 
++
++#ifndef _WIN32
++/* virtio-dxg: native fence descriptors ----------------------------------- */
++
++/* The DRM descriptor of an application's screen (a render node). */
++static int
++d3d12_fence_drm_fd(struct d3d12_screen *screen)
++{
++   struct stat st;
++   int fd = screen->winsys && screen->winsys->get_fd ?
++            screen->winsys->get_fd(screen->winsys) : -1;
++
++   if (fd < 0 || fstat(fd, &st) || !S_ISCHR(st.st_mode) ||
++       major(st.st_rdev) != 226 || minor(st.st_rdev) < 128)
++      return -1;
++   return fd;
++}
++
++/* A sync file that is signalled already. */
++static int
++d3d12_signaled_sync_file(struct d3d12_screen *screen)
++{
++   int drm = d3d12_fence_drm_fd(screen);
++   if (drm < 0)
++      return -1;
++   struct drm_syncobj_create create = {};
++   create.flags = DRM_SYNCOBJ_CREATE_SIGNALED;
++   if (ioctl(drm, DRM_IOCTL_SYNCOBJ_CREATE, &create))
++      return -1;
++   struct drm_syncobj_handle exported = {};
++   exported.handle = create.handle;
++   exported.flags = DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_EXPORT_SYNC_FILE;
++   exported.fd = -1;
++   int ret = ioctl(drm, DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD, &exported);
++   struct drm_syncobj_destroy destroy = {};
++   destroy.handle = create.handle;
++   ioctl(drm, DRM_IOCTL_SYNCOBJ_DESTROY, &destroy);
++   return ret ? -1 : exported.fd;
++}
++
++bool
++d3d12_screen_native_fences(struct d3d12_screen *screen)
++{
++   if (!debug_get_bool_option("D3D12_NATIVE_FENCE", true))
++      return false;
++   int fd = d3d12_signaled_sync_file(screen);
++   if (fd < 0)
++      return false;
++   close(fd);
++   return true;
++}
++
++static int
++fence_get_fd(struct pipe_screen *pscreen, struct pipe_fence_handle *pfence)
++{
++   struct d3d12_fence *fence = d3d12_fence(pfence);
++
++   if (fence->sync_fd >= 0)
++      return os_dupfd_cloexec(fence->sync_fd);
++   if (fence->type != PIPE_FD_TYPE_NATIVE_SYNC ||
++       !d3d12_fence_finish(fence, OS_TIMEOUT_INFINITE))
++      return -1;
++   return d3d12_signaled_sync_file(d3d12_screen(pscreen));
++}
++
++void
++d3d12_create_fence_fd(struct pipe_context *pctx,
++                      struct pipe_fence_handle **pfence, int fd,
++                      enum pipe_fd_type type)
++{
++   *pfence = NULL;
++   if (type != PIPE_FD_TYPE_NATIVE_SYNC || fd < 0)
++      return;
++   struct d3d12_fence *fence = d3d12_create_fence_raw(NULL, 0);
++   if (!fence)
++      return;
++   fence->sync_fd = os_dupfd_cloexec(fd);
++   if (fence->sync_fd < 0) {
++      FREE(fence);
++      return;
++   }
++   *pfence = (struct pipe_fence_handle *)fence;
++}
++#endif /* !_WIN32 */
++
+ void
+ d3d12_screen_fence_init(struct pipe_screen *pscreen)
+ {
+    pscreen->fence_reference = fence_reference;
+    pscreen->fence_finish = fence_finish;
++#ifndef _WIN32
++   pscreen->fence_get_fd = fence_get_fd;
++#endif
+ }
+--- a/src/gallium/drivers/d3d12/d3d12_fence.h
++++ b/src/gallium/drivers/d3d12/d3d12_fence.h
+@@ -93,6 +93,9 @@
+    int event_fd;
+    uint64_t value;
+    bool signaled;
++
++   /* An imported sync file (not a GPU fence) when not negative. */
++   int sync_fd;
+ };
+ 
+ static inline struct d3d12_fence *
+@@ -122,6 +125,14 @@
+ void
+ d3d12_screen_fence_init(struct pipe_screen *pscreen);
+ 
++bool
++d3d12_screen_native_fences(struct d3d12_screen *screen);
++
++void
++d3d12_create_fence_fd(struct pipe_context *pctx,
++                      struct pipe_fence_handle **pfence, int fd,
++                      enum pipe_fd_type type);
++
+ void
+ d3d12_fence_wait_impl(struct d3d12_fence *fence, ID3D12CommandQueue *queue, uint64_t value);
+ void
 --- a/src/gallium/drivers/d3d12/d3d12_resource.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_resource.cpp
 @@ -37,6 +37,29 @@
@@ -198,7 +409,7 @@
 +static void
 +d3d12_scanout_unlink(struct d3d12_resource *res);
 +static void
-+d3d12_winbuf_unregister(int dmabuf_fd);
++d3d12_winbuf_release(struct d3d12_screen *screen, struct d3d12_resource *res);
 +#endif
  
  #include <dxguids/dxguids.h>
@@ -211,7 +422,7 @@
 +   if (resource->mirror_zero_copy && !resource->mirror_link_borrowed)
 +      d3d12_scanout_unlink(resource);
 +   if (resource->dxg_shared)
-+      d3d12_winbuf_unregister(resource->mirror_fd);
++      d3d12_winbuf_release(d3d12_screen(pscreen), resource);
 +   if (resource->mirror_has_fd) {
 +      if (resource->dt_map)
 +         munmap(resource->dt_map, resource->mirror_map_size);
@@ -238,7 +449,7 @@
     FREE(resource);
  }
  
-@@ -540,10 +584,651 @@
+@@ -540,10 +584,672 @@
     return &res->base.b;
  }
  
@@ -621,13 +832,15 @@
 +   int ret = ioctl(drm_fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime);
 +   struct drm_gem_close gem = {};
 +   gem.handle = rc.bo_handle;
-+   ioctl(drm_fd, DRM_IOCTL_GEM_CLOSE, &gem);   /* the dma-buf keeps it */
-+   if (ret)
++   if (ret) {
++      ioctl(drm_fd, DRM_IOCTL_GEM_CLOSE, &gem);
 +      return NULL;
++   }
 +   int fd = prime.fd;
 +
 +   struct d3d12_resource *res = CALLOC_STRUCT(d3d12_resource);
 +   if (!res) {
++      ioctl(drm_fd, DRM_IOCTL_GEM_CLOSE, &gem);
 +      close(fd);
 +      return NULL;
 +   }
@@ -638,9 +851,11 @@
 +   struct pipe_resource *pres =
 +      d3d12_resource_create_or_place(screen, res, &tex_templ, nullptr, 0);
 +   if (!pres) {
++      ioctl(drm_fd, DRM_IOCTL_GEM_CLOSE, &gem);
 +      close(fd);
 +      return NULL;
 +   }
++   res->mirror_gem = rc.bo_handle;
 +   pres->bind = templ->bind | PIPE_BIND_SHARED;
 +   res->dt_mirror = true;
 +   res->dt_stride = stride;
@@ -662,6 +877,10 @@
 +      res->dxg_shared = ioctl(dxg, D3D12_LX_DXVIRTIOWINBUF, &reg) == 0;
 +      close(reg.resource_fd);
 +   }
++   if (debug_get_bool_option("D3D12_WINBUF_DEBUG", false))
++      fprintf(stderr, "winbuf[%d]: create %ux%u %s bind 0x%x -> %s\n", getpid(),
++              templ->width0, templ->height0, util_format_short_name(templ->format),
++              templ->bind, res->dxg_shared ? "paired" : "NOT paired");
 +   if (!res->dxg_shared) {
 +      /* No pairing (an older dxg module): an importer could not see the
 +       * image, so there is no window buffer; callers fall back. */
@@ -671,16 +890,18 @@
 +   return pres;
 +}
 +
++/* The pair is not taken back when the allocation goes: browsers allocate
++ * with GBM, import the dma-buf, free the allocation and only then hand the
++ * dma-buf to the compositor. The module drops a pair with its dma-buf. */
 +static void
-+d3d12_winbuf_unregister(int dmabuf_fd)
++d3d12_winbuf_release(struct d3d12_screen *screen, struct d3d12_resource *res)
 +{
-+   int dxg = d3d12_dxg_fd();
-+   struct d3d12_virtio_winbuf unreg = {};
-+   unreg.op = 2;
-+   unreg.dmabuf_fd = dmabuf_fd;
-+   unreg.resource_fd = -1;
-+   if (dxg >= 0)
-+      ioctl(dxg, D3D12_LX_DXVIRTIOWINBUF, &unreg);
++   if (res->mirror_gem) {
++      struct drm_gem_close gem = {};
++      gem.handle = res->mirror_gem;
++      ioctl(screen->winsys->get_fd(screen->winsys), DRM_IOCTL_GEM_CLOSE, &gem);
++      res->mirror_gem = 0;
++   }
 +}
 +
 +/* The texture paired with an imported window buffer, as a resource of this
@@ -695,8 +916,13 @@
 +   look.dmabuf_fd = dmabuf_fd;
 +   look.resource_fd = -1;
 +   if (dxg < 0 || !debug_get_bool_option("D3D12_ZERO_COPY_CLIENTS", true) ||
-+       ioctl(dxg, D3D12_LX_DXVIRTIOWINBUF, &look) || look.resource_fd < 0)
++       ioctl(dxg, D3D12_LX_DXVIRTIOWINBUF, &look) || look.resource_fd < 0) {
++      if (debug_get_bool_option("D3D12_WINBUF_DEBUG", false))
++         fprintf(stderr, "winbuf[%d]: import %ux%u %s: no pair (dxg fd %d)\n",
++                 getpid(), templ->width0, templ->height0,
++                 util_format_short_name(templ->format), dxg);
 +      return NULL;
++   }
 +   struct winsys_handle wh = {};
 +   wh.type = WINSYS_HANDLE_TYPE_FD;
 +   wh.handle = look.resource_fd;
@@ -705,6 +931,12 @@
 +   struct pipe_resource *pres = screen->base.resource_from_handle(
 +      &screen->base, templ, &wh, PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
 +   close(look.resource_fd);
++   if (pres)
++      d3d12_resource(pres)->dxg_window = true;
++   if (debug_get_bool_option("D3D12_WINBUF_DEBUG", false))
++      fprintf(stderr, "winbuf[%d]: import %ux%u %s bind 0x%x -> %s\n", getpid(),
++              templ->width0, templ->height0, util_format_short_name(templ->format),
++              templ->bind, pres ? "texture" : "FAILED to open");
 +   return pres;
 +}
 +#endif /* !_WIN32 */
@@ -890,7 +1122,7 @@
     struct d3d12_resource *res = CALLOC_STRUCT(d3d12_resource);
     if (!res)
        return NULL;
-@@ -557,6 +1242,13 @@
+@@ -557,6 +1263,13 @@
                            struct winsys_handle *handle, unsigned usage)
  {
     struct d3d12_screen *screen = d3d12_screen(pscreen);
@@ -904,7 +1136,7 @@
     if (handle->type != WINSYS_HANDLE_TYPE_D3D12_RES &&
         handle->type != WINSYS_HANDLE_TYPE_FD &&
         handle->type != WINSYS_HANDLE_TYPE_WIN32_NAME)
-@@ -846,6 +1538,27 @@
+@@ -846,6 +1559,35 @@
     struct d3d12_resource *res = d3d12_resource(pres);
     struct d3d12_screen *screen = d3d12_screen(pscreen);
  
@@ -912,6 +1144,14 @@
 +                          handle->type == WINSYS_HANDLE_TYPE_FD)) {
 +#ifndef _WIN32
 +      if (res->mirror_has_fd) {
++         if (handle->type == WINSYS_HANDLE_TYPE_KMS && res->mirror_gem) {
++            handle->handle = res->mirror_gem;
++            handle->stride = res->dt_stride;
++            handle->offset = 0;
++            handle->modifier = 0; /* DRM_FORMAT_MOD_LINEAR */
++            handle->format = pres->format;
++            return true;
++         }
 +         if (handle->type != WINSYS_HANDLE_TYPE_FD)
 +            return false;
 +         handle->handle = os_dupfd_cloexec(res->mirror_fd);
@@ -932,7 +1172,7 @@
     switch (handle->type) {
     case WINSYS_HANDLE_TYPE_D3D12_RES:
        handle->com_obj = d3d12_resource_resource(res);
-@@ -985,6 +1698,13 @@
+@@ -985,6 +1727,13 @@
  
  static constexpr unsigned d3d12_max_planes = 3;
  
@@ -946,7 +1186,7 @@
  /**
   * Get stride and offset for the given pipe resource without the need to get
   * a winsys_handle.
-@@ -1003,6 +1723,41 @@
+@@ -1003,6 +1752,41 @@
     struct d3d12_resource* res = d3d12_resource(pres);
     unsigned num_planes = util_format_get_num_planes(res->overall_format);
  
@@ -988,7 +1228,7 @@
     pipe_resource *planes[d3d12_max_planes];
     unsigned int strides[d3d12_max_planes];
     unsigned int layer_strides[d3d12_max_planes];
-@@ -1273,6 +2028,142 @@
+@@ -1273,6 +2057,142 @@
     ctx->has_commands = true;
  }
  
@@ -1103,7 +1343,7 @@
 +   bool recorded = false;
 +   for (unsigned i = 0; i < count; i++) {
 +      struct d3d12_resource *res = d3d12_resource(list[i].resource);
-+      if (res->dxg_shared || d3d12_scanout_active(res)) {
++      if (res->dxg_shared || res->dxg_window || d3d12_scanout_active(res)) {
 +         /* The host shows the texture: finish GPU work before KMS commits. */
 +         recorded = true;
 +      } else if (d3d12_mirror_record(ctx, res)) {
@@ -1133,7 +1373,7 @@
                             struct d3d12_resource *res,
 --- a/src/gallium/drivers/d3d12/d3d12_resource.h
 +++ b/src/gallium/drivers/d3d12/d3d12_resource.h
-@@ -54,6 +54,33 @@
+@@ -54,6 +54,41 @@
     unsigned dt_stride;
     struct pipe_resource *dt_proxy;
  
@@ -1146,6 +1386,14 @@
 +    * in the dxg module: the compositor samples the texture, so flushes
 +    * that wrote it only finish the GPU work. */
 +   bool dxg_shared;
++   /* The texture of a window buffer, opened through an import of its
++    * dma-buf (browsers allocate with GBM and render through their own
++    * import): writes are finished at flush as well, or the compositor
++    * could sample, and keep, an unfinished frame. */
++   bool dxg_window;
++   /* The window buffer's GEM handle on the screen's DRM descriptor, for
++    * clients that ask GBM for the handle and export it themselves. */
++   uint32_t mirror_gem;
 +   /* An imported dma-buf is mapped through its own descriptor: render
 +    * nodes (where compositors usually render) cannot map dumb buffers. */
 +   bool mirror_has_fd;
@@ -1167,7 +1415,7 @@
     struct util_range valid_buffer_range;
     uint32_t bind_counts[MESA_SHADER_STAGES][D3D12_RESOURCE_BINDING_TYPES];
     unsigned generation_id;
-@@ -62,6 +89,17 @@
+@@ -62,6 +97,17 @@
     struct pipe_resource *logicop_texture;
  };
  
@@ -1187,7 +1435,17 @@
     ID3D12Resource *res;
 --- a/src/gallium/drivers/d3d12/d3d12_screen.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_screen.cpp
-@@ -420,6 +420,12 @@
+@@ -384,6 +384,9 @@
+    caps->robust_buffer_access_behavior = true;
+    caps->memobj = true;
+    caps->fence_signal = true;
++#ifndef _WIN32
++   caps->native_fence_fd = d3d12_screen_native_fences(screen);
++#endif
+    caps->timeline_semaphore_import = true;
+    caps->clip_halfz = true;
+    caps->vs_layer_viewport = true;
+@@ -420,6 +423,12 @@
     caps->query_memory_info = true;
  #endif
  

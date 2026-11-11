@@ -5695,15 +5695,19 @@ dxgkio_virtio_scanout(struct dxgprocess *process, void *__user inargs)
 #ifdef DXG_VIRTIO
 /*
  * Window buffers (LX_DXVIRTIOWINBUF): dma-buf -> the shared resource file an
- * application rendered it in. Each pair holds its dma-buf and its resource
- * file, so both outlive a compositor's lookup; pairs go at unregister or
- * when their process closes /dev/dxg.
+ * application rendered it in. A pair lives as long as its dma-buf, not as
+ * long as the allocation or the process that made it: browsers allocate a
+ * buffer, import it, free the allocation, and only then pass the dma-buf to
+ * the compositor, which must still find the texture.
+ *
+ * A pair must not keep the dma-buf alive either, so it holds the dma-buf's
+ * inode instead: the inode keeps its address (the identity of the pair),
+ * and loses its dentry when the last descriptor of the dma-buf is closed.
  */
 struct dxgwinbuf {
 	struct list_head	entry;
-	struct dma_buf		*dmabuf;
+	struct inode		*inode;
 	struct file		*resource;
-	struct dxgprocess	*owner;
 };
 
 /* Read-only marker: user space selects window buffers when it exists. */
@@ -5717,19 +5721,34 @@ static DEFINE_MUTEX(dxgwinbuf_lock);
 static void dxgwinbuf_free(struct dxgwinbuf *w)
 {
 	list_del(&w->entry);
-	dma_buf_put(w->dmabuf);
+	iput(w->inode);
 	fput(w->resource);
 	kfree(w);
 }
 
+static bool dxgwinbuf_gone(struct dxgwinbuf *w)
+{
+	bool gone;
+
+	spin_lock(&w->inode->i_lock);
+	gone = hlist_empty(&w->inode->i_dentry);
+	spin_unlock(&w->inode->i_lock);
+	return gone;
+}
+
+/* Called with the lock held: drops the pairs whose dma-buf was closed. */
 static struct dxgwinbuf *dxgwinbuf_find(struct dma_buf *dmabuf)
 {
-	struct dxgwinbuf *w;
+	struct inode *inode = file_inode(dmabuf->file);
+	struct dxgwinbuf *w, *tmp, *found = NULL;
 
-	list_for_each_entry(w, &dxgwinbuf_list, entry)
-		if (w->dmabuf == dmabuf)
-			return w;
-	return NULL;
+	list_for_each_entry_safe(w, tmp, &dxgwinbuf_list, entry) {
+		if (w->inode == inode)
+			found = w;
+		else if (dxgwinbuf_gone(w))
+			dxgwinbuf_free(w);
+	}
+	return found;
 }
 
 void dxgwinbuf_release_process(struct dxgprocess *process)
@@ -5738,7 +5757,7 @@ void dxgwinbuf_release_process(struct dxgprocess *process)
 
 	mutex_lock(&dxgwinbuf_lock);
 	list_for_each_entry_safe(w, tmp, &dxgwinbuf_list, entry)
-		if (w->owner == process)
+		if (dxgwinbuf_gone(w))
 			dxgwinbuf_free(w);
 	mutex_unlock(&dxgwinbuf_lock);
 }
@@ -5773,20 +5792,20 @@ dxgkio_virtio_winbuf(struct dxgprocess *process, void *__user inargs)
 			fput(file);
 			break;
 		}
-		w->dmabuf = dmabuf;
+		w->inode = file_inode(dmabuf->file);
+		ihold(w->inode);
 		w->resource = file;
-		w->owner = process;
 		mutex_lock(&dxgwinbuf_lock);
 		old = dxgwinbuf_find(dmabuf);
 		if (old)
 			dxgwinbuf_free(old);
 		list_add(&w->entry, &dxgwinbuf_list);
 		mutex_unlock(&dxgwinbuf_lock);
-		return 0;	/* the pair keeps dmabuf and file */
+		break;
 	case D3DKMT_VIRTIOWINBUF_UNREGISTER:
 		mutex_lock(&dxgwinbuf_lock);
 		w = dxgwinbuf_find(dmabuf);
-		if (w && w->owner == process)
+		if (w)
 			dxgwinbuf_free(w);
 		else
 			ret = -ENOENT;

@@ -81,6 +81,9 @@ int main(void)
 	PFNEGLCREATEIMAGEKHRPROC create_image =
 		(void *)eglGetProcAddress("eglCreateImageKHR");
 	struct side app, comp;
+	/* FORMAT=AB24 (as Chromium), XR24, XB24; AR24 by default. */
+	const char *f = getenv("FORMAT") ?: "AR24";
+	uint32_t fourcc = f[0] | f[1] << 8 | f[2] << 16 | (uint32_t)f[3] << 24;
 	int frame, bad = 0;
 
 	setvbuf(stdout, NULL, _IONBF, 0);
@@ -89,7 +92,7 @@ int main(void)
 		return 1;
 
 	/* The application: a window buffer, as wl_egl allocates one. */
-	struct gbm_bo *bo = gbm_bo_create(app.gbm, W, H, GBM_FORMAT_ARGB8888,
+	struct gbm_bo *bo = gbm_bo_create(app.gbm, W, H, fourcc,
 					  GBM_BO_USE_RENDERING);
 	if (!bo) { perror("gbm_bo_create on the render node"); return 1; }
 	int fd = gbm_bo_get_fd(bo);
@@ -99,24 +102,38 @@ int main(void)
 	       stride, (unsigned long long)modifier);
 	if (fd < 0) { fprintf(stderr, "no descriptor\n"); return 1; }
 
-	eglMakeCurrent(app.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, app.ctx);
-	printf("application renders on: %s\n", glGetString(GL_RENDERER));
-	EGLImageKHR app_img = create_image(app.dpy, EGL_NO_CONTEXT,
-					   EGL_NATIVE_PIXMAP_KHR, bo, NULL);
-	if (!app_img) { fprintf(stderr, "app image 0x%x\n", eglGetError()); return 1; }
-	GLuint app_fbo = fbo_of_image(app_img);
-
-	/* The compositor: import what linux-dmabuf would carry. */
-	eglMakeCurrent(comp.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, comp.ctx);
 	EGLint attr[] = {
 		EGL_WIDTH, W, EGL_HEIGHT, H,
-		EGL_LINUX_DRM_FOURCC_EXT, DRM_FORMAT_ARGB8888,
+		EGL_LINUX_DRM_FOURCC_EXT, (EGLint)fourcc,
 		EGL_DMA_BUF_PLANE0_FD_EXT, fd,
 		EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
 		EGL_DMA_BUF_PLANE0_PITCH_EXT, (EGLint)stride,
 		EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT, (EGLint)(modifier & 0xffffffff),
 		EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT, (EGLint)(modifier >> 32),
 		EGL_NONE };
+
+	/* VIA_DMABUF=1: the application renders through its own import of the
+	 * buffer on a second display, as Chromium's GPU process does (GBM to
+	 * allocate, its GL's EGL to render). */
+	if (getenv("VIA_DMABUF")) {
+		struct side render;
+
+		if (side_init(&render, getenv("APP_NODE") ?: "/dev/dri/renderD128"))
+			return 1;
+		app.dpy = render.dpy;
+		app.ctx = render.ctx;
+	}
+	eglMakeCurrent(app.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, app.ctx);
+	printf("application renders on: %s%s\n", glGetString(GL_RENDERER),
+	       getenv("VIA_DMABUF") ? " (through a dma-buf import)" : "");
+	EGLImageKHR app_img = getenv("VIA_DMABUF") ?
+		create_image(app.dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, NULL, attr) :
+		create_image(app.dpy, EGL_NO_CONTEXT, EGL_NATIVE_PIXMAP_KHR, bo, NULL);
+	if (!app_img) { fprintf(stderr, "app image 0x%x\n", eglGetError()); return 1; }
+	GLuint app_fbo = fbo_of_image(app_img);
+
+	/* The compositor: import what linux-dmabuf would carry. */
+	eglMakeCurrent(comp.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, comp.ctx);
 	EGLImageKHR comp_img = create_image(comp.dpy, EGL_NO_CONTEXT,
 					    EGL_LINUX_DMA_BUF_EXT, NULL, attr);
 	if (!comp_img) {

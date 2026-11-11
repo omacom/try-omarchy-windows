@@ -89,7 +89,7 @@ def main():
         'd3d12_mirror_reference', 'd3d12_mirror_sync'))
     template = (HERE / 'mirror_cases.cpp.in').read_text().replace(
         '// ACTUAL_MIRROR_FUNCTIONS', '// ACTUAL_FUNCTIONS')
-    run_fixture(out, 'mirror-patched', template, mirror, 0, 'MIRROR_CPU_PASS cases=18')
+    run_fixture(out, 'mirror-patched', template, mirror, 0, 'MIRROR_CPU_PASS cases=19')
     # Use the actual old batch function to show the shared-bit defect, not a
     # second hand-written version of its algorithm.
     old = copy_source('claude-baseline')
@@ -111,6 +111,12 @@ def main():
     b = fence_template.index('      std::printf(', a)
     fence_template = (fence_template[:a] + fence_template[b:]).replace(
         '// ACTUAL_MESA_FENCE_FUNCTIONS', '// ACTUAL_FUNCTIONS')
+    # Imported sync files (native fence descriptors) are a second kind of
+    # fence; the GPU fences these cases cover never carry one.
+    field = '   int sync_file_fd = -1;\n'
+    if fence_template.count(field) != 1:
+        raise RuntimeError('Fence fixture layout changed')
+    fence_template = fence_template.replace(field, field + '   int sync_fd = -1;\n')
     for label, source, expected, message in (
         ('fence-patched', driver, 0, 'MESA_FENCE_PORT_CPU_PASS cases=15'),
         ('fence-baseline', args.source / 'src/gallium/drivers/d3d12', 1,

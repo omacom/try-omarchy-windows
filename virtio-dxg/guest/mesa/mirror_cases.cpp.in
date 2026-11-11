@@ -14,7 +14,7 @@ struct pipe_resource { pipe_reference reference; };
 struct d3d12_resource {
    struct { pipe_resource b; } base;
    bool dt_mirror = true, dt_mirror_dirty = false, mirror_zero_copy = false;
-   bool dxg_shared = false;
+   bool dxg_shared = false, dxg_window = false;
    pipe_resource *mirror_link_owner = nullptr;
    void *bo = nullptr;
 };
@@ -135,6 +135,16 @@ int main() {
          require(c.published.empty() && c.records == 0 && c.waits == 1,
                  "Window buffer copied CPU pixels or skipped completion");
          require(texture.base.b.reference.count == 1, "Window buffer flush leaked a reference");
+         ++cases;
+      }
+      {
+         /* The same texture through an import of its dma-buf (browsers). */
+         struct d3d12_resource texture; d3d12_context c;
+         texture.dt_mirror = false;
+         texture.dxg_window = true;
+         d3d12_mirror_reference(&c, &texture); d3d12_mirror_sync(&c);
+         require(c.published.empty() && c.records == 0 && c.waits == 1,
+                 "Imported window buffer copied CPU pixels or skipped completion");
          ++cases;
       }
       {
