@@ -450,7 +450,7 @@
     FREE(resource);
  }
  
-@@ -540,10 +584,672 @@
+@@ -540,10 +584,681 @@
     return &res->base.b;
  }
  
@@ -932,8 +932,15 @@
 +   struct pipe_resource *pres = screen->base.resource_from_handle(
 +      &screen->base, templ, &wh, PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
 +   close(look.resource_fd);
-+   if (pres)
-+      d3d12_resource(pres)->dxg_window = true;
++   if (pres) {
++      struct d3d12_resource *window = d3d12_resource(pres);
++
++      window->dxg_window = true;
++      /* Re-export (Xwayland presents a client's pixmap by its dma-buf)
++       * hands out the dma-buf itself, not the texture's handle. */
++      window->mirror_fd = os_dupfd_cloexec(dmabuf_fd);
++      window->mirror_has_fd = window->mirror_fd >= 0;
++   }
 +   if (debug_get_bool_option("D3D12_WINBUF_DEBUG", false))
 +      fprintf(stderr, "winbuf[%d]: import %ux%u %s bind 0x%x -> %s\n", getpid(),
 +              templ->width0, templ->height0, util_format_short_name(templ->format),
@@ -1055,8 +1062,10 @@
 +      if (!borrowed) {
 +         struct pipe_resource *window =
 +            d3d12_winbuf_import(screen, templ, (int)handle->handle);
-+         if (window)
++         if (window) {
++            d3d12_resource(window)->dt_stride = handle->stride;
 +            return window;
++         }
 +      }
 +      int fd = os_dupfd_cloexec((int)handle->handle);
 +      if (fd < 0) {
@@ -1123,7 +1132,7 @@
     struct d3d12_resource *res = CALLOC_STRUCT(d3d12_resource);
     if (!res)
        return NULL;
-@@ -557,6 +1263,13 @@
+@@ -557,6 +1272,13 @@
                            struct winsys_handle *handle, unsigned usage)
  {
     struct d3d12_screen *screen = d3d12_screen(pscreen);
@@ -1137,12 +1146,13 @@
     if (handle->type != WINSYS_HANDLE_TYPE_D3D12_RES &&
         handle->type != WINSYS_HANDLE_TYPE_FD &&
         handle->type != WINSYS_HANDLE_TYPE_WIN32_NAME)
-@@ -846,6 +1559,35 @@
+@@ -846,6 +1568,36 @@
     struct d3d12_resource *res = d3d12_resource(pres);
     struct d3d12_screen *screen = d3d12_screen(pscreen);
  
-+   if (res->dt_mirror && (handle->type == WINSYS_HANDLE_TYPE_KMS ||
-+                          handle->type == WINSYS_HANDLE_TYPE_FD)) {
++   if ((res->dt_mirror || (res->dxg_window && res->mirror_has_fd)) &&
++       (handle->type == WINSYS_HANDLE_TYPE_KMS ||
++        handle->type == WINSYS_HANDLE_TYPE_FD)) {
 +#ifndef _WIN32
 +      if (res->mirror_has_fd) {
 +         if (handle->type == WINSYS_HANDLE_TYPE_KMS && res->mirror_gem) {
@@ -1173,7 +1183,7 @@
     switch (handle->type) {
     case WINSYS_HANDLE_TYPE_D3D12_RES:
        handle->com_obj = d3d12_resource_resource(res);
-@@ -985,6 +1727,13 @@
+@@ -985,6 +1737,13 @@
  
  static constexpr unsigned d3d12_max_planes = 3;
  
@@ -1187,11 +1197,11 @@
  /**
   * Get stride and offset for the given pipe resource without the need to get
   * a winsys_handle.
-@@ -1003,6 +1752,41 @@
+@@ -1003,6 +1762,41 @@
     struct d3d12_resource* res = d3d12_resource(pres);
     unsigned num_planes = util_format_get_num_planes(res->overall_format);
  
-+   if (res->dt_mirror) {
++   if (res->dt_mirror || (res->dxg_window && res->mirror_has_fd)) {
 +      struct winsys_handle handle = {};
 +      switch (param) {
 +      case PIPE_RESOURCE_PARAM_NPLANES:
@@ -1229,7 +1239,7 @@
     pipe_resource *planes[d3d12_max_planes];
     unsigned int strides[d3d12_max_planes];
     unsigned int layer_strides[d3d12_max_planes];
-@@ -1273,6 +2057,142 @@
+@@ -1273,6 +2067,142 @@
     ctx->has_commands = true;
  }
  
@@ -1492,6 +1502,19 @@
     LUID adapter_luid;
     char driver_uuid[PIPE_UUID_SIZE];
     char device_uuid[PIPE_UUID_SIZE];
+--- a/src/glx/dri_common.c
++++ b/src/glx/dri_common.c
+@@ -952,7 +952,9 @@
+    enum dri_screen_type type;
+    switch (psc->display->driver) {
+    case GLX_DRIVER_DRI3:
+-      type = DRI_SCREEN_DRI3;
++      /* virtio-dxg: the D3D12 driver on a DRM node goes by this name. */
++      type = psc->driverName && !strcmp(psc->driverName, "kms_swrast") ?
++             DRI_SCREEN_KMS_SWRAST : DRI_SCREEN_DRI3;
+       break;
+    case GLX_DRIVER_ZINK_YES:
+       type = DRI_SCREEN_KOPPER;
 --- a/src/mesa/state_tracker/st_atom_constbuf.c
 +++ b/src/mesa/state_tracker/st_atom_constbuf.c
 @@ -35,6 +35,7 @@

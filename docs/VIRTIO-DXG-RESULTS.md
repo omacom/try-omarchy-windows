@@ -50,6 +50,7 @@ clicks, drags and keys were.
 | --- | --- | --- | --- |
 | glmark2 1080p off-screen (OpenGL 4.6, Mesa d3d12) | 1289 (the first desktop build: 42, then a hang) | 2255–2522 | |
 | vkmark 720p windowed (Vulkan on Dozen, test VM) | 627 (frames copied through `wl_shm`) | 4840–6781 | Zero-copy Vulkan windows: swapchain images are window buffers |
+| Direct3D 11 under Wine (wined3d on OpenGL, 200 draws per frame, `bench/d3d11tri.c`) | Xwayland exited | 231 fps on a 240 Hz display | GLX on the D3D12 driver |
 | glmark2 720p windowed | 313 | 1579–1757 (453–519 on `wl_shm`) | Zero-copy window buffers |
 | vkmark 720p (Vulkan 1.2, Dozen) | 491 | 1026–1211 | |
 | vkcube, Wayland | timed out | 300 frames in 0.8 s without vsync | |
@@ -116,6 +117,8 @@ Other media:
 | A window buffer's texture pairing ended with the allocation that made it | Browsers allocate with GBM, import the dma-buf, free the allocation and only then pass the dma-buf on: the compositor found no texture | The pairing lives as long as the dma-buf (the module holds its inode, not the buffer) |
 | Window buffers gave GBM no KMS handle | Clients that export through `gbm_bo_get_handle` could not allocate | The buffer keeps its GEM handle |
 | virtio-gpu's 256 MiB host memory limit | Every window buffer is also a virtio-gpu buffer: after a few large windows creation failed on the host (656 errors in one session) | The limit is 8 GiB in dxg mode (reserved, never touched) |
+| GLX asked for a DRI3 hardware screen under the session's driver name (`kms_swrast`) | X11 OpenGL (Wine, Proton, older toolkits) fell back to indirect rendering: glxgears 125 fps | A DRI3 connection creates the kms_swrast screen: X11 clients render on the GPU into window buffers |
+| An imported window buffer exported the texture's D3D12 handle instead of its dma-buf | Xwayland presents a client's buffer by passing it on; the compositor refused it and Xwayland exited (every X11 application gone) | The import keeps its dma-buf and exports that |
 | The debug overlay and idle blanking in measurements | Throttled clients (display off, locked session); Hyprland's overlay can deadlock in hyprgraphics | Benchmarks keep the display on and do not use the overlay |
 
 ## Where the rest of native performance goes
