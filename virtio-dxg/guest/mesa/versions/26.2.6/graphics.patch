@@ -1517,19 +1517,162 @@
           if (uniform_bytes)
 --- a/src/microsoft/vulkan/dzn_device.c
 +++ b/src/microsoft/vulkan/dzn_device.c
-@@ -56,6 +56,11 @@
+@@ -56,6 +56,18 @@
  #include <windows.h>
  #include <shlobj.h>
  #include "dzn_dxgi.h"
 +#else
 +#include "util/os_file.h"
 +#include "dzn_imported_memory_fd.h"
++#include "drm-uapi/drm.h"
++#include "drm-uapi/virtgpu_drm.h"
++#include "util/simple_mtx.h"
++#include "util/u_debug.h"
++#include <fcntl.h>
++#include <sys/ioctl.h>
++#include <unistd.h>
 +#include <errno.h>
 +#include <limits.h>
  #endif
  
  #define DZN_API_VERSION VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION)
-@@ -2607,6 +2612,10 @@
+@@ -2567,6 +2579,8 @@
+ #else
+    if ((intptr_t)mem->export_handle >= 0)
+       close((int)(intptr_t)mem->export_handle);
++   if (mem->dxg_dmabuf > 0)
++      close(mem->dxg_dmabuf - 1);
+ #endif
+ 
+    vk_object_base_finish(&mem->base);
+@@ -2593,6 +2607,126 @@
+    return properties;
+ }
+ 
++
++#ifndef _WIN32
++/* virtio-dxg window buffers ----------------------------------------------
++ *
++ * A dedicated image allocation exported as a dma-buf is a shared committed
++ * resource plus a virtio-gpu buffer (what compositors accept as a dma-buf),
++ * paired in the dxg module (LX_DXVIRTIOWINBUF): whoever imports the dma-buf
++ * gets the texture. The buffer's own pixels are never used.
++ */
++struct dzn_virtio_winbuf {
++   uint32_t op;         /* 1 register */
++   int32_t dmabuf_fd;
++   int32_t resource_fd;
++   uint32_t reserved;
++};
++#define DZN_LX_DXVIRTIOWINBUF _IOWR(0x47, 0x81, struct dzn_virtio_winbuf)
++
++static simple_mtx_t dzn_winbuf_lock = SIMPLE_MTX_INITIALIZER;
++static int dzn_winbuf_drm = -2, dzn_winbuf_dxg = -2;
++
++bool
++dzn_window_buffers_available(void)
++{
++   simple_mtx_lock(&dzn_winbuf_lock);
++   if (dzn_winbuf_drm == -2) {
++      char marker = 0;
++      int fd = open("/sys/module/dxgkrnl_virtio/parameters/winbuf",
++                    O_RDONLY | O_CLOEXEC);
++
++      dzn_winbuf_drm = dzn_winbuf_dxg = -1;
++      if (fd >= 0) {
++         if (read(fd, &marker, 1) != 1)
++            marker = 0;
++         close(fd);
++      }
++      if ((marker == 'Y' || marker == '1') &&
++          debug_get_bool_option("DZN_WINDOW_BUFFERS", true)) {
++         for (int i = 128; i < 136 && dzn_winbuf_drm < 0; i++) {
++            char path[32], name[32] = "";
++            struct drm_version version = { 0 };
++
++            snprintf(path, sizeof(path), "/dev/dri/renderD%d", i);
++            fd = open(path, O_RDWR | O_CLOEXEC);
++            if (fd < 0)
++               continue;
++            version.name = name;
++            version.name_len = sizeof(name) - 1;
++            if (!ioctl(fd, DRM_IOCTL_VERSION, &version) &&
++                !strcmp(name, "virtio_gpu"))
++               dzn_winbuf_drm = fd;
++            else
++               close(fd);
++         }
++         if (dzn_winbuf_drm >= 0) {
++            dzn_winbuf_dxg = open("/dev/dxg", O_RDWR | O_CLOEXEC);
++            if (dzn_winbuf_dxg < 0) {
++               close(dzn_winbuf_drm);
++               dzn_winbuf_drm = -1;
++            }
++         }
++      }
++   }
++   bool available = dzn_winbuf_drm >= 0;
++   simple_mtx_unlock(&dzn_winbuf_lock);
++   return available;
++}
++
++/* The dma-buf for a shared image resource, or -1. */
++static int
++dzn_window_buffer_create(struct dzn_device *device,
++                         const struct dzn_image *image, int resource_fd)
++{
++   D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
++   UINT64 row_size, total_size;
++   UINT num_rows;
++
++   if (resource_fd < 0 || !dzn_window_buffers_available())
++      return -1;
++   ID3D12Device1_GetCopyableFootprints(device->dev, &image->desc, 0, 1, 0,
++                                       &footprint, &num_rows, &row_size,
++                                       &total_size);
++   uint64_t size = (uint64_t)footprint.Footprint.RowPitch *
++                   footprint.Footprint.Height;
++   if (!size || size > UINT32_MAX)
++      return -1;
++
++   struct drm_virtgpu_resource_create create = {
++      .target = 2,
++      .format = 1,
++      .width = (uint32_t)image->desc.Width,
++      .height = image->desc.Height,
++      .depth = 1,
++      .array_size = 1,
++      .size = (uint32_t)size,
++   };
++   if (ioctl(dzn_winbuf_drm, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE, &create))
++      return -1;
++   struct drm_prime_handle prime = {
++      .handle = create.bo_handle,
++      .flags = DRM_CLOEXEC | DRM_RDWR,
++   };
++   int ret = ioctl(dzn_winbuf_drm, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime);
++   struct drm_gem_close gem = { .handle = create.bo_handle };
++   ioctl(dzn_winbuf_drm, DRM_IOCTL_GEM_CLOSE, &gem);   /* the dma-buf keeps it */
++   if (ret)
++      return -1;
++
++   struct dzn_virtio_winbuf pair = {
++      .op = 1,
++      .dmabuf_fd = prime.fd,
++      .resource_fd = resource_fd,
++   };
++   if (ioctl(dzn_winbuf_dxg, DZN_LX_DXVIRTIOWINBUF, &pair)) {
++      close(prime.fd);
++      return -1;
++   }
++   return prime.fd;
++}
++#endif /* !_WIN32 */
++
+ static VkResult
+ dzn_device_memory_create(struct dzn_device *device,
+                          const VkMemoryAllocateInfo *pAllocateInfo,
+@@ -2607,6 +2741,10 @@
  
     VkExternalMemoryHandleTypeFlags export_flags = 0;
     HANDLE import_handle = NULL;
@@ -1540,7 +1683,7 @@
     bool imported_from_d3d11 = false;
     void *host_pointer = NULL;
  #ifdef _WIN32
-@@ -2662,7 +2671,9 @@
+@@ -2662,7 +2800,9 @@
           default:
              return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
           }
@@ -1551,7 +1694,18 @@
           break;
        }
  #endif
-@@ -2778,7 +2789,17 @@
+@@ -2711,6 +2851,10 @@
+        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP_BIT);
+    if (image && imported_from_d3d11)
+       valid_flags |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
++#ifndef _WIN32
++   if (image)
++      valid_flags |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
++#endif
+ 
+    if (export_flags & ~valid_flags)
+       return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+@@ -2778,7 +2922,17 @@
  #else
        goto cleanup;
  #endif
@@ -1569,11 +1723,22 @@
        error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
        if (image || buffer) {
           if (FAILED(ID3D12Device_OpenSharedHandle(device->dev, import_handle, &IID_ID3D12Resource, (void **)&mem->dedicated_res)))
-@@ -2921,10 +2942,16 @@
+@@ -2921,10 +3075,27 @@
           goto cleanup;
     }
  
 +#ifndef _WIN32
++   if (export_flags & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) {
++      /* A window buffer: the dma-buf that stands for the shared image. */
++      int dmabuf = image ?
++         dzn_window_buffer_create(device, image,
++                                  (int)(intptr_t)mem->export_handle) : -1;
++      if (dmabuf < 0) {
++         error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
++         goto cleanup;
++      }
++      mem->dxg_dmabuf = dmabuf + 1;
++   }
 +   dzn_imported_memory_fd_finish(&imported_fd, true);
 +#endif
     *out = dzn_device_memory_to_handle(mem);
@@ -1586,7 +1751,7 @@
  #ifdef _WIN32
     if (handle_from_name)
        CloseHandle(handle_from_name);
-@@ -3772,16 +3799,23 @@
+@@ -3772,16 +3943,33 @@
                     int *pFd)
  {
     VK_FROM_HANDLE(dzn_device_memory, mem, pGetFdInfo->memory);
@@ -1597,6 +1762,16 @@
 +   if (fd < 0 || fd > INT_MAX)
        return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
  
++   if (pGetFdInfo->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) {
++      if (mem->dxg_dmabuf <= 0)
++         return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++      const int exported = os_dupfd_cloexec(mem->dxg_dmabuf - 1);
++      if (exported < 0)
++         return vk_error(device, VK_ERROR_TOO_MANY_OBJECTS);
++      *pFd = exported;
++      return VK_SUCCESS;
++   }
++
     switch (pGetFdInfo->handleType) {
     case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT:
     case VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT:
@@ -1614,53 +1789,186 @@
     default:
        return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
     }
---- /dev/null
-+++ b/src/microsoft/vulkan/dzn_imported_memory_fd.h
-@@ -0,0 +1,44 @@
-+/* SPDX-License-Identifier: MIT
-+ * Transactional Linux FD ownership for Vulkan memory import.
-+ */
-+#ifndef DZN_IMPORTED_MEMORY_FD_H
-+#define DZN_IMPORTED_MEMORY_FD_H
-+#include <stdbool.h>
-+#include <errno.h>
-+#include <unistd.h>
-+#include <vulkan/vulkan_core.h>
-+#include "util/os_file.h"
+--- a/src/microsoft/vulkan/dzn_private.h
++++ b/src/microsoft/vulkan/dzn_private.h
+@@ -346,6 +346,10 @@
+    /* If the resource is exportable, this is the pre-created handle for that */
+    HANDLE export_handle;
+ 
++   /* virtio-dxg window buffer: the dma-buf paired with the dedicated image
++    * (descriptor + 1; zero when there is none). */
++   int dxg_dmabuf;
 +
-+struct dzn_imported_memory_fd {
-+   int source_fd;
-+   int duplicate_fd;
-+};
+    /* These flags need to be added into all resources created on this heap */
+    D3D12_RESOURCE_FLAGS res_flags;
+ };
+@@ -1232,6 +1236,11 @@
+            if (mask & aspect)
+ 
+ VkResult dzn_wsi_init(struct dzn_physical_device *physical_device);
 +
-+static inline VkResult
-+dzn_imported_memory_fd_open(struct dzn_imported_memory_fd *owner, int source)
-+{
-+   if (source < 0 || owner->duplicate_fd >= 0)
-+      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
-+   const int duplicate = os_dupfd_cloexec(source);
-+   if (duplicate < 0)
-+      return (errno == EBADF || errno == EINVAL) ?
-+         VK_ERROR_INVALID_EXTERNAL_HANDLE : VK_ERROR_OUT_OF_HOST_MEMORY;
-+   owner->source_fd = source;
-+   owner->duplicate_fd = duplicate;
-+   return VK_SUCCESS;
-+}
-+
-+static inline void
-+dzn_imported_memory_fd_finish(struct dzn_imported_memory_fd *owner, bool success)
-+{
-+   if (owner->duplicate_fd < 0)
-+      return;
-+   const int duplicate = owner->duplicate_fd;
-+   const int source = owner->source_fd;
-+   owner->source_fd = owner->duplicate_fd = -1;
-+   /* Do not retry close on EINTR: Linux may already have reused the number. */
-+   close(duplicate);
-+   if (success)
-+      close(source);
-+}
++#ifndef _WIN32
++bool
++dzn_window_buffers_available(void);
 +#endif
+ void dzn_wsi_finish(struct dzn_physical_device *physical_device);
+ 
+ struct dzn_app_info {
+--- a/src/microsoft/vulkan/dzn_wsi.c
++++ b/src/microsoft/vulkan/dzn_wsi.c
+@@ -110,6 +110,14 @@
+    physical_device->wsi_device.win32.create_image_memory =
+       dzn_wsi_create_image_memory;
+    physical_device->wsi_device.supports_modifiers = false;
++#ifndef _WIN32
++   physical_device->wsi_device.dxg_window_buffers =
++      dzn_window_buffers_available();
++   /* Not looked up for a software device. */
++   physical_device->wsi_device.GetMemoryFdKHR = (PFN_vkGetMemoryFdKHR)
++      dzn_wsi_proc_addr(dzn_physical_device_to_handle(physical_device),
++                        "vkGetMemoryFdKHR");
++#endif
+    physical_device->vk.wsi_device = &physical_device->wsi_device;
+ 
+    return VK_SUCCESS;
+--- a/src/vulkan/wsi/wsi_common.h
++++ b/src/vulkan/wsi/wsi_common.h
+@@ -157,6 +157,11 @@
+ 
+    bool sw;
+ 
++   /* virtio-dxg: Wayland swapchain images are window buffers (a shared
++    * GPU texture behind a virtio-gpu dma-buf) although the device counts
++    * as a software one for every other window system. */
++   bool dxg_window_buffers;
++
+    /* Set to true if the implementation is ok with linear WSI images. */
+    bool wants_linear;
+ 
+--- a/src/vulkan/wsi/wsi_common_drm.c
++++ b/src/vulkan/wsi/wsi_common_drm.c
+@@ -843,7 +843,9 @@
+       wsi->GetImageSubresourceLayout(chain->device, image->image,
+                                      &image_subresource, &image_layout);
+ 
+-      image->drm_modifier = DRM_FORMAT_MOD_INVALID;
++      /* A virtio-dxg window buffer is a linear virtio-gpu buffer. */
++      image->drm_modifier = wsi->dxg_window_buffers ?
++                            DRM_FORMAT_MOD_LINEAR : DRM_FORMAT_MOD_INVALID;
+       image->num_planes = 1;
+       image->sizes[0] = reqs.size;
+       image->row_pitches[0] = image_layout.rowPitch;
+--- a/src/vulkan/wsi/wsi_common_wayland.c
++++ b/src/vulkan/wsi/wsi_common_wayland.c
+@@ -1,3 +1,7 @@
++/* virtio-dxg: window buffers take the dma-buf path. */
++#define WSI_WL_SW(wsi) ((wsi)->sw && !(wsi)->dxg_window_buffers)
++#include "vk_format.h"
++
+ /*
+  * Copyright © 2015 Intel Corporation
+  * Copyright © 2026 NXP
+@@ -424,6 +428,12 @@
+    if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))
+       return NULL;
+ 
++   /* virtio-dxg window buffers: the compositor opens the texture in the
++    * dma-buf's format, and D3D12 has no UNORM view of a texture that was
++    * created sRGB. Applications get the UNORM formats. */
++   if (display->wsi_wl->wsi->dxg_window_buffers && vk_format_is_srgb(format))
++      return NULL;
++
+    struct u_vector modifiers;
+    if (!u_vector_init_pow2(&modifiers, 4, sizeof(uint64_t)))
+       return NULL;
+@@ -1792,7 +1802,7 @@
+ 
+    struct wsi_wl_display display;
+    VkResult ret = wsi_wl_display_init(wsi, &display, wl_display, false,
+-                                      wsi_device->sw, "mesa presentation support query");
++                                      WSI_WL_SW(wsi_device), "mesa presentation support query");
+    if (ret == VK_SUCCESS)
+       wsi_wl_display_finish(&display);
+ 
+@@ -1868,7 +1878,7 @@
+ 
+    if (!wsi_wl_surface->display) {
+       if (wsi_wl_display_init(wsi, &temp_display, surface->display, true,
+-                              wsi_device->sw, "mesa image count query"))
++                              WSI_WL_SW(wsi_device), "mesa image count query"))
+          return VK_ERROR_SURFACE_LOST_KHR;
+       display = &temp_display;
+    }
+@@ -1929,7 +1939,7 @@
+    struct wsi_wl_display display;
+ 
+    if (wsi_wl_display_init(wsi, &display, surface->display, true,
+-                           wsi_device->sw, "mesa check wp_presentation"))
++                           WSI_WL_SW(wsi_device), "mesa check wp_presentation"))
+       return VK_ERROR_SURFACE_LOST_KHR;
+ 
+    if (has_wp_presentation)
+@@ -1963,7 +1973,7 @@
+ 
+    struct wsi_wl_display display;
+    if (wsi_wl_display_init(wsi, &display, surface->display, true,
+-                           wsi_device->sw, "mesa present modes query"))
++                           WSI_WL_SW(wsi_device), "mesa present modes query"))
+       return VK_ERROR_SURFACE_LOST_KHR;
+ 
+    VkPresentModeKHR present_modes[WSI_WL_MAX_PRESENT_MODES];
+@@ -2171,7 +2181,7 @@
+ 
+    struct wsi_wl_display display;
+    if (wsi_wl_display_init(wsi, &display, surface->display, true,
+-                           wsi_device->sw, "mesa formats query"))
++                           WSI_WL_SW(wsi_device), "mesa formats query"))
+       return VK_ERROR_SURFACE_LOST_KHR;
+ 
+    VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormatKHR, out,
+@@ -2216,7 +2226,7 @@
+ 
+    struct wsi_wl_display display;
+    if (wsi_wl_display_init(wsi, &display, surface->display, true,
+-                           wsi_device->sw, "mesa formats2 query"))
++                           WSI_WL_SW(wsi_device), "mesa formats2 query"))
+       return VK_ERROR_SURFACE_LOST_KHR;
+ 
+    VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormat2KHR, out,
+@@ -2509,7 +2519,7 @@
+       return VK_SUCCESS;
+ 
+    result = wsi_wl_display_create(wsi, wsi_wl_surface->base.display,
+-                                  wsi_device->sw, &wsi_wl_surface->display);
++                                  WSI_WL_SW(wsi_device), &wsi_wl_surface->display);
+    if (result != VK_SUCCESS)
+       goto fail;
+ 
+@@ -3309,6 +3319,15 @@
+    if (chain->retired)
+       return VK_ERROR_OUT_OF_DATE_KHR;
+ 
++   /* virtio-dxg window buffers: the compositor samples the image itself and
++    * no fence travels with it, so the frame is finished before it is shown. */
++   if (wsi_chain->wsi->dxg_window_buffers &&
++       chain->buffer_type == WSI_WL_BUFFER_NATIVE &&
++       wsi_chain->fences[image_index] != VK_NULL_HANDLE)
++      wsi_chain->wsi->WaitForFences(wsi_chain->device, 1,
++                                    &wsi_chain->fences[image_index],
++                                    true, UINT64_MAX);
++
+    struct wsi_wl_surface *wsi_wl_surface = chain->wsi_wl_surface;
+    bool mode_fifo = chain->base.present_mode == VK_PRESENT_MODE_FIFO_KHR;
+ 
+@@ -3866,7 +3885,7 @@
+    struct wsi_drm_image_params drm_image_params;
+    uint32_t num_drm_modifiers = 0;
+    const uint64_t *drm_modifiers = NULL;
+-   if (wsi_device->sw) {
++   if (WSI_WL_SW(wsi_device)) {
+       cpu_image_params = (struct wsi_cpu_image_params) {
+          .base.image_type = WSI_IMAGE_TYPE_CPU,
+       };
 --- a/subprojects/DirectX-Headers.wrap
 +++ b/subprojects/DirectX-Headers.wrap
 @@ -2,5 +2,5 @@

@@ -49,6 +49,7 @@ clicks, drags and keys were.
 | Test | Before | After | Notes |
 | --- | --- | --- | --- |
 | glmark2 1080p off-screen (OpenGL 4.6, Mesa d3d12) | 1289 (the first desktop build: 42, then a hang) | 2255–2522 | |
+| vkmark 720p windowed (Vulkan on Dozen, test VM) | 627 (frames copied through `wl_shm`) | 4840–6781 | Zero-copy Vulkan windows: swapchain images are window buffers |
 | glmark2 720p windowed | 313 | 1579–1757 (453–519 on `wl_shm`) | Zero-copy window buffers |
 | vkmark 720p (Vulkan 1.2, Dozen) | 491 | 1026–1211 | |
 | vkcube, Wayland | timed out | 300 frames in 0.8 s without vsync | |

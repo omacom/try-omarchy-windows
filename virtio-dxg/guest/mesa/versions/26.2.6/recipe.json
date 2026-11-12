@@ -7,7 +7,7 @@
   "profiles": {
     "graphics": {
       "patchFile": "graphics.patch",
-      "patchSha256": "a97237febe689f1a0264d88d73454c130ccefc263211e32a6d02407c2ad816a1",
+      "patchSha256": "f24ebd093ff7518676b3ff5f9ff8f9256a2cacc3ef9796b03961c5690f1c3f9f",
       "files": {
         "VERSION": {
           "originalSha256": "982a353702e30cae7604c76ff1a99db8b959088c79b12dd1ea480141241f2e48",
@@ -61,17 +61,29 @@
           "originalSha256": "b442477e3751012eba05e4b41c269501f0f682679c908850dac059e13dea9185",
           "patchedSha256": "d51e8e017231e60874aa47e2d643a2a69cb95e826a5bee57266cd3a1b1515293"
         },
+        "src/gallium/drivers/d3d12/d3d12_screen.h": {
+          "originalSha256": "e4ee1a6673d8b17cb27fe6fb12670d386dcec737c579f1427bfebe0bc238aa62",
+          "patchedSha256": "2750d08e1ad9aaebd21cb1a612ee030b0943c7e97dba4a66a19527622a1cadea"
+        },
         "src/mesa/state_tracker/st_atom_constbuf.c": {
           "originalSha256": "a0140c9954053b256f969f4e2d2074c83a91cbe221e2dab6c47d96f67d130856",
           "patchedSha256": "d40c57cf8141666ffc6465c18fd3a8ffccc023b2e878e9ab9383733a550f3d3a"
         },
         "src/microsoft/vulkan/dzn_device.c": {
           "originalSha256": "837bbdd6851ee4bf9073628f6029329d5bf50a6e93f179d7429ea61f70fd400a",
-          "patchedSha256": "d4447162aaf327bb094586d79a53df89fe5fe21c016abe05361f4d8ae3dce342"
+          "patchedSha256": "342a208e57a6bda72cb4b9dcc70026c5c0807ac385000348838b370406725ef0"
         },
         "src/microsoft/vulkan/dzn_imported_memory_fd.h": {
           "originalSha256": null,
           "patchedSha256": "03155a0ea2ba1f9f2b42a20342340060b7ed9a10461a2ab0551293ed50e2271c"
+        },
+        "src/microsoft/vulkan/dzn_private.h": {
+          "originalSha256": "d787ec1f37d336142e3e023edf5f020e4e9d55bb12180c27f0ded8e399218d5c",
+          "patchedSha256": "9c6f469eb5669d32bcd9a3c9a18ae31522596dd88057fbb17378fee50c160f02"
+        },
+        "src/microsoft/vulkan/dzn_wsi.c": {
+          "originalSha256": "f31a98248744b0cb772e66b2c2d9f67c6dfc6c15905c416765b00a2e49a34366",
+          "patchedSha256": "b12849051b4d24cd2df548f21296566e137efec70a5dc18baeda9ebeb23a728d"
         },
         "src/util/hash_table.h": {
           "originalSha256": "2c5d9cdbf9ae86a5b202c14719c5a32a0b19d5c47d1ebffcd45fd52c945aa29d",
@@ -81,13 +93,21 @@
           "originalSha256": "81bf636924f9c049606ed8d0be2e01cc7b9facc963955efc1faec2140b510960",
           "patchedSha256": "81bf636924f9c049606ed8d0be2e01cc7b9facc963955efc1faec2140b510960"
         },
+        "src/vulkan/wsi/wsi_common.h": {
+          "originalSha256": "63679b6ea74f03c374e996539cb43405dccbf0c31a3ab444923aa0169b8e2a0e",
+          "patchedSha256": "ba196b7bf15d3326f70de73ec44ea9a92e6a271f6ad6b400b4f10bcf419123a2"
+        },
+        "src/vulkan/wsi/wsi_common_drm.c": {
+          "originalSha256": "7cc381755a3aa52a307d3570b664f14f09082ccb7e99f1587862c82a6ce78779",
+          "patchedSha256": "d9b6164669ad912bb9bcbaf45975c67f55e9863a145a2d1ca1017131c0e80adf"
+        },
+        "src/vulkan/wsi/wsi_common_wayland.c": {
+          "originalSha256": "74a64c3e24e3ba2abc3e7423f070cf898abe98af9d1bb1325e41354f2b902396",
+          "patchedSha256": "470b5d18e87cd5f5204b4c7713046a3040dd3cd55a79f8eff27fbb9d10e5dee3"
+        },
         "subprojects/DirectX-Headers.wrap": {
           "originalSha256": "cd7710ccaa92dc9dabe4c6040b47c701c48b22c179d435debd5f7409142fcbe1",
           "patchedSha256": "647775c4b94f0d5c0042f790aaca03667ab6ea8796d98416d2bb6c42e75f8070"
-        },
-        "src/gallium/drivers/d3d12/d3d12_screen.h": {
-          "originalSha256": "e4ee1a6673d8b17cb27fe6fb12670d386dcec737c579f1427bfebe0bc238aa62",
-          "patchedSha256": "2750d08e1ad9aaebd21cb1a612ee030b0943c7e97dba4a66a19527622a1cadea"
         }
       }
     }
