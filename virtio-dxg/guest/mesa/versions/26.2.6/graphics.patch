@@ -1789,6 +1789,53 @@
     default:
        return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
     }
+--- /dev/null
++++ b/src/microsoft/vulkan/dzn_imported_memory_fd.h
+@@ -0,0 +1,44 @@
++/* SPDX-License-Identifier: MIT
++ * Transactional Linux FD ownership for Vulkan memory import.
++ */
++#ifndef DZN_IMPORTED_MEMORY_FD_H
++#define DZN_IMPORTED_MEMORY_FD_H
++#include <stdbool.h>
++#include <errno.h>
++#include <unistd.h>
++#include <vulkan/vulkan_core.h>
++#include "util/os_file.h"
++
++struct dzn_imported_memory_fd {
++   int source_fd;
++   int duplicate_fd;
++};
++
++static inline VkResult
++dzn_imported_memory_fd_open(struct dzn_imported_memory_fd *owner, int source)
++{
++   if (source < 0 || owner->duplicate_fd >= 0)
++      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
++   const int duplicate = os_dupfd_cloexec(source);
++   if (duplicate < 0)
++      return (errno == EBADF || errno == EINVAL) ?
++         VK_ERROR_INVALID_EXTERNAL_HANDLE : VK_ERROR_OUT_OF_HOST_MEMORY;
++   owner->source_fd = source;
++   owner->duplicate_fd = duplicate;
++   return VK_SUCCESS;
++}
++
++static inline void
++dzn_imported_memory_fd_finish(struct dzn_imported_memory_fd *owner, bool success)
++{
++   if (owner->duplicate_fd < 0)
++      return;
++   const int duplicate = owner->duplicate_fd;
++   const int source = owner->source_fd;
++   owner->source_fd = owner->duplicate_fd = -1;
++   /* Do not retry close on EINTR: Linux may already have reused the number. */
++   close(duplicate);
++   if (success)
++      close(source);
++}
++#endif
 --- a/src/microsoft/vulkan/dzn_private.h
 +++ b/src/microsoft/vulkan/dzn_private.h
 @@ -346,6 +346,10 @@

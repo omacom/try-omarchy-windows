@@ -7,7 +7,7 @@
   "profiles": {
     "graphics": {
       "patchFile": "graphics.patch",
-      "patchSha256": "f24ebd093ff7518676b3ff5f9ff8f9256a2cacc3ef9796b03961c5690f1c3f9f",
+      "patchSha256": "eded00dcf0b4a180d4a498fb3e23c7466b44249e68826a534fff2b6cab54cde2",
       "files": {
         "VERSION": {
           "originalSha256": "982a353702e30cae7604c76ff1a99db8b959088c79b12dd1ea480141241f2e48",
