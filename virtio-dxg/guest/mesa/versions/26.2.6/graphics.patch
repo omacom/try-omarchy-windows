@@ -1538,9 +1538,747 @@
  
           int uniform_bytes = params->UniformBytes;
           if (uniform_bytes)
+--- a/src/microsoft/spirv_to_dxil/dxil_spirv_nir.c
++++ b/src/microsoft/spirv_to_dxil/dxil_spirv_nir.c
+@@ -80,6 +80,10 @@
+    .Float64 = true,
+    .Tessellation = true,
+    .PhysicalStorageBufferAddresses = true,
++   /* virtio-dxg: Vulkan 1.3 (dzn_eds_key) */
++   .DemoteToHelperInvocation = true,
++   .VulkanMemoryModel = true,
++   .VulkanMemoryModelDeviceScope = true,
+ };
+ 
+ static const struct spirv_to_nir_options
+@@ -1023,11 +1027,18 @@
+    NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_global,
+               nir_address_format_32bit_index_offset_pack64);
+ 
+-   if (nir->info.shared_memory_explicit_layout) {
++   /* virtio-dxg: VK_KHR_zero_initialize_workgroup_memory takes the explicit
++    * layout so the whole block can be cleared word by word. */
++   bool zero_shared = nir->info.zero_initialize_shared_memory &&
++                      nir->info.stage == MESA_SHADER_COMPUTE;
++   if (nir->info.shared_memory_explicit_layout || zero_shared) {
+       NIR_PASS(_, nir, nir_lower_vars_to_explicit_types, nir_var_mem_shared,
+                  shared_var_info);
+       NIR_PASS(_, nir, dxil_nir_split_unaligned_loads_stores, nir_var_mem_shared);
+       NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_shared, nir_address_format_32bit_offset);
++      if (zero_shared && nir->info.shared_size > 0)
++         NIR_PASS(_, nir, nir_zero_initialize_shared_memory,
++                  ALIGN_POT(nir->info.shared_size, 4), 4);
+       NIR_PASS(_, nir, dxil_nir_scratch_and_shared_to_dxil);
+    } else {
+       NIR_PASS(_, nir, nir_split_struct_vars, nir_var_mem_shared);
+--- a/src/microsoft/vulkan/dzn_cmd_buffer.c
++++ b/src/microsoft/vulkan/dzn_cmd_buffer.c
+@@ -3225,7 +3225,8 @@
+       if (bindpoint == VK_PIPELINE_BIND_POINT_GRAPHICS) {
+          struct dzn_graphics_pipeline *gfx =
+             (struct dzn_graphics_pipeline *)pipeline;
+-         ID3D12GraphicsCommandList1_IASetPrimitiveTopology(cmdbuf->cmdlist, gfx->ia.topology);
++         ID3D12GraphicsCommandList1_IASetPrimitiveTopology(cmdbuf->cmdlist,
++            (gfx->eds.dyn & DZN_EDS_TOPOLOGY) ? cmdbuf->state.eds_topology : gfx->ia.topology);
+          dzn_graphics_pipeline_get_state(gfx, &cmdbuf->state.pipeline_variant);
+          if (gfx->multiview.native_view_instancing)
+             view_instance_mask = gfx->multiview.view_mask;
+@@ -3460,11 +3461,15 @@
+    const struct dzn_graphics_pipeline *pipeline =
+       (const struct dzn_graphics_pipeline *)cmdbuf->state.pipeline;
+ 
+-   if (!(cmdbuf->state.dirty & DZN_CMD_DIRTY_VIEWPORTS) ||
+-       !pipeline->vp.count)
++   /* virtio-dxg: vkCmdSetViewportWithCount */
++   uint32_t count = (pipeline->eds.dyn & DZN_EDS_VIEWPORT_COUNT) ?
++      MIN2(cmdbuf->vk.dynamic_graphics_state.vp.viewport_count, MAX_VP) :
++      pipeline->vp.count;
++
++   if (!(cmdbuf->state.dirty & DZN_CMD_DIRTY_VIEWPORTS) || !count)
+       return;
+ 
+-   ID3D12GraphicsCommandList1_RSSetViewports(cmdbuf->cmdlist, pipeline->vp.count, cmdbuf->state.viewports);
++   ID3D12GraphicsCommandList1_RSSetViewports(cmdbuf->cmdlist, count, cmdbuf->state.viewports);
+ }
+ 
+ static void
+@@ -3476,7 +3481,12 @@
+    if (!(cmdbuf->state.dirty & DZN_CMD_DIRTY_SCISSORS))
+       return;
+ 
+-   if (!pipeline->scissor.count) {
++   /* virtio-dxg: vkCmdSetScissorWithCount */
++   uint32_t count = (pipeline->eds.dyn & DZN_EDS_SCISSOR_COUNT) ?
++      MIN2(cmdbuf->vk.dynamic_graphics_state.vp.scissor_count, MAX_SCISSOR) :
++      pipeline->scissor.count;
++
++   if (!count) {
+       /* Apply a scissor delimiting the render area. */
+       ID3D12GraphicsCommandList1_RSSetScissorRects(cmdbuf->cmdlist, 1, &cmdbuf->state.render.area);
+       return;
+@@ -3484,15 +3494,15 @@
+ 
+    D3D12_RECT scissors[MAX_SCISSOR];
+ 
+-   memcpy(scissors, cmdbuf->state.scissors, sizeof(D3D12_RECT) * pipeline->scissor.count);
+-   for (uint32_t i = 0; i < pipeline->scissor.count; i++) {
++   memcpy(scissors, cmdbuf->state.scissors, sizeof(D3D12_RECT) * count);
++   for (uint32_t i = 0; i < count; i++) {
+       scissors[i].left = MAX2(scissors[i].left, cmdbuf->state.render.area.left);
+       scissors[i].top = MAX2(scissors[i].top, cmdbuf->state.render.area.top);
+       scissors[i].right = MIN2(scissors[i].right, cmdbuf->state.render.area.right);
+       scissors[i].bottom = MIN2(scissors[i].bottom, cmdbuf->state.render.area.bottom);
+    }
+ 
+-   ID3D12GraphicsCommandList1_RSSetScissorRects(cmdbuf->cmdlist, pipeline->scissor.count, scissors);
++   ID3D12GraphicsCommandList1_RSSetScissorRects(cmdbuf->cmdlist, count, scissors);
+ }
+ 
+ static void
+@@ -3587,10 +3597,17 @@
+ {
+    if (cmdbuf->state.dirty & DZN_CMD_DIRTY_DEPTH_BIAS) {
+       assert(cmdbuf->cmdlist9);
++      /* virtio-dxg: depth bias off (static or dynamic depthBiasEnable) */
++      const struct dzn_graphics_pipeline *gfx = (const struct dzn_graphics_pipeline *)
++         cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
++      bool off = gfx &&
++         !((gfx->eds.dyn & DZN_EDS_DEPTH_BIAS_ENABLE) ?
++           cmdbuf->vk.dynamic_graphics_state.rs.depth_bias.enable :
++           gfx->eds.statik.depth_bias_enable);
+       ID3D12GraphicsCommandList9_RSSetDepthBias(cmdbuf->cmdlist9,
+-                                                cmdbuf->state.pipeline_variant.depth_bias.constant_factor,
+-                                                cmdbuf->state.pipeline_variant.depth_bias.clamp,
+-                                                cmdbuf->state.pipeline_variant.depth_bias.slope_factor);
++                                                off ? 0.0f : cmdbuf->state.pipeline_variant.depth_bias.constant_factor,
++                                                off ? 0.0f : cmdbuf->state.pipeline_variant.depth_bias.clamp,
++                                                off ? 0.0f : cmdbuf->state.pipeline_variant.depth_bias.slope_factor);
+    }
+ }
+ 
+@@ -3728,9 +3745,103 @@
+    return VK_SUCCESS;
+ }
+ 
++/* virtio-dxg: Vulkan 1.3 extended dynamic state. The vkCmdSet* calls are
++ * the common runtime's (cmdbuf->vk.dynamic_graphics_state); what the bound
++ * pipeline declares dynamic is folded in here, before its pipeline state is
++ * chosen. */
++static void
++dzn_cmd_buffer_update_eds(struct dzn_cmd_buffer *cmdbuf)
++{
++   struct dzn_physical_device *pdev =
++      container_of(cmdbuf->vk.base.device->physical, struct dzn_physical_device, vk);
++   struct dzn_graphics_pipeline *gfx = (struct dzn_graphics_pipeline *)
++      cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
++   const struct vk_dynamic_graphics_state *dyn = &cmdbuf->vk.dynamic_graphics_state;
++   uint32_t d = gfx ? gfx->eds.dyn : 0;
++
++   if (gfx && gfx->zsa.dynamic_depth_bias && pdev->options16.DynamicDepthBiasSupported &&
++       (cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty & DZN_CMD_BINDPOINT_DIRTY_PIPELINE))
++      cmdbuf->state.dirty |= DZN_CMD_DIRTY_DEPTH_BIAS;
++
++   if (d & DZN_EDS_PSO_MASK) {
++      struct dzn_eds_key k = gfx->eds.statik;
++
++      if (d & DZN_EDS_CULL_MODE)
++         k.cull_mode = dyn->rs.cull_mode;
++      if (d & DZN_EDS_FRONT_FACE)
++         k.front_ccw = dyn->rs.front_face == VK_FRONT_FACE_COUNTER_CLOCKWISE;
++      if (d & DZN_EDS_DEPTH_BIAS_ENABLE)
++         k.depth_bias_enable = dyn->rs.depth_bias.enable;
++      if (d & DZN_EDS_PRIMITIVE_RESTART)
++         k.primitive_restart = dyn->ia.primitive_restart_enable;
++      if (d & DZN_EDS_DEPTH_TEST)
++         k.depth_test = dyn->ds.depth.test_enable;
++      if (d & DZN_EDS_DEPTH_WRITE)
++         k.depth_write = dyn->ds.depth.write_enable;
++      if (d & DZN_EDS_DEPTH_COMPARE)
++         k.depth_compare = dyn->ds.depth.compare_op;
++      if (d & DZN_EDS_DEPTH_BOUNDS_TEST)
++         k.depth_bounds_test = dyn->ds.depth.bounds_test.enable;
++      if (d & DZN_EDS_STENCIL_TEST)
++         k.stencil_test = dyn->ds.stencil.test_enable;
++      if (d & DZN_EDS_STENCIL_OP) {
++         k.stencil_front[0] = dyn->ds.stencil.front.op.fail;
++         k.stencil_front[1] = dyn->ds.stencil.front.op.pass;
++         k.stencil_front[2] = dyn->ds.stencil.front.op.depth_fail;
++         k.stencil_front[3] = dyn->ds.stencil.front.op.compare;
++         k.stencil_back[0] = dyn->ds.stencil.back.op.fail;
++         k.stencil_back[1] = dyn->ds.stencil.back.op.pass;
++         k.stencil_back[2] = dyn->ds.stencil.back.op.depth_fail;
++         k.stencil_back[3] = dyn->ds.stencil.back.op.compare;
++      }
++
++      k.discard = ((d & DZN_EDS_RASTERIZER_DISCARD) && dyn->rs.rasterizer_discard_enable) ||
++                  (gfx->eds.tri_class && (d & DZN_EDS_CULL_MODE) &&
++                   k.cull_mode == VK_CULL_MODE_FRONT_AND_BACK);
++
++      if (memcmp(&k, &cmdbuf->state.pipeline_variant.eds, sizeof(k))) {
++         if (k.depth_bias_enable != cmdbuf->state.pipeline_variant.eds.depth_bias_enable &&
++             gfx->zsa.dynamic_depth_bias && pdev->options16.DynamicDepthBiasSupported)
++            cmdbuf->state.dirty |= DZN_CMD_DIRTY_DEPTH_BIAS;
++         cmdbuf->state.pipeline_variant.eds = k;
++         cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
++            DZN_CMD_BINDPOINT_DIRTY_PIPELINE;
++      }
++   }
++
++   if (d & DZN_EDS_TOPOLOGY) {
++      D3D12_PRIMITIVE_TOPOLOGY t =
++         dzn_translate_prim_topology(dyn->ia.primitive_topology,
++                                     gfx->eds.patch_control_points,
++                                     pdev->options15.TriangleFanSupported);
++      if (t != cmdbuf->state.eds_topology) {
++         cmdbuf->state.eds_topology = t;
++         cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
++            DZN_CMD_BINDPOINT_DIRTY_PIPELINE;
++      }
++   }
++}
++
++/* virtio-dxg: a dynamic triangle-fan topology without native fans takes
++ * the index-rewrite paths, which test the pipeline before the draw. */
++static void
++dzn_cmd_buffer_eds_triangle_fan(struct dzn_cmd_buffer *cmdbuf)
++{
++   struct dzn_physical_device *pdev =
++      container_of(cmdbuf->vk.base.device->physical, struct dzn_physical_device, vk);
++   struct dzn_graphics_pipeline *gfx = (struct dzn_graphics_pipeline *)
++      cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
++
++   if (gfx && (gfx->eds.dyn & DZN_EDS_TOPOLOGY) && !pdev->options15.TriangleFanSupported)
++      gfx->ia.triangle_fan = cmdbuf->vk.dynamic_graphics_state.ia.primitive_topology ==
++                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
++}
++
+ static void
+ dzn_cmd_buffer_prepare_draw(struct dzn_cmd_buffer *cmdbuf, bool indexed)
+ {
++   dzn_cmd_buffer_update_eds(cmdbuf);
++
+    if (indexed)
+       dzn_cmd_buffer_update_ibview(cmdbuf);
+ 
+@@ -4025,6 +4136,7 @@
+                              uint32_t draw_buf_stride,
+                              bool indexed)
+ {
++   dzn_cmd_buffer_eds_triangle_fan(cmdbuf);
+    struct dzn_device *device = container_of(cmdbuf->vk.base.device, struct dzn_device, vk);
+    struct dzn_physical_device *pdev = container_of(device->vk.physical, struct dzn_physical_device, vk);
+    struct dzn_graphics_pipeline *pipeline = (struct dzn_graphics_pipeline *)
+@@ -5145,8 +5257,10 @@
+          cmdbuf->state.dirty |= DZN_CMD_DIRTY_BLEND_CONSTANTS;
+       }
+ 
+-      for (uint32_t vb = 0; vb < gfx->vb.count; vb++)
+-         cmdbuf->state.vb.views[vb].StrideInBytes = gfx->vb.strides[vb];
++      if (!(gfx->eds.dyn & DZN_EDS_VB_STRIDE)) {
++         for (uint32_t vb = 0; vb < gfx->vb.count; vb++)
++            cmdbuf->state.vb.views[vb].StrideInBytes = gfx->vb.strides[vb];
++      }
+ 
+       if (gfx->vb.count > 0)
+          BITSET_SET_COUNT(cmdbuf->state.vb.dirty, 0, gfx->vb.count);
+@@ -5231,6 +5345,31 @@
+    }
+ }
+ 
++/* virtio-dxg: Vulkan 1.3; the count is read at draw time */
++VKAPI_ATTR void VKAPI_CALL
++dzn_CmdSetViewportWithCount(VkCommandBuffer commandBuffer,
++                            uint32_t viewportCount,
++                            const VkViewport *pViewports)
++{
++   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
++
++   cmdbuf->vk.dynamic_graphics_state.vp.viewport_count = viewportCount;
++   dzn_CmdSetViewport(commandBuffer, 0, viewportCount, pViewports);
++   cmdbuf->state.dirty |= DZN_CMD_DIRTY_VIEWPORTS;
++}
++
++VKAPI_ATTR void VKAPI_CALL
++dzn_CmdSetScissorWithCount(VkCommandBuffer commandBuffer,
++                           uint32_t scissorCount,
++                           const VkRect2D *pScissors)
++{
++   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
++
++   cmdbuf->vk.dynamic_graphics_state.vp.scissor_count = scissorCount;
++   dzn_CmdSetScissor(commandBuffer, 0, scissorCount, pScissors);
++   cmdbuf->state.dirty |= DZN_CMD_DIRTY_SCISSORS;
++}
++
+ VKAPI_ATTR void VKAPI_CALL
+ dzn_CmdSetScissor(VkCommandBuffer commandBuffer,
+                   uint32_t firstScissor,
+@@ -5278,6 +5417,7 @@
+ {
+    VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+ 
++   dzn_cmd_buffer_eds_triangle_fan(cmdbuf);
+    const struct dzn_graphics_pipeline *pipeline = (const struct dzn_graphics_pipeline *)
+       cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
+ 
+@@ -5333,6 +5473,7 @@
+ {
+    VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+ 
++   dzn_cmd_buffer_eds_triangle_fan(cmdbuf);
+    const struct dzn_graphics_pipeline *pipeline = (const struct dzn_graphics_pipeline *)
+       cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
+ 
+@@ -5490,6 +5631,42 @@
+    }
+ 
+    BITSET_SET_COUNT(cmdbuf->state.vb.dirty, firstBinding, bindingCount);
++}
++
++/* virtio-dxg: Vulkan 1.3 */
++VKAPI_ATTR void VKAPI_CALL
++dzn_CmdBindVertexBuffers2(VkCommandBuffer commandBuffer,
++                          uint32_t firstBinding,
++                          uint32_t bindingCount,
++                          const VkBuffer *pBuffers,
++                          const VkDeviceSize *pOffsets,
++                          const VkDeviceSize *pSizes,
++                          const VkDeviceSize *pStrides)
++{
++   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
++
++   if (!bindingCount)
++      return;
++
++   D3D12_VERTEX_BUFFER_VIEW *vbviews = cmdbuf->state.vb.views;
++
++   for (uint32_t i = 0; i < bindingCount; i++) {
++      VK_FROM_HANDLE(dzn_buffer, buf, pBuffers[i]);
++      D3D12_VERTEX_BUFFER_VIEW *view = &vbviews[firstBinding + i];
++
++      if (!buf) {
++         view->BufferLocation = 0;
++         view->SizeInBytes = 0;
++      } else {
++         view->BufferLocation = buf->gpuva + pOffsets[i];
++         view->SizeInBytes = pSizes && pSizes[i] != VK_WHOLE_SIZE ?
++            pSizes[i] : buf->size - pOffsets[i];
++      }
++      if (pStrides)
++         view->StrideInBytes = pStrides[i];
++   }
++
++   BITSET_SET_COUNT(cmdbuf->state.vb.dirty, firstBinding, bindingCount);
+ }
+ 
+ VKAPI_ATTR void VKAPI_CALL
+--- a/src/microsoft/vulkan/dzn_descriptor_set.c
++++ b/src/microsoft/vulkan/dzn_descriptor_set.c
+@@ -498,14 +498,62 @@
+    return 0;
+ }
+ 
++/* virtio-dxg: an inline uniform block is a uniform buffer to the shaders;
++ * its bytes live in the descriptor pool's inline buffer and the set gets a
++ * uniform-buffer descriptor pointing there (dzn_descriptor_set_init). */
+ VKAPI_ATTR VkResult VKAPI_CALL
+ dzn_CreateDescriptorSetLayout(VkDevice device,
+                               const VkDescriptorSetLayoutCreateInfo *pCreateInfo,
+                               const VkAllocationCallbacks *pAllocator,
+                               VkDescriptorSetLayout *pSetLayout)
+ {
+-   return dzn_descriptor_set_layout_create(dzn_device_from_handle(device),
+-                                           pCreateInfo, pAllocator, pSetLayout);
++   uint32_t inline_count = 0;
++
++   for (uint32_t i = 0; i < pCreateInfo->bindingCount; i++)
++      inline_count += pCreateInfo->pBindings[i].descriptorType ==
++                      VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK;
++   if (!inline_count)
++      return dzn_descriptor_set_layout_create(dzn_device_from_handle(device),
++                                              pCreateInfo, pAllocator, pSetLayout);
++
++   VkDescriptorSetLayoutBinding *bindings =
++      malloc(sizeof(*bindings) * pCreateInfo->bindingCount);
++   if (!bindings)
++      return vk_error(dzn_device_from_handle(device), VK_ERROR_OUT_OF_HOST_MEMORY);
++   memcpy(bindings, pCreateInfo->pBindings, sizeof(*bindings) * pCreateInfo->bindingCount);
++   for (uint32_t i = 0; i < pCreateInfo->bindingCount; i++) {
++      if (bindings[i].descriptorType != VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
++         continue;
++      bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
++      bindings[i].descriptorCount = bindings[i].descriptorCount ? 1 : 0;
++      bindings[i].pImmutableSamplers = NULL;
++   }
++
++   VkDescriptorSetLayoutCreateInfo info = *pCreateInfo;
++   info.pBindings = bindings;
++   VkResult ret = dzn_descriptor_set_layout_create(dzn_device_from_handle(device),
++                                                   &info, pAllocator, pSetLayout);
++   free(bindings);
++   if (ret != VK_SUCCESS)
++      return ret;
++
++   VK_FROM_HANDLE(dzn_descriptor_set_layout, layout, *pSetLayout);
++   struct dzn_descriptor_set_layout_binding *binfos =
++      (struct dzn_descriptor_set_layout_binding *)layout->bindings;
++   uint32_t offset = 0;
++
++   for (uint32_t i = 0; i < pCreateInfo->bindingCount; i++) {
++      const VkDescriptorSetLayoutBinding *b = &pCreateInfo->pBindings[i];
++
++      if (b->descriptorType != VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK || !b->descriptorCount)
++         continue;
++      binfos[b->binding].inline_offset = offset;
++      binfos[b->binding].inline_size = b->descriptorCount;
++      /* constant buffer views are 256-byte aligned and sized */
++      offset += ALIGN_POT(b->descriptorCount, 256);
++   }
++   layout->inline_total = offset;
++   return VK_SUCCESS;
+ }
+ 
+ VKAPI_ATTR void VKAPI_CALL
+@@ -539,10 +587,13 @@
+           (binding_flags->pBindingFlags[i] & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT))
+          variable_count->maxVariableDescriptorCount = device->bindless ? INT32_MAX : upper_bound;
+ 
++      /* virtio-dxg: an inline uniform block takes one descriptor */
++      uint32_t count = desc_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK ?
++         1 : bindings[i].descriptorCount;
+       if (has_sampler)
+-         sampler_count += bindings[i].descriptorCount;
++         sampler_count += count;
+       if (!is_sampler)
+-         other_desc_count += bindings[i].descriptorCount;
++         other_desc_count += count;
+       if (dzn_descriptor_type_depends_on_shader_usage(desc_type, device->bindless))
+          other_desc_count += bindings[i].descriptorCount;
+    }
+@@ -1684,6 +1735,9 @@
+          set->heap_sizes[type] = layout->range_desc_count[type] + variable_descriptor_count[type];
+          set->pool->free_offset[type] = set->heap_offsets[type] + set->heap_sizes[type];
+       }
++      set->inline_offset = pool->inline_free;
++      set->inline_size = layout->inline_total;
++      pool->inline_free += layout->inline_total;
+    }
+ 
+    /* Pre-fill the immutable samplers */
+@@ -1708,6 +1762,26 @@
+          }
+       }
+    }
++
++   /* virtio-dxg: inline uniform blocks */
++   if (layout->inline_total && pool->inline_buffer) {
++      for (uint32_t b = 0; b < layout->binding_count; b++) {
++         if (!layout->bindings[b].inline_size)
++            continue;
++
++         struct dzn_descriptor_set_ptr ptr;
++         struct dzn_buffer_desc desc = {
++            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
++            pool->inline_buffer,
++            ALIGN_POT(layout->bindings[b].inline_size, 256),
++            set->inline_offset + layout->bindings[b].inline_offset,
++         };
++
++         dzn_descriptor_set_ptr_init(set->layout, &ptr, b, 0);
++         dzn_descriptor_set_ptr_write_buffer_desc(device, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
++                                                  set, &ptr, &desc);
++      }
++   }
+    return VK_SUCCESS;
+ }
+ 
+@@ -1738,10 +1812,85 @@
+       }
+    }
+ 
++   if (pool->inline_buffer)
++      dzn_DestroyBuffer(dzn_device_to_handle(device),
++                        dzn_buffer_to_handle(pool->inline_buffer), NULL);
++   if (pool->inline_memory != VK_NULL_HANDLE)
++      dzn_FreeMemory(dzn_device_to_handle(device), pool->inline_memory, NULL);
++
+    vk_object_base_finish(&pool->base);
+    vk_free2(&device->vk.alloc, pAllocator, pool);
+ }
+ 
++/* virtio-dxg: the pool's inline uniform block storage, a host-visible
++ * buffer the blocks' uniform-buffer descriptors point into. */
++static VkResult
++dzn_descriptor_pool_init_inline(struct dzn_device *device,
++                                struct dzn_descriptor_pool *pool,
++                                uint64_t size)
++{
++   struct dzn_physical_device *pdev =
++      container_of(device->vk.physical, struct dzn_physical_device, vk);
++   VkDevice dev = dzn_device_to_handle(device);
++   VkBufferCreateInfo bci = {
++      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
++      .size = size,
++      .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
++   };
++   VkBuffer buf;
++   VkResult result = dzn_CreateBuffer(dev, &bci, NULL, &buf);
++   if (result != VK_SUCCESS)
++      return result;
++   pool->inline_buffer = dzn_buffer_from_handle(buf);
++
++   VkBufferMemoryRequirementsInfo2 rinfo = {
++      .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,
++      .buffer = buf,
++   };
++   VkMemoryRequirements2 req = { .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2 };
++   dzn_GetBufferMemoryRequirements2(dev, &rinfo, &req);
++
++   const VkMemoryPropertyFlags want =
++      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
++   uint32_t type = UINT32_MAX;
++   for (uint32_t i = 0; i < pdev->memory.memoryTypeCount; i++) {
++      if ((req.memoryRequirements.memoryTypeBits & BITFIELD_BIT(i)) &&
++          (pdev->memory.memoryTypes[i].propertyFlags & want) == want) {
++         type = i;
++         break;
++      }
++   }
++   if (type == UINT32_MAX)
++      return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
++
++   VkMemoryAllocateInfo mai = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
++      .allocationSize = req.memoryRequirements.size,
++      .memoryTypeIndex = type,
++   };
++   result = dzn_AllocateMemory(dev, &mai, NULL, &pool->inline_memory);
++   if (result != VK_SUCCESS)
++      return result;
++
++   VkBindBufferMemoryInfo bind = {
++      .sType = VK_STRUCTURE_TYPE_BIND_BUFFER_MEMORY_INFO,
++      .buffer = buf,
++      .memory = pool->inline_memory,
++   };
++   result = dzn_BindBufferMemory2(dev, 1, &bind);
++   if (result != VK_SUCCESS)
++      return result;
++
++   void *map;
++   result = dzn_MapMemory(dev, pool->inline_memory, 0, VK_WHOLE_SIZE, 0, &map);
++   if (result != VK_SUCCESS)
++      return result;
++   pool->inline_map = map;
++   pool->inline_capacity = size;
++   memset(map, 0, size);
++   return VK_SUCCESS;
++}
++
+ static VkResult
+ dzn_descriptor_pool_create(struct dzn_device *device,
+                            const VkDescriptorPoolCreateInfo *pCreateInfo,
+@@ -1762,10 +1911,17 @@
+ 
+    vk_object_base_init(&device->vk, &pool->base, VK_OBJECT_TYPE_DESCRIPTOR_POOL);
+ 
++   uint64_t inline_bytes = 0;
+    for (uint32_t p = 0; p < pCreateInfo->poolSizeCount; p++) {
+       VkDescriptorType type = pCreateInfo->pPoolSizes[p].type;
+       uint32_t num_desc = pCreateInfo->pPoolSizes[p].descriptorCount;
+ 
++      /* virtio-dxg: inline uniform blocks are counted in bytes */
++      if (type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK) {
++         inline_bytes += num_desc;
++         continue;
++      }
++
+       if (device->bindless) {
+          if (!vk_descriptor_type_is_dynamic(type))
+             pool->desc_count[0] += num_desc;
+@@ -1799,6 +1955,16 @@
+       }
+    }
+ 
++   /* virtio-dxg: one uniform-buffer descriptor per inline block */
++   uint32_t inline_bindings = 0;
++   if (inline_bytes) {
++      const VkDescriptorPoolInlineUniformBlockCreateInfo *iub =
++         vk_find_struct_const(pCreateInfo->pNext, DESCRIPTOR_POOL_INLINE_UNIFORM_BLOCK_CREATE_INFO);
++      inline_bindings = iub && iub->maxInlineUniformBlockBindings ?
++         iub->maxInlineUniformBlockBindings : MAX2(1, inline_bytes / 16);
++      pool->desc_count[D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV] += inline_bindings;
++   }
++
+    if (device->bindless) {
+       if (pool->desc_count[0]) {
+          /* Include extra descriptors so that we can align each allocated descriptor set to a 16-byte boundary */
+@@ -1838,6 +2004,16 @@
+       }
+    }
+ 
++   if (inline_bytes) {
++      VkResult result =
++         dzn_descriptor_pool_init_inline(device, pool,
++                                         ALIGN_POT(inline_bytes + 255ull * inline_bindings, 256));
++      if (result != VK_SUCCESS) {
++         dzn_descriptor_pool_destroy(pool, pAllocator);
++         return result;
++      }
++   }
++
+    *out = dzn_descriptor_pool_to_handle(pool);
+    return VK_SUCCESS;
+ }
+@@ -1876,6 +2052,7 @@
+       pool->used_desc_count[type] = 0;
+    }
+    pool->used_set_count = 0;
++   pool->inline_free = 0;
+ 
+    return VK_SUCCESS;
+ }
+@@ -2030,6 +2207,8 @@
+                      break;
+                   }
+                }
++               if (pool->sets[set_idx].inline_size < layout->inline_total)
++                  is_reuse = false;
+                if (!is_reuse)
+                   continue;
+             }
+@@ -2052,6 +2231,11 @@
+                return vk_error(device, VK_ERROR_FRAGMENTED_POOL);
+             }
+          }
++         if (pool->inline_free + layout->inline_total > pool->inline_capacity) {
++            dzn_FreeDescriptorSets(dev, pAllocateInfo->descriptorPool, i, pDescriptorSets);
++            return vk_error(device, pool->inline_free ?
++                            VK_ERROR_FRAGMENTED_POOL : VK_ERROR_OUT_OF_POOL_MEMORY);
++         }
+       }
+ 
+       VkResult result = dzn_descriptor_set_init(set, device, pool, layout, is_reuse, additional_desc_counts);
+@@ -2111,6 +2295,33 @@
+    return VK_SUCCESS;
+ }
+ 
++/* virtio-dxg: bytes of an inline uniform block (offset/size in bytes,
++ * size clamped to the block) */
++static uint8_t *
++dzn_descriptor_set_inline_ptr(const struct dzn_descriptor_set *set, uint32_t binding,
++                              uint32_t offset, uint32_t *size)
++{
++   if (!set->layout || binding >= set->layout->binding_count ||
++       !set->pool || !set->pool->inline_map)
++      return NULL;
++
++   const struct dzn_descriptor_set_layout_binding *b = &set->layout->bindings[binding];
++   if (offset >= b->inline_size)
++      return NULL;
++   *size = MIN2(*size, b->inline_size - offset);
++   return set->pool->inline_map + set->inline_offset + b->inline_offset + offset;
++}
++
++static void
++dzn_descriptor_set_write_inline(struct dzn_descriptor_set *set, uint32_t binding,
++                                uint32_t offset, const void *data, uint32_t size)
++{
++   uint8_t *dst = dzn_descriptor_set_inline_ptr(set, binding, offset, &size);
++
++   if (dst)
++      memcpy(dst, data, size);
++}
++
+ static void
+ dzn_descriptor_set_write(struct dzn_device *device,
+                          const VkWriteDescriptorSet *pDescriptorWrite)
+@@ -2119,6 +2330,16 @@
+ 
+    struct dzn_descriptor_set_ptr ptr;
+ 
++   if (pDescriptorWrite->descriptorType == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK) {
++      const VkWriteDescriptorSetInlineUniformBlock *iub =
++         vk_find_struct_const(pDescriptorWrite->pNext, WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK);
++      if (iub)
++         dzn_descriptor_set_write_inline(set, pDescriptorWrite->dstBinding,
++                                         pDescriptorWrite->dstArrayElement,
++                                         iub->pData, iub->dataSize);
++      return;
++   }
++
+    dzn_descriptor_set_ptr_init(set->layout, &ptr,
+                                pDescriptorWrite->dstBinding,
+                                pDescriptorWrite->dstArrayElement);
+@@ -2246,6 +2467,19 @@
+    VK_FROM_HANDLE(dzn_descriptor_set, dst_set, pDescriptorCopy->dstSet);
+    struct dzn_descriptor_set_ptr src_ptr, dst_ptr;
+ 
++   /* virtio-dxg: inline uniform blocks (offsets and count in bytes) */
++   if (src_set->layout && pDescriptorCopy->srcBinding < src_set->layout->binding_count &&
++       src_set->layout->bindings[pDescriptorCopy->srcBinding].inline_size) {
++      uint32_t size = pDescriptorCopy->descriptorCount, dst_size = size;
++      const uint8_t *src = dzn_descriptor_set_inline_ptr(src_set, pDescriptorCopy->srcBinding,
++                                                         pDescriptorCopy->srcArrayElement, &size);
++      uint8_t *dst = dzn_descriptor_set_inline_ptr(dst_set, pDescriptorCopy->dstBinding,
++                                                   pDescriptorCopy->dstArrayElement, &dst_size);
++      if (src && dst)
++         memcpy(dst, src, MIN2(size, dst_size));
++      return;
++   }
++
+    dzn_descriptor_set_ptr_init(src_set->layout, &src_ptr,
+                                pDescriptorCopy->srcBinding,
+                                pDescriptorCopy->srcArrayElement);
+@@ -2381,6 +2615,11 @@
+       ASSERTED VkDescriptorType type = info->pDescriptorUpdateEntries[e].descriptorType;
+       uint32_t d = 0;
+ 
++      if (type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK) {
++         entry_count++;
++         continue;
++      }
++
+       while (dzn_descriptor_set_ptr_is_valid(&ptr) && d < desc_count) {
+          uint32_t ndescs = dzn_descriptor_set_remaining_descs_in_binding(set_layout, &ptr);
+ 
+@@ -2418,6 +2657,19 @@
+       size_t user_data_stride = info->pDescriptorUpdateEntries[e].stride;
+       uint32_t d = 0;
+ 
++      if (type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK) {
++         /* virtio-dxg: the binding in buffer_idx, the byte offset in
++          * heap_offsets.cbv_srv_uav, the byte count in desc_count */
++         entry->type = type;
++         entry->desc_count = desc_count;
++         entry->buffer_idx = info->pDescriptorUpdateEntries[e].dstBinding;
++         entry->heap_offsets.cbv_srv_uav = info->pDescriptorUpdateEntries[e].dstArrayElement;
++         entry->user_data.offset = user_data_offset;
++         entry->user_data.stride = 0;
++         ++entry;
++         continue;
++      }
++
+       while (dzn_descriptor_set_ptr_is_valid(&ptr) && d < desc_count) {
+          uint32_t ndescs = dzn_descriptor_set_remaining_descs_in_binding(set_layout, &ptr);
+ 
+@@ -2612,6 +2864,13 @@
+          }
+          break;
+ 
++      case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK:
++         dzn_descriptor_set_write_inline(set, entry->buffer_idx,
++                                         entry->heap_offsets.cbv_srv_uav,
++                                         (const uint8_t *)pData + entry->user_data.offset,
++                                         entry->desc_count);
++         break;
++
+       default:
+          UNREACHABLE("invalid descriptor type");
+       }
 --- a/src/microsoft/vulkan/dzn_device.c
 +++ b/src/microsoft/vulkan/dzn_device.c
-@@ -56,6 +56,18 @@
+@@ -56,9 +56,22 @@
  #include <windows.h>
  #include <shlobj.h>
  #include "dzn_dxgi.h"
@@ -1558,8 +2296,138 @@
 +#include <limits.h>
  #endif
  
- #define DZN_API_VERSION VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION)
-@@ -2567,6 +2579,8 @@
+-#define DZN_API_VERSION VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION)
++/* virtio-dxg: Vulkan 1.3 (dozen_vk13.py; inline_total) */
++#define DZN_API_VERSION VK_MAKE_VERSION(1, 3, VK_HEADER_VERSION)
+ 
+ #define MAX_TIER2_MEMORY_TYPES 4
+ 
+@@ -101,6 +114,23 @@
+    pdev->vk.supported_extensions = (struct vk_device_extension_table) {
+       .KHR_16bit_storage                     = pdev->options4.Native16BitShaderOpsSupported,
+       .KHR_bind_memory2                      = true,
++      /* virtio-dxg: Vulkan 1.3 (dzn_eds_key) */
++      .KHR_copy_commands2                    = true,
++      .KHR_shader_non_semantic_info          = true,
++      .KHR_shader_terminate_invocation       = true,
++      .KHR_vulkan_memory_model               = true,
++      .EXT_extended_dynamic_state            = true,
++      .EXT_extended_dynamic_state2           = true,
++      .EXT_image_robustness                  = true,
++      .EXT_pipeline_creation_cache_control   = true,
++      .EXT_private_data                      = true,
++      .EXT_shader_demote_to_helper_invocation = true,
++      .EXT_tooling_info                      = true,
++      .EXT_inline_uniform_block              = true,
++      .EXT_texel_buffer_alignment            = true,
++      .KHR_format_feature_flags2             = true,
++      .KHR_maintenance4                      = true,
++      .KHR_zero_initialize_workgroup_memory  = true,
+       .KHR_buffer_device_address             = pdev->shader_model >= D3D_SHADER_MODEL_6_6,
+       .KHR_create_renderpass2                = true,
+       .KHR_dedicated_allocation              = true,
+@@ -781,33 +811,40 @@
+       .bufferDeviceAddress                = pdev->shader_model >= D3D_SHADER_MODEL_6_6,
+       .bufferDeviceAddressCaptureReplay   = false,
+       .bufferDeviceAddressMultiDevice     = false,
+-      .vulkanMemoryModel                  = false,
+-      .vulkanMemoryModelDeviceScope       = false,
++      .vulkanMemoryModel                  = true,
++      .vulkanMemoryModelDeviceScope       = true,
+       .vulkanMemoryModelAvailabilityVisibilityChains = false,
+       .shaderOutputViewportIndex          = false,
+       .shaderOutputLayer                  = false,
+       .subgroupBroadcastDynamicId         = true,
+ 
+-      .robustImageAccess                  = false,
+-      .inlineUniformBlock                 = false,
+-      .descriptorBindingInlineUniformBlockUpdateAfterBind = false,
+-      .pipelineCreationCacheControl       = false,
++      .robustImageAccess                  = true,
++      .inlineUniformBlock                 = true,
++      .descriptorBindingInlineUniformBlockUpdateAfterBind = support_descriptor_indexing,
++      .pipelineCreationCacheControl       = true,
+       .privateData                        = true,
+-      .shaderDemoteToHelperInvocation     = false,
+-      .shaderTerminateInvocation          = false,
++      .shaderDemoteToHelperInvocation     = true,
++      .shaderTerminateInvocation          = true,
+       .subgroupSizeControl                = pdev->options1.WaveOps && pdev->shader_model >= D3D_SHADER_MODEL_6_6,
+       .computeFullSubgroups               = true,
+       .synchronization2                   = true,
+       .textureCompressionASTC_HDR         = false,
+-      .shaderZeroInitializeWorkgroupMemory = false,
++      .shaderZeroInitializeWorkgroupMemory = true,
+       .dynamicRendering                   = true,
+       .shaderIntegerDotProduct            = true,
+-      .maintenance4                       = false,
++      .maintenance4                       = true,
++      .texelBufferAlignment               = true,
+       .shaderExpectAssume                 = true,
+ 
+       .vertexAttributeInstanceRateDivisor = true,
+       .vertexAttributeInstanceRateZeroDivisor = true,
+       .shaderReplicatedComposites         = true,
++
++      /* virtio-dxg: extended dynamic state (dzn_eds_key) */
++      .extendedDynamicState               = true,
++      .extendedDynamicState2              = true,
++      .extendedDynamicState2LogicOp       = false,
++      .extendedDynamicState2PatchControlPoints = false,
+    };
+ }
+ 
+@@ -1064,6 +1101,22 @@
+       .integerDotProduct4x8BitPackedUnsignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
+       .integerDotProductAccumulatingSaturating4x8BitPackedSignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
+       .integerDotProductAccumulatingSaturating4x8BitPackedUnsignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
++      /* virtio-dxg: Vulkan 1.3 limits */
++      .maxInlineUniformBlockSize = 4096,
++      .maxPerStageDescriptorInlineUniformBlocks = 4,
++      .maxPerStageDescriptorUpdateAfterBindInlineUniformBlocks = 4,
++      .maxDescriptorSetInlineUniformBlocks = 4,
++      .maxDescriptorSetUpdateAfterBindInlineUniformBlocks = 4,
++      .maxInlineUniformTotalSize = 4 * 4096,
++      .storageTexelBufferOffsetAlignmentBytes = 32,
++      .storageTexelBufferOffsetSingleTexelAlignment = false,
++      .uniformTexelBufferOffsetAlignmentBytes = 32,
++      .uniformTexelBufferOffsetSingleTexelAlignment = false,
++      .maxBufferSize =
++         CLAMP(MAX2(pdev->desc.dedicated_video_memory,
++                    pdev->desc.dedicated_system_memory +
++                    pdev->desc.shared_system_memory) / 4,
++               1ull << 30, 2ull * 1024 * 1024 * 1024),
+ 
+       /* VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT */
+       .maxVertexAttribDivisor = UINT32_MAX,
+@@ -1629,6 +1682,26 @@
+    VK_FROM_HANDLE(dzn_physical_device, pdev, physicalDevice);
+ 
+    dzn_physical_device_get_format_properties(pdev, format, pFormatProperties);
++
++   /* virtio-dxg: VK_KHR_format_feature_flags2 */
++   VkFormatProperties3 *props3 =
++      vk_find_struct(pFormatProperties->pNext, FORMAT_PROPERTIES_3);
++   if (props3) {
++      const VkFormatProperties *p = &pFormatProperties->formatProperties;
++
++      props3->linearTilingFeatures = p->linearTilingFeatures;
++      props3->optimalTilingFeatures = p->optimalTilingFeatures;
++      props3->bufferFeatures = p->bufferFeatures;
++      if (p->optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
++         props3->optimalTilingFeatures |= VK_FORMAT_FEATURE_2_STORAGE_READ_WITHOUT_FORMAT_BIT |
++                                          VK_FORMAT_FEATURE_2_STORAGE_WRITE_WITHOUT_FORMAT_BIT;
++      if (p->bufferFeatures & VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT)
++         props3->bufferFeatures |= VK_FORMAT_FEATURE_2_STORAGE_READ_WITHOUT_FORMAT_BIT |
++                                   VK_FORMAT_FEATURE_2_STORAGE_WRITE_WITHOUT_FORMAT_BIT;
++      if (vk_format_has_depth(format) &&
++          (p->optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
++         props3->optimalTilingFeatures |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT;
++   }
+ }
+ 
+ VKAPI_ATTR VkResult VKAPI_CALL
+@@ -2567,6 +2640,8 @@
  #else
     if ((intptr_t)mem->export_handle >= 0)
        close((int)(intptr_t)mem->export_handle);
@@ -1568,7 +2436,7 @@
  #endif
  
     vk_object_base_finish(&mem->base);
-@@ -2593,6 +2607,126 @@
+@@ -2593,6 +2668,126 @@
     return properties;
  }
  
@@ -1695,7 +2563,7 @@
  static VkResult
  dzn_device_memory_create(struct dzn_device *device,
                           const VkMemoryAllocateInfo *pAllocateInfo,
-@@ -2607,6 +2741,10 @@
+@@ -2607,6 +2802,10 @@
  
     VkExternalMemoryHandleTypeFlags export_flags = 0;
     HANDLE import_handle = NULL;
@@ -1706,7 +2574,7 @@
     bool imported_from_d3d11 = false;
     void *host_pointer = NULL;
  #ifdef _WIN32
-@@ -2662,7 +2800,9 @@
+@@ -2662,7 +2861,9 @@
           default:
              return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
           }
@@ -1717,7 +2585,7 @@
           break;
        }
  #endif
-@@ -2711,6 +2851,10 @@
+@@ -2711,6 +2912,10 @@
         VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP_BIT);
     if (image && imported_from_d3d11)
        valid_flags |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
@@ -1728,7 +2596,7 @@
  
     if (export_flags & ~valid_flags)
        return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
-@@ -2778,7 +2922,17 @@
+@@ -2778,7 +2983,17 @@
  #else
        goto cleanup;
  #endif
@@ -1746,7 +2614,7 @@
        error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
        if (image || buffer) {
           if (FAILED(ID3D12Device_OpenSharedHandle(device->dev, import_handle, &IID_ID3D12Resource, (void **)&mem->dedicated_res)))
-@@ -2921,10 +3075,27 @@
+@@ -2921,10 +3136,27 @@
           goto cleanup;
     }
  
@@ -1774,7 +2642,64 @@
  #ifdef _WIN32
     if (handle_from_name)
        CloseHandle(handle_from_name);
-@@ -3772,16 +3943,33 @@
+@@ -3691,6 +3923,56 @@
+    *pPeerMemoryFeatures = 0;
+ }
+ 
++/* virtio-dxg: maintenance4, requirements without an object: make one. */
++VKAPI_ATTR void VKAPI_CALL
++dzn_GetDeviceBufferMemoryRequirements(VkDevice device,
++                                      const VkDeviceBufferMemoryRequirements *pInfo,
++                                      VkMemoryRequirements2 *pMemoryRequirements)
++{
++   VkBuffer buffer;
++
++   if (dzn_CreateBuffer(device, pInfo->pCreateInfo, NULL, &buffer) != VK_SUCCESS) {
++      pMemoryRequirements->memoryRequirements = (VkMemoryRequirements) { 0 };
++      return;
++   }
++
++   VkBufferMemoryRequirementsInfo2 info = {
++      .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,
++      .buffer = buffer,
++   };
++   dzn_GetBufferMemoryRequirements2(device, &info, pMemoryRequirements);
++   dzn_DestroyBuffer(device, buffer, NULL);
++}
++
++VKAPI_ATTR void VKAPI_CALL
++dzn_GetDeviceImageMemoryRequirements(VkDevice device,
++                                     const VkDeviceImageMemoryRequirements *pInfo,
++                                     VkMemoryRequirements2 *pMemoryRequirements)
++{
++   VkImage image;
++
++   if (dzn_CreateImage(device, pInfo->pCreateInfo, NULL, &image) != VK_SUCCESS) {
++      pMemoryRequirements->memoryRequirements = (VkMemoryRequirements) { 0 };
++      return;
++   }
++
++   VkImageMemoryRequirementsInfo2 info = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2,
++      .image = image,
++   };
++   dzn_GetImageMemoryRequirements2(device, &info, pMemoryRequirements);
++   dzn_DestroyImage(device, image, NULL);
++}
++
++VKAPI_ATTR void VKAPI_CALL
++dzn_GetDeviceImageSparseMemoryRequirements(VkDevice device,
++                                           const VkDeviceImageMemoryRequirements *pInfo,
++                                           uint32_t *pSparseMemoryRequirementCount,
++                                           VkSparseImageMemoryRequirements2 *pSparseMemoryRequirements)
++{
++   *pSparseMemoryRequirementCount = 0;
++}
++
+ VKAPI_ATTR void VKAPI_CALL
+ dzn_GetImageSparseMemoryRequirements2(VkDevice device,
+                                       const VkImageSparseMemoryRequirementsInfo2* pInfo,
+@@ -3772,16 +4054,33 @@
                     int *pFd)
  {
     VK_FROM_HANDLE(dzn_device_memory, mem, pGetFdInfo->memory);
@@ -1859,6 +2784,354 @@
 +      close(source);
 +}
 +#endif
+--- a/src/microsoft/vulkan/dzn_pipeline.c
++++ b/src/microsoft/vulkan/dzn_pipeline.c
+@@ -1243,6 +1243,16 @@
+    }
+ }
+ 
++/* virtio-dxg: the primitive topology as dynamic state (dzn_eds_key). */
++D3D12_PRIMITIVE_TOPOLOGY
++dzn_translate_prim_topology(VkPrimitiveTopology in, unsigned patch_control_points,
++                            bool support_triangle_fan)
++{
++   if (in == VK_PRIMITIVE_TOPOLOGY_PATCH_LIST && !patch_control_points)
++      patch_control_points = 1;
++   return to_prim_topology(in, patch_control_points, support_triangle_fan);
++}
++
+ static VkResult
+ dzn_graphics_pipeline_translate_ia(struct dzn_device *device,
+                                    struct dzn_graphics_pipeline *pipeline,
+@@ -1857,6 +1867,99 @@
+    vk_free2(&pipeline->base.base.device->alloc, alloc, pipeline);
+ }
+ 
++/* virtio-dxg: Vulkan 1.3 extended dynamic state. Records the static values
++ * and, when something is dynamic, points *pinfo at a copy of the create info
++ * with neutral values (rasterizer on, no culling, depth bias present,
++ * primitive restart possible, every depth/stencil path live, stencil ops
++ * that use the masks) so the pipeline-state template covers every value;
++ * the real ones are folded in per variant (dzn_graphics_pipeline_apply_eds). */
++static void
++dzn_graphics_pipeline_init_eds(struct dzn_graphics_pipeline *pipeline,
++                               const VkGraphicsPipelineCreateInfo **pinfo,
++                               VkGraphicsPipelineCreateInfo *info,
++                               VkPipelineRasterizationStateCreateInfo *rast,
++                               VkPipelineInputAssemblyStateCreateInfo *ia,
++                               VkPipelineDepthStencilStateCreateInfo *zsa)
++{
++   const VkGraphicsPipelineCreateInfo *in = *pinfo;
++   const VkPipelineRenderingCreateInfo *ri =
++      vk_find_struct_const(in, PIPELINE_RENDERING_CREATE_INFO);
++   const VkPipelineRasterizationStateCreateInfo *in_rast = in->pRasterizationState;
++   const VkPipelineInputAssemblyStateCreateInfo *in_ia = in->pInputAssemblyState;
++   uint32_t dyn = pipeline->eds.dyn;
++   struct dzn_eds_key *s = &pipeline->eds.statik;
++   bool discard = in_rast->rasterizerDiscardEnable &&
++                  !(dyn & DZN_EDS_RASTERIZER_DISCARD);
++   const VkPipelineDepthStencilStateCreateInfo *in_zsa =
++      discard ? NULL : in->pDepthStencilState;
++
++   s->cull_mode = in_rast->cullMode;
++   s->front_ccw = in_rast->frontFace == VK_FRONT_FACE_COUNTER_CLOCKWISE;
++   s->depth_bias_enable = in_rast->depthBiasEnable;
++   s->primitive_restart = in_ia && in_ia->primitiveRestartEnable;
++   if (in_zsa) {
++      s->depth_test = in_zsa->depthTestEnable;
++      s->depth_write = in_zsa->depthWriteEnable;
++      s->depth_compare = in_zsa->depthCompareOp;
++      s->depth_bounds_test = in_zsa->depthBoundsTestEnable;
++      s->stencil_test = in_zsa->stencilTestEnable;
++      s->stencil_front[0] = in_zsa->front.failOp;
++      s->stencil_front[1] = in_zsa->front.passOp;
++      s->stencil_front[2] = in_zsa->front.depthFailOp;
++      s->stencil_front[3] = in_zsa->front.compareOp;
++      s->stencil_back[0] = in_zsa->back.failOp;
++      s->stencil_back[1] = in_zsa->back.passOp;
++      s->stencil_back[2] = in_zsa->back.depthFailOp;
++      s->stencil_back[3] = in_zsa->back.compareOp;
++   }
++   /* A static front+back cull already disabled depth/stencil and dropped
++    * the fragment shader; leave that alone. */
++   pipeline->eds.zsa = in_zsa != NULL &&
++      !(in_rast->cullMode == VK_CULL_MODE_FRONT_AND_BACK && !(dyn & DZN_EDS_CULL_MODE));
++   pipeline->eds.has_depth = !(ri && ri->depthAttachmentFormat == VK_FORMAT_UNDEFINED);
++   pipeline->eds.has_stencil = !(ri && ri->stencilAttachmentFormat == VK_FORMAT_UNDEFINED);
++   pipeline->eds.tri_class = in_ia &&
++      to_prim_topology_type(in_ia->topology) == D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
++   pipeline->eds.patch_control_points =
++      in->pTessellationState ? in->pTessellationState->patchControlPoints : 0;
++
++   if (!dyn)
++      return;
++
++   *info = *in;
++   *rast = *in_rast;
++   info->pRasterizationState = rast;
++   if (dyn & DZN_EDS_RASTERIZER_DISCARD)
++      rast->rasterizerDiscardEnable = false;
++   if (dyn & DZN_EDS_CULL_MODE)
++      rast->cullMode = VK_CULL_MODE_NONE;
++   if (dyn & DZN_EDS_DEPTH_BIAS_ENABLE)
++      rast->depthBiasEnable = true;
++   if (in_ia && (dyn & DZN_EDS_PRIMITIVE_RESTART)) {
++      *ia = *in_ia;
++      ia->primitiveRestartEnable = true;
++      info->pInputAssemblyState = ia;
++   }
++   if (in->pDepthStencilState && (dyn & DZN_EDS_ZSA_MASK)) {
++      *zsa = *in->pDepthStencilState;
++      if (dyn & DZN_EDS_DEPTH_TEST)
++         zsa->depthTestEnable = true;
++      if (dyn & DZN_EDS_DEPTH_BOUNDS_TEST)
++         zsa->depthBoundsTestEnable = true;
++      if (dyn & DZN_EDS_STENCIL_TEST)
++         zsa->stencilTestEnable = true;
++      if (dyn & DZN_EDS_STENCIL_OP) {
++         zsa->front.failOp = zsa->front.passOp = zsa->front.depthFailOp =
++            VK_STENCIL_OP_REPLACE;
++         zsa->back.failOp = zsa->back.passOp = zsa->back.depthFailOp =
++            VK_STENCIL_OP_REPLACE;
++         zsa->front.compareOp = zsa->back.compareOp = VK_COMPARE_OP_LESS;
++      }
++      info->pDepthStencilState = zsa;
++   }
++   *pinfo = info;
++}
++
+ static VkResult
+ dzn_graphics_pipeline_create(struct dzn_device *device,
+                              VkPipelineCache cache,
+@@ -1877,6 +1980,16 @@
+    VkResult ret;
+    HRESULT hres = 0;
+    D3D12_VIEW_INSTANCE_LOCATION vi_locs[D3D12_MAX_VIEW_INSTANCE_COUNT];
++   VkGraphicsPipelineCreateInfo eds_info;
++   VkPipelineRasterizationStateCreateInfo eds_rast;
++   VkPipelineInputAssemblyStateCreateInfo eds_ia;
++   VkPipelineDepthStencilStateCreateInfo eds_zsa;
++
++   /* virtio-dxg: pipelines are compiled on creation (pipeline creation
++    * cache control). */
++   if (vk_graphics_pipeline_create_flags(pCreateInfo) &
++       VK_PIPELINE_CREATE_2_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_KHR)
++      return VK_PIPELINE_COMPILE_REQUIRED;
+ 
+    struct dzn_graphics_pipeline *pipeline =
+       vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*pipeline), 8,
+@@ -1945,11 +2058,69 @@
+          case VK_DYNAMIC_STATE_LINE_WIDTH:
+             /* Nothing to do since we just support lineWidth = 1. */
+             break;
+-         default: UNREACHABLE("Unsupported dynamic state");
++         /* virtio-dxg: extended dynamic state (dzn_eds_key) */
++         case VK_DYNAMIC_STATE_CULL_MODE:
++            pipeline->eds.dyn |= DZN_EDS_CULL_MODE;
++            break;
++         case VK_DYNAMIC_STATE_FRONT_FACE:
++            pipeline->eds.dyn |= DZN_EDS_FRONT_FACE;
++            break;
++         case VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY:
++            pipeline->eds.dyn |= DZN_EDS_TOPOLOGY;
++            break;
++         case VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT:
++            pipeline->vp.dynamic = true;
++            pipeline->eds.dyn |= DZN_EDS_VIEWPORT_COUNT;
++            break;
++         case VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT:
++            pipeline->scissor.dynamic = true;
++            pipeline->eds.dyn |= DZN_EDS_SCISSOR_COUNT;
++            break;
++         case VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE:
++            pipeline->eds.dyn |= DZN_EDS_VB_STRIDE;
++            break;
++         case VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_DEPTH_TEST;
++            break;
++         case VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_DEPTH_WRITE;
++            break;
++         case VK_DYNAMIC_STATE_DEPTH_COMPARE_OP:
++            pipeline->eds.dyn |= DZN_EDS_DEPTH_COMPARE;
++            break;
++         case VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_DEPTH_BOUNDS_TEST;
++            break;
++         case VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_STENCIL_TEST;
++            break;
++         case VK_DYNAMIC_STATE_STENCIL_OP:
++            pipeline->eds.dyn |= DZN_EDS_STENCIL_OP;
++            break;
++         case VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_RASTERIZER_DISCARD;
++            break;
++         case VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_DEPTH_BIAS_ENABLE;
++            break;
++         case VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_PRIMITIVE_RESTART;
++            break;
++         default:
++            /* Not advertised: keep the create-info value. */
++            break;
+          }
+       }
+    }
+ 
++   if (pipeline->eds.dyn & DZN_EDS_PSO_MASK) {
++      ret = dzn_graphics_pipeline_prepare_for_variants(device, pipeline);
++      if (ret)
++         goto out;
++   }
++   dzn_graphics_pipeline_init_eds(pipeline, &pCreateInfo, &eds_info,
++                                  &eds_rast, &eds_ia, &eds_zsa);
++
+    ret = dzn_graphics_pipeline_translate_ia(device, pipeline, stream_desc, pCreateInfo);
+    if (ret)
+       goto out;
+@@ -2180,6 +2351,105 @@
+    }
+ }
+ 
++/* virtio-dxg: fold the extended dynamic state of a variant key into a copy
++ * of the pipeline-state stream (see dzn_graphics_pipeline_init_eds). */
++#define DZN_EDS_STENCIL_FACE(face, ops) do { \
++      (face).StencilFailOp = translate_stencil_op((VkStencilOp)(ops)[0]); \
++      (face).StencilPassOp = translate_stencil_op((VkStencilOp)(ops)[1]); \
++      (face).StencilDepthFailOp = translate_stencil_op((VkStencilOp)(ops)[2]); \
++      (face).StencilFunc = dzn_translate_compare_op((VkCompareOp)(ops)[3]); \
++   } while (0)
++
++#define DZN_EDS_APPLY_DS(ds) do { \
++      (ds)->DepthEnable = depth; \
++      if (depth) { \
++         (ds)->DepthWriteMask = k->depth_write ? \
++            D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO; \
++         (ds)->DepthFunc = k->depth_test ? \
++            dzn_translate_compare_op((VkCompareOp)k->depth_compare) : \
++            D3D12_COMPARISON_FUNC_ALWAYS; \
++      } \
++      (ds)->DepthBoundsTestEnable = k->depth_bounds_test; \
++      (ds)->StencilEnable = stencil; \
++      if (stencil && (dyn & DZN_EDS_STENCIL_OP)) { \
++         DZN_EDS_STENCIL_FACE((ds)->FrontFace, k->stencil_front); \
++         DZN_EDS_STENCIL_FACE((ds)->BackFace, k->stencil_back); \
++      } \
++   } while (0)
++
++static void
++dzn_graphics_pipeline_apply_eds(struct dzn_physical_device *pdev,
++                                struct dzn_graphics_pipeline *pipeline,
++                                uintptr_t *stream_buf,
++                                const struct dzn_graphics_pipeline_variant_key *key)
++{
++   uint32_t dyn = pipeline->eds.dyn;
++   const struct dzn_eds_key *k = &key->eds;
++
++   if (!(dyn & DZN_EDS_PSO_MASK))
++      return;
++
++   /* RASTERIZER, RASTERIZER1 and RASTERIZER2 share the first six fields;
++    * DepthBias is an INT in the first and a FLOAT in the others, and zero
++    * is the same bits in both. */
++   D3D12_RASTERIZER_DESC *rast =
++      dzn_graphics_pipeline_get_desc(pipeline, stream_buf, rast);
++   if (rast) {
++      if (dyn & DZN_EDS_CULL_MODE)
++         rast->CullMode = translate_cull_mode(k->cull_mode);
++      if (dyn & DZN_EDS_FRONT_FACE)
++         rast->FrontCounterClockwise = k->front_ccw;
++      if ((dyn & DZN_EDS_DEPTH_BIAS_ENABLE) && !k->depth_bias_enable) {
++         rast->DepthBias = 0;
++         rast->DepthBiasClamp = 0.0f;
++         rast->SlopeScaledDepthBias = 0.0f;
++      }
++   }
++
++   if (pipeline->eds.zsa && (dyn & DZN_EDS_ZSA_MASK) &&
++       !pipeline->rast_disabled_from_missing_position) {
++      bool depth = pipeline->eds.has_depth && (k->depth_test || k->depth_bounds_test);
++      bool stencil = pipeline->eds.has_stencil && k->stencil_test;
++
++      if (pdev->options14.IndependentFrontAndBackStencilRefMaskSupported) {
++         D3D12_DEPTH_STENCIL_DESC2 *ds =
++            dzn_graphics_pipeline_get_desc(pipeline, stream_buf, ds);
++         if (ds)
++            DZN_EDS_APPLY_DS(ds);
++      } else {
++         D3D12_DEPTH_STENCIL_DESC1 *ds =
++            dzn_graphics_pipeline_get_desc(pipeline, stream_buf, ds);
++         if (ds)
++            DZN_EDS_APPLY_DS(ds);
++      }
++   }
++
++   /* Rasterizer discard (or both faces culled): what Dozen does for the
++    * static case, no fragment shader and no depth/stencil. */
++   if (k->discard) {
++      const D3D12_SHADER_BYTECODE *ps_templ =
++         pipeline->templates.shaders[MESA_SHADER_FRAGMENT].bc;
++      if (ps_templ) {
++         D3D12_SHADER_BYTECODE *ps = (D3D12_SHADER_BYTECODE *)
++            ((uint8_t *)stream_buf +
++             ((const uint8_t *)ps_templ - (const uint8_t *)pipeline->templates.stream_buf));
++         ps->pShaderBytecode = NULL;
++         ps->BytecodeLength = 0;
++      }
++      if (pdev->options14.IndependentFrontAndBackStencilRefMaskSupported) {
++         D3D12_DEPTH_STENCIL_DESC2 *ds =
++            dzn_graphics_pipeline_get_desc(pipeline, stream_buf, ds);
++         if (ds)
++            ds->DepthEnable = ds->StencilEnable = ds->DepthBoundsTestEnable = false;
++      } else {
++         D3D12_DEPTH_STENCIL_DESC1 *ds =
++            dzn_graphics_pipeline_get_desc(pipeline, stream_buf, ds);
++         if (ds)
++            ds->DepthEnable = ds->StencilEnable = ds->DepthBoundsTestEnable = false;
++      }
++   }
++}
++
+ ID3D12PipelineState *
+ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
+                                 const struct dzn_graphics_pipeline_variant_key *key)
+@@ -2204,6 +2474,14 @@
+ 
+    mask_key_for_stencil_state(pdev, pipeline, key, &masked_key);
+ 
++   /* virtio-dxg: extended dynamic state */
++   if (pipeline->eds.dyn & DZN_EDS_PSO_MASK)
++      masked_key.eds = key->eds;
++   if ((pipeline->eds.dyn & DZN_EDS_PRIMITIVE_RESTART) && !key->eds.primitive_restart)
++      masked_key.ib_strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
++   if ((pipeline->eds.dyn & DZN_EDS_DEPTH_BIAS_ENABLE) && !key->eds.depth_bias_enable)
++      memset(&masked_key.depth_bias, 0, sizeof(masked_key.depth_bias));
++
+    struct hash_entry *he =
+       _mesa_hash_table_search(pipeline->variants, &masked_key);
+ 
+@@ -2235,6 +2513,7 @@
+       }
+ 
+       update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
++      dzn_graphics_pipeline_apply_eds(pdev, pipeline, stream_buf, &masked_key);
+ 
+       ASSERTED HRESULT hres = ID3D12Device4_CreatePipelineState(device->dev, &stream_desc,
+                                                                 &IID_ID3D12PipelineState,
+@@ -2590,6 +2869,11 @@
+    VK_FROM_HANDLE(dzn_pipeline_layout, layout, pCreateInfo->layout);
+    VK_FROM_HANDLE(vk_pipeline_cache, pcache, cache);
+ 
++   /* virtio-dxg: pipeline creation cache control */
++   if (vk_compute_pipeline_create_flags(pCreateInfo) &
++       VK_PIPELINE_CREATE_2_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_KHR)
++      return VK_PIPELINE_COMPILE_REQUIRED;
++
+    struct dzn_compute_pipeline *pipeline =
+       vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*pipeline), 8,
+                  VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
 --- a/src/microsoft/vulkan/dzn_private.h
 +++ b/src/microsoft/vulkan/dzn_private.h
 @@ -346,6 +346,10 @@
@@ -1872,7 +3145,130 @@
     /* These flags need to be added into all resources created on this heap */
     D3D12_RESOURCE_FLAGS res_flags;
  };
-@@ -1232,6 +1236,11 @@
+@@ -565,8 +569,45 @@
+    VkAttachmentStoreOp store_op;
+ };
+ 
++/* virtio-dxg: Vulkan 1.3 extended dynamic state. */
++enum dzn_eds_bits {
++   /* baked into the D3D12 pipeline state: part of the variant key */
++   DZN_EDS_CULL_MODE = 1 << 0,
++   DZN_EDS_FRONT_FACE = 1 << 1,
++   DZN_EDS_DEPTH_BIAS_ENABLE = 1 << 2,
++   DZN_EDS_DEPTH_TEST = 1 << 3,
++   DZN_EDS_DEPTH_WRITE = 1 << 4,
++   DZN_EDS_DEPTH_COMPARE = 1 << 5,
++   DZN_EDS_DEPTH_BOUNDS_TEST = 1 << 6,
++   DZN_EDS_STENCIL_TEST = 1 << 7,
++   DZN_EDS_STENCIL_OP = 1 << 8,
++   DZN_EDS_PRIMITIVE_RESTART = 1 << 9,
++   DZN_EDS_RASTERIZER_DISCARD = 1 << 10,
++   DZN_EDS_PSO_MASK = (1 << 11) - 1,
++   DZN_EDS_ZSA_MASK = DZN_EDS_DEPTH_TEST | DZN_EDS_DEPTH_WRITE |
++                      DZN_EDS_DEPTH_COMPARE | DZN_EDS_DEPTH_BOUNDS_TEST |
++                      DZN_EDS_STENCIL_TEST | DZN_EDS_STENCIL_OP,
++   /* command-list state */
++   DZN_EDS_TOPOLOGY = 1 << 11,
++   DZN_EDS_VIEWPORT_COUNT = 1 << 12,
++   DZN_EDS_SCISSOR_COUNT = 1 << 13,
++   DZN_EDS_VB_STRIDE = 1 << 14,
++};
++
++/* Effective values (dynamic or static) of the baked states; 4-byte multiple
++ * so the key hashes without padding. */
++struct dzn_eds_key {
++   uint8_t cull_mode, front_ccw, depth_bias_enable, primitive_restart;
++   uint8_t depth_test, depth_write, depth_compare, depth_bounds_test;
++   /* rasterizer discard, or both faces culled for triangles */
++   uint8_t stencil_test, discard, pad[2];
++   /* fail, pass, depth fail, compare */
++   uint8_t stencil_front[4], stencil_back[4];
++};
++
+ struct dzn_graphics_pipeline_variant_key {
+    D3D12_INDEX_BUFFER_STRIP_CUT_VALUE ib_strip_cut;
++   struct dzn_eds_key eds;
+    struct {
+       int constant_factor;
+       float slope_factor;
+@@ -590,6 +631,8 @@
+    const struct dzn_pipeline *pipeline;
+    struct dzn_descriptor_heap *heaps[NUM_POOL_TYPES];
+    struct dzn_graphics_pipeline_variant_key pipeline_variant;
++   /* virtio-dxg: extended dynamic state applied at draw time */
++   D3D12_PRIMITIVE_TOPOLOGY eds_topology;
+    struct {
+       VkRenderingFlags flags;
+       D3D12_RECT area;
+@@ -728,6 +771,11 @@
+    uint32_t desc_count[NUM_POOL_TYPES];
+    uint32_t used_desc_count[NUM_POOL_TYPES];
+    uint32_t free_offset[NUM_POOL_TYPES];
++   /* virtio-dxg: inline uniform block storage (host visible) */
++   struct dzn_buffer *inline_buffer;
++   VkDeviceMemory inline_memory;
++   uint8_t *inline_map;
++   uint64_t inline_free, inline_capacity;
+ };
+ 
+ #define MAX_SHADER_VISIBILITIES (D3D12_SHADER_VISIBILITY_PIXEL + 1)
+@@ -748,6 +796,9 @@
+       uint32_t buffer_idx;
+    };
+    bool variable_size;
++   /* virtio-dxg: inline uniform block: its bytes and place in the set's
++    * inline storage (0 for every other binding) */
++   uint32_t inline_offset, inline_size;
+ };
+ 
+ struct dzn_descriptor_set_layout {
+@@ -779,6 +830,8 @@
+ 
+    uint32_t binding_count;
+    const struct dzn_descriptor_set_layout_binding *bindings;
++   /* virtio-dxg: bytes of inline uniform block storage per set */
++   uint32_t inline_total;
+ };
+ 
+ struct dzn_descriptor_set {
+@@ -791,6 +844,8 @@
+    uint32_t heap_sizes[NUM_POOL_TYPES];
+    /* Layout (and pool) is null for a freed descriptor set */
+    const struct dzn_descriptor_set_layout *layout;
++   /* virtio-dxg: inline uniform block storage in the pool's inline buffer */
++   uint64_t inline_offset, inline_size;
+ };
+ 
+ struct dzn_pipeline_layout_set {
+@@ -988,6 +1043,16 @@
+       float constants[4];
+    } blend;
+ 
++   /* virtio-dxg: Vulkan 1.3 extended dynamic state */
++   struct {
++      uint32_t dyn;              /* DZN_EDS_* declared dynamic */
++      struct dzn_eds_key statik; /* the create-info values */
++      bool zsa;                  /* has a depth/stencil state to patch */
++      bool has_depth, has_stencil;
++      bool tri_class;            /* triangle topology class (culling applies) */
++      uint32_t patch_control_points;
++   } eds;
++
+    bool rast_disabled_from_missing_position;
+    bool use_gs_for_polygon_mode_point;
+    bool needs_draw_sysvals;
+@@ -1035,6 +1100,10 @@
+ 
+ VkFormat dzn_graphics_pipeline_patch_vi_format(VkFormat format);
+ 
++D3D12_PRIMITIVE_TOPOLOGY
++dzn_translate_prim_topology(VkPrimitiveTopology in, unsigned patch_control_points,
++                            bool support_triangle_fan);
++
+ struct dzn_compute_pipeline {
+    struct dzn_pipeline base;
+    struct {
+@@ -1232,6 +1301,11 @@
             if (mask & aspect)
  
  VkResult dzn_wsi_init(struct dzn_physical_device *physical_device);

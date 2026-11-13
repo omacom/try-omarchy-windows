@@ -7,7 +7,7 @@
   "profiles": {
     "graphics": {
       "patchFile": "graphics.patch",
-      "patchSha256": "07da3eb3ce7068f09e425e3b7aebd0df319ba8b21dd6080f358b2a236d5d10cf",
+      "patchSha256": "0b196bf0bb9694ade3675c3ce8f24aa6062aa0655b786e5eda0a28920e0366ba",
       "files": {
         "VERSION": {
           "originalSha256": "982a353702e30cae7604c76ff1a99db8b959088c79b12dd1ea480141241f2e48",
@@ -73,17 +73,33 @@
           "originalSha256": "a0140c9954053b256f969f4e2d2074c83a91cbe221e2dab6c47d96f67d130856",
           "patchedSha256": "d40c57cf8141666ffc6465c18fd3a8ffccc023b2e878e9ab9383733a550f3d3a"
         },
+        "src/microsoft/spirv_to_dxil/dxil_spirv_nir.c": {
+          "originalSha256": "7de0c6d801a4dfa0ad888ba29ec54b5a9d0bc43b2541ea715d2e52aa72cc8bfd",
+          "patchedSha256": "84d56bd48ba866611f5284f889dabf5b0382686408456eee2776c8131197646c"
+        },
+        "src/microsoft/vulkan/dzn_cmd_buffer.c": {
+          "originalSha256": "1daea02a1357f6b571eee959a8f7288f32c23b7a77906b013fbeeb653ad1fada",
+          "patchedSha256": "dc2d27445a0d75369783319a47b09de28be5f30877cdca4e689cd8460328e0cb"
+        },
+        "src/microsoft/vulkan/dzn_descriptor_set.c": {
+          "originalSha256": "63f9b65f84b2d8af3ab8b55c0e715bf567096621fe72531af73ceee8f3f1d87e",
+          "patchedSha256": "b4ced89bf236b32bb7056ce79570e170641a7d2008d6307e353683f918b97f64"
+        },
         "src/microsoft/vulkan/dzn_device.c": {
           "originalSha256": "837bbdd6851ee4bf9073628f6029329d5bf50a6e93f179d7429ea61f70fd400a",
-          "patchedSha256": "342a208e57a6bda72cb4b9dcc70026c5c0807ac385000348838b370406725ef0"
+          "patchedSha256": "799df52f1cdcaa647190f34c128fe1a1f28eea0385acebad99fa3a5eaeee7497"
         },
         "src/microsoft/vulkan/dzn_imported_memory_fd.h": {
           "originalSha256": null,
           "patchedSha256": "03155a0ea2ba1f9f2b42a20342340060b7ed9a10461a2ab0551293ed50e2271c"
         },
+        "src/microsoft/vulkan/dzn_pipeline.c": {
+          "originalSha256": "d1b80c48c053199d9be1802a7ca27145b90b81dd20ad51b76f7f8adea0dab24c",
+          "patchedSha256": "ad6514685da371a188d9fd0cf65bf807c3c0e256ce45f37babf86f96bd4e51b1"
+        },
         "src/microsoft/vulkan/dzn_private.h": {
           "originalSha256": "d787ec1f37d336142e3e023edf5f020e4e9d55bb12180c27f0ded8e399218d5c",
-          "patchedSha256": "9c6f469eb5669d32bcd9a3c9a18ae31522596dd88057fbb17378fee50c160f02"
+          "patchedSha256": "44606708a3a8aad617dd7a66cbec6add90d8d9debf67ac9a0c279fa13b850b19"
         },
         "src/microsoft/vulkan/dzn_wsi.c": {
           "originalSha256": "f31a98248744b0cb772e66b2c2d9f67c6dfc6c15905c416765b00a2e49a34366",

@@ -181,7 +181,7 @@ executes the work; GPU-bound performance is then the hardware's.
 | DLSS / Reflex / frame generation | Windows-driver prototype and NGX | Extensions and library loading are not proof of working game integration. Workload validation remains open. |
 | Windows OpenGL | NVIDIA Windows driver under Wine | Not tested. |
 | Linux OpenGL | Mesa d3d12 | Reported OpenGL 4.6 samples and compositor rendering. Accurate animations and sustained stability remain open. |
-| Linux Vulkan | Mesa Dozen on D3D12 | Reported Vulkan 1.2 sample path; no native NVIDIA Linux ICD or general Vulkan conformance claim. |
+| Linux Vulkan | Mesa Dozen on D3D12 | Vulkan 1.3 with all required features (extended dynamic state, inline uniform blocks, maintenance4, ...), checked by `bench/vulkan13`; zero-copy windows. Not a conformance claim; no tessellation, multi-viewport, dual-source blend or logic op; 1.4 open. No native NVIDIA Linux ICD. |
 | VA-API decode | Mesa d3d12 video | Reported H.264 sample; Chromium codec-specific hardware decode still needs verification. |
 | VA-API encode | Mesa d3d12 video | **Blocked: first frame removes the device in the reported test.** Chromium's integration wrapper disables accelerated video encode. NVENC is a separate working sample path. |
 
@@ -429,3 +429,20 @@ completed at creation (the allocation's layout) for later openers, and NT
 handles of shared objects are descriptors the bridge marks for Windows code
 (`kmt_bridge_fd_handle`). `d3d12vkimport.c` checks the same import on
 Windows itself.
+
+### Vulkan 1.3 for Linux applications
+
+Native Linux Vulkan applications use Mesa's Dozen, which runs Vulkan on the
+host's D3D12 driver in the same process: no translation into another
+process or protocol. Dozen now reports Vulkan 1.3 with every required
+feature; the design is in
+[guest/mesa](../virtio-dxg/guest/mesa/README.md#vulkan-13-dozen) and the
+checks in `bench/vulkan13`:
+
+```sh
+cd virtio-dxg/bench/vulkan13
+glslc edstest.vert -o vert.spv && glslc edstest.frag -o frag.spv
+for s in inline dirty zero; do glslc --target-env=vulkan1.3 $s.comp -o $s.spv; done
+gcc -O2 -o edstest edstest.c -lvulkan && ./edstest      # 27 pixel checks
+gcc -O2 -o vk13test vk13test.c -lvulkan && ./vk13test   # 1.3 features
+```

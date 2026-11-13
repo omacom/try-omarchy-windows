@@ -56,6 +56,36 @@ with `wl_shm`); opening the Omarchy menu, 346 of 367 possible frames with 5
 late (311 with 26 late). Chromium runs on the GPU as a native Wayland client
 with its default flags (ANGLE on D3D12), where it needed Xwayland before.
 
+## Vulkan 1.3 (Dozen)
+
+Dozen, Mesa's Vulkan driver on D3D12, reported Vulkan 1.2. It now reports
+1.3 with every feature 1.3 requires. Each piece translates directly to D3D12;
+nothing is emulated in software:
+
+- **Extended dynamic state 1 and 2.** The `vkCmdSet*` calls are the common
+  runtime's; Dozen applies graphics state at draw time anyway, so it reads
+  what the bound pipeline declares dynamic there. What D3D12 bakes into a
+  pipeline state (cull mode, front face, depth and stencil state, depth
+  bias enable, primitive restart, rasterizer discard) becomes part of the
+  pipeline-variant key, the mechanism Dozen already used for stencil masks:
+  the pipeline is built once from neutral values and each new combination is
+  a D3D12 pipeline state made on first use and cached. Topology, viewport and
+  scissor counts and vertex strides are command-list state.
+  `vkCmdBindVertexBuffers2` is new.
+- **Inline uniform blocks** are uniform buffers to the shaders. Their bytes
+  live in a host-visible buffer per descriptor pool; a set gets a 256-byte
+  aligned slice and a uniform-buffer descriptor pointing at it, in both of
+  Dozen's descriptor modes. Writes, copies and update templates copy bytes.
+- **Zero-initialized workgroup memory** takes the explicit shared-memory
+  layout and clears it word by word before the shader starts.
+- **maintenance4** (requirements without an object), `VkFormatProperties3`,
+  shader demote and terminate, the Vulkan memory model, image robustness,
+  pipeline creation cache control, the 1.3 limits.
+
+`bench/vulkan13` checks these with rendered pixels and read-back buffers.
+Dozen still lacks tessellation, multiple viewports, dual-source blending
+and logic ops, which are optional in 1.3; Vulkan 1.4 is the next step.
+
 ## Building the inactive cohort
 
 Build from a full repository checkout on Linux with the guest's build dependencies

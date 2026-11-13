@@ -24,6 +24,16 @@ They run inside a development VM (`guest/test/initcpio`, kernel arguments
 | `desk-stress.sh [seconds]` | Hyprland's debug overlay, vkcube and glmark2 together; checks the compositor answers every 2 s. |
 | `awake.sh` | Keeps the display on (an idle session turns it off and throttles every client). |
 
+[`vulkan13/`](vulkan13) checks Vulkan 1.3 on Dozen for Linux applications
+with pixels and buffers read back, not only reported flags: `edstest.c`
+renders every extended dynamic state case (cull mode, front face, topology,
+viewport and scissor counts, vertex strides, depth test/write/compare, depth
+bias enable, stencil test and ops, rasterizer discard, primitive restart);
+`vk13test.c` checks the required 1.3 features, inline uniform blocks
+(write, partial write, update template, copy), zero-initialized workgroup
+memory, the maintenance4 queries and `VkFormatProperties3`. Build commands
+are at the top of each file.
+
 With `DXGHOST_STATS=1` in QEMU's environment, QEMU reports per-command host
 time and, with zero-copy scanout, the presented frame rate every 10 s:
 `scanout 238.9 fps over 10 s (display 240 Hz): 3 gaps over 1.5 frames, worst

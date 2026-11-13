@@ -50,6 +50,7 @@ clicks, drags and keys were.
 | --- | --- | --- | --- |
 | glmark2 1080p off-screen (OpenGL 4.6, Mesa d3d12) | 1289 (the first desktop build: 42, then a hang) | 2255–2522 | |
 | vkmark 720p windowed (Vulkan on Dozen, test VM) | 627 (frames copied through `wl_shm`) | 4840–6781 | Zero-copy Vulkan windows: swapchain images are window buffers |
+| Vulkan version for Linux applications (Dozen, test VM, boot payload) | 1.2 | 1.3.354 with every required 1.3 feature; `bench/vulkan13`: 27/27 dynamic-state pixel checks, inline uniform blocks, zero-initialized workgroup memory, maintenance4 and format properties 3 pass in both descriptor modes; vkmark 720p 3675 (no regression) | Recipe: extended dynamic state as pipeline variants, inline uniform blocks as pool-backed uniform buffers |
 | Direct3D 11 under Wine (wined3d on OpenGL, 200 draws per frame, `bench/d3d11tri.c`) | Xwayland exited | 231 fps on a 240 Hz display | GLX on the D3D12 driver |
 | Vulkan under Wine on NVIDIA's own Windows driver (dxgvk, `wine/vkpresent.c`, clear + present, test VM) | no driver (Wine's Vulkan was Dozen, 1.2) | Vulkan 1.4.357; 2686–3253 fps immediate, 234 fps FIFO on a 240 Hz display | dxgvk.dll: NVIDIA ICD + zero-copy swapchain |
 | Direct3D 11 through DXVK 3.1.1 on dxgvk (Proton's route, `bench/d3d11tri.c`) | no Vulkan driver for it | 1452-1876 fps; DXVK reports NVIDIA GeForce RTX 5090, driver 621.14 | dxgvk |
