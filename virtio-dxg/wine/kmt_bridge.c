@@ -135,11 +135,160 @@ static int32_t errno_to_ntstatus(long err)
 	}
 }
 
+/*
+ * NT handles of shared GPU objects are file descriptors on Linux. Windows
+ * code gets them as marked handle values (Wine would treat a bare
+ * descriptor number as one of its own handles); the *FromNtHandle calls
+ * turn them back into descriptors.
+ */
+#define FD_HANDLE_MARK 0x7d000000u
+
+void *kmt_bridge_fd_handle(int fd)
+{
+	return (void *)(uintptr_t)(FD_HANDLE_MARK | ((uint32_t)fd << 2));
+}
+
+int kmt_bridge_handle_fd(const void *handle)
+{
+	uintptr_t v = (uintptr_t)handle;
+
+	if ((v & 0xff000003u) != FD_HANDLE_MARK || (v >> 32))
+		return -1;
+	return (int)((v & 0x00ffffffu) >> 2);
+}
+
+static void translate_nt_handle(unsigned long request, void *args)
+{
+	uint64_t *field = NULL;
+	int fd;
+
+	switch (request & 0xff) {
+	case 0x40:	/* OpenSyncObjectFromNtHandle2 */
+		field = (uint64_t *)args;
+		break;
+	case 0x41:	/* QueryResourceInfoFromNtHandle */
+	case 0x42:	/* OpenResourceFromNtHandle */
+		field = (uint64_t *)((char *)args + 8);
+		break;
+	default:
+		return;
+	}
+	fd = kmt_bridge_handle_fd((void *)(uintptr_t)*field);
+	if (trace_calls > 0)
+		fprintf(stderr, "[kmt] NT handle 0x%llx -> %s %d\n",
+			(unsigned long long)*field, fd >= 0 ? "descriptor" : "unmarked",
+			fd);
+	if (fd >= 0)
+		*field = (uint64_t)fd;
+}
+
+/*
+ * The D3D12 runtime's description of a shared resource (its "runtime private
+ * data") differs between the Linux runtime (WSL's libd3d12core, 264 bytes
+ * here) and the Windows one (280 bytes), and NVIDIA's Windows drivers expect
+ * the Windows layout. Offsets from comparing the two for the same texture:
+ * a nested record is 0x58 bytes on Linux and 0x68 on Windows (the 16 extra
+ * bytes end the blob), Windows repeats width/height/format in the header,
+ * and the Linux runtime records an equivalent custom heap where Windows
+ * names the default heap type. DXGVK_RUNTIME_FIX selects the steps
+ * (bit 0 size, 1 header, 2 heap, 3 flag bit 0x80); default all.
+ */
+#define RT_LINUX_SIZE 264
+#define RT_WINDOWS_SIZE 280
+
+static int rt_fix_mask(void)
+{
+	static int mask = -1;
+
+	if (mask < 0) {
+		const char *e = getenv("DXGVK_RUNTIME_FIX");
+
+		mask = e ? (int)strtol(e, NULL, 0) : 0xf;
+	}
+	return mask;
+}
+
+static int rt_is_linux(const uint8_t *d, uint32_t size)
+{
+	return size >= RT_LINUX_SIZE && *(const uint32_t *)d == 0x68 &&
+	       *(const uint32_t *)(d + 176) == 0x58;
+}
+
+static void rt_to_windows(uint8_t *d)
+{
+	uint32_t *w = (uint32_t *)d;
+	int mask = rt_fix_mask();
+
+	if (mask & 2) {			/* header copy of the description */
+		w[2] = w[15];		/* width (offset 60) */
+		w[3] = w[16];		/* height (64) */
+		w[4] = w[19];		/* format (76) */
+		w[5] = 1;
+	}
+	if (mask & 4) {			/* heap: custom L1 -> default */
+		if (w[32] == 4 && w[33] == 1 && w[34] == 2) {
+			w[32] = 1;
+			w[33] = w[34] = 0;
+		}
+		w[37] = 0x10001;	/* creation/visible node masks */
+		w[41] = 0;
+	}
+	if (mask & 8)
+		w[23] &= ~0x80u;
+	if (mask & 1) {			/* the longer Windows record */
+		memset(d + RT_LINUX_SIZE, 0, RT_WINDOWS_SIZE - RT_LINUX_SIZE);
+		w[44] = 0x68;
+	}
+}
+
 static int32_t kmt_ioctl(struct kmt_stat *stat, unsigned long request,
 			 void *args)
 {
-	long ret = linux_ioctl(dxg_fd, request, args);
-	int32_t status = ret < 0 ? errno_to_ntstatus(-ret) : (int32_t)ret;
+	long ret;
+	int32_t status;
+
+	translate_nt_handle(request, args);
+	ret = linux_ioctl(dxg_fd, request, args);
+	status = ret < 0 ? errno_to_ntstatus(-ret) : (int32_t)ret;
+	/* Windows-layout runtime descriptions of shared resources. */
+	if (ret >= 0 && (rt_fix_mask() & 1) && (request & 0xff) == 0x41) {
+		struct d3dkmt_queryresourceinfofromnthandle *q = args;
+
+		if (q->private_runtime_data_size == RT_LINUX_SIZE)
+			q->private_runtime_data_size = RT_WINDOWS_SIZE;
+	}
+	if (ret >= 0 && rt_fix_mask() && (request & 0xff) == 0x42) {
+		struct d3dkmt_openresourcefromnthandle *o = args;
+		uint8_t *d = (uint8_t *)(uintptr_t)o->private_runtime_data;
+
+		if (d && o->private_runtime_data_size >= RT_WINDOWS_SIZE &&
+		    rt_is_linux(d, (uint32_t)o->private_runtime_data_size))
+			rt_to_windows(d);
+	}
+	if (trace_calls > 0 && ret >= 0 && (request & 0xff) == 0x41) {
+		const struct d3dkmt_queryresourceinfofromnthandle *q = args;
+
+		fprintf(stderr, "[kmt] shared resource: runtime data %u, driver data %u "
+			"(resource %u), %u allocation(s)\n", q->private_runtime_data_size,
+			q->total_priv_drv_data_size, q->resource_priv_drv_data_size,
+			q->allocation_count);
+	}
+	if (trace_calls > 0 && ret >= 0 && (request & 0xff) == 0x42) {
+		const struct d3dkmt_openresourcefromnthandle *o = args;
+		const uint8_t *d = (const uint8_t *)(uintptr_t)o->private_runtime_data;
+		int i, n = o->private_runtime_data_size;
+
+		fprintf(stderr, "[kmt] runtime data (%d):", n);
+		for (i = 0; d && i < n; i++)
+			fprintf(stderr, "%s%02x", i % 32 ? "" : "\n[kmt]     ", d[i]);
+		fprintf(stderr, "\n");
+		d = (const uint8_t *)(uintptr_t)o->total_priv_drv_data;
+		n = (int)o->total_priv_drv_data_size;
+		fprintf(stderr, "[kmt] driver data (%d):", n);
+		for (i = 0; d && i < n; i++)
+			fprintf(stderr, "%s%02x", i % 32 ? "" : "\n[kmt]     ", d[i]);
+		fprintf(stderr, "\n");
+	}
 
 	InterlockedIncrement(&stat->calls);
 	if (status < 0)
@@ -1455,4 +1604,10 @@ void kmt_bridge_report(void)
 			fprintf(stderr, "[kmt]   %-40s %6ld  failed %ld\n",
 				s->name, s->calls, s->failures);
 	}
+}
+
+/* A call into dxgkmt.so that is not a D3DKMT one (dxgkmt_unix.h). */
+int kmt_bridge_call(unsigned int code, void *args)
+{
+	return unix_dispatch && !unix_dispatch(unix_lib, code, args) ? 0 : -5;
 }

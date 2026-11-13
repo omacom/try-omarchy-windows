@@ -395,6 +395,37 @@ virtio-dxg/wine/build.sh <out-dir>
 # In Linux with /dev/dxg (WSL2 or the VM), with Wine 11 and a prefix where:
 #  - drive_c/windows/system32/DriverStore/FileRepository -> /usr/lib/wsl/drivers
 #  - the DRS files are present (see "Going further" above)
-gcc -shared -fPIC -O2 -o dxgkmt.so virtio-dxg/wine/dxgkmt_unix.c
+gcc -shared -fPIC -O2 -o dxgkmt.so virtio-dxg/wine/dxgkmt_unix.c \
+    -lgbm -lxcb -lxcb-dri3 -lxcb-present -lpthread
 wine nvvkprobe.exe [--trace|--stacks]   # dxgkmt.so next to the .exe
 ```
+
+### dxgvk: NVIDIA's Vulkan driver for Wine and Proton
+
+`wine/dxgvk.dll` is a Vulkan driver (ICD) for Windows programs under Wine:
+it loads NVIDIA's own Windows Vulkan driver (`nvoglv64.dll`, from the
+host's driver store) with its kernel calls routed to `/dev/dxg`, and hands
+the application the driver's objects and entry points unchanged. Every
+Vulkan call runs in NVIDIA's driver: Vulkan 1.4, ray tracing, mesh shaders,
+the vendor extensions. Only presentation is dxgvk's: a swapchain image is a
+zero-copy window buffer (Mesa's shared GPU texture behind a virtio-gpu
+dma-buf) imported into the NVIDIA device, presented to the Wine window's
+X11 window with DRI3 and Present, which pass it to the compositor without
+a copy. FIFO waits for the previous frame to be shown; mailbox and
+immediate do not wait.
+
+```sh
+# build.sh also writes dxgvk.dll, dxgvk.json, vkpresent.exe and the
+# Khronos loader (vulkan-1.dll), which programs must load natively:
+WINEDLLOVERRIDES=vulkan-1=n
+# The Windows loader finds the driver in the prefix's registry:
+wine reg add 'HKLM\SOFTWARE\Khronos\Vulkan\Drivers' /v 'Z:\path\dxgvk.json' /t REG_DWORD /d 0 /f
+DXGVK_DEBUG=1 wine vkpresent.exe 10 [fifo|mailbox|immediate]
+```
+
+Two things made NVIDIA's Windows driver accept a texture made in the VM:
+the guest kernel now keeps the private data the kernel-mode driver
+completed at creation (the allocation's layout) for later openers, and NT
+handles of shared objects are descriptors the bridge marks for Windows code
+(`kmt_bridge_fd_handle`). `d3d12vkimport.c` checks the same import on
+Windows itself.

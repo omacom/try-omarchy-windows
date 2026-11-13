@@ -1994,6 +1994,18 @@ create_local_allocations(struct dxgprocess *process,
 		}
 		dxgalloc[i]->cached = host_alloc->allocation_flags.cached;
 		if (host_alloc->priv_drv_data_size) {
+			/*
+			 * The KMD completes the private data at creation (the
+			 * allocation's layout). A shared resource hands out the
+			 * copy kept here to every opener, so it is the completed
+			 * one: NVIDIA's Windows drivers read the layout from it.
+			 */
+			if (dxgalloc[i]->priv_drv_data &&
+			    dxgalloc[i]->priv_drv_data->data_size ==
+			    host_alloc->priv_drv_data_size)
+				memcpy(dxgalloc[i]->priv_drv_data->data,
+				       alloc_private_data,
+				       host_alloc->priv_drv_data_size);
 			ret = copy_to_user(user_alloc->priv_drv_data,
 					   alloc_private_data,
 					   host_alloc->priv_drv_data_size);

@@ -31,6 +31,14 @@ int kmt_bridge_open(const wchar_t *unix_lib_path, int trace);
 void *kmt_bridge_lookup(const char *d3dkmt_name);
 void kmt_bridge_report(void);
 /*
+ * A Linux descriptor of a shared GPU object as an NT handle Windows code can
+ * hold, and back (-1 when the handle is not one of these).
+ */
+void *kmt_bridge_fd_handle(int fd);
+int kmt_bridge_handle_fd(const void *handle);
+/* A dxgkmt_unix.h call into dxgkmt.so: 0, or -EIO when it did not run. */
+int kmt_bridge_call(unsigned int code, void *args);
+/*
  * Display devices backed by the dxg adapters (kmt_display.c): wrappers for
  * user32's EnumDisplayDevicesA/W by name, and the D3DKMT calls that map a
  * DC or GDI display name to an adapter.
