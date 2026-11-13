@@ -265,6 +265,22 @@ static int32_t kmt_ioctl(struct kmt_stat *stat, unsigned long request,
 		    rt_is_linux(d, (uint32_t)o->private_runtime_data_size))
 			rt_to_windows(d);
 	}
+	if (trace_calls > 0 && (request & 0xff) == 0x10) {
+		const struct d3dkmt_createsynchronizationobject2 *c = args;
+
+		fprintf(stderr, "[kmt] sync object 0x%x (type %u) on device 0x%x\n",
+			c->sync_object.v, c->info.type, c->device.v);
+	}
+	if (trace_calls > 0 && ret < 0 && (request & 0xff) == 0x3a) {
+		const struct d3dkmt_waitforsynchronizationobjectfromcpu *w = args;
+		const uint32_t *o = (const uint32_t *)(uintptr_t)w->objects;
+		uint32_t i;
+
+		fprintf(stderr, "[kmt] CPU wait (%u objects, flags 0x%x) on device 0x%x for", w->object_count, *(const uint32_t *)&w->flags, w->device.v);
+		for (i = 0; i < w->object_count && i < 8; i++)
+			fprintf(stderr, " 0x%x", o[i]);
+		fprintf(stderr, "\n");
+	}
 	if (trace_calls > 0 && ret >= 0 && (request & 0xff) == 0x41) {
 		const struct d3dkmt_queryresourceinfofromnthandle *q = args;
 
@@ -370,7 +386,20 @@ static int32_t WINAPI kmt_wait_cpu(void *args)
 static int32_t WINAPI kmt_query_adapter_info(void *args)
 {
 	struct d3dkmt_queryadapterinfo *q = args;
-	int32_t status = kmt_QueryAdapterInfo(args);
+	int32_t status;
+
+	/*
+	 * The Windows Vulkan loader finds a display adapter's driver in its
+	 * registry (VulkanDriverName, through KMTQAITYPE_QUERYREGISTRY); with
+	 * D3DKMT routed here it would load NVIDIA's driver a second time,
+	 * without dxgvk's presentation. dxgvk is the adapter's Vulkan driver:
+	 * these values do not exist.
+	 */
+	if (q->type == 48 && q->private_data_size >= 548 && q->private_data &&
+	    !wcsncmp((const wchar_t *)((const uint8_t *)(uintptr_t)q->private_data + 8),
+		     L"Vulkan", 6))
+		return (int32_t)0xC0000034;	/* OBJECT_NAME_NOT_FOUND */
+	status = kmt_QueryAdapterInfo(args);
 
 	if (trace_calls > 0) {
 		const uint8_t *p = (const uint8_t *)(uintptr_t)q->private_data;

@@ -52,6 +52,8 @@ clicks, drags and keys were.
 | vkmark 720p windowed (Vulkan on Dozen, test VM) | 627 (frames copied through `wl_shm`) | 4840–6781 | Zero-copy Vulkan windows: swapchain images are window buffers |
 | Direct3D 11 under Wine (wined3d on OpenGL, 200 draws per frame, `bench/d3d11tri.c`) | Xwayland exited | 231 fps on a 240 Hz display | GLX on the D3D12 driver |
 | Vulkan under Wine on NVIDIA's own Windows driver (dxgvk, `wine/vkpresent.c`, clear + present, test VM) | no driver (Wine's Vulkan was Dozen, 1.2) | Vulkan 1.4.357; 2686–3253 fps immediate, 234 fps FIFO on a 240 Hz display | dxgvk.dll: NVIDIA ICD + zero-copy swapchain |
+| Direct3D 11 through DXVK 3.1.1 on dxgvk (Proton's route, `bench/d3d11tri.c`) | no Vulkan driver for it | 1452-1876 fps; DXVK reports NVIDIA GeForce RTX 5090, driver 621.14 | dxgvk |
+| Direct3D 12 through vkd3d-proton 3.1 on dxgvk (`bench/d3d12clear.c`) | none | about 2000 fps; ray tracing tier 1.2, shader model 6.6 | dxgvk, host CPU waits and GPU VA windows |
 | glmark2 720p windowed | 313 | 1579–1757 (453–519 on `wl_shm`) | Zero-copy window buffers |
 | vkmark 720p (Vulkan 1.2, Dozen) | 491 | 1026–1211 | |
 | vkcube, Wayland | timed out | 300 frames in 0.8 s without vsync | |
@@ -121,6 +123,9 @@ Other media:
 | GLX asked for a DRI3 hardware screen under the session's driver name (`kms_swrast`) | X11 OpenGL (Wine, Proton, older toolkits) fell back to indirect rendering: glxgears 125 fps | A DRI3 connection creates the kms_swrast screen: X11 clients render on the GPU into window buffers |
 | An imported window buffer exported the texture's D3D12 handle instead of its dma-buf | Xwayland presents a client's buffer by passing it on; the compositor refused it and Xwayland exited (every X11 application gone) | The import keeps its dma-buf and exports that |
 | Shared allocations kept the private data from before the host created them | NVIDIA's Windows Vulkan driver found no layout in a texture made in the VM and refused it (VK_ERROR_OUT_OF_DEVICE_MEMORY) | The guest keeps the data the kernel-mode driver completed |
+| The host accepted CPU waits on at most 32 objects (the GPU-wait limit) | NVIDIA's driver under vkd3d-proton waits on up to 53; D3D12 device creation failed | CPU waits up to 4096 objects |
+| All guest processes share the host process's GPU address space | A fixed-base reservation NVIDIA's driver prefers (12-28 GiB at 8-32 GiB) was taken by another guest process | A taken fixed base is granted at the same offset in a 1 TiB window of the guest process's own |
+| The Windows Vulkan loader read the adapter's VulkanDriverName through the routed D3DKMT | NVIDIA's driver loaded a second time without dxgvk's presentation; D3D12 picked it | The bridge reports no Vulkan registry values; dxgvk is the adapter's driver |
 | The debug overlay and idle blanking in measurements | Throttled clients (display off, locked session); Hyprland's overlay can deadlock in hyprgraphics | Benchmarks keep the display on and do not use the overlay |
 
 ## Where the rest of native performance goes

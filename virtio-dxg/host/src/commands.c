@@ -1765,6 +1765,11 @@ static void cmd_evict(struct dxghost_msg *m)
 	r->num_bytes_to_trim = a.num_bytes_to_trim;
 }
 
+/* Per guest process GPU VA windows for displaced fixed bases: 1 TiB each
+ * from 4 TiB (64 windows, below 68 TiB). */
+#define DXGHOST_VA_WINDOW 0x10000000000ull
+#define DXGHOST_VA_WINDOWS_START 0x40000000000ull
+
 static void cmd_reserve_gpu_va(struct dxghost_msg *m)
 {
 	COMMAND(dxgkvmb_command_reservegpuvirtualaddress);
@@ -1790,6 +1795,29 @@ static void cmd_reserve_gpu_va(struct dxghost_msg *m)
 		struct d3dddi_reservegpuvirtualaddress want = a;
 
 		status = h->kmt.ReserveGpuVirtualAddress(&a);
+		/*
+		 * Every guest process shares this process's GPU address space,
+		 * where on Windows each has its own: a fixed base a driver
+		 * prefers (NVIDIA's Vulkan driver asks for 12-28 GiB at 8-32 GiB
+		 * under vkd3d-proton) is often taken by another guest process.
+		 * The same offset inside a 1 TiB window of the guest process's
+		 * own is granted instead; the driver uses the address returned.
+		 */
+		if (status < 0 && want.base_address &&
+		    want.base_address + want.size <= DXGHOST_VA_WINDOW) {
+			a = want;
+			a.base_address = DXGHOST_VA_WINDOWS_START +
+				(uint64_t)(m->process & 0x3f) * DXGHOST_VA_WINDOW +
+				want.base_address;
+			status = h->kmt.ReserveGpuVirtualAddress(&a);
+			if (status >= 0 && h->stats)
+				dxghost_logf(h, "GPU VA 0x%llx (size 0x%llx) placed at "
+					     "0x%llx for process 0x%x",
+					     (unsigned long long)want.base_address,
+					     (unsigned long long)want.size,
+					     (unsigned long long)a.virtual_address,
+					     m->process);
+		}
 		if (status < 0)
 			dxghost_logf(h, "ReserveGpuVirtualAddress(base 0x%llx, "
 				     "range 0x%llx-0x%llx, size 0x%llx, process "
@@ -2468,6 +2496,9 @@ static VOID CALLBACK wait_done(PTP_CALLBACK_INSTANCE instance, PVOID context,
 	InterlockedExchange(&w->fired, 1);
 }
 
+/* An upper bound for one CPU wait (the guest sends them in one message). */
+#define DXGHOST_MAX_CPU_WAIT_OBJECTS 4096
+
 static void cmd_wait_cpu(struct dxghost_msg *m)
 {
 	COMMAND(dxgkvmb_command_waitforsyncobjectfromcpu);
@@ -2482,7 +2513,13 @@ static void cmd_wait_cpu(struct dxghost_msg *m)
 
 	if (!objects || !fences)
 		return;
-	if (!c->object_count || c->object_count > D3DDDI_MAX_OBJECT_WAITED_ON ||
+	/*
+	 * D3DDDI_MAX_OBJECT_WAITED_ON (32) bounds GPU waits only: drivers wait
+	 * on more from the CPU (NVIDIA's Vulkan driver under vkd3d-proton
+	 * waits on 50 at once), and D3DKMT accepts them. tail() has checked
+	 * that the arrays are in the message.
+	 */
+	if (!c->object_count || c->object_count > DXGHOST_MAX_CPU_WAIT_OBJECTS ||
 	    !owns(h, c->device.v, OBJ_DEVICE, m->process) ||
 	    !owns_all(h, objects, c->object_count, OBJ_SYNC, m->process)) {
 		reply_ntstatus(m, DXG_STATUS_INVALID_HANDLE);

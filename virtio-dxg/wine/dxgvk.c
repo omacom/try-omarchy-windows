@@ -110,6 +110,9 @@ static const char *const hidden_extensions[] = {
 	"VK_EXT_present_timing", "VK_NV_present_barrier",
 	"VK_EXT_present_mode_fifo_latest_ready",
 	"VK_KHR_present_mode_fifo_latest_ready",
+	/* The optical flow engine fails device creation over virtio-dxg so far
+	 * (vkd3d-proton enables it when offered). */
+	"VK_NV_optical_flow",
 };
 
 static int hidden(const char *name)
@@ -292,6 +295,127 @@ static VkResult VKAPI_CALL dxgvk_CreateDevice(VkPhysicalDevice gpu,
 	struct device *d;
 	VkResult r;
 
+	if (debug) {
+		uint32_t q;
+
+		LOG("vkCreateDevice: %u extensions, %u queue families:",
+		    ci->enabledExtensionCount, ci->queueCreateInfoCount);
+		for (q = 0; q < ci->queueCreateInfoCount; q++)
+			if (debug)
+				fprintf(stderr, " %u x%u", ci->pQueueCreateInfos[q].queueFamilyIndex,
+					ci->pQueueCreateInfos[q].queueCount);
+		if (debug)
+			fprintf(stderr, "\n");
+	}
+	/* DXGVK_PLAIN_DEVICE=1: the application's device unchanged (no
+	 * swapchain support), to tell a driver failure from ours. */
+	if (getenv("DXGVK_PLAIN_DEVICE") && atoi(getenv("DXGVK_PLAIN_DEVICE"))) {
+		VkResult pr = nv_CreateDevice(gpu, ci, a, out);
+
+		LOG("plain vkCreateDevice: %d\n", pr);
+		return pr;
+	}
+	/* DXGVK_PROBE_DEVICE=1: which queue family or extension the driver
+	 * refuses, by retrying without each (diagnostics only). */
+	if (getenv("DXGVK_PROBE_DEVICE") && atoi(getenv("DXGVK_PROBE_DEVICE"))) {
+		VkDeviceCreateInfo t = *ci;
+		VkDeviceQueueCreateInfo qs[16];
+		const char *es[512];
+		VkDevice probe;
+		uint32_t i, j, n;
+
+		int mode = atoi(getenv("DXGVK_PROBE_DEVICE"));
+
+		if (mode == 1) {
+			VkDeviceQueueCreateInfo one = ci->pQueueCreateInfos[0];
+			VkResult pr;
+
+			one.queueCount = 1;
+			t = *ci;
+			t.queueCreateInfoCount = 1;
+			t.pQueueCreateInfos = &one;
+			pr = nv_CreateDevice(gpu, &t, a, &probe);
+			fprintf(stderr, "dxgvk: probe: one queue: %d\n", pr);
+			if (pr == VK_SUCCESS)
+				((PFN_vkDestroyDevice)nv_gdpa(probe, "vkDestroyDevice"))(probe, a);
+			t = *ci;
+			t.pNext = NULL;
+			t.pEnabledFeatures = NULL;
+			pr = nv_CreateDevice(gpu, &t, a, &probe);
+			fprintf(stderr, "dxgvk: probe: no feature structures: %d\n", pr);
+			if (pr == VK_SUCCESS)
+				((PFN_vkDestroyDevice)nv_gdpa(probe, "vkDestroyDevice"))(probe, a);
+			t.enabledExtensionCount = 0;
+			pr = nv_CreateDevice(gpu, &t, a, &probe);
+			fprintf(stderr, "dxgvk: probe: no features, no extensions: %d\n", pr);
+			if (pr == VK_SUCCESS)
+				((PFN_vkDestroyDevice)nv_gdpa(probe, "vkDestroyDevice"))(probe, a);
+		}
+		/* Each feature structure left out in turn (the chain is relinked
+		 * in place and restored), then each enabled flag of one that
+		 * makes the difference. */
+		{
+			VkBaseOutStructure *prev = (VkBaseOutStructure *)ci, *s;
+
+			for (s = (VkBaseOutStructure *)ci->pNext; s; prev = s, s = s->pNext) {
+				VkResult pr;
+
+				prev->pNext = s->pNext;
+				pr = nv_CreateDevice(gpu, ci, a, &probe);
+				prev->pNext = s;
+				fprintf(stderr, "dxgvk: probe: without sType %d: %d\n", s->sType, pr);
+				if (pr != VK_SUCCESS)
+					continue;
+				((PFN_vkDestroyDevice)nv_gdpa(probe, "vkDestroyDevice"))(probe, a);
+				fprintf(stderr, "dxgvk: probe: works without feature structure sType %d\n",
+					s->sType);
+				{
+					VkBool32 *flag = (VkBool32 *)((char *)s + sizeof(VkBaseOutStructure));
+					uint32_t k;
+
+					/* Feature structures are VkBool32 arrays after the
+					 * header; 512 bounds VkPhysicalDeviceFeatures2. */
+					for (k = 0; k < 128; k++) {
+						if (flag[k] != VK_TRUE)
+							continue;
+						flag[k] = VK_FALSE;
+						pr = nv_CreateDevice(gpu, ci, a, &probe);
+						flag[k] = VK_TRUE;
+						if (pr == VK_SUCCESS) {
+							((PFN_vkDestroyDevice)nv_gdpa(probe, "vkDestroyDevice"))(probe, a);
+							fprintf(stderr, "dxgvk: probe:   ... and without its flag %u\n", k);
+						}
+					}
+				}
+			}
+		}
+		for (i = 0; mode == 1 && i < ci->queueCreateInfoCount && ci->queueCreateInfoCount <= 16; i++) {
+			for (j = 0, n = 0; j < ci->queueCreateInfoCount; j++)
+				if (j != i)
+					qs[n++] = ci->pQueueCreateInfos[j];
+			t = *ci;
+			t.queueCreateInfoCount = n;
+			t.pQueueCreateInfos = qs;
+			if (nv_CreateDevice(gpu, &t, a, &probe) == VK_SUCCESS) {
+				fprintf(stderr, "dxgvk: probe: works without queue family %u\n",
+					ci->pQueueCreateInfos[i].queueFamilyIndex);
+				((PFN_vkDestroyDevice)nv_gdpa(probe, "vkDestroyDevice"))(probe, a);
+			}
+		}
+		for (i = 0; mode == 1 && i < ci->enabledExtensionCount && ci->enabledExtensionCount <= 512; i++) {
+			for (j = 0, n = 0; j < ci->enabledExtensionCount; j++)
+				if (j != i)
+					es[n++] = ci->ppEnabledExtensionNames[j];
+			t = *ci;
+			t.enabledExtensionCount = n;
+			t.ppEnabledExtensionNames = es;
+			if (nv_CreateDevice(gpu, &t, a, &probe) == VK_SUCCESS) {
+				fprintf(stderr, "dxgvk: probe: works without %s\n",
+					ci->ppEnabledExtensionNames[i]);
+				((PFN_vkDestroyDevice)nv_gdpa(probe, "vkDestroyDevice"))(probe, a);
+			}
+		}
+	}
 	if (ci->queueCreateInfoCount > 63 || ci->enabledExtensionCount > 510)
 		return nv_CreateDevice(gpu, ci, a, out);
 	/* The swapchain imports window buffers into the device. */
