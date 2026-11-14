@@ -28,7 +28,10 @@ const (
 	curtainSessionWait = 60 * time.Second
 	// From the start of the boot, whatever else happened.
 	curtainBootWait = 180 * time.Second
-	// When the setup window starts saying that this is taking a while.
+	// A boot whose desktop session has not started this long after the boot
+	// started is slower than usual, and the setup window says so. The session
+	// started about 25 to 37 seconds in on a Ryzen Embedded PC and in a
+	// nested VM with CPU rendering.
 	curtainSlowNotice = 60 * time.Second
 )
 
@@ -111,6 +114,23 @@ func (t bootCurtainTimes) liftReason(now time.Time) string {
 		return "the boot is taking too long"
 	}
 	return ""
+}
+
+// slowStart reports whether the setup window should say that Omarchy is
+// taking longer than usual. Once the session has started, the curtain lifts
+// on the drawn report or curtainDrawWait later, both normal for the guest
+// that is running, so only a session that started late keeps the notice up:
+// it has been showing since curtainSlowNotice, and turning it off then would
+// make the start look normal again. A session that never starts lifts the
+// curtain on curtainSessionWait or curtainBootWait, and those starts are slow.
+func (t bootCurtainTimes) slowStart(now time.Time) bool {
+	if t.boot.IsZero() {
+		return false
+	}
+	if t.session.IsZero() {
+		return now.Sub(t.boot) >= curtainSlowNotice
+	}
+	return t.session.Sub(t.boot) >= curtainSlowNotice
 }
 
 // blankDesktopDue reports whether a window that never showed the desktop has

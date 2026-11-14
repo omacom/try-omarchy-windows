@@ -56,6 +56,65 @@ func TestBootCurtainWaitsForAMissingSessionAndASlowBoot(t *testing.T) {
 	}
 }
 
+func TestBootCurtainSlowNoticeWaitsOutANormalStart(t *testing.T) {
+	boot := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
+	// An older guest on the AMD PC: the session at 26 s, no drawn report, so
+	// the curtain lifts on the draw wait 66 s after the boot. Every look until
+	// then is part of a normal start.
+	old := bootCurtainTimes{boot: boot, ready: boot.Add(17 * time.Second), session: boot.Add(26 * time.Second)}
+	for at := time.Duration(0); at <= 26*time.Second+curtainDrawWait; at += 250 * time.Millisecond {
+		now := boot.Add(at)
+		if at < 26*time.Second {
+			old.session = time.Time{}
+		} else {
+			old.session = boot.Add(26 * time.Second)
+		}
+		if old.liftReason(now) != "" {
+			break
+		}
+		if old.slowStart(now) {
+			t.Fatalf("said the start is slow %v after the boot, before a normal lift", at)
+		}
+	}
+	if old.liftReason(boot.Add(26*time.Second+curtainDrawWait)) == "" {
+		t.Fatal("the old guest's start never lifted the curtain")
+	}
+	// The latest session a normal start has still lifts on the draw wait
+	// without the notice.
+	late := bootCurtainTimes{boot: boot, session: boot.Add(curtainSlowNotice - time.Second)}
+	if late.slowStart(late.session.Add(curtainDrawWait - time.Second)) {
+		t.Fatal("said a session that started in time is slow")
+	}
+}
+
+func TestBootCurtainSlowNoticeForSlowStarts(t *testing.T) {
+	boot := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
+	if (bootCurtainTimes{}).slowStart(boot.Add(time.Hour)) {
+		t.Fatal("said a boot that has not started is slow")
+	}
+	// No session: firmware, a disk check, a login screen or a broken config.
+	stuck := bootCurtainTimes{boot: boot}
+	if stuck.slowStart(boot.Add(curtainSlowNotice - time.Second)) {
+		t.Fatal("said the start is slow before the notice wait")
+	}
+	if !stuck.slowStart(boot.Add(curtainSlowNotice)) {
+		t.Fatal("kept quiet about a boot with no session after the notice wait")
+	}
+	ready := bootCurtainTimes{boot: boot, ready: boot.Add(30 * time.Second)}
+	at := boot.Add(curtainSlowNotice)
+	if ready.liftReason(at) != "" || !ready.slowStart(at) {
+		t.Fatal("kept quiet about a session that has not started while the curtain waits for it")
+	}
+	// A session that started late keeps the notice the setup window already
+	// shows until the lift, instead of taking it back.
+	late := bootCurtainTimes{boot: boot, ready: boot.Add(50 * time.Second), session: boot.Add(75 * time.Second)}
+	for _, now := range []time.Time{boot.Add(75 * time.Second), boot.Add(75*time.Second + curtainDrawWait - time.Second)} {
+		if late.liftReason(now) != "" || !late.slowStart(now) {
+			t.Fatalf("dropped the notice for a late session at %v", now.Sub(boot))
+		}
+	}
+}
+
 func TestShownWindowRects(t *testing.T) {
 	// A 1280x800 monitor with a 48 pixel taskbar, and Windows 11's frame at
 	// 100%: 8 pixel borders and a 23 pixel title bar.
