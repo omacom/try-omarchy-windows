@@ -31,8 +31,7 @@ scheduling, residency and GPU virtual memory. The only route to RM from user
 mode is vendor-private `D3DKMTEscape` traffic, which is undocumented, changes
 with each driver and is not a translation of the Linux ABI. Building an RM
 translator on it would require an undocumented, vendor-specific translation
-and a separate compatibility effort. GPT's earlier investigation reached the same conclusion
-([WINDOWS-NVIDIA-BACKEND.md](WINDOWS-NVIDIA-BACKEND.md)).
+and a separate compatibility effort.
 
 ### The equivalent boundary Windows does have
 
@@ -155,17 +154,11 @@ polling, handle translation scoped to the owning guest process, and a backend
 that does not depend on any particular VMM (`dxghost` takes map, unmap and
 event callbacks, like virtio-nvgpu's `device/` traits).
 
-### What is kept from the previous fork work
+### The real kernel driver in the guest
 
-GPT's lab established on this exact hardware that user-mode D3DKMT accepts the
-NVIDIA WSL driver's private data for devices, contexts, allocations, hardware
-queues and fences, that Lock2 views and fence pages can be mapped into a WHPX
-guest, and which adapter adaptations the driver needs. `dxghost` relies on
-those results. The difference is the guest side: instead of an `LD_PRELOAD`
-interposer, a userspace broker and a TCP socket, the guest runs the real
-kernel driver, so every process (sandboxed Chromium, Flatpak, static
-binaries) gets `/dev/dxg` without patching, and the transport is a virtqueue
-inside QEMU. Nothing under `experimental/` was removed.
+The guest runs Microsoft's dxgkrnl itself, not a user-space interposer: every
+process (sandboxed Chromium, Flatpak, static binaries) gets `/dev/dxg`
+without patching, and the transport is a virtqueue inside QEMU.
 
 ## Feature matrix
 
@@ -261,12 +254,10 @@ desktop maps and unmaps views fast enough to hit it within seconds. Views are
 now QOM objects that own their region, so the last flatview frees them, the
 same pattern virtio-gpu uses for blob mappings.
 
-The original software fallback was subsequently addressed with Xwayland and
-ANGLE OpenGL while retaining Chromium's sandbox. The integration candidate
-also routes the installed menu entry through that wrapper. Full browser/video
-hardware acceleration is still unverified, and applications still hand frames
-to the compositor through shared memory. The obsolete `chromium_gpu=1`
-sandbox workaround is not part of the current boot hook.
+Chromium now runs on the GPU as a native Wayland client with its default
+flags (ANGLE on D3D12) and keeps its sandbox; applications hand the
+compositor GPU textures (zero-copy windows, below). Hardware video decode in
+Chromium is still unverified.
 
 ### Zero-copy scanout
 
@@ -348,26 +339,23 @@ covered by a test:
 | The device had no MSI-X vectors, so completions went through a shared INTx line | An ISR-read exit and an IOAPIC EOI per completion; under WHPX completions were lost and processes hung unkillably | Three MSI-X vectors (configuration, completions, events). Guest waits are killable and reap completions themselves after 100 ms, logging any that came without an interrupt |
 | QMP virtio introspection asserted on the device ID | One `x-query-virtio-status` killed the VM | The device is listed as featureless |
 
-## Next milestones
+## Next steps
 
-1. **Build the device** with the winq-emu runtime recipe:
-   `python virtio-dxg/qemu/prepare.py <qemu-source>` after
-   `experimental/qemu/prepare_qemu.py`, then the existing MSYS2 build.
-2. **First hardware bring-up** (needs the owner's go-ahead because of the
-   [November 3 display incident](HOST-DISPLAY-INCIDENT-2026-11-03.md)):
-   load `dxgkrnl_virtio.ko`, then `nvidia-smi`, CUDA `deviceQuery`, a D3D12
-   triangle, `vainfo`, `vulkaninfo` (Dozen).
-3. **Guest staging**: ship the module with the launcher's kernel; expose the
-   host driver store at `/usr/lib/wsl/drivers/<folder>` and the loader
-   libraries at `/usr/lib/wsl/lib`, read-only, from the user's own install
-   (never redistributed).
-4. **Zero-copy presentation**: the compositor's frame as a shared D3D12
-   resource, opened by QEMU's SDL frontend and drawn without copies. The
-   upstream keyboard, cursor and window logic stay as they are.
-5. **Per-process host workers**: one host process per guest GPU process with
+1. **Frame pacing in dxgvk:** present from a thread with frames in flight
+   instead of waiting for each frame on the CPU; measure games and Blender
+   against the same workloads on Windows.
+2. **Proton as a launcher option:** install dxgvk into Proton prefixes from
+   the launcher instead of `wine/proton-dxgvk.sh`.
+3. **Dozen:** tessellation, viewport index from geometry shaders, Vulkan 1.4.
+4. **Per-process host workers:** one host process per guest GPU process with
    `WHvMapGpaRange2`, for separate GPU address spaces (CUDA unified
    addressing in several guest processes at once) and crash containment.
-6. **Cross-process sharing and existing-sysmem allocations.**
+5. **Existing-sysmem allocations** (`VK_EXT_external_memory_host`) and
+   VA-API encode.
+
+The QEMU device is built with the winq-emu runtime recipe:
+`python virtio-dxg/qemu/prepare.py <qemu-source>` (after
+`experimental/qemu/prepare_qemu.py`), then the existing MSYS2 build.
 
 ## Security
 

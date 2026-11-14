@@ -1,12 +1,5 @@
 # README media
 
-`gpu-backend-progress.svg` is the current progress summary. The README uses a
-versioned copy, `gpu-backend-progress-qemu-sdl-2026-10-21.svg`, so GitHub's
-image cache can distinguish updates. Older versioned graphics retain their
-original checkpoint scope. The graphic describes diagnostic evidence separately
-from the broader backend and desktop product gates; its counts are not effort
-percentages.
-
 `try-omarchy-windows.gif` combines the pixel wordmark animation from
 [tryomarchy.com](https://tryomarchy.com/) with the Windows product still in
 `tryomarchy-site/images/try/windows.webp` at

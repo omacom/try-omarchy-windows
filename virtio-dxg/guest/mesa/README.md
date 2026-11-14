@@ -1,33 +1,29 @@
-# virtio-dxg Mesa 26.2.6 candidate
+# Mesa for the virtio-dxg guest
 
-The November 11 recipe keeps one completed sync file per D3D12 screen and
-duplicates it for native-fence exports after producer completion. Rebuild the
-Mesa archive and initramfs together because the recipe digest has changed.
-The previous CI archive at `3718b3a` predates the native Wayland changes.
+The guest's OpenGL, GBM, VA-API and Vulkan run on NVIDIA's D3D12 driver
+through Mesa 26.2.6: the d3d12 Gallium driver (OpenGL 4.6, GLES 3.1, video)
+and Dozen (Vulkan 1.3). Changes from upstream Mesa:
 
-This branch combines Claude's KMS mirrors and compositor zero-copy scanout with
-our resource-ownership, upload, constant-buffer, fence and Dozen FD guards.
-It uses the real guest dxg kernel ABI, not the older private userspace broker.
-The first cohort at d717dfa compiled completely and its CPU controls passed,
-but runtime-archive acceptance failed because its receipt also listed SDK
-headers not shipped in the tar. The corrected receipt and the submitted-fence
-guard have since **run on hardware** (RTX 5090 Laptop GPU, 2026-11-10): the
-Omarchy desktop, zero-copy scanout, the CUDA, video and D3D12 checks and a
-60 s compositor stress pass on this cohort. That run found one fault, fixed
-since: the staged directory kept mkdtemp's 0700 mode, so the session could
-not load it. See
-[status and performance limits](../../../docs/VIRTIO-DXG-INTEGRATION.md).
+- **Scanout mirrors:** the compositor renders into KMS buffers whose D3D12
+  textures the host window draws directly (zero-copy scanout); flushes that
+  wrote one finish the GPU work, tracked per context.
+- **Window buffers** (below): applications hand the compositor GPU textures.
+- **Native fences:** `EGL_ANDROID_native_fence_sync`; a fence asked for its
+  descriptor finishes the work and returns a signalled sync file (Chromium
+  submits frames this way).
+- **Resource safety:** scanout owners retained through borrowed wrappers,
+  zero-ref weak lookups refused, failed uploads and constant-buffer updates
+  reported instead of used, a failed GPU completion never publishes a CPU
+  readback.
+- **GLX on DRI3** for X11 applications (Wine, Proton, older toolkits), and
+  imported window buffers that export their dma-buf again (Xwayland).
+- **Dozen:** Vulkan 1.3 and what Blender needs beyond it (below), zero-copy
+  Vulkan windows.
 
 The versioned recipe in `versions/26.2.6/` pins the official source archive,
-DirectX-Headers commit, complete combined diff and before/after source hashes.
-Source `VERSION` remains 26.2.6. The 26.2.4 deadlock backports in historical
-`0003`/`0004` are already upstream and are not applied twice. The older numbered
-patches are retained as source history; the build uses only the pinned recipe.
-
-The new recipe also tracks mirror writes per context, retains the scanout owner
-through borrowed wrappers and rejects zero-ref weak lookups. Up to 16 pending
-mirrors avoid a per-flush heap list. A failed GPU completion cannot publish a
-CPU readback.
+the DirectX-Headers commit, the complete diff and the before/after hash of
+every changed file. The older numbered patches are source history; the build
+uses only the recipe.
 
 ## Window buffers
 
@@ -108,14 +104,13 @@ What Blender 5.2's Vulkan backend needs beyond 1.3, each a D3D12 feature:
 Dozen still lacks tessellation and a viewport index written by geometry
 shaders; Vulkan 1.4 is the next step.
 
-## Building the inactive cohort
+## Building
 
 Build from a full repository checkout on Linux with the guest's build dependencies
 available (X11/XCB, Wayland/protocols, VA-API, GLVND, DRM, compilers and Python venv).
 The build does not install into the system or load a graphics library. It uses a
 fresh private directory, hash-pinned Python tools, pinned DirectX-Headers and two
-compiler workers by default (`JOBS=1..8`). The caller must approve a test/build
-batch before running it in this project.
+compiler workers by default (`JOBS=1..8`).
 
 ```sh
 bash virtio-dxg/guest/mesa/build-in-guest.sh mesa-26.2.6.tar.xz mesa-virtio-dxg.tar
@@ -129,18 +124,13 @@ for diagnosis; a failed build never replaces the requested output archive.
 Rebuild the **initramfs and Mesa archive as a matched pair** with this branch's
 `guest/test/mkdevinitramfs.py`. Its boot hook rejects an archive whose recipe,
 contents or aliases differ, before selecting session graphics libraries. Files
-are staged under `/run`, without replacing guest packages. Old receipt-free
-26.2.4 archives are deliberately not accepted by this new hook.
+are staged under `/run`, without replacing guest packages.
 
 The guest reads host NVIDIA/WSL libraries from read-only shares at each boot;
-there is no separate Linux NVIDIA package to upgrade for this dxg path. A Windows
-driver update changes that hardware baseline and requires a new approved runtime
-check. Mesa version compatibility cannot be proven by renaming its library.
+there is no separate Linux NVIDIA package to upgrade for this dxg path.
 
-## Verification boundary
+## Testing
 
-The prepared remote workflow builds the complete cohort and runs inert boot-data,
-actual-source mirror/fence and mock-host controls. No ICD or graphics ELF is
-loaded. The first batch passed those controls/build but rejected its archive; the current follow-up needs a new approved batch. Hardware correctness,
-accurate animations, CPU/app-launch gains, full Chromium acceleration, 4K and
-sustained cleanup/recovery require separately approved tests.
+`guest/test` checks the payload staging (`python3 -m unittest`).
+`bench/vulkan13` checks Dozen with rendered pixels; the results on hardware
+are in [VIRTIO-DXG-RESULTS.md](../../../docs/VIRTIO-DXG-RESULTS.md).
