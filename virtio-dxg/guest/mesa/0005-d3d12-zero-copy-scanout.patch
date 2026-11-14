@@ -1,0 +1,347 @@
+diff -ruN a/src/gallium/drivers/d3d12/d3d12_resource.cpp b/src/gallium/drivers/d3d12/d3d12_resource.cpp
+--- a/src/gallium/drivers/d3d12/d3d12_resource.cpp	2026-11-09 15:23:45.378111500 +0200
++++ b/src/gallium/drivers/d3d12/d3d12_resource.cpp	2026-11-09 15:38:14.344009800 +0200
+@@ -40,10 +40,18 @@
+ #include "util/os_file.h"
+ 
+ #ifndef _WIN32
++#include <fcntl.h>
+ #include <linux/dma-buf.h>
+ #include <sys/ioctl.h>
+ #include <sys/mman.h>
+ #include <unistd.h>
++#include "drm-uapi/virtgpu_drm.h"
++#include "util/hash_table.h"
++#include "util/simple_mtx.h"
++#include "util/u_debug.h"
++
++static void
++d3d12_scanout_unlink(struct d3d12_resource *res);
+ #endif
+ 
+ #include <dxguids/dxguids.h>
+@@ -89,6 +97,8 @@
+    if (resource->dt_refcount > 0)
+       resource->dt_refcount--;
+ #ifndef _WIN32
++   if (resource->mirror_zero_copy && !resource->mirror_link_borrowed)
++      d3d12_scanout_unlink(resource);
+    if (resource->mirror_has_fd) {
+       munmap(resource->dt_map, resource->mirror_map_size);
+       close(resource->mirror_fd);
+@@ -588,6 +598,205 @@
+           !util_format_is_depth_or_stencil(templ->format);
+ }
+ 
++
++#ifndef _WIN32
++/* virtio-dxg zero-copy scanout -----------------------------------------
++ *
++ * In a virtio-dxg VM the host display can show a scanout buffer's GPU
++ * texture itself: LX_DXVIRTIOSCANOUT on /dev/dxg links the virtio-gpu
++ * buffer to the texture's shared handle. Nothing is then copied into the
++ * dumb buffer, nor into the host, nor uploaded to the display. Scanout
++ * mirrors are therefore created shared, and an import of a linked buffer
++ * in the same process (the compositor importing its own swapchain) gets
++ * the same texture, so the host shows what is rendered.
++ * D3D12_ZERO_COPY_SCANOUT=false keeps the copies.
++ */
++struct d3d12_virtio_scanout {
++   uint32_t gpu_resource;
++   int32_t resource_fd;
++   uint32_t width;
++   uint32_t height;
++   uint32_t drm_format;
++   uint32_t alloc_size;
++   uint32_t flags;
++   uint32_t reserved;
++   uint64_t cookie;
++};
++#define D3D12_LX_DXVIRTIOSCANOUT \
++   _IOWR(0x47, 0x80, struct d3d12_virtio_scanout)
++#define D3D12_VIRTIO_SCANOUT_ZERO_COPY 1u
++
++static simple_mtx_t d3d12_scanout_lock = SIMPLE_MTX_INITIALIZER;
++static int d3d12_scanout_dxg = -2;   /* /dev/dxg; -1: none, -2: not tried */
++static struct hash_table_u64 *d3d12_scanout_links; /* gpu resource -> res */
++static unsigned d3d12_scanout_count;
++static uint64_t d3d12_scanout_cookie;
++
++static uint32_t
++d3d12_scanout_fourcc(enum pipe_format format)
++{
++   switch (format) {
++   case PIPE_FORMAT_B8G8R8X8_UNORM: return 0x34325258; /* XR24 */
++   case PIPE_FORMAT_B8G8R8A8_UNORM: return 0x34325241; /* AR24 */
++   case PIPE_FORMAT_R8G8B8X8_UNORM: return 0x34324258; /* XB24 */
++   case PIPE_FORMAT_R8G8B8A8_UNORM: return 0x34324241; /* AB24 */
++   default: return 0;
++   }
++}
++
++static bool
++d3d12_scanout_wanted(const struct pipe_resource *templ)
++{
++   if (!(templ->bind & PIPE_BIND_SCANOUT) || (templ->bind & PIPE_BIND_CURSOR) ||
++       !d3d12_scanout_fourcc(templ->format) ||
++       !debug_get_bool_option("D3D12_ZERO_COPY_SCANOUT", true))
++      return false;
++   simple_mtx_lock(&d3d12_scanout_lock);
++   if (d3d12_scanout_dxg == -2) {
++      d3d12_scanout_dxg = open("/dev/dxg", O_RDWR | O_CLOEXEC);
++      if (d3d12_scanout_dxg < 0)
++         d3d12_scanout_dxg = -1;
++   }
++   bool ok = d3d12_scanout_dxg >= 0;
++   simple_mtx_unlock(&d3d12_scanout_lock);
++   return ok;
++}
++
++static uint32_t
++d3d12_scanout_resource_id(int drm_fd, uint32_t gem_handle)
++{
++   struct drm_virtgpu_resource_info info = {};
++   info.bo_handle = gem_handle;
++   if (drm_fd < 0 || ioctl(drm_fd, DRM_IOCTL_VIRTGPU_RESOURCE_INFO, &info))
++      return 0;
++   return info.res_handle;
++}
++
++/* Links res (a shared texture) to the virtio-gpu buffer gpu_resource. */
++static void
++d3d12_scanout_link(struct d3d12_screen *screen, struct d3d12_resource *res,
++                   uint32_t gpu_resource)
++{
++   ID3D12Resource *d3d12_res = d3d12_resource_resource(res);
++   HANDLE handle = nullptr;
++
++   if (!gpu_resource || !d3d12_res ||
++       FAILED(screen->dev->CreateSharedHandle(d3d12_res, nullptr, GENERIC_ALL,
++                                              nullptr, &handle)) || !handle)
++      return;
++   D3D12_RESOURCE_DESC desc = GetDesc(d3d12_res);
++   struct d3d12_virtio_scanout link = {};
++   link.gpu_resource = gpu_resource;
++   link.resource_fd = (int)(intptr_t)handle;
++   link.width = res->base.b.width0;
++   link.height = res->base.b.height0;
++   link.drm_format = d3d12_scanout_fourcc(res->base.b.format);
++   link.alloc_size = (uint32_t)
++      GetResourceAllocationInfo(screen->dev, 0, 1, &desc).SizeInBytes;
++
++   simple_mtx_lock(&d3d12_scanout_lock);
++   link.cookie = ++d3d12_scanout_cookie | ((uint64_t)getpid() << 32);
++   if (ioctl(d3d12_scanout_dxg, D3D12_LX_DXVIRTIOSCANOUT, &link) == 0 &&
++       (link.flags & D3D12_VIRTIO_SCANOUT_ZERO_COPY)) {
++      if (!d3d12_scanout_links)
++         d3d12_scanout_links = _mesa_hash_table_u64_create(NULL);
++      if (!_mesa_hash_table_u64_search(d3d12_scanout_links, gpu_resource))
++         d3d12_scanout_count++;
++      _mesa_hash_table_u64_insert(d3d12_scanout_links, gpu_resource, res);
++      res->mirror_zero_copy = true;
++      res->mirror_gpu_resource = gpu_resource;
++      res->mirror_cookie = link.cookie;
++   }
++   simple_mtx_unlock(&d3d12_scanout_lock);
++   close(link.resource_fd);
++}
++
++/* With d3d12_scanout_lock. */
++static void
++d3d12_scanout_unlink_locked(struct d3d12_resource *res)
++{
++   struct d3d12_virtio_scanout link = {};
++
++   if (!res->mirror_zero_copy)
++      return;
++   if (d3d12_scanout_links &&
++       _mesa_hash_table_u64_search(d3d12_scanout_links,
++                                   res->mirror_gpu_resource) == res) {
++      _mesa_hash_table_u64_remove(d3d12_scanout_links, res->mirror_gpu_resource);
++      d3d12_scanout_count--;
++   }
++   link.gpu_resource = res->mirror_gpu_resource;
++   link.resource_fd = -1;
++   link.cookie = res->mirror_cookie;
++   ioctl(d3d12_scanout_dxg, D3D12_LX_DXVIRTIOSCANOUT, &link);
++   res->mirror_zero_copy = false;
++}
++
++static void
++d3d12_scanout_unlink(struct d3d12_resource *res)
++{
++   simple_mtx_lock(&d3d12_scanout_lock);
++   d3d12_scanout_unlink_locked(res);
++   simple_mtx_unlock(&d3d12_scanout_lock);
++}
++
++/*
++ * The linked texture of the dma-buf's buffer, when this process linked it
++ * and the import matches it; NULL otherwise. On another screen of the
++ * process (compositors allocate on one GBM device and render on another),
++ * *borrowed instead becomes a resource of this screen wrapping the same
++ * D3D12 texture, and *gpu_resource its buffer. An import that does not
++ * match (another format or size) returns the buffer to copies, so every
++ * view of it stays correct.
++ */
++static struct pipe_resource *
++d3d12_scanout_lookup(struct d3d12_screen *screen,
++                     const struct pipe_resource *templ, int dmabuf_fd,
++                     struct pipe_resource **borrowed, uint32_t *gpu_resource)
++{
++   struct pipe_resource *found = NULL;
++   int drm_fd = screen->winsys->get_fd(screen->winsys);
++
++   *borrowed = NULL;
++
++   simple_mtx_lock(&d3d12_scanout_lock);
++   if (d3d12_scanout_count && drm_fd >= 0) {
++      /* Our own buffers already have this handle on drm_fd: not closed. */
++      struct drm_prime_handle prime = {};
++      prime.fd = dmabuf_fd;
++      if (ioctl(drm_fd, DRM_IOCTL_PRIME_FD_TO_HANDLE, &prime) == 0) {
++         uint32_t id = d3d12_scanout_resource_id(drm_fd, prime.handle);
++         struct d3d12_resource *res = id ? (struct d3d12_resource *)
++            _mesa_hash_table_u64_search(d3d12_scanout_links, id) : NULL;
++         bool match = res && res->base.b.format == templ->format &&
++                      res->base.b.width0 == templ->width0 &&
++                      res->base.b.height0 == templ->height0;
++         if (match && res->base.b.screen == &screen->base) {
++            pipe_resource_reference(&found, &res->base.b);
++         } else if (match) {
++            /* The import consumes this reference. */
++            ID3D12Resource *d3d12_res = d3d12_resource_resource(res);
++            struct winsys_handle wh = {};
++            d3d12_res->AddRef();
++            wh.type = WINSYS_HANDLE_TYPE_D3D12_RES;
++            wh.com_obj = d3d12_res;
++            wh.format = templ->format;
++            *borrowed = screen->base.resource_from_handle(
++               &screen->base, templ, &wh, PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
++            if (*borrowed)
++               *gpu_resource = id;
++            else
++               d3d12_scanout_unlink_locked(res);
++         } else if (res) {
++            d3d12_scanout_unlink_locked(res);
++         }
++      }
++   }
++   simple_mtx_unlock(&d3d12_scanout_lock);
++   return found;
++}
++#endif /* !_WIN32 */
++
+ static struct pipe_resource *
+ d3d12_mirror_attach(struct d3d12_screen *screen,
+                     const struct pipe_resource *templ,
+@@ -600,10 +809,18 @@
+       return NULL;
+    }
+ 
+-   /* The GPU copy is an ordinary optimal-layout texture. */
++   /* The GPU copy is an ordinary optimal-layout texture; shared when the
++    * host display may show it (zero-copy scanout). */
++#ifndef _WIN32
++   bool zero_copy = d3d12_scanout_wanted(templ);
++#else
++   bool zero_copy = false;
++#endif
+    struct pipe_resource gpu_templ = *templ;
+    gpu_templ.bind &= ~d3d12_mirror_binds;
+    gpu_templ.bind |= PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW;
++   if (zero_copy)
++      gpu_templ.bind |= PIPE_BIND_SHARED;
+    struct pipe_resource *pres =
+       d3d12_resource_create_or_place(screen, res, &gpu_templ, nullptr, 0);
+    if (!pres) {
+@@ -621,6 +838,16 @@
+       pipe_resource_reference(&pres, NULL);
+       return NULL;
+    }
++#ifndef _WIN32
++   if (zero_copy) {
++      struct winsys_handle wh = {};
++      wh.type = WINSYS_HANDLE_TYPE_KMS;
++      if (winsys->displaytarget_get_handle(winsys, dt, &wh))
++         d3d12_scanout_link(screen, res,
++                            d3d12_scanout_resource_id(winsys->get_fd(winsys),
++                                                      wh.handle));
++   }
++#endif
+    return pres;
+ }
+ 
+@@ -673,6 +900,13 @@
+       if (size <= 0 || stride < row ||
+           (uint64_t)stride * templ->height0 > (uint64_t)size)
+          return NULL;
++      struct pipe_resource *borrowed = NULL;
++      uint32_t gpu_resource = 0;
++      struct pipe_resource *linked =
++         d3d12_scanout_lookup(screen, templ, (int)handle->handle, &borrowed,
++                              &gpu_resource);
++      if (linked)
++         return linked;
+       int fd = os_dupfd_cloexec((int)handle->handle);
+       if (fd < 0)
+          return NULL;
+@@ -681,13 +915,20 @@
+          close(fd);
+          return NULL;
+       }
+-      struct pipe_resource *pres = d3d12_mirror_gpu_texture(screen, templ);
++      struct pipe_resource *pres = borrowed ? borrowed :
++         d3d12_mirror_gpu_texture(screen, templ);
+       if (!pres) {
+          munmap(map, size);
+          close(fd);
+          return NULL;
+       }
+       struct d3d12_resource *res = d3d12_resource(pres);
++      if (borrowed) {
++         pres->bind = templ->bind | PIPE_BIND_SHARED;
++         res->mirror_zero_copy = true;
++         res->mirror_link_borrowed = true;
++         res->mirror_gpu_resource = gpu_resource;
++      }
+       res->dt_mirror = true;
+       res->dt_stride = stride;
+       res->dt_map = map;
+@@ -1605,10 +1846,15 @@
+    bool recorded = false;
+    for (unsigned i = 0; i < count; i++) {
+       struct d3d12_resource *res = d3d12_resource(list[i]);
+-      if (!d3d12_mirror_record(ctx, res))
++      if (res->mirror_zero_copy) {
++         /* The host shows the texture: the frame only has to be done. */
++         res->dt_mirror_dirty = false;
++         recorded = true;
++      } else if (!d3d12_mirror_record(ctx, res)) {
+          res->dt_mirror_dirty = false;
+-      else
++      } else {
+          recorded = true;
++      }
+    }
+    if (recorded)
+       d3d12_flush_cmdlist_and_wait(ctx);
+diff -ruN a/src/gallium/drivers/d3d12/d3d12_resource.h b/src/gallium/drivers/d3d12/d3d12_resource.h
+--- a/src/gallium/drivers/d3d12/d3d12_resource.h	2026-11-09 15:23:45.162772400 +0200
++++ b/src/gallium/drivers/d3d12/d3d12_resource.h	2026-11-09 15:38:14.343010300 +0200
+@@ -67,6 +67,15 @@
+    size_t mirror_map_size;
+    struct pipe_resource *mirror_staging;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT mirror_footprint;
++   /* virtio-dxg zero-copy scanout: the host display shows this (shared)
++    * texture for the dumb buffer, so nothing is copied into it; flushes
++    * only finish the GPU work before the compositor commits. */
++   bool mirror_zero_copy;
++   uint32_t mirror_gpu_resource;   /* virtio-gpu resource id of dt */
++   uint64_t mirror_cookie;
++   /* The linked texture of another screen of this process, wrapped here:
++    * its owner holds the link. */
++   bool mirror_link_borrowed;
+ 
+    struct util_range valid_buffer_range;
+    uint32_t bind_counts[MESA_SHADER_STAGES][D3D12_RESOURCE_BINDING_TYPES];

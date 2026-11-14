@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "mesaVersion": "26.0.8",
+  "requiresNativeImagePatchSha256": "8590be1d2b36eda92cec4bfd77c52d42a98b033754993d1dbee46693e108f12e",
+  "patchSha256": "0b14eaf0bec63e77dbadb7d19d39d303c33b16d44e11f46542b0b4c7c874fa07",
+  "files": {
+    "src/gallium/drivers/d3d12/d3d12_native_render.h": {
+      "originalSha256": null,
+      "patchedSha256": "9f9b603f0218d15c518a5c00674064a22dd701fb8aa50761a8096ab0fecc11ec"
+    },
+    "src/gallium/drivers/d3d12/d3d12_public.h": {
+      "originalSha256": "564944946394688380ecf9541e60998422debbf12e4e4c87341639fc936ee072",
+      "patchedSha256": "b888fa3aadce98540bef97cf5cd9771f2eb3f466277df1435456afcdd47cb8e5"
+    },
+    "src/gallium/drivers/d3d12/d3d12_screen.h": {
+      "originalSha256": "91dc8cfd368adfd2df96eed3380e2f3ce2b1b36275a7b19158403bff464999ae",
+      "patchedSha256": "45ca40a85e1f3d29ff713998e1212f69e4a27cf711d9ce033f3dcc8e98c03bc8"
+    },
+    "src/gallium/drivers/d3d12/d3d12_screen.cpp": {
+      "originalSha256": "10411fb8bab3ff9c81f980b53cc7bcb3d79b5040f9c87f85e954269a4cb9673b",
+      "patchedSha256": "0330798ae99cc6939f09a4407e2cc06ef7019f08b2263f61e0e1bb3e20e49d13"
+    },
+    "src/gallium/drivers/d3d12/d3d12_dxcore_screen.cpp": {
+      "originalSha256": "ea992da3825ac60ca1a82508ba8299ced0695abf0fce3bdb35c0c117edc0d40c",
+      "patchedSha256": "f19e61f751e9d70621faf6e0daabf77747f1c9b8a7f57b1c26f2e49d5e3125a1"
+    },
+    "src/gallium/auxiliary/target-helpers/drm_helper.h": {
+      "originalSha256": "016018afa77024907b0f7de621e08de094add066b7c70e751364eb71e4e1a1dc",
+      "patchedSha256": "69d657c598e3ba82d56bf5e2eb063ee3c11d3443dfa65a7f49dd5f047cd3523f"
+    },
+    "src/gallium/auxiliary/target-helpers/drm_helper_public.h": {
+      "originalSha256": "cafc0b73f56071eeb427e30c057ebea9116098bc3d7cce197f897a21df86cb81",
+      "patchedSha256": "0395e5b80a940a045e55bf7a4136ba74e0b781fb75d03768b501d30b66125d30"
+    },
+    "src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c": {
+      "originalSha256": "177846dd494f5908b8c8f87b39a582326cbfcc9265e1abfe3402cccd32a77a7f",
+      "patchedSha256": "de441ca559360a6fd545f8a1b93aeaabcce28f1bf712a72c46a6f886af1dd0cc"
+    }
+  },
+  "experimental": true,
+  "desktopVerified": false,
+  "kmsVerified": false,
+  "kernelPrimeVerified": false,
+  "renderNodeQueryVersion": 1,
+  "layout": "implicit opaque, no explicit linear modifier"
+}

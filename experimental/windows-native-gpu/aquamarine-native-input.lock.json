@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/hyprwm/aquamarine",
+  "tag": "v0.15.1",
+  "commit": "f31c47a1b9d300847d8fc3108ad959448103dfc1",
+  "patch": "aquamarine-0.15.1-native-input.patch",
+  "patchSha256": "8da29137d84fa582f215fe8fdf37bcae2417f84c9058876384dbd7276e0a44cc",
+  "requiresPatchSha256": "c4f2a1e57c3f157836372e50cd4fda920a6461cef458fd7a408aa2cfad07d8ec",
+  "files": {
+    "src/backend/Backend.cpp": {
+      "beforeSha256": "66bbfdee8c8430d13ad4418a80d286333424d9d1370325b6f846c4e0b8c2e385",
+      "afterSha256": "74d4cba8989336a259026d8c96694bf406d7d56aec820e35b9c95ce291ff9e80"
+    }
+  }
+}

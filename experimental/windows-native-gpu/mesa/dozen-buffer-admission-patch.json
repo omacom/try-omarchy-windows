@@ -1,0 +1,18 @@
+{
+  "mesaVersion": "26.0.8",
+  "archiveSha256": "caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc",
+  "predecessorPatchSha256": "567f44ebe814e8fdd4fba862959c5d4ef3486f245c477075ef4a20c08d39e141",
+  "patchSha256": "68d1641acbe1e6008a989c91bde7aedcd2cfd92e87a561e16bdd3bfd00f4c1bb",
+  "files": {
+    "src/microsoft/vulkan/dzn_device.c": {
+      "originalSha256": "54bf2123b6df22d71157b355158ad28b25cafd7711478c0513f937e54ce9de20",
+      "patchedSha256": "755fdf83a45e6d4389ee711f36ffa1db8cc6fc9e705cdfe8cab5a3f1b253fd28"
+    },
+    "src/microsoft/vulkan/dzn_wddm_native_gpu_buffer_admission.h": {
+      "originalSha256": null,
+      "patchedSha256": "e343bf4ac26aede95eab783c155996033b5ab17998d9087405fa0be4cbb077d6"
+    }
+  },
+  "vulkanMemoryFailureSpecification": "https://docs.vulkan.org/refpages/latest/refpages/source/vkAllocateMemory.html",
+  "defaultEnabled": false
+}

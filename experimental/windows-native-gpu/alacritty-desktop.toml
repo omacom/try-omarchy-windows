@@ -1,0 +1,15 @@
+[general]
+live_config_reload = false
+
+[window]
+dimensions = { columns = 100, lines = 28 }
+padding = { x = 16, y = 12 }
+opacity = 1.0
+
+[font]
+size = 16.0
+normal = { family = "JetBrainsMono Nerd Font", style = "Regular" }
+
+[colors.primary]
+background = "#1a1b26"
+foreground = "#c0caf5"

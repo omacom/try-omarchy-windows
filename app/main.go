@@ -84,6 +84,14 @@ type config struct {
 	recoveryChoice *gpuRecoveryDecision
 	// venus offers guest Vulkan on the host GPU in GPU mode (venus.go).
 	venus bool
+	// Prepared native GPU ownership is internal until normal guest/runtime
+	// integration passes. The released settings leave this nil.
+	nativeGPU nativeGPUPrepare
+	// virtio-dxg rendering (-render dxg), see virtio_dxg.go.
+	dxg dxgLaunch
+	// -disk-snapshot: the guest's disk writes go to a temporary overlay
+	// that QEMU discards when the VM stops.
+	diskSnapshot bool
 }
 
 // memoryStarved reports whether the current attempt's QEMU died because the
@@ -161,7 +169,8 @@ func main() {
 	resourceProfileFlag := flag.String("resource-profile", "", "resource preset: balanced, maximum-performance, or manual; -cpus and -memory override individual resources")
 	flag.IntVar(&cfg.diskGiB, "disk-size", 0, "guest disk capacity in GiB (0: default; grows existing disks, never shrinks)")
 	flag.BoolVar(&cfg.noGpu, "nogpu", false, "force CPU rendering even if WINQ-EMU is installed (same as -render cpu)")
-	renderFlag := flag.String("render", "", "rendering path: auto (default), gpu, or cpu")
+	renderFlag := flag.String("render", "", "rendering path: auto (default), gpu, cpu, or dxg (NVIDIA through virtio-dxg)")
+	flag.BoolVar(&cfg.diskSnapshot, "disk-snapshot", false, "discard the guest's disk changes when the VM stops")
 	timeZoneFlag := flag.String("timezone", "", "guest time zone: blank follows Windows, keep leaves the guest alone, or an IANA name such as Europe/Berlin")
 	keyboardFlag := flag.String("keyboard", "", "guest keyboard layout: blank follows Windows, keep leaves the guest alone, or an XKB layout such as de or us:intl")
 	localeFlag := flag.String("locale", "", "guest language: blank follows Windows, keep leaves the guest alone, or a locale such as de_DE")
@@ -835,6 +844,16 @@ func main() {
 		}
 		cfg.venus, reason = venusDecision(os.Getenv(venusVariable), cfg.displayDriver)
 		logf("rendering: Venus Vulkan %s - %s", map[bool]string{false: "off", true: "on"}[cfg.venus], reason)
+		if cfg.renderMode == renderDXG {
+			l, qemu, err := prepareDxgLaunch(cfg.dir)
+			if err != nil {
+				fatal(uiTextWith("fatal.invalid_setting", map[string]string{"error": err.Error()}))
+			}
+			cfg.dxg, cfg.qemu = l, qemu
+			cfg.runtimeID = runtimeIdentity(filepath.Dir(filepath.Dir(qemu)))
+			cfg.useGpu, cfg.venus = false, false
+			logf("rendering: virtio-dxg (NVIDIA driver) with %s", qemu)
+		}
 	} else {
 		cfg.qemu = stockQemu
 	}
@@ -1053,6 +1072,7 @@ func loadLaunchAudioPreferences(dir string) (audioPreferences, error) {
 // guest-reset cannot discard the event (see docs/FINDINGS.md).
 func supervise(cfg *config, cmdline string) bool {
 	var proc *exec.Cmd
+	var guest *supervisedGuest
 	var qmp *qmpConn
 	// The worst case can consume one attempt each for nested virtualization,
 	// audio, runtime rollback, and GPU fallback before walking 64 GiB down to a
@@ -1150,7 +1170,7 @@ func supervise(cfg *config, cmdline string) bool {
 			}
 			return false
 		}
-		err = proc.Start()
+		guest, err = startSupervisedGuest(setupContext(), proc, cfg.nativeGPU)
 		// QEMU inherits its own handle. Closing ours per attempt keeps retries
 		// and guest reboots from leaking one handle each.
 		if ef != nil {
@@ -1160,11 +1180,11 @@ func supervise(cfg *config, cmdline string) bool {
 			guestLaunchInProgress.Store(false)
 			fatal(uiTextWith("fatal.qemu.start", map[string]string{"error": err.Error()}))
 		}
-		qemuPid.Store(uint32(proc.Process.Pid))
+		publishSupervisedGuest(guest)
 		guestLaunchInProgress.Store(false)
 		exited := make(chan error, 1)
 		go func() {
-			err := proc.Wait()
+			err := guest.wait()
 			if err != nil {
 				logf("QEMU process exited with error: %v", err)
 			}
@@ -1183,7 +1203,7 @@ func supervise(cfg *config, cmdline string) bool {
 			select {
 			case <-setupCancelWake:
 				cancelBackgroundUpdate()
-				proc.Process.Kill()
+				guest.kill()
 				<-exited
 				qemuPid.Store(0)
 				return false
@@ -1307,7 +1327,7 @@ func supervise(cfg *config, cmdline string) bool {
 		qemuPid.Store(0)
 		if !startupDead {
 			logf("QEMU did not answer QMP within the startup timeout - killing and retrying")
-			proc.Process.Kill()
+			guest.kill()
 			<-exited
 		}
 		if sleepDuringSetup(2*time.Second) != nil {
@@ -1713,9 +1733,7 @@ func waitExit(exited <-chan error, grace time.Duration, cfg *config) bool {
 	case <-time.After(grace):
 		logf("QEMU wedged after guest shutdown (stock WHPX trap) - cleaning up")
 		if pid := qemuPid.Load(); pid != 0 {
-			if p, err := os.FindProcess(int(pid)); err == nil {
-				p.Kill()
-			}
+			_ = stopSupervisedGuest(pid)
 		}
 		<-exited
 		return true

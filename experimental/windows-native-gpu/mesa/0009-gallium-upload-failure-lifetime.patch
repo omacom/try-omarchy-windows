@@ -1,0 +1,18 @@
+--- a/src/gallium/auxiliary/util/u_upload_mgr.c
++++ b/src/gallium/auxiliary/util/u_upload_mgr.c
+@@ -207,6 +207,7 @@
+    if (upload->map == NULL) {
+       u_upload_release_buffer(upload);
+       pipe_resource_release(upload->pipe, upload->buffer);
++      upload->buffer = NULL;
+       return 0;
+    }
+ 
+@@ -255,7 +256,6 @@
+       if (unlikely(!buffer_size)) {
+          *out_offset = ~0;
+          *ptr = NULL;
+-         *releasebuf = NULL;
+          return;
+       }
+    } else {

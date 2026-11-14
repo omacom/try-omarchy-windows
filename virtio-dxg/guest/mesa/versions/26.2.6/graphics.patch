@@ -1,0 +1,3891 @@
+--- a/src/gallium/auxiliary/util/u_upload_mgr.c
++++ b/src/gallium/auxiliary/util/u_upload_mgr.c
+@@ -207,6 +207,7 @@
+    if (upload->map == NULL) {
+       u_upload_release_buffer(upload);
+       pipe_resource_release(upload->pipe, upload->buffer);
++      upload->buffer = NULL;
+       return 0;
+    }
+ 
+@@ -255,7 +256,6 @@
+       if (unlikely(!buffer_size)) {
+          *out_offset = ~0;
+          *ptr = NULL;
+-         *releasebuf = NULL;
+          return;
+       }
+    } else {
+--- a/src/gallium/auxiliary/vl/vl_winsys_drm.c
++++ b/src/gallium/auxiliary/vl/vl_winsys_drm.c
+@@ -61,6 +61,21 @@
+    if (pipe_loader_drm_probe_fd(&vscreen->dev, fd, false))
+       vscreen->pscreen = pipe_loader_create_screen(vscreen->dev, false);
+ 
++#ifdef HAVE_DRISW_KMS
++   /*
++    * A KMS device without a hardware driver (virtio-gpu in 2D mode, as with
++    * virtio-dxg): decode with the software path's driver (GALLIUM_DRIVER,
++    * d3d12 there), sharing buffers with KMS as kms_swrast does for GL.
++    */
++   if (!vscreen->pscreen) {
++      if (vscreen->dev)
++         pipe_loader_release(&vscreen->dev, 1);
++      vscreen->dev = NULL;
++      if (pipe_loader_sw_probe_kms(&vscreen->dev, fd))
++         vscreen->pscreen = pipe_loader_create_screen(vscreen->dev, false);
++   }
++#endif
++
+    if (libva_owned_fd >= 0 && libva_owned_fd != fd)
+       close(fd);
+ 
+--- a/src/gallium/drivers/d3d12/d3d12_batch.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_batch.cpp
+@@ -484,6 +484,9 @@
+    uint8_t new_data = write ? batch_bo_reference_written : batch_bo_reference_read;
+    uint8_t old_data = (uint8_t)*state;
+    *state = (old_data | new_data);
++
++   if (write && (res->dt_mirror || res->dxg_window) && batch->ctx)
++      d3d12_mirror_reference(batch->ctx, res);
+ }
+ 
+ void
+--- a/src/gallium/drivers/d3d12/d3d12_batch.h
++++ b/src/gallium/drivers/d3d12/d3d12_batch.h
+@@ -67,6 +67,7 @@
+ 
+    uint64_t submit_id;
+    uint32_t ctx_id, ctx_index;
++   struct d3d12_context *ctx;
+ };
+ 
+ bool
+--- a/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp
+@@ -225,6 +225,8 @@
+ d3d12_screen_reclaim_completed(struct d3d12_screen *screen)
+ {
+    uint64_t completed = screen->fence->GetCompletedValue();
++   if (completed == UINT64_MAX)
++      return false;
+    struct list_head retired;
+    list_inithead(&retired);
+ 
+@@ -265,14 +267,21 @@
+    if (!have_target)
+       return false;
+ 
+-   if (screen->fence->GetCompletedValue() < target &&
+-       FAILED(screen->fence->SetEventOnCompletion(target, nullptr))) {
+-      debug_printf("D3D12: failed to wait for pending resource reclamation\n");
++   uint64_t completed = screen->fence->GetCompletedValue();
++   if (completed == UINT64_MAX)
+       return false;
+-   }
+-
+-   d3d12_screen_reclaim_completed(screen);
+-   return true;
++   if (completed < target) {
++      if (FAILED(screen->fence->SetEventOnCompletion(target, nullptr))) {
++         debug_printf("D3D12: failed to wait for pending resource reclamation\n");
++         return false;
++      }
++      completed = screen->fence->GetCompletedValue();
++      if (completed == UINT64_MAX || completed < target)
++         return false;
++   }
++
++   /* Allocation retries need actual progress, not merely a wake-up. */
++   return d3d12_screen_reclaim_completed(screen);
+ }
+ 
+ void *
+--- a/src/gallium/drivers/d3d12/d3d12_context.h
++++ b/src/gallium/drivers/d3d12/d3d12_context.h
+@@ -168,6 +168,7 @@
+    struct pipe_context base;
+ 
+    unsigned id;
++   struct util_dynarray mirror_dirty; /* d3d12_resource mirrors to publish */
+    struct slab_child_pool transfer_pool;
+    struct slab_child_pool transfer_pool_unsync;
+    struct list_head context_list_entry;
+--- a/src/gallium/drivers/d3d12/d3d12_context_common.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_context_common.cpp
+@@ -157,6 +157,10 @@
+    }
+ #endif // HAVE_GALLIUM_D3D12_GRAPHICS
+ 
++   util_dynarray_foreach(&ctx->mirror_dirty, struct pipe_resource *, pres) {
++      pipe_resource_reference(pres, NULL);
++   }
++   util_dynarray_fini(&ctx->mirror_dirty);
+    slab_destroy_child(&ctx->transfer_pool);
+    slab_destroy_child(&ctx->transfer_pool_unsync);
+    d3d12_context_state_table_destroy(ctx);
+@@ -200,6 +204,8 @@
+    struct d3d12_context *ctx = d3d12_context(pipe);
+    struct d3d12_batch *batch = d3d12_current_batch(ctx);
+ 
++   d3d12_mirror_sync(ctx);
++
+    bool flushed = d3d12_flush_cmdlist(ctx);
+ 
+    if (fence) {
+@@ -606,6 +612,9 @@
+    ctx->base.flush_resource = d3d12_flush_resource;
+    ctx->base.fence_server_signal = d3d12_signal;
+    ctx->base.fence_server_sync = d3d12_wait;
++#ifndef _WIN32
++   ctx->base.create_fence_fd = d3d12_create_fence_fd;
++#endif
+    ctx->base.memory_barrier = d3d12_memory_barrier;
+    ctx->base.texture_barrier = d3d12_texture_barrier;
+ 
+@@ -726,9 +735,11 @@
+       ctx->id = D3D12_CONTEXT_NO_ID;
+    mtx_unlock(&screen->submit_mutex);
+ 
++   util_dynarray_init(&ctx->mirror_dirty, NULL);
+    for (unsigned i = 0; i < ARRAY_SIZE(ctx->batches); ++i) {
+       ctx->batches[i].ctx_id = ctx->id;
+       ctx->batches[i].ctx_index = i;
++      ctx->batches[i].ctx = ctx;
+    }
+ 
+    if (flags & PIPE_CONTEXT_PREFER_THREADED) {
+--- a/src/gallium/drivers/d3d12/d3d12_fence.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_fence.cpp
+@@ -27,12 +27,29 @@
+ #include "d3d12_screen.h"
+ 
+ #include "util/u_memory.h"
++#ifndef _WIN32
++#include "frontend/sw_winsys.h"
++#include "util/os_file.h"
++#include "util/u_debug.h"
++#include "drm-uapi/drm.h"
++#include <sys/ioctl.h>
++#include <sys/stat.h>
++#include <sys/sysmacros.h>
++#include <unistd.h>
++#endif
+ 
+ #include <dxguids/dxguids.h>
+ 
+ static void
+ destroy_fence(struct d3d12_fence *fence)
+ {
++#ifndef _WIN32
++   if (fence->sync_fd >= 0) {
++      close(fence->sync_fd);
++      FREE(fence);
++      return;
++   }
++#endif
+    if (fence->type == PIPE_FD_TYPE_NATIVE_SYNC)
+       d3d12_fence_close_event(fence->event, fence->event_fd);
+    else
+@@ -95,6 +112,7 @@
+    ret->event = NULL;
+    ret->event_fd = -1;
+    ret->signaled = false;
++   ret->sync_fd = -1;
+ 
+    pipe_reference_init(&ret->reference, 1);
+    return ret;
+@@ -123,6 +141,7 @@
+    }
+ 
+    ret->type = type;
++   ret->sync_fd = -1;
+    pipe_reference_init(&ret->reference, 1);
+    return ret;
+ }
+@@ -153,11 +172,21 @@
+ bool
+ d3d12_fence_finish(struct d3d12_fence *fence, uint64_t timeout_ns)
+ {
++#ifndef _WIN32
++   if (fence->sync_fd >= 0) {
++      if (!fence->signaled)
++         fence->signaled = d3d12_fence_wait_event(NULL, fence->sync_fd, timeout_ns);
++      return fence->signaled;
++   }
++#endif
+    assert(fence->type == PIPE_FD_TYPE_NATIVE_SYNC);
+    if (fence->signaled)
+       return true;
+ 
+-   bool complete = fence->cmdqueue_fence->GetCompletedValue() >= fence->value;
++   uint64_t observed = fence->cmdqueue_fence->GetCompletedValue();
++   if (observed == UINT64_MAX)
++      return false;
++   bool complete = observed >= fence->value;
+    if (!complete && timeout_ns) {
+       if (timeout_ns == OS_TIMEOUT_INFINITE || timeout_ns > MaxTimeoutInNs) {
+          complete = SUCCEEDED(fence->cmdqueue_fence->SetEventOnCompletion(fence->value, NULL));
+@@ -168,6 +197,10 @@
+       }
+    }
+ 
++   if (complete) {
++      observed = fence->cmdqueue_fence->GetCompletedValue();
++      complete = observed != UINT64_MAX && observed >= fence->value;
++   }
+    fence->signaled = complete;
+    return complete;
+ }
+@@ -189,6 +222,8 @@
+ void
+ d3d12_fence_signal_impl(struct d3d12_fence *fence, ID3D12CommandQueue *queue, uint64_t value)
+ {
++   if (fence->sync_fd >= 0)
++      return;
+    if (fence->type == PIPE_FD_TYPE_NATIVE_SYNC)
+       value = fence->value;
+    queue->Signal(fence->cmdqueue_fence, value);
+@@ -197,14 +232,107 @@
+ void
+ d3d12_fence_wait_impl(struct d3d12_fence *fence, ID3D12CommandQueue *queue, uint64_t value)
+ {
++   if (fence->sync_fd >= 0) {
++      /* Not a GPU fence: what is submitted next starts after it. */
++      d3d12_fence_finish(fence, OS_TIMEOUT_INFINITE);
++      return;
++   }
+    if (fence->type == PIPE_FD_TYPE_NATIVE_SYNC)
+       value = fence->value;
+    queue->Wait(fence->cmdqueue_fence, value);
+ }
+ 
++
++#ifndef _WIN32
++/* virtio-dxg: native fence descriptors ----------------------------------- */
++
++/* The DRM descriptor of an application's screen (a render node). */
++static int
++d3d12_fence_drm_fd(struct d3d12_screen *screen)
++{
++   struct stat st;
++   int fd = screen->winsys && screen->winsys->get_fd ?
++            screen->winsys->get_fd(screen->winsys) : -1;
++
++   if (fd < 0 || fstat(fd, &st) || !S_ISCHR(st.st_mode) ||
++       major(st.st_rdev) != 226 || minor(st.st_rdev) < 128)
++      return -1;
++   return fd;
++}
++
++/* A sync file that is signalled already. */
++static int
++d3d12_signaled_sync_file(struct d3d12_screen *screen)
++{
++   int drm = d3d12_fence_drm_fd(screen);
++   if (drm < 0)
++      return -1;
++   struct drm_syncobj_create create = {};
++   create.flags = DRM_SYNCOBJ_CREATE_SIGNALED;
++   if (ioctl(drm, DRM_IOCTL_SYNCOBJ_CREATE, &create))
++      return -1;
++   struct drm_syncobj_handle exported = {};
++   exported.handle = create.handle;
++   exported.flags = DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_EXPORT_SYNC_FILE;
++   exported.fd = -1;
++   int ret = ioctl(drm, DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD, &exported);
++   struct drm_syncobj_destroy destroy = {};
++   destroy.handle = create.handle;
++   ioctl(drm, DRM_IOCTL_SYNCOBJ_DESTROY, &destroy);
++   return ret ? -1 : exported.fd;
++}
++
++bool
++d3d12_screen_native_fences(struct d3d12_screen *screen)
++{
++   if (!debug_get_bool_option("D3D12_NATIVE_FENCE", true))
++      return false;
++   /* The probe produces a permanently signaled sync_file. Keep it for
++    * this screen's lifetime. Each completed export gets its own fd. */
++   screen->completed_sync_fd = d3d12_signaled_sync_file(screen);
++   return screen->completed_sync_fd >= 0;
++}
++
++static int
++fence_get_fd(struct pipe_screen *pscreen, struct pipe_fence_handle *pfence)
++{
++   struct d3d12_fence *fence = d3d12_fence(pfence);
++
++   if (fence->sync_fd >= 0)
++      return os_dupfd_cloexec(fence->sync_fd);
++   int completed_fd = d3d12_screen(pscreen)->completed_sync_fd;
++   if (completed_fd < 0 || fence->type != PIPE_FD_TYPE_NATIVE_SYNC ||
++       !d3d12_fence_finish(fence, OS_TIMEOUT_INFINITE))
++      return -1;
++   return os_dupfd_cloexec(completed_fd);
++}
++
++void
++d3d12_create_fence_fd(struct pipe_context *pctx,
++                      struct pipe_fence_handle **pfence, int fd,
++                      enum pipe_fd_type type)
++{
++   *pfence = NULL;
++   if (type != PIPE_FD_TYPE_NATIVE_SYNC || fd < 0)
++      return;
++   struct d3d12_fence *fence = d3d12_create_fence_raw(NULL, 0);
++   if (!fence)
++      return;
++   fence->sync_fd = os_dupfd_cloexec(fd);
++   if (fence->sync_fd < 0) {
++      FREE(fence);
++      return;
++   }
++   *pfence = (struct pipe_fence_handle *)fence;
++}
++#endif /* !_WIN32 */
++
+ void
+ d3d12_screen_fence_init(struct pipe_screen *pscreen)
+ {
+    pscreen->fence_reference = fence_reference;
+    pscreen->fence_finish = fence_finish;
+-}
++#ifndef _WIN32
++   pscreen->fence_get_fd = fence_get_fd;
++#endif
++}
+--- a/src/gallium/drivers/d3d12/d3d12_fence.h
++++ b/src/gallium/drivers/d3d12/d3d12_fence.h
+@@ -93,6 +93,9 @@
+    int event_fd;
+    uint64_t value;
+    bool signaled;
++
++   /* An imported sync file (not a GPU fence) when not negative. */
++   int sync_fd;
+ };
+ 
+ static inline struct d3d12_fence *
+@@ -122,6 +125,14 @@
+ void
+ d3d12_screen_fence_init(struct pipe_screen *pscreen);
+ 
++bool
++d3d12_screen_native_fences(struct d3d12_screen *screen);
++
++void
++d3d12_create_fence_fd(struct pipe_context *pctx,
++                      struct pipe_fence_handle **pfence, int fd,
++                      enum pipe_fd_type type);
++
+ void
+ d3d12_fence_wait_impl(struct d3d12_fence *fence, ID3D12CommandQueue *queue, uint64_t value);
+ void
+--- a/src/gallium/drivers/d3d12/d3d12_format.c
++++ b/src/gallium/drivers/d3d12/d3d12_format.c
+@@ -91,6 +91,9 @@
+    MAP_FORMAT_X8(R8G8B8, SNORM) \
+    MAP_FORMAT_X8(R8G8B8, UINT) \
+    MAP_FORMAT_X8(R8G8B8, SINT) \
++   /* virtio-dxg: opaque float16 and 10-bit window buffers */ \
++   MAP_FORMAT2(R16G16B16X16, FLOAT, R16G16B16A16, FLOAT) \
++   MAP_FORMAT2(R10G10B10X2, UNORM, R10G10B10A2, UNORM) \
+ \
+    MAP_FORMAT(B8G8R8A8, UNORM) \
+ \
+--- a/src/gallium/drivers/d3d12/d3d12_resource.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_resource.cpp
+@@ -37,6 +37,29 @@
+ #include "util/format/u_format_zs.h"
+ 
+ #include "frontend/sw_winsys.h"
++#include "util/os_file.h"
++#include "util/os_time.h"
++
++#ifndef _WIN32
++#include <fcntl.h>
++#include <linux/dma-buf.h>
++#include <sys/ioctl.h>
++#include <sys/mman.h>
++#include <unistd.h>
++#include "drm-uapi/virtgpu_drm.h"
++#include <sys/stat.h>
++#include <sys/sysmacros.h>
++#include "util/hash_table.h"
++#include "util/u_atomic.h"
++#include <limits.h>
++#include "util/simple_mtx.h"
++#include "util/u_debug.h"
++
++static void
++d3d12_scanout_unlink(struct d3d12_resource *res);
++static void
++d3d12_winbuf_release(struct d3d12_screen *screen, struct d3d12_resource *res);
++#endif
+ 
+ #include <dxguids/dxguids.h>
+ #include <memory>
+@@ -80,6 +103,25 @@
+    // and only destroy it on the last plane being destroyed
+    if (resource->dt_refcount > 0)
+       resource->dt_refcount--;
++#ifndef _WIN32
++   if (resource->mirror_zero_copy && !resource->mirror_link_borrowed)
++      d3d12_scanout_unlink(resource);
++   if (resource->dxg_shared)
++      d3d12_winbuf_release(d3d12_screen(pscreen), resource);
++   if (resource->mirror_has_fd) {
++      if (resource->dt_map)
++         munmap(resource->dt_map, resource->mirror_map_size);
++      close(resource->mirror_fd);
++      resource->dt_map = NULL;
++   }
++#endif
++   if (resource->dt_map && resource->dt && resource->dt_refcount == 0) {
++      struct sw_winsys *winsys = d3d12_screen(pscreen)->winsys;
++      winsys->displaytarget_unmap(winsys, resource->dt);
++      resource->dt_map = NULL;
++   }
++   if (resource->mirror_staging)
++      pipe_resource_reference(&resource->mirror_staging, NULL);
+    if ((resource->dt_refcount == 0) && resource->dt)
+    {
+       struct d3d12_screen *screen = d3d12_screen(pscreen);
+@@ -95,6 +137,8 @@
+       d3d12_bo_unreference(resource->bo);
+    if (resource->logicop_texture)
+       pipe_resource_reference(&resource->logicop_texture, NULL);
++   if (resource->mirror_link_owner)
++      pipe_resource_reference(&resource->mirror_link_owner, NULL);
+    FREE(resource);
+ }
+ 
+@@ -540,10 +584,681 @@
+    return &res->base.b;
+ }
+ 
++/* KMS mirror ------------------------------------------------------------
++ *
++ * With the kms_swrast winsys (a KMS device without a GPU driver, such as
++ * virtio-gpu in 2D mode) the display, other processes and dma-buf
++ * consumers only understand dumb buffers. Scanout, cursor and shared
++ * images therefore pair a GPU texture (where everything renders) with a
++ * dumb buffer (what handles, dma-bufs and KMS see). Each flush of a context
++ * that wrote a mirror copies it into the dumb buffer, so the frame is
++ * there before the compositor commits it.
++ */
++static const unsigned d3d12_mirror_binds =
++   PIPE_BIND_SCANOUT | PIPE_BIND_SHARED | PIPE_BIND_CURSOR |
++   PIPE_BIND_DISPLAY_TARGET | PIPE_BIND_LINEAR;
++
++static bool
++d3d12_mirror_wanted(struct d3d12_screen *screen,
++                    const struct pipe_resource *templ)
++{
++   return screen->winsys && screen->winsys->get_fd &&
++          templ->target == PIPE_TEXTURE_2D && templ->nr_samples <= 1 &&
++          templ->last_level == 0 && templ->array_size <= 1 &&
++          util_format_get_num_planes(templ->format) == 1 &&
++          !util_format_is_yuv(templ->format) &&
++          !util_format_is_depth_or_stencil(templ->format);
++}
++
++
++#ifndef _WIN32
++/* virtio-dxg zero-copy scanout -----------------------------------------
++ *
++ * In a virtio-dxg VM the host display can show a scanout buffer's GPU
++ * texture itself: LX_DXVIRTIOSCANOUT on /dev/dxg links the virtio-gpu
++ * buffer to the texture's shared handle. Nothing is then copied into the
++ * dumb buffer, nor into the host, nor uploaded to the display. Scanout
++ * mirrors are therefore created shared, and an import of a linked buffer
++ * in the same process (the compositor importing its own swapchain) gets
++ * the same texture, so the host shows what is rendered.
++ * D3D12_ZERO_COPY_SCANOUT=false keeps the copies.
++ */
++struct d3d12_virtio_scanout {
++   uint32_t gpu_resource;
++   int32_t resource_fd;
++   uint32_t width;
++   uint32_t height;
++   uint32_t drm_format;
++   uint32_t alloc_size;
++   uint32_t flags;
++   uint32_t reserved;
++   uint64_t cookie;
++};
++#define D3D12_LX_DXVIRTIOSCANOUT \
++   _IOWR(0x47, 0x80, struct d3d12_virtio_scanout)
++#define D3D12_VIRTIO_SCANOUT_ZERO_COPY 1u
++
++static simple_mtx_t d3d12_scanout_lock = SIMPLE_MTX_INITIALIZER;
++static int d3d12_scanout_dxg = -2;   /* /dev/dxg; -1: none, -2: not tried */
++static struct hash_table_u64 *d3d12_scanout_links; /* gpu resource -> res */
++static unsigned d3d12_scanout_count;
++static uint64_t d3d12_scanout_cookie;
++
++static uint32_t
++d3d12_scanout_fourcc(enum pipe_format format)
++{
++   switch (format) {
++   case PIPE_FORMAT_B8G8R8X8_UNORM: return 0x34325258; /* XR24 */
++   case PIPE_FORMAT_B8G8R8A8_UNORM: return 0x34325241; /* AR24 */
++   case PIPE_FORMAT_R8G8B8X8_UNORM: return 0x34324258; /* XB24 */
++   case PIPE_FORMAT_R8G8B8A8_UNORM: return 0x34324241; /* AB24 */
++   default: return 0;
++   }
++}
++
++static bool
++d3d12_scanout_wanted(const struct pipe_resource *templ)
++{
++   if (!(templ->bind & PIPE_BIND_SCANOUT) || (templ->bind & PIPE_BIND_CURSOR) ||
++       !d3d12_scanout_fourcc(templ->format) ||
++       !debug_get_bool_option("D3D12_ZERO_COPY_SCANOUT", true))
++      return false;
++   simple_mtx_lock(&d3d12_scanout_lock);
++   if (d3d12_scanout_dxg == -2) {
++      d3d12_scanout_dxg = open("/dev/dxg", O_RDWR | O_CLOEXEC);
++      if (d3d12_scanout_dxg < 0)
++         d3d12_scanout_dxg = -1;
++   }
++   bool ok = d3d12_scanout_dxg >= 0;
++   simple_mtx_unlock(&d3d12_scanout_lock);
++   return ok;
++}
++
++static uint32_t
++d3d12_scanout_resource_id(int drm_fd, uint32_t gem_handle)
++{
++   struct drm_virtgpu_resource_info info = {};
++   info.bo_handle = gem_handle;
++   if (drm_fd < 0 || ioctl(drm_fd, DRM_IOCTL_VIRTGPU_RESOURCE_INFO, &info))
++      return 0;
++   return info.res_handle;
++}
++
++/* Links res (a shared texture) to the virtio-gpu buffer gpu_resource. */
++static void
++d3d12_scanout_link(struct d3d12_screen *screen, struct d3d12_resource *res,
++                   uint32_t gpu_resource)
++{
++   ID3D12Resource *d3d12_res = d3d12_resource_resource(res);
++   HANDLE handle = nullptr;
++
++   if (!gpu_resource || !d3d12_res ||
++       FAILED(screen->dev->CreateSharedHandle(d3d12_res, nullptr, GENERIC_ALL,
++                                              nullptr, &handle)))
++      return;
++   D3D12_RESOURCE_DESC desc = GetDesc(d3d12_res);
++   struct d3d12_virtio_scanout link = {};
++   link.gpu_resource = gpu_resource;
++   link.resource_fd = (int)(intptr_t)handle;
++   link.width = res->base.b.width0;
++   link.height = res->base.b.height0;
++   link.drm_format = d3d12_scanout_fourcc(res->base.b.format);
++   const uint64_t allocation_size =
++      GetResourceAllocationInfo(screen->dev, 0, 1, &desc).SizeInBytes;
++   if (!allocation_size || allocation_size > UINT32_MAX) {
++      close(link.resource_fd);
++      return;
++   }
++   link.alloc_size = (uint32_t)allocation_size;
++
++   simple_mtx_lock(&d3d12_scanout_lock);
++   if (!d3d12_scanout_links)
++      d3d12_scanout_links = _mesa_hash_table_u64_create(NULL);
++   if (!d3d12_scanout_links) {
++      simple_mtx_unlock(&d3d12_scanout_lock);
++      close(link.resource_fd);
++      return;
++   }
++   link.cookie = ++d3d12_scanout_cookie | ((uint64_t)getpid() << 32);
++   if (ioctl(d3d12_scanout_dxg, D3D12_LX_DXVIRTIOSCANOUT, &link) == 0 &&
++       (link.flags & D3D12_VIRTIO_SCANOUT_ZERO_COPY)) {
++      if (!_mesa_hash_table_u64_search(d3d12_scanout_links, gpu_resource))
++         d3d12_scanout_count++;
++      _mesa_hash_table_u64_insert(d3d12_scanout_links, gpu_resource, res);
++      res->mirror_zero_copy = true;
++      res->mirror_gpu_resource = gpu_resource;
++      res->mirror_cookie = link.cookie;
++   }
++   simple_mtx_unlock(&d3d12_scanout_lock);
++   close(link.resource_fd);
++}
++
++/* With d3d12_scanout_lock. */
++static void
++d3d12_scanout_unlink_locked(struct d3d12_resource *res)
++{
++   struct d3d12_virtio_scanout link = {};
++
++   if (!res->mirror_zero_copy)
++      return;
++   if (d3d12_scanout_links &&
++       _mesa_hash_table_u64_search(d3d12_scanout_links,
++                                   res->mirror_gpu_resource) == res) {
++      _mesa_hash_table_u64_remove(d3d12_scanout_links, res->mirror_gpu_resource);
++      d3d12_scanout_count--;
++   }
++   link.gpu_resource = res->mirror_gpu_resource;
++   link.resource_fd = -1;
++   link.cookie = res->mirror_cookie;
++   ioctl(d3d12_scanout_dxg, D3D12_LX_DXVIRTIOSCANOUT, &link);
++   res->mirror_zero_copy = false;
++}
++
++static void
++d3d12_scanout_unlink(struct d3d12_resource *res)
++{
++   simple_mtx_lock(&d3d12_scanout_lock);
++   d3d12_scanout_unlink_locked(res);
++   simple_mtx_unlock(&d3d12_scanout_lock);
++}
++
++/* The registry is weak. A last release can enter resource_destroy and
++ * wait for this mutex with count zero; never resurrect that resource. */
++static bool
++d3d12_scanout_try_reference(struct pipe_resource **target,
++                              struct pipe_resource *source)
++{
++   int count = p_atomic_read(&source->reference.count);
++   while (count > 0 && count < INT_MAX) {
++      int prior = p_atomic_cmpxchg(&source->reference.count, count, count + 1);
++      if (prior == count) {
++         *target = source;
++         return true;
++      }
++      count = prior;
++   }
++   return false;
++}
++
++/* A layout fallback on the owner also invalidates its borrowed wrappers. */
++static bool
++d3d12_scanout_active(struct d3d12_resource *res)
++{
++   simple_mtx_lock(&d3d12_scanout_lock);
++   bool active = res->mirror_zero_copy &&
++      (!res->mirror_link_owner ||
++       d3d12_resource(res->mirror_link_owner)->mirror_zero_copy);
++   simple_mtx_unlock(&d3d12_scanout_lock);
++   return active;
++}
++
++/*
++ * The linked texture of the dma-buf's buffer, when this process linked it
++ * and the import matches it; NULL otherwise. On another screen of the
++ * process (compositors allocate on one GBM device and render on another),
++ * *borrowed instead becomes a resource of this screen wrapping the same
++ * D3D12 texture, and *gpu_resource its buffer. An import that does not
++ * match (another format or size) returns the buffer to copies, so every
++ * view of it stays correct.
++ */
++static struct pipe_resource *
++d3d12_scanout_lookup(struct d3d12_screen *screen,
++                     const struct pipe_resource *templ, int dmabuf_fd,
++                     struct pipe_resource **borrowed, uint32_t *gpu_resource)
++{
++   struct pipe_resource *found = NULL;
++   struct pipe_resource *owner = NULL;
++   ID3D12Resource *shared = NULL;
++   uint32_t borrowed_id = 0;
++   int drm_fd = screen->winsys->get_fd(screen->winsys);
++
++   *borrowed = NULL;
++
++   simple_mtx_lock(&d3d12_scanout_lock);
++   if (d3d12_scanout_count && drm_fd >= 0) {
++      /* Our own buffers already have this handle on drm_fd: not closed. */
++      struct drm_prime_handle prime = {};
++      prime.fd = dmabuf_fd;
++      if (ioctl(drm_fd, DRM_IOCTL_PRIME_FD_TO_HANDLE, &prime) == 0) {
++         uint32_t id = d3d12_scanout_resource_id(drm_fd, prime.handle);
++         struct d3d12_resource *res = id ? (struct d3d12_resource *)
++            _mesa_hash_table_u64_search(d3d12_scanout_links, id) : NULL;
++         bool retained = res && d3d12_scanout_try_reference(&owner, &res->base.b);
++         bool match = retained && res->base.b.format == templ->format &&
++                      res->base.b.width0 == templ->width0 &&
++                      res->base.b.height0 == templ->height0;
++         if (match && res->base.b.screen == &screen->base) {
++            found = owner;
++            owner = NULL;
++         } else if (match) {
++            shared = d3d12_resource_resource(res);
++            shared->AddRef();
++            borrowed_id = id;
++         } else if (retained) {
++            d3d12_scanout_unlink_locked(res);
++         }
++      }
++   }
++   simple_mtx_unlock(&d3d12_scanout_lock);
++
++   if (shared) {
++      /* Import can reclaim other batches/resources and enter their
++       * destructors. Never hold the registry mutex across that call. The
++       * positive owner reference keeps our texture/link alive meanwhile. */
++      struct winsys_handle wh = {};
++      wh.type = WINSYS_HANDLE_TYPE_D3D12_RES;
++      wh.com_obj = shared; /* The import consumes this COM reference. */
++      wh.format = templ->format;
++      *borrowed = screen->base.resource_from_handle(
++         &screen->base, templ, &wh, PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
++      if (*borrowed) {
++         d3d12_resource(*borrowed)->mirror_link_owner = owner;
++         owner = NULL;
++         *gpu_resource = borrowed_id;
++      } else {
++         simple_mtx_lock(&d3d12_scanout_lock);
++         d3d12_scanout_unlink_locked(d3d12_resource(owner));
++         simple_mtx_unlock(&d3d12_scanout_lock);
++      }
++   }
++   /* A final owner release can unlink, so it must happen outside the mutex. */
++   pipe_resource_reference(&owner, NULL);
++   return found;
++}
++
++#else
++static bool
++d3d12_scanout_active(struct d3d12_resource *)
++{
++   return false;
++}
++#endif /* !_WIN32 */
++
++static struct pipe_resource *
++d3d12_resource_create_or_place(struct d3d12_screen *screen,
++                               struct d3d12_resource *res,
++                               const struct pipe_resource *templ,
++                               ID3D12Heap *heap,
++                               uint64_t placed_offset);
++
++#ifndef _WIN32
++/* virtio-dxg zero-copy window buffers ------------------------------------
++ *
++ * On a render node a shared image (a Wayland window buffer) is a virtio-gpu
++ * buffer exported as a dma-buf, with a shared GPU texture registered for it
++ * in the dxg module (LX_DXVIRTIOWINBUF). An import of such a dma-buf, in
++ * any process, gets the texture. D3D12_ZERO_COPY_CLIENTS=false, or a
++ * kernel without the registry, leaves a mirror that is filled by a copy.
++ */
++struct d3d12_virtio_winbuf {
++   uint32_t op;         /* 1 register, 2 unregister, 3 lookup */
++   int32_t dmabuf_fd;
++   int32_t resource_fd;
++   uint32_t reserved;
++};
++#define D3D12_LX_DXVIRTIOWINBUF _IOWR(0x47, 0x81, struct d3d12_virtio_winbuf)
++
++static int
++d3d12_dxg_fd(void)
++{
++   simple_mtx_lock(&d3d12_scanout_lock);
++   if (d3d12_scanout_dxg == -2) {
++      d3d12_scanout_dxg = open("/dev/dxg", O_RDWR | O_CLOEXEC);
++      if (d3d12_scanout_dxg < 0)
++         d3d12_scanout_dxg = -1;
++   }
++   int fd = d3d12_scanout_dxg;
++   simple_mtx_unlock(&d3d12_scanout_lock);
++   return fd;
++}
++
++static bool
++d3d12_on_render_node(struct d3d12_screen *screen)
++{
++   struct stat st;
++   int fd = screen->winsys && screen->winsys->get_fd ?
++            screen->winsys->get_fd(screen->winsys) : -1;
++
++   return fd >= 0 && fstat(fd, &st) == 0 && S_ISCHR(st.st_mode) &&
++          major(st.st_rdev) == 226 && minor(st.st_rdev) >= 128;
++}
++
++static uint32_t
++d3d12_virtio_gpu_format(enum pipe_format format)
++{
++   switch (format) {
++   case PIPE_FORMAT_B8G8R8A8_UNORM: return 1;
++   case PIPE_FORMAT_B8G8R8X8_UNORM: return 2;
++   case PIPE_FORMAT_R8G8B8A8_UNORM: return 67;
++   case PIPE_FORMAT_R8G8B8X8_UNORM: return 134;
++   default: return 0;
++   }
++}
++
++static struct pipe_resource *
++d3d12_winbuf_create(struct d3d12_screen *screen,
++                    const struct pipe_resource *templ)
++{
++   int drm_fd = screen->winsys->get_fd(screen->winsys);
++   uint32_t format = d3d12_virtio_gpu_format(templ->format);
++   unsigned stride = align(util_format_get_stride(templ->format, templ->width0), 64);
++   uint64_t size = (uint64_t)stride * templ->height0;
++   if (!format || size > UINT32_MAX)
++      return NULL;
++
++   /* The dma-buf: a 2D virtio-gpu buffer (render nodes may create them). */
++   struct drm_virtgpu_resource_create rc = {};
++   rc.target = 2;
++   rc.format = format;
++   rc.width = templ->width0;
++   rc.height = templ->height0;
++   rc.depth = 1;
++   rc.array_size = 1;
++   rc.size = (uint32_t)size;
++   if (ioctl(drm_fd, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE, &rc))
++      return NULL;
++   struct drm_prime_handle prime = {};
++   prime.handle = rc.bo_handle;
++   prime.flags = DRM_CLOEXEC | DRM_RDWR;
++   int ret = ioctl(drm_fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime);
++   struct drm_gem_close gem = {};
++   gem.handle = rc.bo_handle;
++   if (ret) {
++      ioctl(drm_fd, DRM_IOCTL_GEM_CLOSE, &gem);
++      return NULL;
++   }
++   int fd = prime.fd;
++
++   struct d3d12_resource *res = CALLOC_STRUCT(d3d12_resource);
++   if (!res) {
++      ioctl(drm_fd, DRM_IOCTL_GEM_CLOSE, &gem);
++      close(fd);
++      return NULL;
++   }
++   struct pipe_resource tex_templ = *templ;
++   tex_templ.bind &= ~d3d12_mirror_binds;
++   tex_templ.bind |= PIPE_BIND_SHARED | PIPE_BIND_RENDER_TARGET |
++                     PIPE_BIND_SAMPLER_VIEW;
++   struct pipe_resource *pres =
++      d3d12_resource_create_or_place(screen, res, &tex_templ, nullptr, 0);
++   if (!pres) {
++      ioctl(drm_fd, DRM_IOCTL_GEM_CLOSE, &gem);
++      close(fd);
++      return NULL;
++   }
++   res->mirror_gem = rc.bo_handle;
++   pres->bind = templ->bind | PIPE_BIND_SHARED;
++   res->dt_mirror = true;
++   res->dt_stride = stride;
++   res->mirror_has_fd = true;
++   res->mirror_fd = fd;
++   res->mirror_map_size = size;
++
++   /* Pair the texture with the dma-buf for whoever imports it. */
++   HANDLE shared = nullptr;
++   int dxg = d3d12_dxg_fd();
++   ID3D12Resource *d3d12_res = d3d12_resource_resource(res);
++   if (dxg >= 0 && d3d12_res &&
++       SUCCEEDED(screen->dev->CreateSharedHandle(d3d12_res, nullptr, GENERIC_ALL,
++                                                 nullptr, &shared)) && shared) {
++      struct d3d12_virtio_winbuf reg = {};
++      reg.op = 1;
++      reg.dmabuf_fd = fd;
++      reg.resource_fd = (int)(intptr_t)shared;
++      res->dxg_shared = ioctl(dxg, D3D12_LX_DXVIRTIOWINBUF, &reg) == 0;
++      close(reg.resource_fd);
++   }
++   if (debug_get_bool_option("D3D12_WINBUF_DEBUG", false))
++      fprintf(stderr, "winbuf[%d]: create %ux%u %s bind 0x%x -> %s\n", getpid(),
++              templ->width0, templ->height0, util_format_short_name(templ->format),
++              templ->bind, res->dxg_shared ? "paired" : "NOT paired");
++   if (!res->dxg_shared) {
++      /* No pairing (an older dxg module): an importer could not see the
++       * image, so there is no window buffer; callers fall back. */
++      pipe_resource_reference(&pres, NULL);
++      return NULL;
++   }
++   return pres;
++}
++
++/* The pair is not taken back when the allocation goes: browsers allocate
++ * with GBM, import the dma-buf, free the allocation and only then hand the
++ * dma-buf to the compositor. The module drops a pair with its dma-buf. */
++static void
++d3d12_winbuf_release(struct d3d12_screen *screen, struct d3d12_resource *res)
++{
++   if (res->mirror_gem) {
++      struct drm_gem_close gem = {};
++      gem.handle = res->mirror_gem;
++      ioctl(screen->winsys->get_fd(screen->winsys), DRM_IOCTL_GEM_CLOSE, &gem);
++      res->mirror_gem = 0;
++   }
++}
++
++/* The texture paired with an imported window buffer, as a resource of this
++ * screen; NULL when the dma-buf has none. */
++static struct pipe_resource *
++d3d12_winbuf_import(struct d3d12_screen *screen,
++                    const struct pipe_resource *templ, int dmabuf_fd)
++{
++   int dxg = d3d12_dxg_fd();
++   struct d3d12_virtio_winbuf look = {};
++   look.op = 3;
++   look.dmabuf_fd = dmabuf_fd;
++   look.resource_fd = -1;
++   if (dxg < 0 || !debug_get_bool_option("D3D12_ZERO_COPY_CLIENTS", true) ||
++       ioctl(dxg, D3D12_LX_DXVIRTIOWINBUF, &look) || look.resource_fd < 0) {
++      if (debug_get_bool_option("D3D12_WINBUF_DEBUG", false))
++         fprintf(stderr, "winbuf[%d]: import %ux%u %s: no pair (dxg fd %d)\n",
++                 getpid(), templ->width0, templ->height0,
++                 util_format_short_name(templ->format), dxg);
++      return NULL;
++   }
++   struct winsys_handle wh = {};
++   wh.type = WINSYS_HANDLE_TYPE_FD;
++   wh.handle = look.resource_fd;
++   wh.format = templ->format;
++   /* Not a dma-buf: the regular path opens the shared handle. */
++   struct pipe_resource *pres = screen->base.resource_from_handle(
++      &screen->base, templ, &wh, PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
++   close(look.resource_fd);
++   if (pres) {
++      struct d3d12_resource *window = d3d12_resource(pres);
++
++      window->dxg_window = true;
++      /* Re-export (Xwayland presents a client's pixmap by its dma-buf)
++       * hands out the dma-buf itself, not the texture's handle. */
++      window->mirror_fd = os_dupfd_cloexec(dmabuf_fd);
++      window->mirror_has_fd = window->mirror_fd >= 0;
++   }
++   if (debug_get_bool_option("D3D12_WINBUF_DEBUG", false))
++      fprintf(stderr, "winbuf[%d]: import %ux%u %s bind 0x%x -> %s\n", getpid(),
++              templ->width0, templ->height0, util_format_short_name(templ->format),
++              templ->bind, pres ? "texture" : "FAILED to open");
++   return pres;
++}
++#endif /* !_WIN32 */
++
++static struct pipe_resource *
++d3d12_mirror_attach(struct d3d12_screen *screen,
++                    const struct pipe_resource *templ,
++                    struct sw_displaytarget *dt, unsigned dt_stride)
++{
++   struct sw_winsys *winsys = screen->winsys;
++   struct d3d12_resource *res = CALLOC_STRUCT(d3d12_resource);
++   if (!res) {
++      winsys->displaytarget_destroy(winsys, dt);
++      return NULL;
++   }
++
++   /* The GPU copy is an ordinary optimal-layout texture; shared when the
++    * host display may show it (zero-copy scanout). */
++#ifndef _WIN32
++   bool zero_copy = d3d12_scanout_wanted(templ);
++#else
++   bool zero_copy = false;
++#endif
++   struct pipe_resource gpu_templ = *templ;
++   gpu_templ.bind &= ~d3d12_mirror_binds;
++   gpu_templ.bind |= PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW;
++   if (zero_copy)
++      gpu_templ.bind |= PIPE_BIND_SHARED;
++   struct pipe_resource *pres =
++      d3d12_resource_create_or_place(screen, res, &gpu_templ, nullptr, 0);
++   if (!pres) {
++      winsys->displaytarget_destroy(winsys, dt);
++      return NULL;
++   }
++   pres->bind = templ->bind | PIPE_BIND_SHARED;
++   res->dt = dt;
++   res->dt_stride = dt_stride;
++   res->dt_refcount = 1;
++   res->dt_mirror = true;
++   /* Mapped for the resource's lifetime: no mmap/munmap per frame. */
++   res->dt_map = winsys->displaytarget_map(winsys, dt, PIPE_MAP_READ_WRITE);
++   if (!res->dt_map) {
++      pipe_resource_reference(&pres, NULL);
++      return NULL;
++   }
++#ifndef _WIN32
++   if (zero_copy) {
++      struct winsys_handle wh = {};
++      wh.type = WINSYS_HANDLE_TYPE_KMS;
++      if (winsys->displaytarget_get_handle(winsys, dt, &wh))
++         d3d12_scanout_link(screen, res,
++                            d3d12_scanout_resource_id(winsys->get_fd(winsys),
++                                                      wh.handle));
++   }
++#endif
++   return pres;
++}
++
++static struct pipe_resource *
++d3d12_mirror_create(struct d3d12_screen *screen,
++                    const struct pipe_resource *templ)
++{
++   unsigned stride = 0;
++   struct sw_displaytarget *dt =
++      screen->winsys->displaytarget_create(screen->winsys, templ->bind,
++                                           templ->format, templ->width0,
++                                           templ->height0, 64, NULL, &stride);
++   if (!dt)
++      return NULL;
++   return d3d12_mirror_attach(screen, templ, dt, stride);
++}
++
++static struct pipe_resource *
++d3d12_mirror_gpu_texture(struct d3d12_screen *screen,
++                         const struct pipe_resource *templ)
++{
++   struct d3d12_resource *res = CALLOC_STRUCT(d3d12_resource);
++   if (!res)
++      return NULL;
++   struct pipe_resource gpu_templ = *templ;
++   gpu_templ.bind &= ~d3d12_mirror_binds;
++   gpu_templ.bind |= PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW;
++   struct pipe_resource *pres =
++      d3d12_resource_create_or_place(screen, res, &gpu_templ, nullptr, 0);
++   if (pres)
++      pres->bind = templ->bind | PIPE_BIND_SHARED;
++   return pres;
++}
++
++static struct pipe_resource *
++d3d12_mirror_import(struct d3d12_screen *screen,
++                    const struct pipe_resource *templ,
++                    struct winsys_handle *handle)
++{
++   unsigned stride = 0;
++   if (handle->plane || handle->offset)
++      return NULL;
++#ifndef _WIN32
++   if (handle->type == WINSYS_HANDLE_TYPE_FD) {
++      /* A D3D12 shared-handle descriptor (not a dma-buf) has no size; the
++       * caller then takes the regular path. */
++      off_t size = lseek((int)handle->handle, 0, SEEK_END);
++      unsigned row = util_format_get_stride(templ->format, templ->width0);
++      stride = handle->stride ? handle->stride : row;
++      if (size <= 0 || stride < row ||
++          (uint64_t)stride * templ->height0 > (uint64_t)size)
++         return NULL;
++      struct pipe_resource *borrowed = NULL;
++      uint32_t gpu_resource = 0;
++      struct pipe_resource *linked =
++         d3d12_scanout_lookup(screen, templ, (int)handle->handle, &borrowed,
++                              &gpu_resource);
++      if (linked)
++         return linked;
++      if (!borrowed) {
++         struct pipe_resource *window =
++            d3d12_winbuf_import(screen, templ, (int)handle->handle);
++         if (window) {
++            d3d12_resource(window)->dt_stride = handle->stride;
++            return window;
++         }
++      }
++      int fd = os_dupfd_cloexec((int)handle->handle);
++      if (fd < 0) {
++         pipe_resource_reference(&borrowed, NULL);
++         return NULL;
++      }
++      void *map = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++      if (map == MAP_FAILED) {
++         close(fd);
++         pipe_resource_reference(&borrowed, NULL);
++         return NULL;
++      }
++      struct pipe_resource *pres = borrowed ? borrowed :
++         d3d12_mirror_gpu_texture(screen, templ);
++      if (!pres) {
++         munmap(map, size);
++         close(fd);
++         return NULL;
++      }
++      struct d3d12_resource *res = d3d12_resource(pres);
++      if (borrowed) {
++         pres->bind = templ->bind | PIPE_BIND_SHARED;
++         res->mirror_zero_copy = true;
++         res->mirror_link_borrowed = true;
++         res->mirror_gpu_resource = gpu_resource;
++      }
++      res->dt_mirror = true;
++      res->dt_stride = stride;
++      res->dt_map = map;
++      res->mirror_has_fd = true;
++      res->mirror_fd = fd;
++      res->mirror_map_size = size;
++      return pres;
++   }
++#endif
++   struct sw_displaytarget *dt =
++      screen->winsys->displaytarget_from_handle(screen->winsys, templ,
++                                                handle, &stride);
++   if (!dt)
++      return NULL;
++   /* Its current contents become the GPU copy's starting point the first
++    * time a context syncs; until then the GPU copy is undefined, which is
++    * what a compositor's render target expects. */
++   return d3d12_mirror_attach(screen, templ, dt, stride);
++}
++
+ static struct pipe_resource *
+ d3d12_resource_create(struct pipe_screen *pscreen,
+                       const struct pipe_resource *templ)
+ {
++   struct d3d12_screen *screen = d3d12_screen(pscreen);
++#ifndef _WIN32
++   if ((templ->bind & d3d12_mirror_binds) &&
++       d3d12_mirror_wanted(screen, templ) && d3d12_on_render_node(screen)) {
++      struct pipe_resource *winbuf = d3d12_winbuf_create(screen, templ);
++      if (winbuf)
++         return winbuf;
++   }
++#endif
++   if ((templ->bind & d3d12_mirror_binds) &&
++       d3d12_mirror_wanted(screen, templ))
++      return d3d12_mirror_create(screen, templ);
++
+    struct d3d12_resource *res = CALLOC_STRUCT(d3d12_resource);
+    if (!res)
+       return NULL;
+@@ -557,6 +1272,13 @@
+                           struct winsys_handle *handle, unsigned usage)
+ {
+    struct d3d12_screen *screen = d3d12_screen(pscreen);
++   if ((handle->type == WINSYS_HANDLE_TYPE_FD ||
++        handle->type == WINSYS_HANDLE_TYPE_KMS) &&
++       templ && d3d12_mirror_wanted(screen, templ)) {
++      struct pipe_resource *mirror = d3d12_mirror_import(screen, templ, handle);
++      if (mirror || handle->type == WINSYS_HANDLE_TYPE_KMS)
++         return mirror;
++   }
+    if (handle->type != WINSYS_HANDLE_TYPE_D3D12_RES &&
+        handle->type != WINSYS_HANDLE_TYPE_FD &&
+        handle->type != WINSYS_HANDLE_TYPE_WIN32_NAME)
+@@ -846,6 +1568,36 @@
+    struct d3d12_resource *res = d3d12_resource(pres);
+    struct d3d12_screen *screen = d3d12_screen(pscreen);
+ 
++   if ((res->dt_mirror || (res->dxg_window && res->mirror_has_fd)) &&
++       (handle->type == WINSYS_HANDLE_TYPE_KMS ||
++        handle->type == WINSYS_HANDLE_TYPE_FD)) {
++#ifndef _WIN32
++      if (res->mirror_has_fd) {
++         if (handle->type == WINSYS_HANDLE_TYPE_KMS && res->mirror_gem) {
++            handle->handle = res->mirror_gem;
++            handle->stride = res->dt_stride;
++            handle->offset = 0;
++            handle->modifier = 0; /* DRM_FORMAT_MOD_LINEAR */
++            handle->format = pres->format;
++            return true;
++         }
++         if (handle->type != WINSYS_HANDLE_TYPE_FD)
++            return false;
++         handle->handle = os_dupfd_cloexec(res->mirror_fd);
++         handle->stride = res->dt_stride;
++         handle->offset = 0;
++         handle->modifier = 0; /* DRM_FORMAT_MOD_LINEAR */
++         handle->format = pres->format;
++         return (int)handle->handle >= 0;
++      }
++#endif
++      if (!screen->winsys->displaytarget_get_handle(screen->winsys, res->dt,
++                                                    handle))
++         return false;
++      handle->format = pres->format;
++      return true;
++   }
++
+    switch (handle->type) {
+    case WINSYS_HANDLE_TYPE_D3D12_RES:
+       handle->com_obj = d3d12_resource_resource(res);
+@@ -985,6 +1737,13 @@
+ 
+ static constexpr unsigned d3d12_max_planes = 3;
+ 
++static bool
++d3d12_resource_get_handle(struct pipe_screen *pscreen,
++                          struct pipe_context *pcontext,
++                          struct pipe_resource *pres,
++                          struct winsys_handle *handle,
++                          unsigned usage);
++
+ /**
+  * Get stride and offset for the given pipe resource without the need to get
+  * a winsys_handle.
+@@ -1003,6 +1762,41 @@
+    struct d3d12_resource* res = d3d12_resource(pres);
+    unsigned num_planes = util_format_get_num_planes(res->overall_format);
+ 
++   if (res->dt_mirror || (res->dxg_window && res->mirror_has_fd)) {
++      struct winsys_handle handle = {};
++      switch (param) {
++      case PIPE_RESOURCE_PARAM_NPLANES:
++         *value = 1;
++         return true;
++      case PIPE_RESOURCE_PARAM_STRIDE:
++         *value = res->dt_stride;
++         return true;
++      case PIPE_RESOURCE_PARAM_OFFSET:
++         *value = 0;
++         return true;
++      case PIPE_RESOURCE_PARAM_LAYER_STRIDE:
++         *value = (uint64_t)res->dt_stride * pres->height0;
++         return true;
++      case PIPE_RESOURCE_PARAM_DISJOINT_PLANES:
++         *value = false;
++         return true;
++      case PIPE_RESOURCE_PARAM_MODIFIER:
++         *value = 0; /* DRM_FORMAT_MOD_LINEAR */
++         return true;
++      case PIPE_RESOURCE_PARAM_HANDLE_TYPE_KMS:
++      case PIPE_RESOURCE_PARAM_HANDLE_TYPE_FD:
++         handle.type = param == PIPE_RESOURCE_PARAM_HANDLE_TYPE_KMS ?
++            WINSYS_HANDLE_TYPE_KMS : WINSYS_HANDLE_TYPE_FD;
++         if (!d3d12_resource_get_handle(pscreen, context, pres, &handle,
++                                        handle_usage))
++            return false;
++         *value = handle.handle;
++         return true;
++      default:
++         return false;
++      }
++   }
++
+    pipe_resource *planes[d3d12_max_planes];
+    unsigned int strides[d3d12_max_planes];
+    unsigned int layer_strides[d3d12_max_planes];
+@@ -1273,6 +2067,142 @@
+    ctx->has_commands = true;
+ }
+ 
++static bool
++d3d12_mirror_staging(struct d3d12_resource *res)
++{
++   if (res->mirror_staging)
++      return true;
++   struct d3d12_screen *screen = d3d12_screen(res->base.b.screen);
++   uint64_t offset = 0;
++   D3D12_RESOURCE_DESC desc = GetDesc(d3d12_resource_underlying(res, &offset));
++   UINT64 total = 0;
++   screen->dev->GetCopyableFootprints(&desc, 0, 1, 0, &res->mirror_footprint,
++                                      nullptr, nullptr, &total);
++   res->mirror_staging = pipe_buffer_create(&screen->base, 0,
++                                            PIPE_USAGE_STAGING, total);
++   return res->mirror_staging != nullptr;
++}
++
++static bool
++d3d12_mirror_record(struct d3d12_context *ctx, struct d3d12_resource *res)
++{
++   if (!d3d12_mirror_staging(res))
++      return false;
++   struct d3d12_resource *staging = d3d12_resource(res->mirror_staging);
++   uint64_t src_offset = 0, dst_offset = 0;
++   struct copy_info info = {};
++   info.src = res;
++   info.src_loc.pResource = d3d12_resource_underlying(res, &src_offset);
++   info.src_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++   info.src_loc.SubresourceIndex = 0;
++   info.dst = staging;
++   info.dst_loc.pResource = d3d12_resource_underlying(staging, &dst_offset);
++   info.dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++   info.dst_loc.PlacedFootprint = res->mirror_footprint;
++   info.dst_loc.PlacedFootprint.Offset = dst_offset;
++   info.src_box = nullptr;
++   copy_texture_region(ctx, info);
++   return true;
++}
++
++static void
++d3d12_mirror_publish(struct d3d12_context *ctx, struct d3d12_resource *res)
++{
++   struct pipe_transfer *xfer = NULL;
++   const uint8_t *src = (const uint8_t *)
++      pipe_buffer_map(&ctx->base, res->mirror_staging,
++                      PIPE_MAP_READ | PIPE_MAP_UNSYNCHRONIZED, &xfer);
++   if (!src)
++      return;
++   const D3D12_SUBRESOURCE_FOOTPRINT &fp = res->mirror_footprint.Footprint;
++   unsigned row = util_format_get_stride(res->base.b.format, res->base.b.width0);
++   unsigned rows = util_format_get_nblocksy(res->base.b.format, res->base.b.height0);
++   uint8_t *dst = (uint8_t *)res->dt_map;
++#ifndef _WIN32
++   struct dma_buf_sync sync = { DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE };
++   if (res->mirror_has_fd)
++      ioctl(res->mirror_fd, DMA_BUF_IOCTL_SYNC, &sync);
++#endif
++   if (row == fp.RowPitch && row == res->dt_stride) {
++      memcpy(dst, src, (size_t)row * rows);
++   } else {
++      for (unsigned y = 0; y < rows; y++)
++         memcpy(dst + (size_t)y * res->dt_stride,
++                src + (size_t)y * fp.RowPitch, row);
++   }
++#ifndef _WIN32
++   if (res->mirror_has_fd) {
++      sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE;
++      ioctl(res->mirror_fd, DMA_BUF_IOCTL_SYNC, &sync);
++   }
++#endif
++   pipe_buffer_unmap(&ctx->base, xfer);
++}
++
++void
++d3d12_mirror_reference(struct d3d12_context *ctx, struct d3d12_resource *res)
++{
++   util_dynarray_foreach(&ctx->mirror_dirty, struct pipe_resource *, pres) {
++      if (*pres == &res->base.b)
++         return;
++   }
++   struct pipe_resource *pres = NULL;
++   pipe_resource_reference(&pres, &res->base.b);
++   util_dynarray_append(&ctx->mirror_dirty, pres);
++}
++
++void
++d3d12_mirror_sync(struct d3d12_context *ctx)
++{
++   unsigned count = util_dynarray_num_elements(&ctx->mirror_dirty,
++                                               struct pipe_resource *);
++   if (!count)
++      return;
++   struct mirror_entry {
++      struct pipe_resource *resource;
++      bool copy;
++   } local[16];
++   struct mirror_entry *list = local;
++   if (count > ARRAY_SIZE(local)) {
++      list = (struct mirror_entry *)calloc(count, sizeof(*list));
++      if (!list)
++         return; /* Keep the references queued for a later flush. */
++   }
++   struct pipe_resource **queued = (struct pipe_resource **)ctx->mirror_dirty.data;
++   for (unsigned i = 0; i < count; i++) {
++      list[i].resource = queued[i];
++      list[i].copy = false;
++   }
++   util_dynarray_clear(&ctx->mirror_dirty);
++
++   bool recorded = false;
++   for (unsigned i = 0; i < count; i++) {
++      struct d3d12_resource *res = d3d12_resource(list[i].resource);
++      if (res->dxg_shared || res->dxg_window || d3d12_scanout_active(res)) {
++         /* The host shows the texture: finish GPU work before KMS commits. */
++         recorded = true;
++      } else if (d3d12_mirror_record(ctx, res)) {
++         list[i].copy = true;
++         recorded = true;
++      }
++   }
++   bool completed = false;
++   if (recorded) {
++      struct d3d12_batch *batch = d3d12_current_batch(ctx);
++      /* Close/Signal/allocation can fail before a fence exists. A reset
++       * without a submitted fence is not evidence of GPU completion. */
++      if (d3d12_flush_cmdlist(ctx) && !batch->has_errors && batch->fence)
++         completed = d3d12_reset_batch(ctx, batch, OS_TIMEOUT_INFINITE);
++   }
++   for (unsigned i = 0; i < count; i++) {
++      if (completed && list[i].copy)
++         d3d12_mirror_publish(ctx, d3d12_resource(list[i].resource));
++      pipe_resource_reference(&list[i].resource, NULL);
++   }
++   if (list != local)
++      free(list);
++}
++
+ static void
+ transfer_buf_to_image_part(struct d3d12_context *ctx,
+                            struct d3d12_resource *res,
+--- a/src/gallium/drivers/d3d12/d3d12_resource.h
++++ b/src/gallium/drivers/d3d12/d3d12_resource.h
+@@ -54,6 +54,41 @@
+    unsigned dt_stride;
+    struct pipe_resource *dt_proxy;
+ 
++   /* KMS mirror: on the kms_swrast winsys the GPU texture renders and dt is
++    * a dumb buffer that KMS scans out and other processes import. GPU writes
++    * reach dt when the writing context flushes. */
++   bool dt_mirror;
++   void *dt_map;
++   /* A window buffer on a render node, paired with this (shared) texture
++    * in the dxg module: the compositor samples the texture, so flushes
++    * that wrote it only finish the GPU work. */
++   bool dxg_shared;
++   /* The texture of a window buffer, opened through an import of its
++    * dma-buf (browsers allocate with GBM and render through their own
++    * import): writes are finished at flush as well, or the compositor
++    * could sample, and keep, an unfinished frame. */
++   bool dxg_window;
++   /* The window buffer's GEM handle on the screen's DRM descriptor, for
++    * clients that ask GBM for the handle and export it themselves. */
++   uint32_t mirror_gem;
++   /* An imported dma-buf is mapped through its own descriptor: render
++    * nodes (where compositors usually render) cannot map dumb buffers. */
++   bool mirror_has_fd;
++   int mirror_fd;
++   size_t mirror_map_size;
++   struct pipe_resource *mirror_staging;
++   D3D12_PLACED_SUBRESOURCE_FOOTPRINT mirror_footprint;
++   /* virtio-dxg zero-copy scanout: the host display shows this (shared)
++    * texture for the dumb buffer, so nothing is copied into it; flushes
++    * only finish the GPU work before the compositor commits. */
++   bool mirror_zero_copy;
++   uint32_t mirror_gpu_resource;   /* virtio-gpu resource id of dt */
++   uint64_t mirror_cookie;
++   /* The linked texture of another screen of this process, wrapped here:
++    * its owner holds the link. */
++   bool mirror_link_borrowed;
++   struct pipe_resource *mirror_link_owner; /* retained through wrapper cleanup */
++
+    struct util_range valid_buffer_range;
+    uint32_t bind_counts[MESA_SHADER_STAGES][D3D12_RESOURCE_BINDING_TYPES];
+    unsigned generation_id;
+@@ -62,6 +97,17 @@
+    struct pipe_resource *logicop_texture;
+ };
+ 
++struct d3d12_context;
++
++/* Track each writing context independently: another context's pending flush
++ * must not suppress this context's write. */
++void
++d3d12_mirror_reference(struct d3d12_context *ctx, struct d3d12_resource *res);
++
++/* Copies every mirror the context wrote into its dumb buffer (at flush). */
++void
++d3d12_mirror_sync(struct d3d12_context *ctx);
++
+ struct d3d12_memory_object {
+    struct pipe_memory_object base;
+    ID3D12Resource *res;
+--- a/src/gallium/drivers/d3d12/d3d12_screen.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_screen.cpp
+@@ -384,6 +384,9 @@
+    caps->robust_buffer_access_behavior = true;
+    caps->memobj = true;
+    caps->fence_signal = true;
++#ifndef _WIN32
++   caps->native_fence_fd = d3d12_screen_native_fences(screen);
++#endif
+    caps->timeline_semaphore_import = true;
+    caps->clip_halfz = true;
+    caps->vs_layer_viewport = true;
+@@ -419,6 +422,12 @@
+ #ifndef _GAMING_XBOX
+    caps->query_memory_info = true;
+ #endif
++
++   /* kms_swrast: scanout and shared images are dumb buffers mirrored from
++    * GPU textures (see d3d12_resource.cpp), so they import and export as
++    * dma-bufs like llvmpipe's. DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT. */
++   if (screen->winsys && screen->winsys->get_fd)
++      caps->dmabuf = 0x1 | 0x2;
+ 
+    caps->min_line_width =
+    caps->min_line_width_aa =
+@@ -670,6 +679,10 @@
+ void
+ d3d12_destroy_screen(struct d3d12_screen *screen)
+ {
++#ifndef _WIN32
++   if (screen->completed_sync_fd >= 0)
++      close(screen->completed_sync_fd);
++#endif
+    slab_destroy_parent(&screen->transfer_pool);
+    mtx_destroy(&screen->submit_mutex);
+    mtx_destroy(&screen->pending_free_lock);
+@@ -1377,6 +1390,9 @@
+    d3d12_debug = static_cast<uint32_t>(debug_get_option_d3d12_debug());
+ 
+    screen->winsys = winsys;
++#ifndef _WIN32
++   screen->completed_sync_fd = -1;
++#endif
+    if (adapter_luid)
+       screen->adapter_luid = *adapter_luid;
+    mtx_init(&screen->descriptor_pool_mutex, mtx_plain);
+--- a/src/gallium/drivers/d3d12/d3d12_screen.h
++++ b/src/gallium/drivers/d3d12/d3d12_screen.h
+@@ -70,6 +70,9 @@
+ struct d3d12_screen {
+    struct pipe_screen base;
+    struct sw_winsys *winsys;
++#ifndef _WIN32
++   int completed_sync_fd;
++#endif
+    LUID adapter_luid;
+    char driver_uuid[PIPE_UUID_SIZE];
+    char device_uuid[PIPE_UUID_SIZE];
+--- a/src/glx/dri_common.c
++++ b/src/glx/dri_common.c
+@@ -952,7 +952,9 @@
+    enum dri_screen_type type;
+    switch (psc->display->driver) {
+    case GLX_DRIVER_DRI3:
+-      type = DRI_SCREEN_DRI3;
++      /* virtio-dxg: the D3D12 driver on a DRM node goes by this name. */
++      type = psc->driverName && !strcmp(psc->driverName, "kms_swrast") ?
++             DRI_SCREEN_KMS_SWRAST : DRI_SCREEN_DRI3;
+       break;
+    case GLX_DRIVER_ZINK_YES:
+       type = DRI_SCREEN_KOPPER;
+--- a/src/mesa/state_tracker/st_atom_constbuf.c
++++ b/src/mesa/state_tracker/st_atom_constbuf.c
+@@ -35,6 +35,7 @@
+ #include "program/prog_parameter.h"
+ #include "program/prog_print.h"
+ #include "main/shaderapi.h"
++#include "main/errors.h"
+ #include "pipe/p_context.h"
+ #include "pipe/p_defines.h"
+ #include "util/u_inlines.h"
+@@ -135,6 +136,12 @@
+           */
+          u_upload_alloc(pipe->const_uploader, 0, paramBytes + 12,
+             alignment, &cb.buffer_offset, &cb.buffer, &releasebuf, (void**)&ptr);
++         if (unlikely(!ptr)) {
++            st_add_releasebuf(st, releasebuf);
++            st_unbind_unused_cb0(st, stage);
++            _mesa_error(st->ctx, GL_OUT_OF_MEMORY, "st_upload_constants");
++            return;
++         }
+ 
+          int uniform_bytes = params->UniformBytes;
+          if (uniform_bytes)
+--- a/src/microsoft/compiler/nir_to_dxil.c
++++ b/src/microsoft/compiler/nir_to_dxil.c
+@@ -3662,7 +3662,10 @@
+    if (ctx->mod.shader_kind == DXIL_PIXEL_SHADER &&
+       ctx->opts->interpolate_at_vertex &&
+       ctx->opts->provoking_vertex != 0 &&
+-      (nir_intrinsic_dest_type(intr) & nir_type_float)) {
++      ((nir_intrinsic_dest_type(intr) & nir_type_float) ||
++       (ctx->opts->provoking_vertex_ints &&
++        (nir_alu_type_get_base_type(nir_intrinsic_dest_type(intr)) == nir_type_int ||
++         nir_alu_type_get_base_type(nir_intrinsic_dest_type(intr)) == nir_type_uint)))) {
+       nir_variable *var = nir_find_variable_with_driver_location(ctx->shader, nir_var_shader_in, nir_intrinsic_base(intr));
+ 
+       attr_at_vertex = var && var->data.interpolation == INTERP_MODE_FLAT;
+--- a/src/microsoft/compiler/nir_to_dxil.h
++++ b/src/microsoft/compiler/nir_to_dxil.h
+@@ -82,6 +82,8 @@
+    bool last_ubo_is_not_arrayed;
+    bool advanced_texture_ops;
+    unsigned provoking_vertex;
++   /* virtio-dxg: attributeAtVertex for integer flat inputs as well */
++   bool provoking_vertex_ints;
+    unsigned num_kernel_globals;
+    unsigned input_clip_size;
+    enum dxil_environment environment;
+--- a/src/microsoft/spirv_to_dxil/dxil_spirv_nir.c
++++ b/src/microsoft/spirv_to_dxil/dxil_spirv_nir.c
+@@ -80,6 +80,15 @@
+    .Float64 = true,
+    .Tessellation = true,
+    .PhysicalStorageBufferAddresses = true,
++   /* virtio-dxg: Vulkan 1.3 (dzn_eds_key) */
++   .DemoteToHelperInvocation = true,
++   .VulkanMemoryModel = true,
++   .VulkanMemoryModelDeviceScope = true,
++   /* virtio-dxg: multiple viewports, viewport index and layer anywhere */
++   .MultiViewport = true,
++   .ShaderViewportIndexLayerEXT = true,
++   .ShaderViewportIndex = true,
++   .ShaderLayer = true,
+ };
+ 
+ static const struct spirv_to_nir_options
+@@ -520,11 +529,132 @@
+    return true;
+ }
+ 
++/* virtio-dxg: multiple viewports. The flip masks have a bit per viewport;
++ * the viewport is the ViewportIndex the shader writes, known only once the
++ * vertex is complete: keep the position and index written in temporaries
++ * and store the flipped position again at each EmitVertex, or at the end. */
++static void
++yz_flip_store_multi_viewport(nir_builder *b, nir_variable *pos_out,
++                             nir_variable *pos_tmp, nir_variable *vp_tmp,
++                             const struct dxil_spirv_runtime_conf *rt_conf,
++                             bool *reads_sysval_ubo)
++{
++   nir_def *pos = nir_load_var(b, pos_tmp);
++   nir_def *vp = nir_load_var(b, vp_tmp);
++   nir_def *y_pos = nir_channel(b, pos, 1);
++   nir_def *z_pos = nir_channel(b, pos, 2);
++   nir_def *y_flip_mask = NULL, *z_flip_mask = NULL, *dyn_yz_flip_mask = NULL;
++
++   if (rt_conf->yz_flip.mode & DXIL_SPIRV_YZ_FLIP_CONDITIONAL) {
++      unsigned offset =
++         offsetof(struct dxil_spirv_vertex_runtime_data, yz_flip_mask);
++      nir_address_format ubo_format = nir_address_format_32bit_index_offset;
++      nir_def *index = nir_vulkan_resource_index(
++         b, nir_address_format_num_components(ubo_format),
++         nir_address_format_bit_size(ubo_format),
++         nir_imm_int(b, 0),
++         .desc_set = rt_conf->runtime_data_cbv.register_space,
++         .binding = rt_conf->runtime_data_cbv.base_shader_register,
++         .desc_type = nir_descriptor_type_uniform_buffer);
++      nir_def *load_desc = nir_load_vulkan_descriptor(
++         b, nir_address_format_num_components(ubo_format),
++         nir_address_format_bit_size(ubo_format),
++         index, .desc_type = nir_descriptor_type_uniform_buffer);
++
++      dyn_yz_flip_mask =
++         nir_load_ubo(b, 1, 32, nir_channel(b, load_desc, 0),
++                      nir_imm_int(b, offset), .align_mul = 256,
++                      .align_offset = offset, .range_base = offset, .range = 4);
++      *reads_sysval_ubo = true;
++   }
++
++   if (rt_conf->yz_flip.mode & DXIL_SPIRV_Y_FLIP_UNCONDITIONAL)
++      y_flip_mask = nir_imm_int(b, rt_conf->yz_flip.y_mask);
++   else if (rt_conf->yz_flip.mode & DXIL_SPIRV_Y_FLIP_CONDITIONAL)
++      y_flip_mask = nir_iand_imm(b, dyn_yz_flip_mask, DXIL_SPIRV_Y_FLIP_MASK);
++
++   if (rt_conf->yz_flip.mode & DXIL_SPIRV_Z_FLIP_UNCONDITIONAL)
++      z_flip_mask = nir_imm_int(b, rt_conf->yz_flip.z_mask);
++   else if (rt_conf->yz_flip.mode & DXIL_SPIRV_Z_FLIP_CONDITIONAL)
++      z_flip_mask = nir_ushr_imm(b, dyn_yz_flip_mask, DXIL_SPIRV_Z_FLIP_SHIFT);
++
++   if (y_flip_mask) {
++      nir_def *flip = nir_test_mask(b, nir_ushr(b, y_flip_mask, vp), 1);
++      y_pos = nir_bcsel(b, flip, nir_fneg(b, y_pos), y_pos);
++   }
++   if (z_flip_mask) {
++      nir_def *flip = nir_test_mask(b, nir_ushr(b, z_flip_mask, vp), 1);
++      z_pos = nir_bcsel(b, flip, nir_fadd_imm(b, nir_fneg(b, z_pos), 1.0f), z_pos);
++   }
++
++   nir_store_var(b, pos_out,
++                 nir_vec4(b, nir_channel(b, pos, 0), y_pos, z_pos, nir_channel(b, pos, 3)),
++                 0xf);
++}
++
++static bool
++lower_yz_flip_multi_viewport(nir_shader *shader,
++                             nir_variable *pos_out, nir_variable *vp_out,
++                             const struct dxil_spirv_runtime_conf *rt_conf,
++                             bool *reads_sysval_ubo)
++{
++   nir_function_impl *impl = nir_shader_get_entrypoint(shader);
++   nir_variable *pos_tmp =
++      nir_local_variable_create(impl, glsl_vec4_type(), "yz_flip_position");
++   nir_variable *vp_tmp =
++      nir_local_variable_create(impl, glsl_int_type(), "yz_flip_viewport");
++   nir_builder b = nir_builder_at(nir_before_impl(impl));
++
++   nir_store_var(&b, pos_tmp, nir_imm_vec4(&b, 0.0f, 0.0f, 0.0f, 1.0f), 0xf);
++   nir_store_var(&b, vp_tmp, nir_imm_int(&b, 0), 0x1);
++
++   nir_foreach_block(block, impl) {
++      nir_foreach_instr_safe(instr, block) {
++         if (instr->type != nir_instr_type_intrinsic)
++            continue;
++
++         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
++         if (intr->intrinsic == nir_intrinsic_store_deref) {
++            nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
++            nir_variable *var = nir_intrinsic_get_var(intr, 0);
++
++            if ((var != pos_out && var != vp_out) || deref->deref_type != nir_deref_type_var)
++               continue;
++            b.cursor = nir_after_instr(instr);
++            nir_store_var(&b, var == pos_out ? pos_tmp : vp_tmp,
++                          intr->src[1].ssa, nir_intrinsic_write_mask(intr));
++         } else if (intr->intrinsic == nir_intrinsic_emit_vertex ||
++                    intr->intrinsic == nir_intrinsic_emit_vertex_with_counter) {
++            b.cursor = nir_before_instr(instr);
++            yz_flip_store_multi_viewport(&b, pos_out, pos_tmp, vp_tmp,
++                                         rt_conf, reads_sysval_ubo);
++         }
++      }
++   }
++
++   if (shader->info.stage != MESA_SHADER_GEOMETRY) {
++      b.cursor = nir_after_impl(impl);
++      yz_flip_store_multi_viewport(&b, pos_out, pos_tmp, vp_tmp,
++                                   rt_conf, reads_sysval_ubo);
++   }
++
++   return nir_progress(true, impl, nir_metadata_none);
++}
++
+ bool
+ dxil_spirv_nir_lower_yz_flip(nir_shader *shader,
+                              const struct dxil_spirv_runtime_conf *rt_conf,
+                              bool *reads_sysval_ubo)
+ {
++   nir_variable *pos_out =
++      nir_find_variable_with_location(shader, nir_var_shader_out, VARYING_SLOT_POS);
++   nir_variable *vp_out =
++      nir_find_variable_with_location(shader, nir_var_shader_out, VARYING_SLOT_VIEWPORT);
++   if (pos_out && vp_out && glsl_type_is_vector(pos_out->type) &&
++       glsl_type_is_scalar(vp_out->type))
++      return lower_yz_flip_multi_viewport(shader, pos_out, vp_out, rt_conf,
++                                          reads_sysval_ubo);
++
+    struct lower_yz_flip_data data = {
+       .rt_conf = rt_conf,
+       .reads_sysval_ubo = reads_sysval_ubo,
+@@ -1023,11 +1153,18 @@
+    NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_global,
+               nir_address_format_32bit_index_offset_pack64);
+ 
+-   if (nir->info.shared_memory_explicit_layout) {
++   /* virtio-dxg: VK_KHR_zero_initialize_workgroup_memory takes the explicit
++    * layout so the whole block can be cleared word by word. */
++   bool zero_shared = nir->info.zero_initialize_shared_memory &&
++                      nir->info.stage == MESA_SHADER_COMPUTE;
++   if (nir->info.shared_memory_explicit_layout || zero_shared) {
+       NIR_PASS(_, nir, nir_lower_vars_to_explicit_types, nir_var_mem_shared,
+                  shared_var_info);
+       NIR_PASS(_, nir, dxil_nir_split_unaligned_loads_stores, nir_var_mem_shared);
+       NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_shared, nir_address_format_32bit_offset);
++      if (zero_shared && nir->info.shared_size > 0)
++         NIR_PASS(_, nir, nir_zero_initialize_shared_memory,
++                  ALIGN_POT(nir->info.shared_size, 4), 4);
+       NIR_PASS(_, nir, dxil_nir_scratch_and_shared_to_dxil);
+    } else {
+       NIR_PASS(_, nir, nir_split_struct_vars, nir_var_mem_shared);
+--- a/src/microsoft/vulkan/dzn_cmd_buffer.c
++++ b/src/microsoft/vulkan/dzn_cmd_buffer.c
+@@ -3225,7 +3225,8 @@
+       if (bindpoint == VK_PIPELINE_BIND_POINT_GRAPHICS) {
+          struct dzn_graphics_pipeline *gfx =
+             (struct dzn_graphics_pipeline *)pipeline;
+-         ID3D12GraphicsCommandList1_IASetPrimitiveTopology(cmdbuf->cmdlist, gfx->ia.topology);
++         ID3D12GraphicsCommandList1_IASetPrimitiveTopology(cmdbuf->cmdlist,
++            (gfx->eds.dyn & DZN_EDS_TOPOLOGY) ? cmdbuf->state.eds_topology : gfx->ia.topology);
+          dzn_graphics_pipeline_get_state(gfx, &cmdbuf->state.pipeline_variant);
+          if (gfx->multiview.native_view_instancing)
+             view_instance_mask = gfx->multiview.view_mask;
+@@ -3460,11 +3461,15 @@
+    const struct dzn_graphics_pipeline *pipeline =
+       (const struct dzn_graphics_pipeline *)cmdbuf->state.pipeline;
+ 
+-   if (!(cmdbuf->state.dirty & DZN_CMD_DIRTY_VIEWPORTS) ||
+-       !pipeline->vp.count)
++   /* virtio-dxg: vkCmdSetViewportWithCount */
++   uint32_t count = (pipeline->eds.dyn & DZN_EDS_VIEWPORT_COUNT) ?
++      MIN2(cmdbuf->vk.dynamic_graphics_state.vp.viewport_count, MAX_VP) :
++      pipeline->vp.count;
++
++   if (!(cmdbuf->state.dirty & DZN_CMD_DIRTY_VIEWPORTS) || !count)
+       return;
+ 
+-   ID3D12GraphicsCommandList1_RSSetViewports(cmdbuf->cmdlist, pipeline->vp.count, cmdbuf->state.viewports);
++   ID3D12GraphicsCommandList1_RSSetViewports(cmdbuf->cmdlist, count, cmdbuf->state.viewports);
+ }
+ 
+ static void
+@@ -3476,7 +3481,12 @@
+    if (!(cmdbuf->state.dirty & DZN_CMD_DIRTY_SCISSORS))
+       return;
+ 
+-   if (!pipeline->scissor.count) {
++   /* virtio-dxg: vkCmdSetScissorWithCount */
++   uint32_t count = (pipeline->eds.dyn & DZN_EDS_SCISSOR_COUNT) ?
++      MIN2(cmdbuf->vk.dynamic_graphics_state.vp.scissor_count, MAX_SCISSOR) :
++      pipeline->scissor.count;
++
++   if (!count) {
+       /* Apply a scissor delimiting the render area. */
+       ID3D12GraphicsCommandList1_RSSetScissorRects(cmdbuf->cmdlist, 1, &cmdbuf->state.render.area);
+       return;
+@@ -3484,15 +3494,15 @@
+ 
+    D3D12_RECT scissors[MAX_SCISSOR];
+ 
+-   memcpy(scissors, cmdbuf->state.scissors, sizeof(D3D12_RECT) * pipeline->scissor.count);
+-   for (uint32_t i = 0; i < pipeline->scissor.count; i++) {
++   memcpy(scissors, cmdbuf->state.scissors, sizeof(D3D12_RECT) * count);
++   for (uint32_t i = 0; i < count; i++) {
+       scissors[i].left = MAX2(scissors[i].left, cmdbuf->state.render.area.left);
+       scissors[i].top = MAX2(scissors[i].top, cmdbuf->state.render.area.top);
+       scissors[i].right = MIN2(scissors[i].right, cmdbuf->state.render.area.right);
+       scissors[i].bottom = MIN2(scissors[i].bottom, cmdbuf->state.render.area.bottom);
+    }
+ 
+-   ID3D12GraphicsCommandList1_RSSetScissorRects(cmdbuf->cmdlist, pipeline->scissor.count, scissors);
++   ID3D12GraphicsCommandList1_RSSetScissorRects(cmdbuf->cmdlist, count, scissors);
+ }
+ 
+ static void
+@@ -3587,10 +3597,17 @@
+ {
+    if (cmdbuf->state.dirty & DZN_CMD_DIRTY_DEPTH_BIAS) {
+       assert(cmdbuf->cmdlist9);
++      /* virtio-dxg: depth bias off (static or dynamic depthBiasEnable) */
++      const struct dzn_graphics_pipeline *gfx = (const struct dzn_graphics_pipeline *)
++         cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
++      bool off = gfx &&
++         !((gfx->eds.dyn & DZN_EDS_DEPTH_BIAS_ENABLE) ?
++           cmdbuf->vk.dynamic_graphics_state.rs.depth_bias.enable :
++           gfx->eds.statik.depth_bias_enable);
+       ID3D12GraphicsCommandList9_RSSetDepthBias(cmdbuf->cmdlist9,
+-                                                cmdbuf->state.pipeline_variant.depth_bias.constant_factor,
+-                                                cmdbuf->state.pipeline_variant.depth_bias.clamp,
+-                                                cmdbuf->state.pipeline_variant.depth_bias.slope_factor);
++                                                off ? 0.0f : cmdbuf->state.pipeline_variant.depth_bias.constant_factor,
++                                                off ? 0.0f : cmdbuf->state.pipeline_variant.depth_bias.clamp,
++                                                off ? 0.0f : cmdbuf->state.pipeline_variant.depth_bias.slope_factor);
+    }
+ }
+ 
+@@ -3728,9 +3745,103 @@
+    return VK_SUCCESS;
+ }
+ 
++/* virtio-dxg: Vulkan 1.3 extended dynamic state. The vkCmdSet* calls are
++ * the common runtime's (cmdbuf->vk.dynamic_graphics_state); what the bound
++ * pipeline declares dynamic is folded in here, before its pipeline state is
++ * chosen. */
++static void
++dzn_cmd_buffer_update_eds(struct dzn_cmd_buffer *cmdbuf)
++{
++   struct dzn_physical_device *pdev =
++      container_of(cmdbuf->vk.base.device->physical, struct dzn_physical_device, vk);
++   struct dzn_graphics_pipeline *gfx = (struct dzn_graphics_pipeline *)
++      cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
++   const struct vk_dynamic_graphics_state *dyn = &cmdbuf->vk.dynamic_graphics_state;
++   uint32_t d = gfx ? gfx->eds.dyn : 0;
++
++   if (gfx && gfx->zsa.dynamic_depth_bias && pdev->options16.DynamicDepthBiasSupported &&
++       (cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty & DZN_CMD_BINDPOINT_DIRTY_PIPELINE))
++      cmdbuf->state.dirty |= DZN_CMD_DIRTY_DEPTH_BIAS;
++
++   if (d & DZN_EDS_PSO_MASK) {
++      struct dzn_eds_key k = gfx->eds.statik;
++
++      if (d & DZN_EDS_CULL_MODE)
++         k.cull_mode = dyn->rs.cull_mode;
++      if (d & DZN_EDS_FRONT_FACE)
++         k.front_ccw = dyn->rs.front_face == VK_FRONT_FACE_COUNTER_CLOCKWISE;
++      if (d & DZN_EDS_DEPTH_BIAS_ENABLE)
++         k.depth_bias_enable = dyn->rs.depth_bias.enable;
++      if (d & DZN_EDS_PRIMITIVE_RESTART)
++         k.primitive_restart = dyn->ia.primitive_restart_enable;
++      if (d & DZN_EDS_DEPTH_TEST)
++         k.depth_test = dyn->ds.depth.test_enable;
++      if (d & DZN_EDS_DEPTH_WRITE)
++         k.depth_write = dyn->ds.depth.write_enable;
++      if (d & DZN_EDS_DEPTH_COMPARE)
++         k.depth_compare = dyn->ds.depth.compare_op;
++      if (d & DZN_EDS_DEPTH_BOUNDS_TEST)
++         k.depth_bounds_test = dyn->ds.depth.bounds_test.enable;
++      if (d & DZN_EDS_STENCIL_TEST)
++         k.stencil_test = dyn->ds.stencil.test_enable;
++      if (d & DZN_EDS_STENCIL_OP) {
++         k.stencil_front[0] = dyn->ds.stencil.front.op.fail;
++         k.stencil_front[1] = dyn->ds.stencil.front.op.pass;
++         k.stencil_front[2] = dyn->ds.stencil.front.op.depth_fail;
++         k.stencil_front[3] = dyn->ds.stencil.front.op.compare;
++         k.stencil_back[0] = dyn->ds.stencil.back.op.fail;
++         k.stencil_back[1] = dyn->ds.stencil.back.op.pass;
++         k.stencil_back[2] = dyn->ds.stencil.back.op.depth_fail;
++         k.stencil_back[3] = dyn->ds.stencil.back.op.compare;
++      }
++
++      k.discard = ((d & DZN_EDS_RASTERIZER_DISCARD) && dyn->rs.rasterizer_discard_enable) ||
++                  (gfx->eds.tri_class && (d & DZN_EDS_CULL_MODE) &&
++                   k.cull_mode == VK_CULL_MODE_FRONT_AND_BACK);
++
++      if (memcmp(&k, &cmdbuf->state.pipeline_variant.eds, sizeof(k))) {
++         if (k.depth_bias_enable != cmdbuf->state.pipeline_variant.eds.depth_bias_enable &&
++             gfx->zsa.dynamic_depth_bias && pdev->options16.DynamicDepthBiasSupported)
++            cmdbuf->state.dirty |= DZN_CMD_DIRTY_DEPTH_BIAS;
++         cmdbuf->state.pipeline_variant.eds = k;
++         cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
++            DZN_CMD_BINDPOINT_DIRTY_PIPELINE;
++      }
++   }
++
++   if (d & DZN_EDS_TOPOLOGY) {
++      D3D12_PRIMITIVE_TOPOLOGY t =
++         dzn_translate_prim_topology(dyn->ia.primitive_topology,
++                                     gfx->eds.patch_control_points,
++                                     pdev->options15.TriangleFanSupported);
++      if (t != cmdbuf->state.eds_topology) {
++         cmdbuf->state.eds_topology = t;
++         cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
++            DZN_CMD_BINDPOINT_DIRTY_PIPELINE;
++      }
++   }
++}
++
++/* virtio-dxg: a dynamic triangle-fan topology without native fans takes
++ * the index-rewrite paths, which test the pipeline before the draw. */
++static void
++dzn_cmd_buffer_eds_triangle_fan(struct dzn_cmd_buffer *cmdbuf)
++{
++   struct dzn_physical_device *pdev =
++      container_of(cmdbuf->vk.base.device->physical, struct dzn_physical_device, vk);
++   struct dzn_graphics_pipeline *gfx = (struct dzn_graphics_pipeline *)
++      cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
++
++   if (gfx && (gfx->eds.dyn & DZN_EDS_TOPOLOGY) && !pdev->options15.TriangleFanSupported)
++      gfx->ia.triangle_fan = cmdbuf->vk.dynamic_graphics_state.ia.primitive_topology ==
++                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
++}
++
+ static void
+ dzn_cmd_buffer_prepare_draw(struct dzn_cmd_buffer *cmdbuf, bool indexed)
+ {
++   dzn_cmd_buffer_update_eds(cmdbuf);
++
+    if (indexed)
+       dzn_cmd_buffer_update_ibview(cmdbuf);
+ 
+@@ -4025,6 +4136,7 @@
+                              uint32_t draw_buf_stride,
+                              bool indexed)
+ {
++   dzn_cmd_buffer_eds_triangle_fan(cmdbuf);
+    struct dzn_device *device = container_of(cmdbuf->vk.base.device, struct dzn_device, vk);
+    struct dzn_physical_device *pdev = container_of(device->vk.physical, struct dzn_physical_device, vk);
+    struct dzn_graphics_pipeline *pipeline = (struct dzn_graphics_pipeline *)
+@@ -5145,8 +5257,10 @@
+          cmdbuf->state.dirty |= DZN_CMD_DIRTY_BLEND_CONSTANTS;
+       }
+ 
+-      for (uint32_t vb = 0; vb < gfx->vb.count; vb++)
+-         cmdbuf->state.vb.views[vb].StrideInBytes = gfx->vb.strides[vb];
++      if (!(gfx->eds.dyn & DZN_EDS_VB_STRIDE)) {
++         for (uint32_t vb = 0; vb < gfx->vb.count; vb++)
++            cmdbuf->state.vb.views[vb].StrideInBytes = gfx->vb.strides[vb];
++      }
+ 
+       if (gfx->vb.count > 0)
+          BITSET_SET_COUNT(cmdbuf->state.vb.dirty, 0, gfx->vb.count);
+@@ -5231,6 +5345,31 @@
+    }
+ }
+ 
++/* virtio-dxg: Vulkan 1.3; the count is read at draw time */
++VKAPI_ATTR void VKAPI_CALL
++dzn_CmdSetViewportWithCount(VkCommandBuffer commandBuffer,
++                            uint32_t viewportCount,
++                            const VkViewport *pViewports)
++{
++   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
++
++   cmdbuf->vk.dynamic_graphics_state.vp.viewport_count = viewportCount;
++   dzn_CmdSetViewport(commandBuffer, 0, viewportCount, pViewports);
++   cmdbuf->state.dirty |= DZN_CMD_DIRTY_VIEWPORTS;
++}
++
++VKAPI_ATTR void VKAPI_CALL
++dzn_CmdSetScissorWithCount(VkCommandBuffer commandBuffer,
++                           uint32_t scissorCount,
++                           const VkRect2D *pScissors)
++{
++   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
++
++   cmdbuf->vk.dynamic_graphics_state.vp.scissor_count = scissorCount;
++   dzn_CmdSetScissor(commandBuffer, 0, scissorCount, pScissors);
++   cmdbuf->state.dirty |= DZN_CMD_DIRTY_SCISSORS;
++}
++
+ VKAPI_ATTR void VKAPI_CALL
+ dzn_CmdSetScissor(VkCommandBuffer commandBuffer,
+                   uint32_t firstScissor,
+@@ -5278,6 +5417,7 @@
+ {
+    VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+ 
++   dzn_cmd_buffer_eds_triangle_fan(cmdbuf);
+    const struct dzn_graphics_pipeline *pipeline = (const struct dzn_graphics_pipeline *)
+       cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
+ 
+@@ -5333,6 +5473,7 @@
+ {
+    VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+ 
++   dzn_cmd_buffer_eds_triangle_fan(cmdbuf);
+    const struct dzn_graphics_pipeline *pipeline = (const struct dzn_graphics_pipeline *)
+       cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
+ 
+@@ -5490,6 +5631,42 @@
+    }
+ 
+    BITSET_SET_COUNT(cmdbuf->state.vb.dirty, firstBinding, bindingCount);
++}
++
++/* virtio-dxg: Vulkan 1.3 */
++VKAPI_ATTR void VKAPI_CALL
++dzn_CmdBindVertexBuffers2(VkCommandBuffer commandBuffer,
++                          uint32_t firstBinding,
++                          uint32_t bindingCount,
++                          const VkBuffer *pBuffers,
++                          const VkDeviceSize *pOffsets,
++                          const VkDeviceSize *pSizes,
++                          const VkDeviceSize *pStrides)
++{
++   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
++
++   if (!bindingCount)
++      return;
++
++   D3D12_VERTEX_BUFFER_VIEW *vbviews = cmdbuf->state.vb.views;
++
++   for (uint32_t i = 0; i < bindingCount; i++) {
++      VK_FROM_HANDLE(dzn_buffer, buf, pBuffers[i]);
++      D3D12_VERTEX_BUFFER_VIEW *view = &vbviews[firstBinding + i];
++
++      if (!buf) {
++         view->BufferLocation = 0;
++         view->SizeInBytes = 0;
++      } else {
++         view->BufferLocation = buf->gpuva + pOffsets[i];
++         view->SizeInBytes = pSizes && pSizes[i] != VK_WHOLE_SIZE ?
++            pSizes[i] : buf->size - pOffsets[i];
++      }
++      if (pStrides)
++         view->StrideInBytes = pStrides[i];
++   }
++
++   BITSET_SET_COUNT(cmdbuf->state.vb.dirty, firstBinding, bindingCount);
+ }
+ 
+ VKAPI_ATTR void VKAPI_CALL
+--- a/src/microsoft/vulkan/dzn_descriptor_set.c
++++ b/src/microsoft/vulkan/dzn_descriptor_set.c
+@@ -498,14 +498,62 @@
+    return 0;
+ }
+ 
++/* virtio-dxg: an inline uniform block is a uniform buffer to the shaders;
++ * its bytes live in the descriptor pool's inline buffer and the set gets a
++ * uniform-buffer descriptor pointing there (dzn_descriptor_set_init). */
+ VKAPI_ATTR VkResult VKAPI_CALL
+ dzn_CreateDescriptorSetLayout(VkDevice device,
+                               const VkDescriptorSetLayoutCreateInfo *pCreateInfo,
+                               const VkAllocationCallbacks *pAllocator,
+                               VkDescriptorSetLayout *pSetLayout)
+ {
+-   return dzn_descriptor_set_layout_create(dzn_device_from_handle(device),
+-                                           pCreateInfo, pAllocator, pSetLayout);
++   uint32_t inline_count = 0;
++
++   for (uint32_t i = 0; i < pCreateInfo->bindingCount; i++)
++      inline_count += pCreateInfo->pBindings[i].descriptorType ==
++                      VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK;
++   if (!inline_count)
++      return dzn_descriptor_set_layout_create(dzn_device_from_handle(device),
++                                              pCreateInfo, pAllocator, pSetLayout);
++
++   VkDescriptorSetLayoutBinding *bindings =
++      malloc(sizeof(*bindings) * pCreateInfo->bindingCount);
++   if (!bindings)
++      return vk_error(dzn_device_from_handle(device), VK_ERROR_OUT_OF_HOST_MEMORY);
++   memcpy(bindings, pCreateInfo->pBindings, sizeof(*bindings) * pCreateInfo->bindingCount);
++   for (uint32_t i = 0; i < pCreateInfo->bindingCount; i++) {
++      if (bindings[i].descriptorType != VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
++         continue;
++      bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
++      bindings[i].descriptorCount = bindings[i].descriptorCount ? 1 : 0;
++      bindings[i].pImmutableSamplers = NULL;
++   }
++
++   VkDescriptorSetLayoutCreateInfo info = *pCreateInfo;
++   info.pBindings = bindings;
++   VkResult ret = dzn_descriptor_set_layout_create(dzn_device_from_handle(device),
++                                                   &info, pAllocator, pSetLayout);
++   free(bindings);
++   if (ret != VK_SUCCESS)
++      return ret;
++
++   VK_FROM_HANDLE(dzn_descriptor_set_layout, layout, *pSetLayout);
++   struct dzn_descriptor_set_layout_binding *binfos =
++      (struct dzn_descriptor_set_layout_binding *)layout->bindings;
++   uint32_t offset = 0;
++
++   for (uint32_t i = 0; i < pCreateInfo->bindingCount; i++) {
++      const VkDescriptorSetLayoutBinding *b = &pCreateInfo->pBindings[i];
++
++      if (b->descriptorType != VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK || !b->descriptorCount)
++         continue;
++      binfos[b->binding].inline_offset = offset;
++      binfos[b->binding].inline_size = b->descriptorCount;
++      /* constant buffer views are 256-byte aligned and sized */
++      offset += ALIGN_POT(b->descriptorCount, 256);
++   }
++   layout->inline_total = offset;
++   return VK_SUCCESS;
+ }
+ 
+ VKAPI_ATTR void VKAPI_CALL
+@@ -539,10 +587,13 @@
+           (binding_flags->pBindingFlags[i] & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT))
+          variable_count->maxVariableDescriptorCount = device->bindless ? INT32_MAX : upper_bound;
+ 
++      /* virtio-dxg: an inline uniform block takes one descriptor */
++      uint32_t count = desc_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK ?
++         1 : bindings[i].descriptorCount;
+       if (has_sampler)
+-         sampler_count += bindings[i].descriptorCount;
++         sampler_count += count;
+       if (!is_sampler)
+-         other_desc_count += bindings[i].descriptorCount;
++         other_desc_count += count;
+       if (dzn_descriptor_type_depends_on_shader_usage(desc_type, device->bindless))
+          other_desc_count += bindings[i].descriptorCount;
+    }
+@@ -1684,6 +1735,9 @@
+          set->heap_sizes[type] = layout->range_desc_count[type] + variable_descriptor_count[type];
+          set->pool->free_offset[type] = set->heap_offsets[type] + set->heap_sizes[type];
+       }
++      set->inline_offset = pool->inline_free;
++      set->inline_size = layout->inline_total;
++      pool->inline_free += layout->inline_total;
+    }
+ 
+    /* Pre-fill the immutable samplers */
+@@ -1708,6 +1762,26 @@
+          }
+       }
+    }
++
++   /* virtio-dxg: inline uniform blocks */
++   if (layout->inline_total && pool->inline_buffer) {
++      for (uint32_t b = 0; b < layout->binding_count; b++) {
++         if (!layout->bindings[b].inline_size)
++            continue;
++
++         struct dzn_descriptor_set_ptr ptr;
++         struct dzn_buffer_desc desc = {
++            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
++            pool->inline_buffer,
++            ALIGN_POT(layout->bindings[b].inline_size, 256),
++            set->inline_offset + layout->bindings[b].inline_offset,
++         };
++
++         dzn_descriptor_set_ptr_init(set->layout, &ptr, b, 0);
++         dzn_descriptor_set_ptr_write_buffer_desc(device, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
++                                                  set, &ptr, &desc);
++      }
++   }
+    return VK_SUCCESS;
+ }
+ 
+@@ -1738,10 +1812,85 @@
+       }
+    }
+ 
++   if (pool->inline_buffer)
++      dzn_DestroyBuffer(dzn_device_to_handle(device),
++                        dzn_buffer_to_handle(pool->inline_buffer), NULL);
++   if (pool->inline_memory != VK_NULL_HANDLE)
++      dzn_FreeMemory(dzn_device_to_handle(device), pool->inline_memory, NULL);
++
+    vk_object_base_finish(&pool->base);
+    vk_free2(&device->vk.alloc, pAllocator, pool);
+ }
+ 
++/* virtio-dxg: the pool's inline uniform block storage, a host-visible
++ * buffer the blocks' uniform-buffer descriptors point into. */
++static VkResult
++dzn_descriptor_pool_init_inline(struct dzn_device *device,
++                                struct dzn_descriptor_pool *pool,
++                                uint64_t size)
++{
++   struct dzn_physical_device *pdev =
++      container_of(device->vk.physical, struct dzn_physical_device, vk);
++   VkDevice dev = dzn_device_to_handle(device);
++   VkBufferCreateInfo bci = {
++      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
++      .size = size,
++      .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
++   };
++   VkBuffer buf;
++   VkResult result = dzn_CreateBuffer(dev, &bci, NULL, &buf);
++   if (result != VK_SUCCESS)
++      return result;
++   pool->inline_buffer = dzn_buffer_from_handle(buf);
++
++   VkBufferMemoryRequirementsInfo2 rinfo = {
++      .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,
++      .buffer = buf,
++   };
++   VkMemoryRequirements2 req = { .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2 };
++   dzn_GetBufferMemoryRequirements2(dev, &rinfo, &req);
++
++   const VkMemoryPropertyFlags want =
++      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
++   uint32_t type = UINT32_MAX;
++   for (uint32_t i = 0; i < pdev->memory.memoryTypeCount; i++) {
++      if ((req.memoryRequirements.memoryTypeBits & BITFIELD_BIT(i)) &&
++          (pdev->memory.memoryTypes[i].propertyFlags & want) == want) {
++         type = i;
++         break;
++      }
++   }
++   if (type == UINT32_MAX)
++      return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
++
++   VkMemoryAllocateInfo mai = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
++      .allocationSize = req.memoryRequirements.size,
++      .memoryTypeIndex = type,
++   };
++   result = dzn_AllocateMemory(dev, &mai, NULL, &pool->inline_memory);
++   if (result != VK_SUCCESS)
++      return result;
++
++   VkBindBufferMemoryInfo bind = {
++      .sType = VK_STRUCTURE_TYPE_BIND_BUFFER_MEMORY_INFO,
++      .buffer = buf,
++      .memory = pool->inline_memory,
++   };
++   result = dzn_BindBufferMemory2(dev, 1, &bind);
++   if (result != VK_SUCCESS)
++      return result;
++
++   void *map;
++   result = dzn_MapMemory(dev, pool->inline_memory, 0, VK_WHOLE_SIZE, 0, &map);
++   if (result != VK_SUCCESS)
++      return result;
++   pool->inline_map = map;
++   pool->inline_capacity = size;
++   memset(map, 0, size);
++   return VK_SUCCESS;
++}
++
+ static VkResult
+ dzn_descriptor_pool_create(struct dzn_device *device,
+                            const VkDescriptorPoolCreateInfo *pCreateInfo,
+@@ -1762,10 +1911,17 @@
+ 
+    vk_object_base_init(&device->vk, &pool->base, VK_OBJECT_TYPE_DESCRIPTOR_POOL);
+ 
++   uint64_t inline_bytes = 0;
+    for (uint32_t p = 0; p < pCreateInfo->poolSizeCount; p++) {
+       VkDescriptorType type = pCreateInfo->pPoolSizes[p].type;
+       uint32_t num_desc = pCreateInfo->pPoolSizes[p].descriptorCount;
+ 
++      /* virtio-dxg: inline uniform blocks are counted in bytes */
++      if (type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK) {
++         inline_bytes += num_desc;
++         continue;
++      }
++
+       if (device->bindless) {
+          if (!vk_descriptor_type_is_dynamic(type))
+             pool->desc_count[0] += num_desc;
+@@ -1799,6 +1955,16 @@
+       }
+    }
+ 
++   /* virtio-dxg: one uniform-buffer descriptor per inline block */
++   uint32_t inline_bindings = 0;
++   if (inline_bytes) {
++      const VkDescriptorPoolInlineUniformBlockCreateInfo *iub =
++         vk_find_struct_const(pCreateInfo->pNext, DESCRIPTOR_POOL_INLINE_UNIFORM_BLOCK_CREATE_INFO);
++      inline_bindings = iub && iub->maxInlineUniformBlockBindings ?
++         iub->maxInlineUniformBlockBindings : MAX2(1, inline_bytes / 16);
++      pool->desc_count[D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV] += inline_bindings;
++   }
++
+    if (device->bindless) {
+       if (pool->desc_count[0]) {
+          /* Include extra descriptors so that we can align each allocated descriptor set to a 16-byte boundary */
+@@ -1838,6 +2004,16 @@
+       }
+    }
+ 
++   if (inline_bytes) {
++      VkResult result =
++         dzn_descriptor_pool_init_inline(device, pool,
++                                         ALIGN_POT(inline_bytes + 255ull * inline_bindings, 256));
++      if (result != VK_SUCCESS) {
++         dzn_descriptor_pool_destroy(pool, pAllocator);
++         return result;
++      }
++   }
++
+    *out = dzn_descriptor_pool_to_handle(pool);
+    return VK_SUCCESS;
+ }
+@@ -1876,6 +2052,7 @@
+       pool->used_desc_count[type] = 0;
+    }
+    pool->used_set_count = 0;
++   pool->inline_free = 0;
+ 
+    return VK_SUCCESS;
+ }
+@@ -2030,6 +2207,8 @@
+                      break;
+                   }
+                }
++               if (pool->sets[set_idx].inline_size < layout->inline_total)
++                  is_reuse = false;
+                if (!is_reuse)
+                   continue;
+             }
+@@ -2052,6 +2231,11 @@
+                return vk_error(device, VK_ERROR_FRAGMENTED_POOL);
+             }
+          }
++         if (pool->inline_free + layout->inline_total > pool->inline_capacity) {
++            dzn_FreeDescriptorSets(dev, pAllocateInfo->descriptorPool, i, pDescriptorSets);
++            return vk_error(device, pool->inline_free ?
++                            VK_ERROR_FRAGMENTED_POOL : VK_ERROR_OUT_OF_POOL_MEMORY);
++         }
+       }
+ 
+       VkResult result = dzn_descriptor_set_init(set, device, pool, layout, is_reuse, additional_desc_counts);
+@@ -2111,6 +2295,33 @@
+    return VK_SUCCESS;
+ }
+ 
++/* virtio-dxg: bytes of an inline uniform block (offset/size in bytes,
++ * size clamped to the block) */
++static uint8_t *
++dzn_descriptor_set_inline_ptr(const struct dzn_descriptor_set *set, uint32_t binding,
++                              uint32_t offset, uint32_t *size)
++{
++   if (!set->layout || binding >= set->layout->binding_count ||
++       !set->pool || !set->pool->inline_map)
++      return NULL;
++
++   const struct dzn_descriptor_set_layout_binding *b = &set->layout->bindings[binding];
++   if (offset >= b->inline_size)
++      return NULL;
++   *size = MIN2(*size, b->inline_size - offset);
++   return set->pool->inline_map + set->inline_offset + b->inline_offset + offset;
++}
++
++static void
++dzn_descriptor_set_write_inline(struct dzn_descriptor_set *set, uint32_t binding,
++                                uint32_t offset, const void *data, uint32_t size)
++{
++   uint8_t *dst = dzn_descriptor_set_inline_ptr(set, binding, offset, &size);
++
++   if (dst)
++      memcpy(dst, data, size);
++}
++
+ static void
+ dzn_descriptor_set_write(struct dzn_device *device,
+                          const VkWriteDescriptorSet *pDescriptorWrite)
+@@ -2119,6 +2330,16 @@
+ 
+    struct dzn_descriptor_set_ptr ptr;
+ 
++   if (pDescriptorWrite->descriptorType == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK) {
++      const VkWriteDescriptorSetInlineUniformBlock *iub =
++         vk_find_struct_const(pDescriptorWrite->pNext, WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK);
++      if (iub)
++         dzn_descriptor_set_write_inline(set, pDescriptorWrite->dstBinding,
++                                         pDescriptorWrite->dstArrayElement,
++                                         iub->pData, iub->dataSize);
++      return;
++   }
++
+    dzn_descriptor_set_ptr_init(set->layout, &ptr,
+                                pDescriptorWrite->dstBinding,
+                                pDescriptorWrite->dstArrayElement);
+@@ -2246,6 +2467,19 @@
+    VK_FROM_HANDLE(dzn_descriptor_set, dst_set, pDescriptorCopy->dstSet);
+    struct dzn_descriptor_set_ptr src_ptr, dst_ptr;
+ 
++   /* virtio-dxg: inline uniform blocks (offsets and count in bytes) */
++   if (src_set->layout && pDescriptorCopy->srcBinding < src_set->layout->binding_count &&
++       src_set->layout->bindings[pDescriptorCopy->srcBinding].inline_size) {
++      uint32_t size = pDescriptorCopy->descriptorCount, dst_size = size;
++      const uint8_t *src = dzn_descriptor_set_inline_ptr(src_set, pDescriptorCopy->srcBinding,
++                                                         pDescriptorCopy->srcArrayElement, &size);
++      uint8_t *dst = dzn_descriptor_set_inline_ptr(dst_set, pDescriptorCopy->dstBinding,
++                                                   pDescriptorCopy->dstArrayElement, &dst_size);
++      if (src && dst)
++         memcpy(dst, src, MIN2(size, dst_size));
++      return;
++   }
++
+    dzn_descriptor_set_ptr_init(src_set->layout, &src_ptr,
+                                pDescriptorCopy->srcBinding,
+                                pDescriptorCopy->srcArrayElement);
+@@ -2381,6 +2615,11 @@
+       ASSERTED VkDescriptorType type = info->pDescriptorUpdateEntries[e].descriptorType;
+       uint32_t d = 0;
+ 
++      if (type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK) {
++         entry_count++;
++         continue;
++      }
++
+       while (dzn_descriptor_set_ptr_is_valid(&ptr) && d < desc_count) {
+          uint32_t ndescs = dzn_descriptor_set_remaining_descs_in_binding(set_layout, &ptr);
+ 
+@@ -2418,6 +2657,19 @@
+       size_t user_data_stride = info->pDescriptorUpdateEntries[e].stride;
+       uint32_t d = 0;
+ 
++      if (type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK) {
++         /* virtio-dxg: the binding in buffer_idx, the byte offset in
++          * heap_offsets.cbv_srv_uav, the byte count in desc_count */
++         entry->type = type;
++         entry->desc_count = desc_count;
++         entry->buffer_idx = info->pDescriptorUpdateEntries[e].dstBinding;
++         entry->heap_offsets.cbv_srv_uav = info->pDescriptorUpdateEntries[e].dstArrayElement;
++         entry->user_data.offset = user_data_offset;
++         entry->user_data.stride = 0;
++         ++entry;
++         continue;
++      }
++
+       while (dzn_descriptor_set_ptr_is_valid(&ptr) && d < desc_count) {
+          uint32_t ndescs = dzn_descriptor_set_remaining_descs_in_binding(set_layout, &ptr);
+ 
+@@ -2612,6 +2864,13 @@
+          }
+          break;
+ 
++      case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK:
++         dzn_descriptor_set_write_inline(set, entry->buffer_idx,
++                                         entry->heap_offsets.cbv_srv_uav,
++                                         (const uint8_t *)pData + entry->user_data.offset,
++                                         entry->desc_count);
++         break;
++
+       default:
+          UNREACHABLE("invalid descriptor type");
+       }
+--- a/src/microsoft/vulkan/dzn_device.c
++++ b/src/microsoft/vulkan/dzn_device.c
+@@ -56,9 +56,22 @@
+ #include <windows.h>
+ #include <shlobj.h>
+ #include "dzn_dxgi.h"
++#else
++#include "util/os_file.h"
++#include "dzn_imported_memory_fd.h"
++#include "drm-uapi/drm.h"
++#include "drm-uapi/virtgpu_drm.h"
++#include "util/simple_mtx.h"
++#include "util/u_debug.h"
++#include <fcntl.h>
++#include <sys/ioctl.h>
++#include <unistd.h>
++#include <errno.h>
++#include <limits.h>
+ #endif
+ 
+-#define DZN_API_VERSION VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION)
++/* virtio-dxg: Vulkan 1.3 (dozen_vk13.py; inline_total) */
++#define DZN_API_VERSION VK_MAKE_VERSION(1, 3, VK_HEADER_VERSION)
+ 
+ #define MAX_TIER2_MEMORY_TYPES 4
+ 
+@@ -72,9 +85,15 @@
+ static const struct vk_instance_extension_table instance_extensions = {
+    .KHR_get_physical_device_properties2      = true,
+    .KHR_device_group_creation                = true,
++   /* virtio-dxg: core in 1.1, asked for by name (external_capabilities) */
++   .KHR_external_fence_capabilities          = true,
++   .KHR_external_memory_capabilities         = true,
++   .KHR_external_semaphore_capabilities      = true,
+ #ifdef DZN_USE_WSI_PLATFORM
+    .KHR_surface                              = true,
+    .KHR_get_surface_capabilities2            = true,
++   /* virtio-dxg: float16 windows (swapchain_colorspace) */
++   .EXT_swapchain_colorspace                 = true,
+ #endif
+ #ifdef VK_USE_PLATFORM_WIN32_KHR
+    .KHR_win32_surface                        = true,
+@@ -101,6 +120,23 @@
+    pdev->vk.supported_extensions = (struct vk_device_extension_table) {
+       .KHR_16bit_storage                     = pdev->options4.Native16BitShaderOpsSupported,
+       .KHR_bind_memory2                      = true,
++      /* virtio-dxg: Vulkan 1.3 (dzn_eds_key) */
++      .KHR_copy_commands2                    = true,
++      .KHR_shader_non_semantic_info          = true,
++      .KHR_shader_terminate_invocation       = true,
++      .KHR_vulkan_memory_model               = true,
++      .EXT_extended_dynamic_state            = true,
++      .EXT_extended_dynamic_state2           = true,
++      .EXT_image_robustness                  = true,
++      .EXT_pipeline_creation_cache_control   = true,
++      .EXT_private_data                      = true,
++      .EXT_shader_demote_to_helper_invocation = true,
++      .EXT_tooling_info                      = true,
++      .EXT_inline_uniform_block              = true,
++      .EXT_texel_buffer_alignment            = true,
++      .KHR_format_feature_flags2             = true,
++      .KHR_maintenance4                      = true,
++      .KHR_zero_initialize_workgroup_memory  = true,
+       .KHR_buffer_device_address             = pdev->shader_model >= D3D_SHADER_MODEL_6_6,
+       .KHR_create_renderpass2                = true,
+       .KHR_dedicated_allocation              = true,
+@@ -157,6 +193,9 @@
+       .EXT_vertex_attribute_divisor          = true,
+       .EXT_memory_budget                     = true,
+       .MSFT_layered_driver                   = true,
++      .EXT_provoking_vertex                  = pdev->options3.BarycentricsSupported,
++      .EXT_shader_viewport_index_layer       =
++         pdev->options.VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation,
+    };
+ }
+ 
+@@ -676,8 +715,9 @@
+       .geometryShader = true,
+       .tessellationShader = false,
+       .sampleRateShading = true,
+-      .dualSrcBlend = false,
+-      .logicOp = false,
++      /* virtio-dxg: Blender's Vulkan backend (provokingVertexLast) */
++      .dualSrcBlend = true,
++      .logicOp = pdev->options.OutputMergerLogicOp,
+       .multiDrawIndirect = true,
+       .drawIndirectFirstInstance = true,
+       .depthClamp = true,
+@@ -687,7 +727,7 @@
+       .wideLines = instance->drirc.debug.claim_wide_lines,
+       .largePoints = false,
+       .alphaToOne = false,
+-      .multiViewport = false,
++      .multiViewport = true,
+       .samplerAnisotropy = true,
+       .textureCompressionETC2 = false,
+       .textureCompressionASTC_LDR = false,
+@@ -781,33 +821,46 @@
+       .bufferDeviceAddress                = pdev->shader_model >= D3D_SHADER_MODEL_6_6,
+       .bufferDeviceAddressCaptureReplay   = false,
+       .bufferDeviceAddressMultiDevice     = false,
+-      .vulkanMemoryModel                  = false,
+-      .vulkanMemoryModelDeviceScope       = false,
++      .vulkanMemoryModel                  = true,
++      .vulkanMemoryModelDeviceScope       = true,
+       .vulkanMemoryModelAvailabilityVisibilityChains = false,
+-      .shaderOutputViewportIndex          = false,
+-      .shaderOutputLayer                  = false,
++      .shaderOutputViewportIndex          =
++         pdev->options.VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation,
++      .shaderOutputLayer                  =
++         pdev->options.VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation,
+       .subgroupBroadcastDynamicId         = true,
+ 
+-      .robustImageAccess                  = false,
+-      .inlineUniformBlock                 = false,
+-      .descriptorBindingInlineUniformBlockUpdateAfterBind = false,
+-      .pipelineCreationCacheControl       = false,
++      .robustImageAccess                  = true,
++      .inlineUniformBlock                 = true,
++      .descriptorBindingInlineUniformBlockUpdateAfterBind = support_descriptor_indexing,
++      .pipelineCreationCacheControl       = true,
+       .privateData                        = true,
+-      .shaderDemoteToHelperInvocation     = false,
+-      .shaderTerminateInvocation          = false,
++      .shaderDemoteToHelperInvocation     = true,
++      .shaderTerminateInvocation          = true,
+       .subgroupSizeControl                = pdev->options1.WaveOps && pdev->shader_model >= D3D_SHADER_MODEL_6_6,
+       .computeFullSubgroups               = true,
+       .synchronization2                   = true,
+       .textureCompressionASTC_HDR         = false,
+-      .shaderZeroInitializeWorkgroupMemory = false,
++      .shaderZeroInitializeWorkgroupMemory = true,
+       .dynamicRendering                   = true,
+       .shaderIntegerDotProduct            = true,
+-      .maintenance4                       = false,
++      .maintenance4                       = true,
++      .texelBufferAlignment               = true,
+       .shaderExpectAssume                 = true,
+ 
+       .vertexAttributeInstanceRateDivisor = true,
+       .vertexAttributeInstanceRateZeroDivisor = true,
+       .shaderReplicatedComposites         = true,
++
++      /* virtio-dxg: extended dynamic state (dzn_eds_key) */
++      .extendedDynamicState               = true,
++      .extendedDynamicState2              = true,
++      .extendedDynamicState2LogicOp       = false,
++      .extendedDynamicState2PatchControlPoints = false,
++
++      /* virtio-dxg: VK_EXT_provoking_vertex (attributeAtVertex) */
++      .provokingVertexLast                = pdev->options3.BarycentricsSupported,
++      .transformFeedbackPreservesProvokingVertex = false,
+    };
+ }
+ 
+@@ -898,7 +951,7 @@
+       .maxGeometryTotalOutputComponents = D3D12_REQ_GS_INVOCATION_32BIT_OUTPUT_COMPONENT_LIMIT,
+       .maxFragmentInputComponents = D3D12_PS_INPUT_REGISTER_COUNT * D3D12_PS_INPUT_REGISTER_COMPONENTS,
+       .maxFragmentOutputAttachments = D3D12_PS_OUTPUT_REGISTER_COUNT,
+-      .maxFragmentDualSrcAttachments = 0,
++      .maxFragmentDualSrcAttachments = 1,
+       .maxFragmentCombinedOutputResources = D3D12_PS_OUTPUT_REGISTER_COUNT,
+       .maxComputeSharedMemorySize = D3D12_CS_TGSM_REGISTER_COUNT * sizeof(float),
+       .maxComputeWorkGroupCount = { D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION,
+@@ -1064,6 +1117,22 @@
+       .integerDotProduct4x8BitPackedUnsignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
+       .integerDotProductAccumulatingSaturating4x8BitPackedSignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
+       .integerDotProductAccumulatingSaturating4x8BitPackedUnsignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
++      /* virtio-dxg: Vulkan 1.3 limits */
++      .maxInlineUniformBlockSize = 4096,
++      .maxPerStageDescriptorInlineUniformBlocks = 4,
++      .maxPerStageDescriptorUpdateAfterBindInlineUniformBlocks = 4,
++      .maxDescriptorSetInlineUniformBlocks = 4,
++      .maxDescriptorSetUpdateAfterBindInlineUniformBlocks = 4,
++      .maxInlineUniformTotalSize = 4 * 4096,
++      .storageTexelBufferOffsetAlignmentBytes = 32,
++      .storageTexelBufferOffsetSingleTexelAlignment = false,
++      .uniformTexelBufferOffsetAlignmentBytes = 32,
++      .uniformTexelBufferOffsetSingleTexelAlignment = false,
++      .maxBufferSize =
++         CLAMP(MAX2(pdev->desc.dedicated_video_memory,
++                    pdev->desc.dedicated_system_memory +
++                    pdev->desc.shared_system_memory) / 4,
++               1ull << 30, 2ull * 1024 * 1024 * 1024),
+ 
+       /* VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT */
+       .maxVertexAttribDivisor = UINT32_MAX,
+@@ -1073,6 +1142,11 @@
+ 
+       /* VkPhysicalDeviceLayeredDriverPropertiesMSFT */
+       .underlyingAPI = VK_LAYERED_DRIVER_UNDERLYING_API_D3D12_MSFT,
++
++      /* virtio-dxg: VkPhysicalDeviceProvokingVertexPropertiesEXT (the mode is
++       * compiled into each pipeline's fragment shader) */
++      .provokingVertexModePerPipeline = true,
++      .transformFeedbackPreservesTriangleFanProvokingVertex = false,
+    };
+ 
+    if (strlen(instance->drirc.debug.force_vk_devicename) > 0) {
+@@ -1629,6 +1703,26 @@
+    VK_FROM_HANDLE(dzn_physical_device, pdev, physicalDevice);
+ 
+    dzn_physical_device_get_format_properties(pdev, format, pFormatProperties);
++
++   /* virtio-dxg: VK_KHR_format_feature_flags2 */
++   VkFormatProperties3 *props3 =
++      vk_find_struct(pFormatProperties->pNext, FORMAT_PROPERTIES_3);
++   if (props3) {
++      const VkFormatProperties *p = &pFormatProperties->formatProperties;
++
++      props3->linearTilingFeatures = p->linearTilingFeatures;
++      props3->optimalTilingFeatures = p->optimalTilingFeatures;
++      props3->bufferFeatures = p->bufferFeatures;
++      if (p->optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
++         props3->optimalTilingFeatures |= VK_FORMAT_FEATURE_2_STORAGE_READ_WITHOUT_FORMAT_BIT |
++                                          VK_FORMAT_FEATURE_2_STORAGE_WRITE_WITHOUT_FORMAT_BIT;
++      if (p->bufferFeatures & VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT)
++         props3->bufferFeatures |= VK_FORMAT_FEATURE_2_STORAGE_READ_WITHOUT_FORMAT_BIT |
++                                   VK_FORMAT_FEATURE_2_STORAGE_WRITE_WITHOUT_FORMAT_BIT;
++      if (vk_format_has_depth(format) &&
++          (p->optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
++         props3->optimalTilingFeatures |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT;
++   }
+ }
+ 
+ VKAPI_ATTR VkResult VKAPI_CALL
+@@ -2567,6 +2661,8 @@
+ #else
+    if ((intptr_t)mem->export_handle >= 0)
+       close((int)(intptr_t)mem->export_handle);
++   if (mem->dxg_dmabuf > 0)
++      close(mem->dxg_dmabuf - 1);
+ #endif
+ 
+    vk_object_base_finish(&mem->base);
+@@ -2593,6 +2689,128 @@
+    return properties;
+ }
+ 
++
++#ifndef _WIN32
++/* virtio-dxg window buffers ----------------------------------------------
++ *
++ * A dedicated image allocation exported as a dma-buf is a shared committed
++ * resource plus a virtio-gpu buffer (what compositors accept as a dma-buf),
++ * paired in the dxg module (LX_DXVIRTIOWINBUF): whoever imports the dma-buf
++ * gets the texture. The buffer's own pixels are never used.
++ */
++struct dzn_virtio_winbuf {
++   uint32_t op;         /* 1 register */
++   int32_t dmabuf_fd;
++   int32_t resource_fd;
++   uint32_t reserved;
++};
++#define DZN_LX_DXVIRTIOWINBUF _IOWR(0x47, 0x81, struct dzn_virtio_winbuf)
++
++static simple_mtx_t dzn_winbuf_lock = SIMPLE_MTX_INITIALIZER;
++static int dzn_winbuf_drm = -2, dzn_winbuf_dxg = -2;
++
++bool
++dzn_window_buffers_available(void)
++{
++   simple_mtx_lock(&dzn_winbuf_lock);
++   if (dzn_winbuf_drm == -2) {
++      char marker = 0;
++      int fd = open("/sys/module/dxgkrnl_virtio/parameters/winbuf",
++                    O_RDONLY | O_CLOEXEC);
++
++      dzn_winbuf_drm = dzn_winbuf_dxg = -1;
++      if (fd >= 0) {
++         if (read(fd, &marker, 1) != 1)
++            marker = 0;
++         close(fd);
++      }
++      if ((marker == 'Y' || marker == '1') &&
++          debug_get_bool_option("DZN_WINDOW_BUFFERS", true)) {
++         for (int i = 128; i < 136 && dzn_winbuf_drm < 0; i++) {
++            char path[32], name[32] = "";
++            struct drm_version version = { 0 };
++
++            snprintf(path, sizeof(path), "/dev/dri/renderD%d", i);
++            fd = open(path, O_RDWR | O_CLOEXEC);
++            if (fd < 0)
++               continue;
++            version.name = name;
++            version.name_len = sizeof(name) - 1;
++            if (!ioctl(fd, DRM_IOCTL_VERSION, &version) &&
++                !strcmp(name, "virtio_gpu"))
++               dzn_winbuf_drm = fd;
++            else
++               close(fd);
++         }
++         if (dzn_winbuf_drm >= 0) {
++            dzn_winbuf_dxg = open("/dev/dxg", O_RDWR | O_CLOEXEC);
++            if (dzn_winbuf_dxg < 0) {
++               close(dzn_winbuf_drm);
++               dzn_winbuf_drm = -1;
++            }
++         }
++      }
++   }
++   bool available = dzn_winbuf_drm >= 0;
++   simple_mtx_unlock(&dzn_winbuf_lock);
++   return available;
++}
++
++/* The dma-buf for a shared image resource, or -1. */
++static int
++dzn_window_buffer_create(struct dzn_device *device,
++                         const struct dzn_image *image, int resource_fd)
++{
++   D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
++   UINT64 row_size, total_size;
++   UINT num_rows;
++
++   if (resource_fd < 0 || !dzn_window_buffers_available())
++      return -1;
++   ID3D12Device1_GetCopyableFootprints(device->dev, &image->desc, 0, 1, 0,
++                                       &footprint, &num_rows, &row_size,
++                                       &total_size);
++   uint64_t size = (uint64_t)footprint.Footprint.RowPitch *
++                   footprint.Footprint.Height;
++   if (!size || size > UINT32_MAX)
++      return -1;
++
++   struct drm_virtgpu_resource_create create = {
++      .target = 2,
++      .format = 1,
++      /* a float16 texel is two 32-bit virtio-gpu texels */
++      .width = (uint32_t)image->desc.Width *
++               MAX2(1u, (uint32_t)(row_size / image->desc.Width) / 4),
++      .height = image->desc.Height,
++      .depth = 1,
++      .array_size = 1,
++      .size = (uint32_t)size,
++   };
++   if (ioctl(dzn_winbuf_drm, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE, &create))
++      return -1;
++   struct drm_prime_handle prime = {
++      .handle = create.bo_handle,
++      .flags = DRM_CLOEXEC | DRM_RDWR,
++   };
++   int ret = ioctl(dzn_winbuf_drm, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime);
++   struct drm_gem_close gem = { .handle = create.bo_handle };
++   ioctl(dzn_winbuf_drm, DRM_IOCTL_GEM_CLOSE, &gem);   /* the dma-buf keeps it */
++   if (ret)
++      return -1;
++
++   struct dzn_virtio_winbuf pair = {
++      .op = 1,
++      .dmabuf_fd = prime.fd,
++      .resource_fd = resource_fd,
++   };
++   if (ioctl(dzn_winbuf_dxg, DZN_LX_DXVIRTIOWINBUF, &pair)) {
++      close(prime.fd);
++      return -1;
++   }
++   return prime.fd;
++}
++#endif /* !_WIN32 */
++
+ static VkResult
+ dzn_device_memory_create(struct dzn_device *device,
+                          const VkMemoryAllocateInfo *pAllocateInfo,
+@@ -2607,6 +2825,10 @@
+ 
+    VkExternalMemoryHandleTypeFlags export_flags = 0;
+    HANDLE import_handle = NULL;
++#ifndef _WIN32
++   int import_source_fd = -1;
++   struct dzn_imported_memory_fd imported_fd = { -1, -1 };
++#endif
+    bool imported_from_d3d11 = false;
+    void *host_pointer = NULL;
+ #ifdef _WIN32
+@@ -2662,7 +2884,9 @@
+          default:
+             return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+          }
+-         import_handle = (HANDLE)(intptr_t)imp->fd;
++         if (imp->fd < 0)
++            return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++         import_source_fd = imp->fd;
+          break;
+       }
+ #endif
+@@ -2711,6 +2935,10 @@
+        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP_BIT);
+    if (image && imported_from_d3d11)
+       valid_flags |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
++#ifndef _WIN32
++   if (image)
++      valid_flags |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
++#endif
+ 
+    if (export_flags & ~valid_flags)
+       return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+@@ -2778,7 +3006,17 @@
+ #else
+       goto cleanup;
+ #endif
++#ifdef _WIN32
+    } else if (import_handle) {
++#else
++   } else if (import_source_fd >= 0) {
++      /* Keep the caller's descriptor on failure; a temporary CLOEXEC
++       * duplicate also makes descriptor zero safe for HANDLE-based APIs. */
++      error = dzn_imported_memory_fd_open(&imported_fd, import_source_fd);
++      if (error != VK_SUCCESS)
++         goto cleanup;
++      import_handle = (HANDLE)(intptr_t)imported_fd.duplicate_fd;
++#endif
+       error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+       if (image || buffer) {
+          if (FAILED(ID3D12Device_OpenSharedHandle(device->dev, import_handle, &IID_ID3D12Resource, (void **)&mem->dedicated_res)))
+@@ -2921,10 +3159,27 @@
+          goto cleanup;
+    }
+ 
++#ifndef _WIN32
++   if (export_flags & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) {
++      /* A window buffer: the dma-buf that stands for the shared image. */
++      int dmabuf = image ?
++         dzn_window_buffer_create(device, image,
++                                  (int)(intptr_t)mem->export_handle) : -1;
++      if (dmabuf < 0) {
++         error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
++         goto cleanup;
++      }
++      mem->dxg_dmabuf = dmabuf + 1;
++   }
++   dzn_imported_memory_fd_finish(&imported_fd, true);
++#endif
+    *out = dzn_device_memory_to_handle(mem);
+    return VK_SUCCESS;
+ 
+ cleanup:
++#ifndef _WIN32
++   dzn_imported_memory_fd_finish(&imported_fd, false);
++#endif
+ #ifdef _WIN32
+    if (handle_from_name)
+       CloseHandle(handle_from_name);
+@@ -3691,6 +3946,56 @@
+    *pPeerMemoryFeatures = 0;
+ }
+ 
++/* virtio-dxg: maintenance4, requirements without an object: make one. */
++VKAPI_ATTR void VKAPI_CALL
++dzn_GetDeviceBufferMemoryRequirements(VkDevice device,
++                                      const VkDeviceBufferMemoryRequirements *pInfo,
++                                      VkMemoryRequirements2 *pMemoryRequirements)
++{
++   VkBuffer buffer;
++
++   if (dzn_CreateBuffer(device, pInfo->pCreateInfo, NULL, &buffer) != VK_SUCCESS) {
++      pMemoryRequirements->memoryRequirements = (VkMemoryRequirements) { 0 };
++      return;
++   }
++
++   VkBufferMemoryRequirementsInfo2 info = {
++      .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,
++      .buffer = buffer,
++   };
++   dzn_GetBufferMemoryRequirements2(device, &info, pMemoryRequirements);
++   dzn_DestroyBuffer(device, buffer, NULL);
++}
++
++VKAPI_ATTR void VKAPI_CALL
++dzn_GetDeviceImageMemoryRequirements(VkDevice device,
++                                     const VkDeviceImageMemoryRequirements *pInfo,
++                                     VkMemoryRequirements2 *pMemoryRequirements)
++{
++   VkImage image;
++
++   if (dzn_CreateImage(device, pInfo->pCreateInfo, NULL, &image) != VK_SUCCESS) {
++      pMemoryRequirements->memoryRequirements = (VkMemoryRequirements) { 0 };
++      return;
++   }
++
++   VkImageMemoryRequirementsInfo2 info = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2,
++      .image = image,
++   };
++   dzn_GetImageMemoryRequirements2(device, &info, pMemoryRequirements);
++   dzn_DestroyImage(device, image, NULL);
++}
++
++VKAPI_ATTR void VKAPI_CALL
++dzn_GetDeviceImageSparseMemoryRequirements(VkDevice device,
++                                           const VkDeviceImageMemoryRequirements *pInfo,
++                                           uint32_t *pSparseMemoryRequirementCount,
++                                           VkSparseImageMemoryRequirements2 *pSparseMemoryRequirements)
++{
++   *pSparseMemoryRequirementCount = 0;
++}
++
+ VKAPI_ATTR void VKAPI_CALL
+ dzn_GetImageSparseMemoryRequirements2(VkDevice device,
+                                       const VkImageSparseMemoryRequirementsInfo2* pInfo,
+@@ -3772,16 +4077,33 @@
+                    int *pFd)
+ {
+    VK_FROM_HANDLE(dzn_device_memory, mem, pGetFdInfo->memory);
+-   if (!mem->export_handle)
++   const intptr_t fd = (intptr_t)mem->export_handle;
++   /* Descriptor zero is valid. Preserve the memory object's owned reference
++    * and hand each caller a fresh close-on-exec descriptor. */
++   if (fd < 0 || fd > INT_MAX)
+       return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+ 
++   if (pGetFdInfo->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) {
++      if (mem->dxg_dmabuf <= 0)
++         return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++      const int exported = os_dupfd_cloexec(mem->dxg_dmabuf - 1);
++      if (exported < 0)
++         return vk_error(device, VK_ERROR_TOO_MANY_OBJECTS);
++      *pFd = exported;
++      return VK_SUCCESS;
++   }
++
+    switch (pGetFdInfo->handleType) {
+    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT:
+    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT:
+-   case VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP_BIT:
+-      *pFd = (int)(intptr_t)mem->export_handle;
+-      mem->export_handle = (HANDLE)(intptr_t)-1;
++   case VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP_BIT: {
++      const int exported = os_dupfd_cloexec((int)fd);
++      if (exported < 0)
++         return vk_error(device, (errno == EMFILE || errno == ENFILE) ?
++                         VK_ERROR_TOO_MANY_OBJECTS : VK_ERROR_OUT_OF_HOST_MEMORY);
++      *pFd = exported;
+       return VK_SUCCESS;
++   }
+    default:
+       return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+    }
+--- /dev/null
++++ b/src/microsoft/vulkan/dzn_imported_memory_fd.h
+@@ -0,0 +1,44 @@
++/* SPDX-License-Identifier: MIT
++ * Transactional Linux FD ownership for Vulkan memory import.
++ */
++#ifndef DZN_IMPORTED_MEMORY_FD_H
++#define DZN_IMPORTED_MEMORY_FD_H
++#include <stdbool.h>
++#include <errno.h>
++#include <unistd.h>
++#include <vulkan/vulkan_core.h>
++#include "util/os_file.h"
++
++struct dzn_imported_memory_fd {
++   int source_fd;
++   int duplicate_fd;
++};
++
++static inline VkResult
++dzn_imported_memory_fd_open(struct dzn_imported_memory_fd *owner, int source)
++{
++   if (source < 0 || owner->duplicate_fd >= 0)
++      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
++   const int duplicate = os_dupfd_cloexec(source);
++   if (duplicate < 0)
++      return (errno == EBADF || errno == EINVAL) ?
++         VK_ERROR_INVALID_EXTERNAL_HANDLE : VK_ERROR_OUT_OF_HOST_MEMORY;
++   owner->source_fd = source;
++   owner->duplicate_fd = duplicate;
++   return VK_SUCCESS;
++}
++
++static inline void
++dzn_imported_memory_fd_finish(struct dzn_imported_memory_fd *owner, bool success)
++{
++   if (owner->duplicate_fd < 0)
++      return;
++   const int duplicate = owner->duplicate_fd;
++   const int source = owner->source_fd;
++   owner->source_fd = owner->duplicate_fd = -1;
++   /* Do not retry close on EINTR: Linux may already have reused the number. */
++   close(duplicate);
++   if (success)
++      close(source);
++}
++#endif
+--- a/src/microsoft/vulkan/dzn_image.c
++++ b/src/microsoft/vulkan/dzn_image.c
+@@ -207,6 +207,15 @@
+        !pdev->options12.RelaxedFormatCastingSupported)
+       image->desc.Format = dzn_get_typeless_dxgi_format(image->desc.Format);
+ 
++#ifndef _WIN32
++   /* virtio-dxg: typeless window buffers. A dma-buf image is opened by
++    * another process in the dma-buf's format (UNORM for an sRGB swapchain). */
++   const VkExternalMemoryImageCreateInfo *dxg_ext =
++      vk_find_struct_const(pCreateInfo->pNext, EXTERNAL_MEMORY_IMAGE_CREATE_INFO);
++   if (dxg_ext && (dxg_ext->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT))
++      image->desc.Format = dzn_get_typeless_dxgi_format(image->desc.Format);
++#endif
++
+    if (image->desc.SampleDesc.Count > 1)
+       image->desc.Alignment = D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT;
+    else
+@@ -1427,7 +1436,9 @@
+                                                    false, false,
+                                                    iview);
+       }
+-      if (iview->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT) {
++      /* virtio-dxg: no sRGB UAVs */
++      if ((iview->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT) &&
++          !vk_format_is_srgb(iview->vk.view_format)) {
+          iview->uav_bindless_slot = dzn_device_descriptor_heap_alloc_slot(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+          if (iview->uav_bindless_slot < 0) {
+             dzn_image_view_destroy(iview, pAllocator);
+--- a/src/microsoft/vulkan/dzn_pipeline.c
++++ b/src/microsoft/vulkan/dzn_pipeline.c
+@@ -412,6 +412,7 @@
+ dzn_pipeline_compile_shader(struct dzn_device *device,
+                             nir_shader *nir,
+                             uint32_t input_clip_size,
++                            unsigned provoking_vertex,
+                             D3D12_SHADER_BYTECODE *slot)
+ {
+    struct dzn_instance *instance =
+@@ -428,6 +429,10 @@
+       .shader_model_max = dzn_get_shader_model(pdev),
+       .input_clip_size = input_clip_size,
+       .advanced_texture_ops = pdev->options14.AdvancedTextureOpsSupported,
++      /* virtio-dxg: VK_EXT_provoking_vertex (dzn_last_vertex_index) */
++      .provoking_vertex = provoking_vertex,
++      .interpolate_at_vertex = provoking_vertex != 0,
++      .provoking_vertex_ints = provoking_vertex != 0,
+ #ifdef _WIN32
+       .validator_version_max = dxil_get_validator_version(instance->dxil_validator),
+ #endif
+@@ -746,6 +751,28 @@
+    _mesa_blake3_final(&ctx, result);
+ }
+ 
++/* virtio-dxg: VK_EXT_provoking_vertex, last vertex: the index of the
++ * primitive's last vertex in attributeAtVertex for a topology class. */
++static unsigned
++dzn_last_vertex_index(VkPrimitiveTopology topology)
++{
++   switch (topology) {
++   case VK_PRIMITIVE_TOPOLOGY_LINE_LIST:
++   case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP:
++   case VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY:
++   case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY:
++      return 1;
++   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST:
++   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP:
++   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN:
++   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY:
++   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY:
++      return 2;
++   default:
++      return 0;
++   }
++}
++
+ static VkResult
+ dzn_graphics_pipeline_compile_shaders(struct dzn_device *device,
+                                       struct dzn_graphics_pipeline *pipeline,
+@@ -842,6 +869,17 @@
+       info->pMultisampleState &&
+       info->pMultisampleState->sampleShadingEnable;
+ 
++   /* virtio-dxg: VK_EXT_provoking_vertex. With the last vertex, the fragment
++    * shader reads flat inputs from the primitive's last vertex. pv_key is 0
++    * (first vertex) or 1 + that vertex for the pipeline's topology class. */
++   const VkPipelineRasterizationProvokingVertexStateCreateInfoEXT *pv_info =
++      vk_find_struct_const(info->pRasterizationState->pNext,
++                           PIPELINE_RASTERIZATION_PROVOKING_VERTEX_STATE_CREATE_INFO_EXT);
++   uint32_t pv_key =
++      pv_info && pv_info->provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT &&
++      info->pInputAssemblyState ?
++      1 + dzn_last_vertex_index(info->pInputAssemblyState->topology) : 0;
++
+    if (cache) {
+       dzn_graphics_pipeline_hash_attribs(attribs, vi_conversions, attribs_hash);
+ 
+@@ -856,6 +894,7 @@
+       _mesa_blake3_update(&pipeline_hash_ctx, &force_sample_rate_shading, sizeof(force_sample_rate_shading));
+       _mesa_blake3_update(&pipeline_hash_ctx, &lower_view_index, sizeof(lower_view_index));
+       _mesa_blake3_update(&pipeline_hash_ctx, &pipeline->use_gs_for_polygon_mode_point, sizeof(pipeline->use_gs_for_polygon_mode_point));
++      _mesa_blake3_update(&pipeline_hash_ctx, &pv_key, sizeof(pv_key));
+ 
+       u_foreach_bit(stage, active_stage_mask) {
+          const VkPipelineShaderStageRequiredSubgroupSizeCreateInfo *subgroup_size_info =
+@@ -1004,6 +1043,21 @@
+       }
+    }
+ 
++   /* virtio-dxg: the last vertex of the primitives the fragment shader sees */
++   unsigned fs_provoking_vertex = 0;
++   if (pv_key) {
++      const nir_shader *gs = pipeline->templates.shaders[MESA_SHADER_GEOMETRY].nir;
++
++      if (pipeline->use_gs_for_polygon_mode_point)
++         fs_provoking_vertex = 0;
++      else if (gs)
++         fs_provoking_vertex =
++            gs->info.gs.output_primitive == MESA_PRIM_TRIANGLE_STRIP ? 2 :
++            gs->info.gs.output_primitive == MESA_PRIM_LINE_STRIP ? 1 : 0;
++      else
++         fs_provoking_vertex = pv_key - 1;
++   }
++
+    u_foreach_bit(stage, active_stage_mask) {
+       uint8_t bindings_hash[BLAKE3_KEY_LEN];
+ 
+@@ -1019,6 +1073,8 @@
+          _mesa_blake3_update(&dxil_hash_ctx, stages[stage].link_hashes[0], sizeof(stages[stage].link_hashes[0]));
+          _mesa_blake3_update(&dxil_hash_ctx, stages[stage].link_hashes[1], sizeof(stages[stage].link_hashes[1]));
+          _mesa_blake3_update(&dxil_hash_ctx, bindings_hash, sizeof(bindings_hash));
++         if (stage == MESA_SHADER_FRAGMENT)
++            _mesa_blake3_update(&dxil_hash_ctx, &fs_provoking_vertex, sizeof(fs_provoking_vertex));
+          _mesa_blake3_final(&dxil_hash_ctx, stages[stage].dxil_hash);
+          dxil_hashes[stage] = stages[stage].dxil_hash;
+ 
+@@ -1088,7 +1144,8 @@
+       D3D12_SHADER_BYTECODE *slot =
+          dzn_pipeline_get_gfx_shader_slot(out, stage);
+ 
+-      ret = dzn_pipeline_compile_shader(device, pipeline->templates.shaders[stage].nir, prev_stage_output_clip_size, slot);
++      ret = dzn_pipeline_compile_shader(device, pipeline->templates.shaders[stage].nir, prev_stage_output_clip_size,
++                                        stage == MESA_SHADER_FRAGMENT ? fs_provoking_vertex : 0, slot);
+       if (ret != VK_SUCCESS)
+          return ret;
+ 
+@@ -1243,6 +1300,16 @@
+    }
+ }
+ 
++/* virtio-dxg: the primitive topology as dynamic state (dzn_eds_key). */
++D3D12_PRIMITIVE_TOPOLOGY
++dzn_translate_prim_topology(VkPrimitiveTopology in, unsigned patch_control_points,
++                            bool support_triangle_fan)
++{
++   if (in == VK_PRIMITIVE_TOPOLOGY_PATCH_LIST && !patch_control_points)
++      patch_control_points = 1;
++   return to_prim_topology(in, patch_control_points, support_triangle_fan);
++}
++
+ static VkResult
+ dzn_graphics_pipeline_translate_ia(struct dzn_device *device,
+                                    struct dzn_graphics_pipeline *pipeline,
+@@ -1857,6 +1924,99 @@
+    vk_free2(&pipeline->base.base.device->alloc, alloc, pipeline);
+ }
+ 
++/* virtio-dxg: Vulkan 1.3 extended dynamic state. Records the static values
++ * and, when something is dynamic, points *pinfo at a copy of the create info
++ * with neutral values (rasterizer on, no culling, depth bias present,
++ * primitive restart possible, every depth/stencil path live, stencil ops
++ * that use the masks) so the pipeline-state template covers every value;
++ * the real ones are folded in per variant (dzn_graphics_pipeline_apply_eds). */
++static void
++dzn_graphics_pipeline_init_eds(struct dzn_graphics_pipeline *pipeline,
++                               const VkGraphicsPipelineCreateInfo **pinfo,
++                               VkGraphicsPipelineCreateInfo *info,
++                               VkPipelineRasterizationStateCreateInfo *rast,
++                               VkPipelineInputAssemblyStateCreateInfo *ia,
++                               VkPipelineDepthStencilStateCreateInfo *zsa)
++{
++   const VkGraphicsPipelineCreateInfo *in = *pinfo;
++   const VkPipelineRenderingCreateInfo *ri =
++      vk_find_struct_const(in, PIPELINE_RENDERING_CREATE_INFO);
++   const VkPipelineRasterizationStateCreateInfo *in_rast = in->pRasterizationState;
++   const VkPipelineInputAssemblyStateCreateInfo *in_ia = in->pInputAssemblyState;
++   uint32_t dyn = pipeline->eds.dyn;
++   struct dzn_eds_key *s = &pipeline->eds.statik;
++   bool discard = in_rast->rasterizerDiscardEnable &&
++                  !(dyn & DZN_EDS_RASTERIZER_DISCARD);
++   const VkPipelineDepthStencilStateCreateInfo *in_zsa =
++      discard ? NULL : in->pDepthStencilState;
++
++   s->cull_mode = in_rast->cullMode;
++   s->front_ccw = in_rast->frontFace == VK_FRONT_FACE_COUNTER_CLOCKWISE;
++   s->depth_bias_enable = in_rast->depthBiasEnable;
++   s->primitive_restart = in_ia && in_ia->primitiveRestartEnable;
++   if (in_zsa) {
++      s->depth_test = in_zsa->depthTestEnable;
++      s->depth_write = in_zsa->depthWriteEnable;
++      s->depth_compare = in_zsa->depthCompareOp;
++      s->depth_bounds_test = in_zsa->depthBoundsTestEnable;
++      s->stencil_test = in_zsa->stencilTestEnable;
++      s->stencil_front[0] = in_zsa->front.failOp;
++      s->stencil_front[1] = in_zsa->front.passOp;
++      s->stencil_front[2] = in_zsa->front.depthFailOp;
++      s->stencil_front[3] = in_zsa->front.compareOp;
++      s->stencil_back[0] = in_zsa->back.failOp;
++      s->stencil_back[1] = in_zsa->back.passOp;
++      s->stencil_back[2] = in_zsa->back.depthFailOp;
++      s->stencil_back[3] = in_zsa->back.compareOp;
++   }
++   /* A static front+back cull already disabled depth/stencil and dropped
++    * the fragment shader; leave that alone. */
++   pipeline->eds.zsa = in_zsa != NULL &&
++      !(in_rast->cullMode == VK_CULL_MODE_FRONT_AND_BACK && !(dyn & DZN_EDS_CULL_MODE));
++   pipeline->eds.has_depth = !(ri && ri->depthAttachmentFormat == VK_FORMAT_UNDEFINED);
++   pipeline->eds.has_stencil = !(ri && ri->stencilAttachmentFormat == VK_FORMAT_UNDEFINED);
++   pipeline->eds.tri_class = in_ia &&
++      to_prim_topology_type(in_ia->topology) == D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
++   pipeline->eds.patch_control_points =
++      in->pTessellationState ? in->pTessellationState->patchControlPoints : 0;
++
++   if (!dyn)
++      return;
++
++   *info = *in;
++   *rast = *in_rast;
++   info->pRasterizationState = rast;
++   if (dyn & DZN_EDS_RASTERIZER_DISCARD)
++      rast->rasterizerDiscardEnable = false;
++   if (dyn & DZN_EDS_CULL_MODE)
++      rast->cullMode = VK_CULL_MODE_NONE;
++   if (dyn & DZN_EDS_DEPTH_BIAS_ENABLE)
++      rast->depthBiasEnable = true;
++   if (in_ia && (dyn & DZN_EDS_PRIMITIVE_RESTART)) {
++      *ia = *in_ia;
++      ia->primitiveRestartEnable = true;
++      info->pInputAssemblyState = ia;
++   }
++   if (in->pDepthStencilState && (dyn & DZN_EDS_ZSA_MASK)) {
++      *zsa = *in->pDepthStencilState;
++      if (dyn & DZN_EDS_DEPTH_TEST)
++         zsa->depthTestEnable = true;
++      if (dyn & DZN_EDS_DEPTH_BOUNDS_TEST)
++         zsa->depthBoundsTestEnable = true;
++      if (dyn & DZN_EDS_STENCIL_TEST)
++         zsa->stencilTestEnable = true;
++      if (dyn & DZN_EDS_STENCIL_OP) {
++         zsa->front.failOp = zsa->front.passOp = zsa->front.depthFailOp =
++            VK_STENCIL_OP_REPLACE;
++         zsa->back.failOp = zsa->back.passOp = zsa->back.depthFailOp =
++            VK_STENCIL_OP_REPLACE;
++         zsa->front.compareOp = zsa->back.compareOp = VK_COMPARE_OP_LESS;
++      }
++      info->pDepthStencilState = zsa;
++   }
++   *pinfo = info;
++}
++
+ static VkResult
+ dzn_graphics_pipeline_create(struct dzn_device *device,
+                              VkPipelineCache cache,
+@@ -1877,6 +2037,16 @@
+    VkResult ret;
+    HRESULT hres = 0;
+    D3D12_VIEW_INSTANCE_LOCATION vi_locs[D3D12_MAX_VIEW_INSTANCE_COUNT];
++   VkGraphicsPipelineCreateInfo eds_info;
++   VkPipelineRasterizationStateCreateInfo eds_rast;
++   VkPipelineInputAssemblyStateCreateInfo eds_ia;
++   VkPipelineDepthStencilStateCreateInfo eds_zsa;
++
++   /* virtio-dxg: pipelines are compiled on creation (pipeline creation
++    * cache control). */
++   if (vk_graphics_pipeline_create_flags(pCreateInfo) &
++       VK_PIPELINE_CREATE_2_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_KHR)
++      return VK_PIPELINE_COMPILE_REQUIRED;
+ 
+    struct dzn_graphics_pipeline *pipeline =
+       vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*pipeline), 8,
+@@ -1945,11 +2115,69 @@
+          case VK_DYNAMIC_STATE_LINE_WIDTH:
+             /* Nothing to do since we just support lineWidth = 1. */
+             break;
+-         default: UNREACHABLE("Unsupported dynamic state");
++         /* virtio-dxg: extended dynamic state (dzn_eds_key) */
++         case VK_DYNAMIC_STATE_CULL_MODE:
++            pipeline->eds.dyn |= DZN_EDS_CULL_MODE;
++            break;
++         case VK_DYNAMIC_STATE_FRONT_FACE:
++            pipeline->eds.dyn |= DZN_EDS_FRONT_FACE;
++            break;
++         case VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY:
++            pipeline->eds.dyn |= DZN_EDS_TOPOLOGY;
++            break;
++         case VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT:
++            pipeline->vp.dynamic = true;
++            pipeline->eds.dyn |= DZN_EDS_VIEWPORT_COUNT;
++            break;
++         case VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT:
++            pipeline->scissor.dynamic = true;
++            pipeline->eds.dyn |= DZN_EDS_SCISSOR_COUNT;
++            break;
++         case VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE:
++            pipeline->eds.dyn |= DZN_EDS_VB_STRIDE;
++            break;
++         case VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_DEPTH_TEST;
++            break;
++         case VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_DEPTH_WRITE;
++            break;
++         case VK_DYNAMIC_STATE_DEPTH_COMPARE_OP:
++            pipeline->eds.dyn |= DZN_EDS_DEPTH_COMPARE;
++            break;
++         case VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_DEPTH_BOUNDS_TEST;
++            break;
++         case VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_STENCIL_TEST;
++            break;
++         case VK_DYNAMIC_STATE_STENCIL_OP:
++            pipeline->eds.dyn |= DZN_EDS_STENCIL_OP;
++            break;
++         case VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_RASTERIZER_DISCARD;
++            break;
++         case VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_DEPTH_BIAS_ENABLE;
++            break;
++         case VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE:
++            pipeline->eds.dyn |= DZN_EDS_PRIMITIVE_RESTART;
++            break;
++         default:
++            /* Not advertised: keep the create-info value. */
++            break;
+          }
+       }
+    }
+ 
++   if (pipeline->eds.dyn & DZN_EDS_PSO_MASK) {
++      ret = dzn_graphics_pipeline_prepare_for_variants(device, pipeline);
++      if (ret)
++         goto out;
++   }
++   dzn_graphics_pipeline_init_eds(pipeline, &pCreateInfo, &eds_info,
++                                  &eds_rast, &eds_ia, &eds_zsa);
++
+    ret = dzn_graphics_pipeline_translate_ia(device, pipeline, stream_desc, pCreateInfo);
+    if (ret)
+       goto out;
+@@ -2180,6 +2408,105 @@
+    }
+ }
+ 
++/* virtio-dxg: fold the extended dynamic state of a variant key into a copy
++ * of the pipeline-state stream (see dzn_graphics_pipeline_init_eds). */
++#define DZN_EDS_STENCIL_FACE(face, ops) do { \
++      (face).StencilFailOp = translate_stencil_op((VkStencilOp)(ops)[0]); \
++      (face).StencilPassOp = translate_stencil_op((VkStencilOp)(ops)[1]); \
++      (face).StencilDepthFailOp = translate_stencil_op((VkStencilOp)(ops)[2]); \
++      (face).StencilFunc = dzn_translate_compare_op((VkCompareOp)(ops)[3]); \
++   } while (0)
++
++#define DZN_EDS_APPLY_DS(ds) do { \
++      (ds)->DepthEnable = depth; \
++      if (depth) { \
++         (ds)->DepthWriteMask = k->depth_write ? \
++            D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO; \
++         (ds)->DepthFunc = k->depth_test ? \
++            dzn_translate_compare_op((VkCompareOp)k->depth_compare) : \
++            D3D12_COMPARISON_FUNC_ALWAYS; \
++      } \
++      (ds)->DepthBoundsTestEnable = k->depth_bounds_test; \
++      (ds)->StencilEnable = stencil; \
++      if (stencil && (dyn & DZN_EDS_STENCIL_OP)) { \
++         DZN_EDS_STENCIL_FACE((ds)->FrontFace, k->stencil_front); \
++         DZN_EDS_STENCIL_FACE((ds)->BackFace, k->stencil_back); \
++      } \
++   } while (0)
++
++static void
++dzn_graphics_pipeline_apply_eds(struct dzn_physical_device *pdev,
++                                struct dzn_graphics_pipeline *pipeline,
++                                uintptr_t *stream_buf,
++                                const struct dzn_graphics_pipeline_variant_key *key)
++{
++   uint32_t dyn = pipeline->eds.dyn;
++   const struct dzn_eds_key *k = &key->eds;
++
++   if (!(dyn & DZN_EDS_PSO_MASK))
++      return;
++
++   /* RASTERIZER, RASTERIZER1 and RASTERIZER2 share the first six fields;
++    * DepthBias is an INT in the first and a FLOAT in the others, and zero
++    * is the same bits in both. */
++   D3D12_RASTERIZER_DESC *rast =
++      dzn_graphics_pipeline_get_desc(pipeline, stream_buf, rast);
++   if (rast) {
++      if (dyn & DZN_EDS_CULL_MODE)
++         rast->CullMode = translate_cull_mode(k->cull_mode);
++      if (dyn & DZN_EDS_FRONT_FACE)
++         rast->FrontCounterClockwise = k->front_ccw;
++      if ((dyn & DZN_EDS_DEPTH_BIAS_ENABLE) && !k->depth_bias_enable) {
++         rast->DepthBias = 0;
++         rast->DepthBiasClamp = 0.0f;
++         rast->SlopeScaledDepthBias = 0.0f;
++      }
++   }
++
++   if (pipeline->eds.zsa && (dyn & DZN_EDS_ZSA_MASK) &&
++       !pipeline->rast_disabled_from_missing_position) {
++      bool depth = pipeline->eds.has_depth && (k->depth_test || k->depth_bounds_test);
++      bool stencil = pipeline->eds.has_stencil && k->stencil_test;
++
++      if (pdev->options14.IndependentFrontAndBackStencilRefMaskSupported) {
++         D3D12_DEPTH_STENCIL_DESC2 *ds =
++            dzn_graphics_pipeline_get_desc(pipeline, stream_buf, ds);
++         if (ds)
++            DZN_EDS_APPLY_DS(ds);
++      } else {
++         D3D12_DEPTH_STENCIL_DESC1 *ds =
++            dzn_graphics_pipeline_get_desc(pipeline, stream_buf, ds);
++         if (ds)
++            DZN_EDS_APPLY_DS(ds);
++      }
++   }
++
++   /* Rasterizer discard (or both faces culled): what Dozen does for the
++    * static case, no fragment shader and no depth/stencil. */
++   if (k->discard) {
++      const D3D12_SHADER_BYTECODE *ps_templ =
++         pipeline->templates.shaders[MESA_SHADER_FRAGMENT].bc;
++      if (ps_templ) {
++         D3D12_SHADER_BYTECODE *ps = (D3D12_SHADER_BYTECODE *)
++            ((uint8_t *)stream_buf +
++             ((const uint8_t *)ps_templ - (const uint8_t *)pipeline->templates.stream_buf));
++         ps->pShaderBytecode = NULL;
++         ps->BytecodeLength = 0;
++      }
++      if (pdev->options14.IndependentFrontAndBackStencilRefMaskSupported) {
++         D3D12_DEPTH_STENCIL_DESC2 *ds =
++            dzn_graphics_pipeline_get_desc(pipeline, stream_buf, ds);
++         if (ds)
++            ds->DepthEnable = ds->StencilEnable = ds->DepthBoundsTestEnable = false;
++      } else {
++         D3D12_DEPTH_STENCIL_DESC1 *ds =
++            dzn_graphics_pipeline_get_desc(pipeline, stream_buf, ds);
++         if (ds)
++            ds->DepthEnable = ds->StencilEnable = ds->DepthBoundsTestEnable = false;
++      }
++   }
++}
++
+ ID3D12PipelineState *
+ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
+                                 const struct dzn_graphics_pipeline_variant_key *key)
+@@ -2204,6 +2531,14 @@
+ 
+    mask_key_for_stencil_state(pdev, pipeline, key, &masked_key);
+ 
++   /* virtio-dxg: extended dynamic state */
++   if (pipeline->eds.dyn & DZN_EDS_PSO_MASK)
++      masked_key.eds = key->eds;
++   if ((pipeline->eds.dyn & DZN_EDS_PRIMITIVE_RESTART) && !key->eds.primitive_restart)
++      masked_key.ib_strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
++   if ((pipeline->eds.dyn & DZN_EDS_DEPTH_BIAS_ENABLE) && !key->eds.depth_bias_enable)
++      memset(&masked_key.depth_bias, 0, sizeof(masked_key.depth_bias));
++
+    struct hash_entry *he =
+       _mesa_hash_table_search(pipeline->variants, &masked_key);
+ 
+@@ -2235,6 +2570,7 @@
+       }
+ 
+       update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
++      dzn_graphics_pipeline_apply_eds(pdev, pipeline, stream_buf, &masked_key);
+ 
+       ASSERTED HRESULT hres = ID3D12Device4_CreatePipelineState(device->dev, &stream_desc,
+                                                                 &IID_ID3D12PipelineState,
+@@ -2563,7 +2899,7 @@
+       }
+    }
+ 
+-   ret = dzn_pipeline_compile_shader(device, nir, 0, shader);
++   ret = dzn_pipeline_compile_shader(device, nir, 0, 0, shader);
+    if (ret != VK_SUCCESS)
+       goto out;
+ 
+@@ -2590,6 +2926,11 @@
+    VK_FROM_HANDLE(dzn_pipeline_layout, layout, pCreateInfo->layout);
+    VK_FROM_HANDLE(vk_pipeline_cache, pcache, cache);
+ 
++   /* virtio-dxg: pipeline creation cache control */
++   if (vk_compute_pipeline_create_flags(pCreateInfo) &
++       VK_PIPELINE_CREATE_2_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_KHR)
++      return VK_PIPELINE_COMPILE_REQUIRED;
++
+    struct dzn_compute_pipeline *pipeline =
+       vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*pipeline), 8,
+                  VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+--- a/src/microsoft/vulkan/dzn_private.h
++++ b/src/microsoft/vulkan/dzn_private.h
+@@ -346,6 +346,10 @@
+    /* If the resource is exportable, this is the pre-created handle for that */
+    HANDLE export_handle;
+ 
++   /* virtio-dxg window buffer: the dma-buf paired with the dedicated image
++    * (descriptor + 1; zero when there is none). */
++   int dxg_dmabuf;
++
+    /* These flags need to be added into all resources created on this heap */
+    D3D12_RESOURCE_FLAGS res_flags;
+ };
+@@ -565,8 +569,45 @@
+    VkAttachmentStoreOp store_op;
+ };
+ 
++/* virtio-dxg: Vulkan 1.3 extended dynamic state. */
++enum dzn_eds_bits {
++   /* baked into the D3D12 pipeline state: part of the variant key */
++   DZN_EDS_CULL_MODE = 1 << 0,
++   DZN_EDS_FRONT_FACE = 1 << 1,
++   DZN_EDS_DEPTH_BIAS_ENABLE = 1 << 2,
++   DZN_EDS_DEPTH_TEST = 1 << 3,
++   DZN_EDS_DEPTH_WRITE = 1 << 4,
++   DZN_EDS_DEPTH_COMPARE = 1 << 5,
++   DZN_EDS_DEPTH_BOUNDS_TEST = 1 << 6,
++   DZN_EDS_STENCIL_TEST = 1 << 7,
++   DZN_EDS_STENCIL_OP = 1 << 8,
++   DZN_EDS_PRIMITIVE_RESTART = 1 << 9,
++   DZN_EDS_RASTERIZER_DISCARD = 1 << 10,
++   DZN_EDS_PSO_MASK = (1 << 11) - 1,
++   DZN_EDS_ZSA_MASK = DZN_EDS_DEPTH_TEST | DZN_EDS_DEPTH_WRITE |
++                      DZN_EDS_DEPTH_COMPARE | DZN_EDS_DEPTH_BOUNDS_TEST |
++                      DZN_EDS_STENCIL_TEST | DZN_EDS_STENCIL_OP,
++   /* command-list state */
++   DZN_EDS_TOPOLOGY = 1 << 11,
++   DZN_EDS_VIEWPORT_COUNT = 1 << 12,
++   DZN_EDS_SCISSOR_COUNT = 1 << 13,
++   DZN_EDS_VB_STRIDE = 1 << 14,
++};
++
++/* Effective values (dynamic or static) of the baked states; 4-byte multiple
++ * so the key hashes without padding. */
++struct dzn_eds_key {
++   uint8_t cull_mode, front_ccw, depth_bias_enable, primitive_restart;
++   uint8_t depth_test, depth_write, depth_compare, depth_bounds_test;
++   /* rasterizer discard, or both faces culled for triangles */
++   uint8_t stencil_test, discard, pad[2];
++   /* fail, pass, depth fail, compare */
++   uint8_t stencil_front[4], stencil_back[4];
++};
++
+ struct dzn_graphics_pipeline_variant_key {
+    D3D12_INDEX_BUFFER_STRIP_CUT_VALUE ib_strip_cut;
++   struct dzn_eds_key eds;
+    struct {
+       int constant_factor;
+       float slope_factor;
+@@ -590,6 +631,8 @@
+    const struct dzn_pipeline *pipeline;
+    struct dzn_descriptor_heap *heaps[NUM_POOL_TYPES];
+    struct dzn_graphics_pipeline_variant_key pipeline_variant;
++   /* virtio-dxg: extended dynamic state applied at draw time */
++   D3D12_PRIMITIVE_TOPOLOGY eds_topology;
+    struct {
+       VkRenderingFlags flags;
+       D3D12_RECT area;
+@@ -728,6 +771,11 @@
+    uint32_t desc_count[NUM_POOL_TYPES];
+    uint32_t used_desc_count[NUM_POOL_TYPES];
+    uint32_t free_offset[NUM_POOL_TYPES];
++   /* virtio-dxg: inline uniform block storage (host visible) */
++   struct dzn_buffer *inline_buffer;
++   VkDeviceMemory inline_memory;
++   uint8_t *inline_map;
++   uint64_t inline_free, inline_capacity;
+ };
+ 
+ #define MAX_SHADER_VISIBILITIES (D3D12_SHADER_VISIBILITY_PIXEL + 1)
+@@ -748,6 +796,9 @@
+       uint32_t buffer_idx;
+    };
+    bool variable_size;
++   /* virtio-dxg: inline uniform block: its bytes and place in the set's
++    * inline storage (0 for every other binding) */
++   uint32_t inline_offset, inline_size;
+ };
+ 
+ struct dzn_descriptor_set_layout {
+@@ -779,6 +830,8 @@
+ 
+    uint32_t binding_count;
+    const struct dzn_descriptor_set_layout_binding *bindings;
++   /* virtio-dxg: bytes of inline uniform block storage per set */
++   uint32_t inline_total;
+ };
+ 
+ struct dzn_descriptor_set {
+@@ -791,6 +844,8 @@
+    uint32_t heap_sizes[NUM_POOL_TYPES];
+    /* Layout (and pool) is null for a freed descriptor set */
+    const struct dzn_descriptor_set_layout *layout;
++   /* virtio-dxg: inline uniform block storage in the pool's inline buffer */
++   uint64_t inline_offset, inline_size;
+ };
+ 
+ struct dzn_pipeline_layout_set {
+@@ -988,6 +1043,16 @@
+       float constants[4];
+    } blend;
+ 
++   /* virtio-dxg: Vulkan 1.3 extended dynamic state */
++   struct {
++      uint32_t dyn;              /* DZN_EDS_* declared dynamic */
++      struct dzn_eds_key statik; /* the create-info values */
++      bool zsa;                  /* has a depth/stencil state to patch */
++      bool has_depth, has_stencil;
++      bool tri_class;            /* triangle topology class (culling applies) */
++      uint32_t patch_control_points;
++   } eds;
++
+    bool rast_disabled_from_missing_position;
+    bool use_gs_for_polygon_mode_point;
+    bool needs_draw_sysvals;
+@@ -1035,6 +1100,10 @@
+ 
+ VkFormat dzn_graphics_pipeline_patch_vi_format(VkFormat format);
+ 
++D3D12_PRIMITIVE_TOPOLOGY
++dzn_translate_prim_topology(VkPrimitiveTopology in, unsigned patch_control_points,
++                            bool support_triangle_fan);
++
+ struct dzn_compute_pipeline {
+    struct dzn_pipeline base;
+    struct {
+@@ -1232,6 +1301,11 @@
+            if (mask & aspect)
+ 
+ VkResult dzn_wsi_init(struct dzn_physical_device *physical_device);
++
++#ifndef _WIN32
++bool
++dzn_window_buffers_available(void);
++#endif
+ void dzn_wsi_finish(struct dzn_physical_device *physical_device);
+ 
+ struct dzn_app_info {
+--- a/src/microsoft/vulkan/dzn_wsi.c
++++ b/src/microsoft/vulkan/dzn_wsi.c
+@@ -110,6 +110,14 @@
+    physical_device->wsi_device.win32.create_image_memory =
+       dzn_wsi_create_image_memory;
+    physical_device->wsi_device.supports_modifiers = false;
++#ifndef _WIN32
++   physical_device->wsi_device.dxg_window_buffers =
++      dzn_window_buffers_available();
++   /* Not looked up for a software device. */
++   physical_device->wsi_device.GetMemoryFdKHR = (PFN_vkGetMemoryFdKHR)
++      dzn_wsi_proc_addr(dzn_physical_device_to_handle(physical_device),
++                        "vkGetMemoryFdKHR");
++#endif
+    physical_device->vk.wsi_device = &physical_device->wsi_device;
+ 
+    return VK_SUCCESS;
+--- a/src/vulkan/wsi/wsi_common.h
++++ b/src/vulkan/wsi/wsi_common.h
+@@ -157,6 +157,11 @@
+ 
+    bool sw;
+ 
++   /* virtio-dxg: Wayland swapchain images are window buffers (a shared
++    * GPU texture behind a virtio-gpu dma-buf) although the device counts
++    * as a software one for every other window system. */
++   bool dxg_window_buffers;
++
+    /* Set to true if the implementation is ok with linear WSI images. */
+    bool wants_linear;
+ 
+--- a/src/vulkan/wsi/wsi_common_drm.c
++++ b/src/vulkan/wsi/wsi_common_drm.c
+@@ -843,7 +843,9 @@
+       wsi->GetImageSubresourceLayout(chain->device, image->image,
+                                      &image_subresource, &image_layout);
+ 
+-      image->drm_modifier = DRM_FORMAT_MOD_INVALID;
++      /* A virtio-dxg window buffer is a linear virtio-gpu buffer. */
++      image->drm_modifier = wsi->dxg_window_buffers ?
++                            DRM_FORMAT_MOD_LINEAR : DRM_FORMAT_MOD_INVALID;
+       image->num_planes = 1;
+       image->sizes[0] = reqs.size;
+       image->row_pitches[0] = image_layout.rowPitch;
+--- a/src/vulkan/wsi/wsi_common_wayland.c
++++ b/src/vulkan/wsi/wsi_common_wayland.c
+@@ -1,3 +1,7 @@
++/* virtio-dxg: window buffers take the dma-buf path. */
++#define WSI_WL_SW(wsi) ((wsi)->sw && !(wsi)->dxg_window_buffers)
++#include "vk_format.h"
++
+ /*
+  * Copyright © 2015 Intel Corporation
+  * Copyright © 2026 NXP
+@@ -424,6 +428,9 @@
+    if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))
+       return NULL;
+ 
++   /* virtio-dxg: typeless window buffers. The shared texture is typeless
++    * (dzn_image.c), so sRGB swapchains are offered too. */
++
+    struct u_vector modifiers;
+    if (!u_vector_init_pow2(&modifiers, 4, sizeof(uint64_t)))
+       return NULL;
+@@ -1255,12 +1262,11 @@
+ static bool
+ needs_color_surface(struct wsi_wl_display *display, VkColorSpaceKHR colorspace)
+ {
+-   if (colorspace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+-      /* we want to use a color surface to set sRGB if possible, but
+-       * only if the compositor actually supports sRGB */
+-      return vector_contains(&display->color_primaries, WP_COLOR_MANAGER_V1_PRIMARIES_SRGB)
+-          && vector_contains(&display->color_transfer_funcs, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB);
+-   }
++   /* virtio-dxg: untagged sRGB. Surfaces without an image description are
++    * sRGB already; applications that manage color themselves (Blender) own
++    * the surface's one color-management object. */
++   if (colorspace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
++      return false;
+    return colorspace != VK_COLOR_SPACE_PASS_THROUGH_EXT;
+ }
+ 
+@@ -1792,7 +1798,7 @@
+ 
+    struct wsi_wl_display display;
+    VkResult ret = wsi_wl_display_init(wsi, &display, wl_display, false,
+-                                      wsi_device->sw, "mesa presentation support query");
++                                      WSI_WL_SW(wsi_device), "mesa presentation support query");
+    if (ret == VK_SUCCESS)
+       wsi_wl_display_finish(&display);
+ 
+@@ -1868,7 +1874,7 @@
+ 
+    if (!wsi_wl_surface->display) {
+       if (wsi_wl_display_init(wsi, &temp_display, surface->display, true,
+-                              wsi_device->sw, "mesa image count query"))
++                              WSI_WL_SW(wsi_device), "mesa image count query"))
+          return VK_ERROR_SURFACE_LOST_KHR;
+       display = &temp_display;
+    }
+@@ -1929,7 +1935,7 @@
+    struct wsi_wl_display display;
+ 
+    if (wsi_wl_display_init(wsi, &display, surface->display, true,
+-                           wsi_device->sw, "mesa check wp_presentation"))
++                           WSI_WL_SW(wsi_device), "mesa check wp_presentation"))
+       return VK_ERROR_SURFACE_LOST_KHR;
+ 
+    if (has_wp_presentation)
+@@ -1963,7 +1969,7 @@
+ 
+    struct wsi_wl_display display;
+    if (wsi_wl_display_init(wsi, &display, surface->display, true,
+-                           wsi_device->sw, "mesa present modes query"))
++                           WSI_WL_SW(wsi_device), "mesa present modes query"))
+       return VK_ERROR_SURFACE_LOST_KHR;
+ 
+    VkPresentModeKHR present_modes[WSI_WL_MAX_PRESENT_MODES];
+@@ -2171,7 +2177,7 @@
+ 
+    struct wsi_wl_display display;
+    if (wsi_wl_display_init(wsi, &display, surface->display, true,
+-                           wsi_device->sw, "mesa formats query"))
++                           WSI_WL_SW(wsi_device), "mesa formats query"))
+       return VK_ERROR_SURFACE_LOST_KHR;
+ 
+    VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormatKHR, out,
+@@ -2179,6 +2185,11 @@
+ 
+    VkColorSpaceKHR *cs;
+    u_vector_foreach(cs, &display.colorspaces) {
++      /* virtio-dxg: 8-bit window buffers */
++      if (wsi_device->dxg_window_buffers &&
++          *cs != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR &&
++          *cs != VK_COLOR_SPACE_PASS_THROUGH_EXT)
++         continue;
+       struct wsi_wl_format *disp_fmt;
+       u_vector_foreach(disp_fmt, &display.formats) {
+          /* Skip formats for which we can't support both alpha & opaque
+@@ -2216,7 +2227,7 @@
+ 
+    struct wsi_wl_display display;
+    if (wsi_wl_display_init(wsi, &display, surface->display, true,
+-                           wsi_device->sw, "mesa formats2 query"))
++                           WSI_WL_SW(wsi_device), "mesa formats2 query"))
+       return VK_ERROR_SURFACE_LOST_KHR;
+ 
+    VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormat2KHR, out,
+@@ -2224,6 +2235,11 @@
+ 
+    VkColorSpaceKHR *cs;
+    u_vector_foreach(cs, &display.colorspaces) {
++      /* virtio-dxg: 8-bit window buffers */
++      if (wsi_device->dxg_window_buffers &&
++          *cs != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR &&
++          *cs != VK_COLOR_SPACE_PASS_THROUGH_EXT)
++         continue;
+       struct wsi_wl_format *disp_fmt;
+       u_vector_foreach(disp_fmt, &display.formats) {
+          /* Skip formats for which we can't support both alpha & opaque
+@@ -2509,7 +2525,7 @@
+       return VK_SUCCESS;
+ 
+    result = wsi_wl_display_create(wsi, wsi_wl_surface->base.display,
+-                                  wsi_device->sw, &wsi_wl_surface->display);
++                                  WSI_WL_SW(wsi_device), &wsi_wl_surface->display);
+    if (result != VK_SUCCESS)
+       goto fail;
+ 
+@@ -3309,6 +3325,15 @@
+    if (chain->retired)
+       return VK_ERROR_OUT_OF_DATE_KHR;
+ 
++   /* virtio-dxg window buffers: the compositor samples the image itself and
++    * no fence travels with it, so the frame is finished before it is shown. */
++   if (wsi_chain->wsi->dxg_window_buffers &&
++       chain->buffer_type == WSI_WL_BUFFER_NATIVE &&
++       wsi_chain->fences[image_index] != VK_NULL_HANDLE)
++      wsi_chain->wsi->WaitForFences(wsi_chain->device, 1,
++                                    &wsi_chain->fences[image_index],
++                                    true, UINT64_MAX);
++
+    struct wsi_wl_surface *wsi_wl_surface = chain->wsi_wl_surface;
+    bool mode_fifo = chain->base.present_mode == VK_PRESENT_MODE_FIFO_KHR;
+ 
+@@ -3866,7 +3891,7 @@
+    struct wsi_drm_image_params drm_image_params;
+    uint32_t num_drm_modifiers = 0;
+    const uint64_t *drm_modifiers = NULL;
+-   if (wsi_device->sw) {
++   if (WSI_WL_SW(wsi_device)) {
+       cpu_image_params = (struct wsi_cpu_image_params) {
+          .base.image_type = WSI_IMAGE_TYPE_CPU,
+       };
+--- a/subprojects/DirectX-Headers.wrap
++++ b/subprojects/DirectX-Headers.wrap
+@@ -2,5 +2,5 @@
+ directory = DirectX-Headers-1.0
+ 
+ url = https://github.com/microsoft/DirectX-Headers.git
+-revision = v1.619.1
++revision = adbd6f3ba40795c46a8d0f33af00bcb57ff0f0a4
+ depth = 1

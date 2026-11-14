@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT
+#version 450
+#ifndef WDDM_VULKAN_TEST_CORRUPT_LAST
+#define WDDM_VULKAN_TEST_CORRUPT_LAST 0
+#endif
+#if WDDM_VULKAN_TEST_CORRUPT_LAST != 0 && WDDM_VULKAN_TEST_CORRUPT_LAST != 1
+#error WDDM_VULKAN_TEST_CORRUPT_LAST must be 0 or 1
+#endif
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(set = 0, binding = 0, std430) writeonly buffer Output { uint pixels[]; } outputData;
+layout(push_constant) uniform Dimensions { uint width; uint height; uint round; } args;
+void main() {
+    uvec2 p = gl_GlobalInvocationID.xy;
+    if (p.x >= args.width || p.y >= args.height) return;
+    uint red = (p.x * 13u + p.y * 7u + args.round * 31u) & 255u;
+    uint green = ((p.x ^ (p.y * 3u)) + args.round * 71u) & 255u;
+    uint blue = ((p.x / 17u) ^ (p.y / 11u) ^ (args.round * 113u)) & 255u;
+    outputData.pixels[p.y * args.width + p.x] = red | (green << 8u) | (blue << 16u) | 0xff000000u;
+#if WDDM_VULKAN_TEST_CORRUPT_LAST
+    if (p.x + 1u == args.width && p.y + 1u == args.height)
+        outputData.pixels[p.y * args.width + p.x] = 0u;
+#endif
+}

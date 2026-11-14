@@ -1,0 +1,63 @@
+From 8835df35264bcadbe68b6b43230f48c549fb2df5 Mon Sep 17 00:00:00 2001
+From: Jesse Natalie <jenatali@microsoft.com>
+Date: Sat, 17 Oct 2026 10:20:08 -0700
+Subject: [PATCH] d3d12: Reclaim buffer memory outside manager locks
+
+Reclamation during backing-buffer allocation can reenter slab managers and deadlock. Remove opportunistic reclamation there and retry failed allocations only after the manager releases its locks.
+
+Assisted-by: LLM
+Fixes: b8f2b968dea6 ("d3d12: reclaim in-flight BO memory on allocation failure")
+Fixes: 758a0e1ad987 ("d3d12: proactively trim completed pending-free entries")
+Closes: https://gitlab.freedesktop.org/mesa/mesa/-/work_items/16531
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/45331>
+---
+ src/gallium/drivers/d3d12/d3d12_bufmgr.cpp   | 16 ++++++----------
+ src/gallium/drivers/d3d12/d3d12_resource.cpp |  5 ++++-
+ 2 files changed, 10 insertions(+), 11 deletions(-)
+
+diff --git a/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp b/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp
+index 7fae92f4624a..81ff4d2d0d3f 100644
+--- a/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp
+@@ -144,16 +144,12 @@ d3d12_bo_new(struct d3d12_screen *screen, uint64_t size, const pb_desc *pb_desc)
+       d3d12_evicted : d3d12_resident;
+ 
+    D3D12_HEAP_PROPERTIES heap_pris = GetCustomHeapProperties(dev, heap_type);
+-   d3d12_screen_reclaim_completed(screen);
+-   HRESULT hres;
+-   do {
+-      hres = dev->CreateCommittedResource(&heap_pris,
+-                                          heap_flags,
+-                                          &res_desc,
+-                                          D3D12_RESOURCE_STATE_COMMON,
+-                                          NULL,
+-                                          IID_PPV_ARGS(&res));
+-   } while (hres == E_OUTOFMEMORY && d3d12_screen_reclaim_one(screen));
++   HRESULT hres = dev->CreateCommittedResource(&heap_pris,
++                                              heap_flags,
++                                              &res_desc,
++                                              D3D12_RESOURCE_STATE_COMMON,
++                                              NULL,
++                                              IID_PPV_ARGS(&res));
+ 
+    if (FAILED(hres))
+       return NULL;
+diff --git a/src/gallium/drivers/d3d12/d3d12_resource.cpp b/src/gallium/drivers/d3d12/d3d12_resource.cpp
+index 09b97643b0f3..458f5cf45dc8 100644
+--- a/src/gallium/drivers/d3d12/d3d12_resource.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_resource.cpp
+@@ -193,7 +193,10 @@ init_buffer(struct d3d12_screen *screen,
+ 
+    buf_desc.alignment = D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT;
+    res->dxgi_format = DXGI_FORMAT_UNKNOWN;
+-   buf = bufmgr->create_buffer(bufmgr, templ->width0, &buf_desc);
++   do {
++      buf = bufmgr->create_buffer(bufmgr, templ->width0, &buf_desc);
++   } while (!buf && d3d12_screen_reclaim_one(screen));
++
+    if (!buf)
+       return false;
+    res->bo = d3d12_bo_wrap_buffer(screen, buf);
+-- 
+GitLab
+

@@ -1,0 +1,448 @@
+--- /dev/null
++++ b/src/gallium/drivers/d3d12/d3d12_native_buffer.h
+@@ -0,0 +1,109 @@
++/* SPDX-License-Identifier: MIT
++ * Private opt-in native resource DMA-BUF interoperability. Implicit opaque
++ * layout only; never advertise CPU-linear or foreign-device attachment. */
++#ifndef D3D12_NATIVE_BUFFER_H
++#define D3D12_NATIVE_BUFFER_H
++#include "pipe/p_screen.h"
++#include "util/u_debug.h"
++#include <stdint.h>
++#ifndef _WIN32
++#include "drm-uapi/drm_fourcc.h"
++#include <dlfcn.h>
++#include <fcntl.h>
++#include <unistd.h>
++#endif
++
++static inline bool
++d3d12_native_buffer_format_supported(struct pipe_screen *, enum pipe_format format)
++{
++   return format == PIPE_FORMAT_R8G8B8A8_UNORM || format == PIPE_FORMAT_R8G8B8X8_UNORM ||
++          format == PIPE_FORMAT_B8G8R8A8_UNORM || format == PIPE_FORMAT_B8G8R8X8_UNORM;
++}
++
++#ifndef _WIN32
++static inline bool
++d3d12_native_buffer_available()
++{
++   if (!debug_get_bool_option("D3D12_EXPERIMENTAL_NATIVE_BUFFERS", false))
++      return false;
++   auto supported = (int (*)(void))dlsym(RTLD_DEFAULT, "wddm_bridge_native_buffer_supported");
++   return supported && dlsym(RTLD_DEFAULT, "wddm_bridge_export_native_buffer") &&
++          dlsym(RTLD_DEFAULT, "wddm_bridge_native_buffer_info") &&
++          dlsym(RTLD_DEFAULT, "wddm_bridge_prepare_native_resource") &&
++          dlsym(RTLD_DEFAULT, "wddm_bridge_cancel_native_resource") && supported() == 1;
++}
++
++static inline bool
++d3d12_native_buffer_dxgi_matches(enum pipe_format format, uint32_t dxgi)
++{
++   /* BGRX has no sampleable native DXGI view. Store its RGB channels in BGRA
++    * and let Mesa's existing BGRX view swizzle supply alpha=1. */
++   switch (format) {
++   case PIPE_FORMAT_R8G8B8A8_UNORM:
++   case PIPE_FORMAT_R8G8B8X8_UNORM: return dxgi == 28;
++   case PIPE_FORMAT_B8G8R8A8_UNORM:
++   case PIPE_FORMAT_B8G8R8X8_UNORM: return dxgi == 87;
++   default: return false;
++   }
++}
++
++static inline int
++d3d12_native_buffer_export(int fd, uint64_t bytes)
++{
++   auto export_buffer = (int (*)(int, uint64_t))dlsym(RTLD_DEFAULT, "wddm_bridge_export_native_buffer");
++   return export_buffer ? export_buffer(fd, bytes) : -1;
++}
++
++static inline bool
++d3d12_native_buffer_info(int fd, uint64_t *bytes)
++{
++   auto info = (int (*)(int, uint64_t *))dlsym(RTLD_DEFAULT, "wddm_bridge_native_buffer_info");
++   return info && info(fd, bytes) == 0;
++}
++
++static inline bool
++d3d12_native_buffer_modifier_supported(struct pipe_screen *screen, uint64_t modifier,
++                                       enum pipe_format format, bool *external_only)
++{
++   if (external_only)
++      *external_only = false;
++   return modifier == DRM_FORMAT_MOD_INVALID && d3d12_native_buffer_format_supported(screen, format);
++}
++
++static inline void
++d3d12_native_buffer_query_modifiers(struct pipe_screen *, enum pipe_format, int,
++                                    uint64_t *, unsigned *, int *count)
++{
++   /* The implicit layout is implementation-defined. No explicit tiling or
++    * linear modifier is supported by this native-capability exporter. */
++   *count = 0;
++}
++#endif
++
++/* The SDK can fail before it issues a shared KMT allocation. Never leave a
++ * declaration behind for the next allocation on this thread. */
++struct d3d12_native_resource_preparation {
++   bool active = false;
++   bool begin(uint32_t width, uint32_t height, uint32_t format, uint32_t flags) {
++#ifndef _WIN32
++      auto prepare = (int (*)(uint32_t, uint32_t, uint32_t, uint32_t))
++         dlsym(RTLD_DEFAULT, "wddm_bridge_prepare_native_resource");
++      active = prepare && prepare(width, height, format, flags) == 0;
++      return active;
++#else
++      return false;
++#endif
++   }
++   void cancel() {
++#ifndef _WIN32
++      if (active) {
++         auto finish = (int (*)(void))dlsym(RTLD_DEFAULT, "wddm_bridge_cancel_native_resource");
++         if (finish)
++            finish();
++      }
++#endif
++      active = false;
++   }
++   ~d3d12_native_resource_preparation() { cancel(); }
++};
++#endif
+--- a/src/gallium/drivers/d3d12/d3d12_resource.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_resource.cpp
+@@ -22,6 +22,7 @@
+  */
+ 
+ #include "d3d12_resource.h"
++#include "d3d12_native_buffer.h"
+ 
+ #include "d3d12_blit.h"
+ #include "d3d12_context.h"
+@@ -95,6 +96,13 @@
+       d3d12_bo_unreference(resource->bo);
+    if (resource->logicop_texture)
+       pipe_resource_reference(&resource->logicop_texture, NULL);
++#ifndef _WIN32
++   if (resource->native_buffer_fd_valid)
++   {
++      close(resource->native_buffer_fd);
++      resource->native_buffer_fd_valid = false;
++   }
++#endif
+    FREE(resource);
+ }
+ 
+@@ -132,6 +140,12 @@
+ void
+ d3d12_resource_release(struct d3d12_resource *resource)
+ {
++#ifndef _WIN32
++   if (resource->native_buffer_fd_valid) {
++      close(resource->native_buffer_fd);
++      resource->native_buffer_fd_valid = false;
++   }
++#endif
+    if (!resource->bo)
+       return;
+    d3d12_bo_unreference(resource->bo);
+@@ -274,15 +288,33 @@
+ 
+    const DXGI_FORMAT *format_cast_list = NULL;
+    uint32_t num_castable_formats = 0;
+-
+-   if (screen->opts12.RelaxedFormatCastingSupported) {
++   bool native_shared = false;
++#ifndef _WIN32
++   native_shared = screen->native_buffer_enabled && (templ->bind & PIPE_BIND_SHARED);
++   if (native_shared) {
++      if (heap || templ->target != PIPE_TEXTURE_2D || templ->last_level || templ->array_size != 1 ||
++          MAX2(templ->nr_samples, 1) != 1 ||
++          (templ->bind & (PIPE_BIND_LINEAR | PIPE_BIND_SCANOUT | PIPE_BIND_SHADER_IMAGE)) ||
++          !d3d12_native_buffer_format_supported(&screen->base, templ->format))
++         return false;
++      /* Native runtime metadata describes a typed, opaque render target.
++       * Do not substitute a typeless/UAV or CPU-linear resource behind it. */
++      desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++      if (desc.Flags != D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
++         return false;
++      if (templ->format == PIPE_FORMAT_B8G8R8X8_UNORM)
++         desc.Format = res->dxgi_format = DXGI_FORMAT_B8G8R8A8_UNORM;
++   }
++#endif
++
++   if (!native_shared && screen->opts12.RelaxedFormatCastingSupported) {
+       /* All formats that fall into a cast set need to be castable and accessible as a shader image. */
+       format_cast_list = d3d12_get_format_cast_list(templ->format, &num_castable_formats);
+       if (format_cast_list != nullptr && !util_format_is_compressed(templ->format) &&
+           screen->support_shader_images && templ->nr_samples <= 1) {
+          desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+       }
+-   } else {
++   } else if (!native_shared) {
+       /* The VA frontend VaFourccToPipeFormat chooses _UNORM types for RGBx formats as typeless formats
+        * such as DXGI_R8G8B8A8_TYPELESS are not supported as Video Processor input/output as specified in:
+        * https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/hardware-support-for-direct3d-12-1-formats
+@@ -308,6 +340,9 @@
+       desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+ 
+    HRESULT hres = E_FAIL;
++   d3d12_native_resource_preparation native_preparation;
++   if (native_shared && !native_preparation.begin(desc.Width, desc.Height, desc.Format, desc.Flags))
++      return false;
+    enum d3d12_residency_status init_residency;
+ #ifndef _GAMING_XBOX
+ 
+@@ -397,6 +432,7 @@
+       }
+    }
+ 
++   native_preparation.cancel();
+    if (FAILED(hres))
+       return false;
+ 
+@@ -539,6 +575,21 @@
+                           struct winsys_handle *handle, unsigned usage)
+ {
+    struct d3d12_screen *screen = d3d12_screen(pscreen);
++#ifndef _WIN32
++   const bool native_buffer = screen->native_buffer_enabled && handle->type == WINSYS_HANDLE_TYPE_FD;
++   if (native_buffer) {
++      uint64_t bytes = 0;
++      if (!templ || templ->next || templ->target != PIPE_TEXTURE_2D || templ->last_level ||
++          templ->array_size != 1 || templ->depth0 != 1 || MAX2(templ->nr_samples, 1) != 1 ||
++          !templ->width0 || !templ->height0 || templ->width0 > UINT32_MAX / 4 ||
++          !d3d12_native_buffer_format_supported(pscreen, templ->format) ||
++          handle->plane || handle->offset || handle->modifier != DRM_FORMAT_MOD_INVALID ||
++          handle->stride != templ->width0 * 4 || handle->handle > INT32_MAX ||
++          !d3d12_native_buffer_info((int)handle->handle, &bytes) ||
++          bytes != (uint64_t)handle->stride * templ->height0)
++         return NULL;
++   }
++#endif
+    if (handle->type != WINSYS_HANDLE_TYPE_D3D12_RES &&
+        handle->type != WINSYS_HANDLE_TYPE_FD &&
+        handle->type != WINSYS_HANDLE_TYPE_WIN32_NAME)
+@@ -742,7 +793,15 @@
+          goto invalid;
+       }
+       if (templ->target != PIPE_BUFFER) {
+-         if ((footprint->Format != d3d12_get_format(templ->format) &&
++#ifndef _WIN32
++         const bool native_formats_match = native_buffer &&
++            d3d12_native_buffer_dxgi_matches(templ->format, footprint->Format) &&
++            d3d12_native_buffer_dxgi_matches((enum pipe_format)handle->format, incoming_res_desc.Format);
++         if (native_buffer ? !native_formats_match :
++#else
++         if (
++#endif
++             (footprint->Format != d3d12_get_format(templ->format) &&
+               footprint->Format != d3d12_get_typeless_format(templ->format)) ||
+              (incoming_res_desc.Format != d3d12_get_format((enum pipe_format)handle->format) &&
+               incoming_res_desc.Format != d3d12_get_typeless_format((enum pipe_format)handle->format))) {
+@@ -799,6 +858,15 @@
+    if (!res->bo) {
+       res->bo = d3d12_bo_wrap_res(screen, d3d12_res, d3d12_permanently_resident);
+    }
++#ifndef _WIN32
++   if (native_buffer) {
++      const int fd = fcntl((int)handle->handle, F_DUPFD_CLOEXEC, 0);
++      if (fd < 0)
++         goto invalid;
++      res->native_buffer_fd = fd;
++      res->native_buffer_fd_valid = true;
++   }
++#endif
+    init_valid_range(res);
+ 
+    threaded_resource_init(&res->base.b, false);
+@@ -830,29 +898,85 @@
+       handle->com_obj = d3d12_resource_resource(res);
+       return true;
+    case WINSYS_HANDLE_TYPE_FD: {
++#ifndef _WIN32
++      if (screen->native_buffer_enabled &&
++          (pres->target != PIPE_TEXTURE_2D || pres->last_level || pres->array_size != 1 ||
++           MAX2(pres->nr_samples, 1) != 1 || !pres->width0 || !pres->height0 ||
++           pres->width0 > UINT32_MAX / 4 || (pres->bind & PIPE_BIND_LINEAR) ||
++           !d3d12_native_buffer_format_supported(pscreen, pres->format)))
++         return false;
++#endif
+       HANDLE d3d_handle = nullptr;
+ 
+-      screen->dev->CreateSharedHandle(d3d12_resource_resource(res),
++      const HRESULT shared_result = screen->dev->CreateSharedHandle(d3d12_resource_resource(res),
+                                       nullptr,
+                                       GENERIC_ALL,
+                                       nullptr,
+                                       &d3d_handle);
+-      if (!d3d_handle)
++      if (FAILED(shared_result) || !d3d_handle)
+          return false;
+       
+ #ifdef _WIN32
+       handle->handle = d3d_handle;
+ #else
+       handle->handle = (int)(intptr_t)d3d_handle;
++      if (screen->native_buffer_enabled) {
++         const int source = (int)(intptr_t)d3d_handle;
++         const int buffer = d3d12_native_buffer_export(source, (uint64_t)pres->width0 * pres->height0 * 4);
++         close(source);
++         if (buffer < 0)
++            return false;
++         handle->handle = buffer;
++         handle->stride = pres->width0 * 4;
++         handle->offset = 0;
++         handle->plane = 0;
++      }
+ #endif
+       handle->format = pres->format;
++#ifndef _WIN32
++      handle->modifier = screen->native_buffer_enabled ? DRM_FORMAT_MOD_INVALID : ~0ull;
++#else
+       handle->modifier = ~0ull;
++#endif
+       return true;
+    }
+    default:
+       return false;
+    }
+ }
++
++#ifndef _WIN32
++static bool
++d3d12_native_resource_get_param(struct pipe_screen *pscreen, struct pipe_context *context,
++                                 struct pipe_resource *pres, unsigned plane, unsigned layer,
++                                 unsigned level, enum pipe_resource_param param,
++                                 unsigned usage, uint64_t *value)
++{
++   if (!d3d12_screen(pscreen)->native_buffer_enabled || plane || layer || level ||
++       pres->target != PIPE_TEXTURE_2D || pres->last_level || pres->array_size != 1 ||
++       MAX2(pres->nr_samples, 1) != 1 || !pres->width0 || !pres->height0 ||
++       pres->width0 > UINT32_MAX / 4 || (pres->bind & PIPE_BIND_LINEAR) ||
++       !d3d12_native_buffer_format_supported(pscreen, pres->format))
++      return false;
++   switch (param) {
++   case PIPE_RESOURCE_PARAM_NPLANES: *value = 1; return true;
++   case PIPE_RESOURCE_PARAM_STRIDE: *value = pres->width0 * 4; return true;
++   case PIPE_RESOURCE_PARAM_LAYER_STRIDE: *value = (uint64_t)pres->width0 * pres->height0 * 4; return true;
++   case PIPE_RESOURCE_PARAM_OFFSET: *value = 0; return true;
++   case PIPE_RESOURCE_PARAM_MODIFIER: *value = DRM_FORMAT_MOD_INVALID; return true;
++   case PIPE_RESOURCE_PARAM_DISJOINT_PLANES: *value = 0; return true;
++   case PIPE_RESOURCE_PARAM_HANDLE_TYPE_FD: {
++      struct winsys_handle handle = {};
++      handle.type = WINSYS_HANDLE_TYPE_FD;
++      if (!d3d12_resource_get_handle(pscreen, context, pres, &handle, usage))
++         return false;
++      *value = handle.handle;
++      return true;
++   }
++   default: return false; /* No GEM/KMS handle or global flink name. */
++   }
++}
++#endif
+ 
+ struct pipe_resource *
+ d3d12_resource_from_resource(struct pipe_screen *pscreen,
+@@ -979,6 +1103,11 @@
+                          unsigned handle_usage,
+                          uint64_t *value)
+ {
++#ifndef _WIN32
++   if (d3d12_screen(pscreen)->native_buffer_enabled)
++      return d3d12_native_resource_get_param(pscreen, context, pres, plane, layer,
++                                               level, param, handle_usage, value);
++#endif
+    struct d3d12_resource* res = d3d12_resource(pres);
+    unsigned num_planes = util_format_get_num_planes(res->overall_format);
+ 
+--- a/src/gallium/drivers/d3d12/d3d12_resource.h
++++ b/src/gallium/drivers/d3d12/d3d12_resource.h
+@@ -57,6 +57,10 @@
+    struct util_range valid_buffer_range;
+    uint32_t bind_counts[MESA_SHADER_STAGES][D3D12_RESOURCE_BINDING_TYPES];
+    unsigned generation_id;
++#ifndef _WIN32
++   int native_buffer_fd;
++   bool native_buffer_fd_valid;
++#endif
+ 
+    util_once_flag logicop_texture_init_flag;
+    struct pipe_resource *logicop_texture;
+--- a/src/gallium/drivers/d3d12/d3d12_screen.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_screen.cpp
+@@ -33,6 +33,10 @@
+ #include "d3d12_context.h"
+ #include "d3d12_debug.h"
+ #include "d3d12_fence.h"
++#include "d3d12_native_buffer.h"
++#ifndef _WIN32
++#include "drm-uapi/drm.h"
++#endif
+ #ifdef HAVE_GALLIUM_D3D12_VIDEO
+ #include "d3d12_video_screen.h"
+ #endif
+@@ -395,6 +399,13 @@
+    /* Explicit private bridge opt-in. Generic/merged sync_file and compositor
+     * interoperability remain separate acceptance requirements. */
+    caps->native_fence_fd = d3d12_native_sync_file_enabled();
++   screen->native_buffer_enabled = d3d12_native_buffer_available();
++   caps->dmabuf = screen->native_buffer_enabled ? DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT : 0;
++   if (screen->native_buffer_enabled) {
++      screen->base.is_dmabuf_format_supported = d3d12_native_buffer_format_supported;
++      screen->base.is_dmabuf_modifier_supported = d3d12_native_buffer_modifier_supported;
++      screen->base.query_dmabuf_modifiers = d3d12_native_buffer_query_modifiers;
++   }
+ #endif
+    caps->clip_halfz = true;
+    caps->vs_layer_viewport = true;
+--- a/src/gallium/drivers/d3d12/d3d12_screen.h
++++ b/src/gallium/drivers/d3d12/d3d12_screen.h
+@@ -88,6 +88,7 @@
+ #ifndef _WIN32
+    int native_sync_fd;
+    bool native_sync_fd_valid;
++   bool native_buffer_enabled;
+ #endif
+ 
+    struct list_head residency_list;
+--- a/src/gallium/include/pipe/p_screen.h
++++ b/src/gallium/include/pipe/p_screen.h
+@@ -490,6 +490,10 @@
+                            const struct pipe_resource *templat,
+                            const uint64_t *modifiers, int count);
+ 
++   /* Optional restriction for native backends whose DMA-BUF import formats
++    * are a subset of their ordinary texture/render-target formats. */
++   bool (*is_dmabuf_format_supported)(struct pipe_screen *screen, enum pipe_format format);
++
+    /**
+     * Get supported modifiers for a format.
+     * If \p max is 0, the total number of supported modifiers for the supplied
+--- a/src/gallium/frontends/dri/dri_helpers.c
++++ b/src/gallium/frontends/dri/dri_helpers.c
+@@ -802,6 +802,10 @@
+       if (dri2_format_table[i].dri_fourcc == __DRI_IMAGE_FOURCC_SARGB8888)
+          continue;
+ 
++      if (pscreen->is_dmabuf_format_supported &&
++          !pscreen->is_dmabuf_format_supported(pscreen, map->pipe_format))
++         continue;
++
+       if (pscreen->is_format_supported(pscreen, map->pipe_format,
+                                        screen->target, 0, 0,
+                                        PIPE_BIND_RENDER_TARGET) ||
+--- a/src/gallium/frontends/dri/dri2.c
++++ b/src/gallium/frontends/dri/dri2.c
+@@ -1344,6 +1344,10 @@
+ 
+    format = map->pipe_format;
+ 
++   if (pscreen->is_dmabuf_format_supported &&
++       !pscreen->is_dmabuf_format_supported(pscreen, format))
++      return false;
++
+    bool native_sampling = pscreen->is_format_supported(pscreen, format, screen->target, 0, 0,
+                                                        PIPE_BIND_SAMPLER_VIEW) ||
+                           pscreen->is_format_supported(pscreen, format, screen->target, 0, 0,

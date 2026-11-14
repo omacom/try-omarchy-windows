@@ -1,0 +1,28 @@
+{
+  "mesaVersion": "26.0.8",
+  "archiveSha256": "caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc",
+  "requiresBasePatchSha256": "75e4e383eb55538278c564e4d3015b4679232303136dbd1e6000e6fb051bf9a1",
+  "patchSha256": "bf2222f4b922ecdf2c6ae2d031098300caa671632d65161246139ac7f3a690ad",
+  "files": {
+    "src/gallium/drivers/d3d12/d3d12_context_common.cpp": {
+      "originalSha256": "ed0b8faa16c228b3b4ada6e5089be352ba5bfc3be8d37ca7d0e1f7173a7e6482",
+      "patchedSha256": "be1cbd931e1bbc30565490053d283bdaacaa57d79c2064a411e585554bc00475"
+    },
+    "src/gallium/drivers/d3d12/d3d12_fence.cpp": {
+      "originalSha256": "693b5f6764f8fa893c3183c03db9ffe9891bc2d933372e1cfd47b53bf0a451eb",
+      "patchedSha256": "9611e32b4cb5634fc8dda41296d51c51f44ed64635bc506a6344f844357fa40d"
+    },
+    "src/gallium/drivers/d3d12/d3d12_fence.h": {
+      "originalSha256": "c0dfb38246345f1572f0e777d6caaeb6aea95222539cca790875dac69a2d184a",
+      "patchedSha256": "bb08eea13a37f6aa44ff5d5163e9021b6c6ace847eb53415cf5eb74319cb8765"
+    },
+    "src/gallium/drivers/d3d12/d3d12_screen.cpp": {
+      "originalSha256": "cc7fd1db9fb7ec052a7299ce47f47ed0701afbbd60211c54e3622bff8fba859b",
+      "patchedSha256": "5423c5e9d3efc546f1aa9eda90360e626caf41aa09c2020534c88f8492dc8717"
+    },
+    "src/gallium/drivers/d3d12/d3d12_screen.h": {
+      "originalSha256": "409560e6c0529da43186624c4ba5dd5ad6b9ee5ab51078927412675e1db5814b",
+      "patchedSha256": "b3dfbac57c752f05489c01fafbcbcd1518509a8ca7f7fd6a5eeb6814f2898aa3"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/hyprwm/aquamarine",
+  "tag": "v0.15.1",
+  "commit": "f31c47a1b9d300847d8fc3108ad959448103dfc1",
+  "patch": "aquamarine-0.15.1-native-render.patch",
+  "patchSha256": "c4f2a1e57c3f157836372e50cd4fda920a6461cef458fd7a408aa2cfad07d8ec",
+  "files": {
+    "src/NativeRender.cpp": {
+      "beforeSha256": null,
+      "afterSha256": "09e1228044db4c3d911adb233ba07e1e6b41d0757a62d5fda194d7f954931dff"
+    },
+    "src/include/NativeRender.hpp": {
+      "beforeSha256": null,
+      "afterSha256": "bea7457804a817f0f9b4a4f88f449924e485a4487b7f6c3078239ddb04154014"
+    },
+    "src/backend/Backend.cpp": {
+      "beforeSha256": "4908c6f81e8183274c906eff4e0545555a7ac5842ba5a96df54c2383ec2620f7",
+      "afterSha256": "66bbfdee8c8430d13ad4418a80d286333424d9d1370325b6f846c4e0b8c2e385"
+    },
+    "src/backend/Headless.cpp": {
+      "beforeSha256": "2ecc7f54d033a85f6a7c5fa0e4eb14fc9e5e563be2146488e47b82a6358cbf02",
+      "afterSha256": "cac6f66bca5333c2f66a2db2b11c9660e0800871bed3789ad0109120093996a4"
+    },
+    "src/allocator/GBM.cpp": {
+      "beforeSha256": "2268a7a72a8ce3d25199a423081cec0e0d53f6c3bd41b47c883e59ba7d0aa2ff",
+      "afterSha256": "17010cb0acbf2c7100b552880ae9c4e29577a9c9aa789e54c3dd1249cf050243"
+    }
+  },
+  "status": "experimental allocator/output-commit diagnostic; no Windows presentation or verified compositor pixels"
+}

@@ -1,0 +1,351 @@
+--- a/src/gallium/drivers/d3d12/d3d12_context_common.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_context_common.cpp
+@@ -192,6 +192,20 @@
+    bool flushed = d3d12_flush_cmdlist(ctx);
+ 
+    if (fence) {
++#ifndef _WIN32
++      if (!flushed && d3d12_native_sync_file_enabled()) {
++         /* A server-side GPU wait may exist without a GL command list.
++          * Insert a fresh native signal after it instead of exporting an
++          * older, already completed point on the screen timeline. */
++         struct d3d12_screen *screen = d3d12_screen(pipe->screen);
++         mtx_lock(&screen->submit_mutex);
++         struct d3d12_fence *exported = d3d12_create_fence(screen, true);
++         mtx_unlock(&screen->submit_mutex);
++         d3d12_fence_reference((struct d3d12_fence **)fence, exported);
++         d3d12_fence_reference(&exported, nullptr);
++         return;
++      }
++#endif
+       if (flushed)
+          d3d12_fence_reference((struct d3d12_fence **)fence, batch->fence);
+       else
+@@ -220,11 +234,17 @@
+                       struct pipe_fence_handle **pfence, int fd,
+                       enum pipe_fd_type type)
+ {
+-   /* A native D3D12 shared fence is a timeline, not a binary semaphore or
+-    * Linux sync_file. The GL frontend retains ownership of fd until success.
+-    */
++   /* Native D3D12 timeline FDs and Linux sync_files use separate validated
++    * import paths. The frontend retains ownership of its input descriptor. */
+    *pfence = nullptr;
+-   if (fd < 0 || type != PIPE_FD_TYPE_TIMELINE_SEMAPHORE_VK)
++   if (fd < 0)
++      return;
++   if (type == PIPE_FD_TYPE_NATIVE_SYNC) {
++      *pfence = (struct pipe_fence_handle *)d3d12_import_sync_file(
++         d3d12_screen(pipe->screen), fd);
++      return;
++   }
++   if (type != PIPE_FD_TYPE_TIMELINE_SEMAPHORE_VK)
+       return;
+    *pfence = (struct pipe_fence_handle *)d3d12_open_fence(
+       d3d12_screen(pipe->screen), (HANDLE)(intptr_t)fd, nullptr, type);
+--- a/src/gallium/drivers/d3d12/d3d12_fence.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_fence.cpp
+@@ -27,15 +27,56 @@
+ #include "d3d12_screen.h"
+ 
+ #include "util/u_memory.h"
++#include "util/u_debug.h"
+ 
+ #include <dxguids/dxguids.h>
++
++#ifndef _WIN32
++#include <dlfcn.h>
++#include <fcntl.h>
++#include <unistd.h>
++
++struct native_sync_hooks {
++   int (*export_fd)(int, uint64_t) = nullptr;
++   int (*resolve_fd)(int, uint64_t *) = nullptr;
++};
++
++static const native_sync_hooks &
++native_sync_api()
++{
++   static const native_sync_hooks api = [] {
++      native_sync_hooks result;
++      if (debug_get_bool_option("D3D12_EXPERIMENTAL_NATIVE_SYNC_FILE", false)) {
++         result.export_fd = reinterpret_cast<int (*)(int, uint64_t)>(
++            dlsym(RTLD_DEFAULT, "wddm_bridge_export_native_sync_file"));
++         result.resolve_fd = reinterpret_cast<int (*)(int, uint64_t *)>(
++            dlsym(RTLD_DEFAULT, "wddm_bridge_resolve_sync_file"));
++      }
++      return result;
++   }();
++   return api;
++}
++
++bool
++d3d12_native_sync_file_enabled()
++{
++   const auto &api = native_sync_api();
++   return api.export_fd && api.resolve_fd;
++}
++#endif
+ 
+ static void
+ destroy_fence(struct d3d12_fence *fence)
+ {
+-   if (fence->type == PIPE_FD_TYPE_NATIVE_SYNC)
++   if (fence->type == PIPE_FD_TYPE_NATIVE_SYNC) {
+       d3d12_fence_close_event(fence->event, fence->event_fd);
+-   else
++#ifndef _WIN32
++      if (fence->sync_file_fd >= 0)
++         close(fence->sync_file_fd);
++      if (fence->native_reference_owned)
++         fence->cmdqueue_fence->Release();
++#endif
++   } else
+       fence->cmdqueue_fence->Release();
+    FREE(fence);
+ }
+@@ -43,8 +84,13 @@
+ struct d3d12_fence *
+ d3d12_create_fence(struct d3d12_screen *screen, bool signal_new)
+ {
+-   struct d3d12_fence *ret =
+-      d3d12_create_fence_raw(screen->fence, screen->fence_value + (signal_new ? 1 : 0));
++   struct d3d12_fence *ret;
++#ifndef _WIN32
++   if (d3d12_native_sync_file_enabled())
++      ret = d3d12_create_sync_file_fence(screen, screen->fence_value + (signal_new ? 1 : 0));
++   else
++#endif
++      ret = d3d12_create_fence_raw(screen->fence, screen->fence_value + (signal_new ? 1 : 0));
+    if (!ret) {
+       debug_printf("CALLOC_STRUCT failed\n");
+       return NULL;
+@@ -72,6 +118,9 @@
+    }
+ 
+    ret->type = PIPE_FD_TYPE_NATIVE_SYNC;
++#ifndef _WIN32
++   ret->sync_file_fd = -1;
++#endif
+    ret->cmdqueue_fence = fence;
+    ret->value = value;
+    ret->event = d3d12_fence_create_event(&ret->event_fd);
+@@ -116,9 +165,103 @@
+    }
+ 
+    ret->type = type;
++#ifndef _WIN32
++   ret->sync_file_fd = -1;
++#endif
+    pipe_reference_init(&ret->reference, 1);
+    return ret;
+ }
++
++#ifndef _WIN32
++struct d3d12_fence *
++d3d12_import_sync_file(struct d3d12_screen *screen, int fd)
++{
++   if (fd < 0 || !d3d12_native_sync_file_enabled())
++      return nullptr;
++   uint64_t value = 0;
++   const int native_fd = native_sync_api().resolve_fd(fd, &value);
++   if (native_fd < 0)
++      return nullptr;
++   ID3D12Fence *native_fence = nullptr;
++   const HRESULT result = screen->dev->OpenSharedHandle(
++      (HANDLE)(intptr_t)native_fd, IID_PPV_ARGS(&native_fence));
++   close(native_fd);
++   if (FAILED(result) || !native_fence) {
++      if (native_fence)
++         native_fence->Release();
++      return nullptr;
++   }
++
++   struct d3d12_fence *ret = CALLOC_STRUCT(d3d12_fence);
++   if (!ret) {
++      native_fence->Release();
++      return nullptr;
++   }
++   ret->type = PIPE_FD_TYPE_NATIVE_SYNC;
++   ret->cmdqueue_fence = native_fence;
++   ret->native_reference_owned = true;
++   ret->event_fd = -1;
++   ret->sync_file_fd = os_dupfd_cloexec(fd);
++   ret->value = value;
++   if (ret->sync_file_fd < 0) {
++      destroy_fence(ret);
++      return nullptr;
++   }
++   /* EGL retains its input FD; our duplicate preserves error/poll semantics
++    * independently of the native timeline and original EGL sync lifetime. */
++   pipe_reference_init(&ret->reference, 1);
++   return ret;
++}
++
++static int
++fence_get_fd(struct pipe_screen *pscreen, struct pipe_fence_handle *pfence)
++{
++   struct d3d12_fence *fence = d3d12_fence(pfence);
++   if (!fence || fence->type != PIPE_FD_TYPE_NATIVE_SYNC ||
++       !d3d12_native_sync_file_enabled())
++      return -1;
++   if (fence->sync_file_fd >= 0)
++      return os_dupfd_cloexec(fence->sync_file_fd);
++
++   HANDLE handle = nullptr;
++   const HRESULT result = d3d12_screen(pscreen)->dev->CreateSharedHandle(
++      fence->cmdqueue_fence, nullptr, GENERIC_ALL, nullptr, &handle);
++   if (FAILED(result))
++      return -1;
++   const int native_fd = (int)(intptr_t)handle;
++   const int fd = native_sync_api().export_fd(native_fd, fence->value);
++   const int error = errno;
++   close(native_fd);
++   if (fd < 0)
++      errno = error;
++   return fd;
++}
++
++struct d3d12_fence *
++d3d12_create_sync_file_fence(struct d3d12_screen *screen, uint64_t value)
++{
++   if (!screen->native_sync_fd_valid || !d3d12_native_sync_file_enabled())
++      return nullptr;
++   struct d3d12_fence *ret = CALLOC_STRUCT(d3d12_fence);
++   if (!ret)
++      return nullptr;
++   ret->type = PIPE_FD_TYPE_NATIVE_SYNC;
++   ret->cmdqueue_fence = screen->fence;
++   ret->cmdqueue_fence->AddRef();
++   ret->native_reference_owned = true;
++   ret->value = value;
++   ret->event_fd = -1;
++   ret->sync_file_fd = -1;
++   const int fd = native_sync_api().export_fd(screen->native_sync_fd, value);
++   if (fd < 0) {
++      destroy_fence(ret);
++      return nullptr;
++   }
++   ret->sync_file_fd = fd;
++   pipe_reference_init(&ret->reference, 1);
++   return ret;
++}
++#endif
+ 
+ void
+ d3d12_fence_reference(struct d3d12_fence **ptr, struct d3d12_fence *fence)
+@@ -149,6 +292,19 @@
+    assert(fence->type == PIPE_FD_TYPE_NATIVE_SYNC);
+    if (fence->signaled)
+       return true;
++
++#ifndef _WIN32
++   if (fence->sync_file_fd >= 0) {
++      const int timeout_ms = timeout_ns == OS_TIMEOUT_INFINITE ? -1 :
++         (int)MIN2(timeout_ns / NsPerMs + (timeout_ns % NsPerMs != 0), (uint64_t)INT_MAX);
++      struct sync_file_info info = {};
++      /* Readiness alone includes failed fences. Require successful Linux
++       * completion, never interpret native device loss as a signaled fence. */
++      fence->signaled = sync_wait(fence->sync_file_fd, timeout_ms) == 0 &&
++         ioctl(fence->sync_file_fd, SYNC_IOC_FILE_INFO, &info) == 0 && info.status > 0;
++      return fence->signaled;
++   }
++#endif
+ 
+    bool complete = fence->cmdqueue_fence->GetCompletedValue() >= fence->value;
+    if (!complete && timeout_ns)
+@@ -193,4 +349,8 @@
+ {
+    pscreen->fence_reference = fence_reference;
+    pscreen->fence_finish = fence_finish;
+-}
++#ifndef _WIN32
++   if (d3d12_native_sync_file_enabled())
++      pscreen->fence_get_fd = fence_get_fd;
++#endif
++}
+--- a/src/gallium/drivers/d3d12/d3d12_fence.h
++++ b/src/gallium/drivers/d3d12/d3d12_fence.h
+@@ -87,6 +87,12 @@
+    struct pipe_reference reference;
+    ID3D12Fence *cmdqueue_fence;
+    pipe_fd_type type;
++#ifndef _WIN32
++   /* Imported Linux sync_files own a native alias and a separate poll FD.
++    * Ordinary internal fences still borrow the screen's native fence. */
++   bool native_reference_owned;
++   int sync_file_fd;
++#endif
+ 
+    // The below fields are only valid if type == PIPE_FD_TYPE_NATIVE_SYNC
+    HANDLE event;
+@@ -109,6 +115,12 @@
+ 
+ struct d3d12_fence *
+ d3d12_open_fence(struct d3d12_screen *screen, HANDLE handle, const void *name, pipe_fd_type type);
++
++#ifndef _WIN32
++bool d3d12_native_sync_file_enabled();
++struct d3d12_fence *d3d12_import_sync_file(struct d3d12_screen *screen, int fd);
++struct d3d12_fence *d3d12_create_sync_file_fence(struct d3d12_screen *screen, uint64_t value);
++#endif
+ 
+ void
+ d3d12_fence_reference(struct d3d12_fence **ptr, struct d3d12_fence *fence);
+--- a/src/gallium/drivers/d3d12/d3d12_screen.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_screen.cpp
+@@ -392,6 +392,9 @@
+    caps->fence_signal = debug_get_bool_option("D3D12_EXPERIMENTAL_FENCE_FD", false);
+    caps->timeline_semaphore_import = caps->fence_signal;
+    caps->max_timeline_semaphore_difference = caps->fence_signal ? INT64_MAX : 0;
++   /* Explicit private bridge opt-in. Generic/merged sync_file and compositor
++    * interoperability remain separate acceptance requirements. */
++   caps->native_fence_fd = d3d12_native_sync_file_enabled();
+ #endif
+    caps->clip_halfz = true;
+    caps->vs_layer_viewport = true;
+@@ -649,6 +652,12 @@
+       screen->bufmgr = nullptr;
+    }
+    d3d12_deinit_residency(screen);
++#ifndef _WIN32
++   if (screen->native_sync_fd_valid) {
++      close(screen->native_sync_fd);
++      screen->native_sync_fd_valid = false;
++   }
++#endif
+    if (screen->fence) {
+       screen->fence->Release();
+       screen->fence = nullptr;
+@@ -1645,6 +1654,18 @@
+    if (FAILED(screen->dev->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&screen->fence))))
+       return false;
+ 
++#ifndef _WIN32
++   if (d3d12_native_sync_file_enabled()) {
++      /* One shared capability per screen; individual sync_files retain it.
++       * Avoid repeated native handle creation on every submitted batch. */
++      HANDLE handle = nullptr;
++      if (FAILED(screen->dev->CreateSharedHandle(screen->fence, nullptr, GENERIC_ALL, nullptr, &handle)))
++         return false;
++      screen->native_sync_fd = (int)(intptr_t)handle;
++      screen->native_sync_fd_valid = true;
++   }
++#endif
++
+    if (!d3d12_init_residency(screen))
+       return false;
+ 
+--- a/src/gallium/drivers/d3d12/d3d12_screen.h
++++ b/src/gallium/drivers/d3d12/d3d12_screen.h
+@@ -85,6 +85,10 @@
+    mtx_t submit_mutex;
+    ID3D12Fence *fence;
+    uint64_t fence_value;
++#ifndef _WIN32
++   int native_sync_fd;
++   bool native_sync_fd_valid;
++#endif
+ 
+    struct list_head residency_list;
+    ID3D12Fence *residency_fence;

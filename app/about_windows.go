@@ -14,7 +14,7 @@ const websiteURL = "https://tryomarchy.com"
 
 func runAbout() {
 	message := uiTextWith("about.body", map[string]string{
-		"version": currentVersion, "website": websiteURL, "source": projectURL,
+		"version": currentVersion, "website": websiteURL, "source": launcherProjectURL(projectURL),
 	})
 	action, err := chooseAction(uiText("about.title"), message,
 		uiText("about.check_updates"), uiText("about.open_website"), uiText("about.open_support"),
@@ -29,13 +29,17 @@ func runAbout() {
 	case 2:
 		openWindowsURL(websiteURL)
 	case 3:
-		openWindowsURL(projectURL)
+		openWindowsURL(launcherProjectURL(projectURL))
 	case 4:
-		openWindowsURL(projectURL + "/blob/master/THIRD_PARTY_NOTICES.md")
+		openWindowsURL(launcherProjectURL(projectURL) + "/blob/master/THIRD_PARTY_NOTICES.md")
 	}
 }
 
 func checkForLauncherUpdates() {
+	if forkIdentity != "" {
+		infoBox(uiTextWith("about.fork_updates", map[string]string{"source": launcherProjectURL(projectURL)}))
+		return
+	}
 	getUI().setStatus("%s", uiText("about.checking"))
 	key, err := updatePublicKey()
 	var manifest *updateManifest

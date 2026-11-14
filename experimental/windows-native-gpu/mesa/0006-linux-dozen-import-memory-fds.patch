@@ -1,0 +1,114 @@
+--- a/src/microsoft/vulkan/dzn_device.c
++++ b/src/microsoft/vulkan/dzn_device.c
+@@ -58,6 +58,7 @@
+ #include "dzn_dxgi.h"
+ #else
+ #include "util/os_file.h"
++#include "dzn_imported_memory_fd.h"
+ #include <errno.h>
+ #include <limits.h>
+ #endif
+@@ -2575,6 +2576,10 @@
+ 
+    VkExternalMemoryHandleTypeFlags export_flags = 0;
+    HANDLE import_handle = NULL;
++#ifndef _WIN32
++   int import_source_fd = -1;
++   struct dzn_imported_memory_fd imported_fd = { -1, -1 };
++#endif
+    bool imported_from_d3d11 = false;
+    void *host_pointer = NULL;
+ #ifdef _WIN32
+@@ -2630,7 +2635,9 @@
+          default:
+             return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+          }
+-         import_handle = (HANDLE)(intptr_t)imp->fd;
++         if (imp->fd < 0)
++            return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++         import_source_fd = imp->fd;
+          break;
+       }
+ #endif
+@@ -2746,7 +2753,17 @@
+ #else
+       goto cleanup;
+ #endif
++#ifdef _WIN32
+    } else if (import_handle) {
++#else
++   } else if (import_source_fd >= 0) {
++      /* Keep the caller's descriptor on failure; a temporary CLOEXEC
++       * duplicate also makes descriptor zero safe for HANDLE-based APIs. */
++      error = dzn_imported_memory_fd_open(&imported_fd, import_source_fd);
++      if (error != VK_SUCCESS)
++         goto cleanup;
++      import_handle = (HANDLE)(intptr_t)imported_fd.duplicate_fd;
++#endif
+       error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+       if (image || buffer) {
+          if (FAILED(ID3D12Device_OpenSharedHandle(device->dev, import_handle, &IID_ID3D12Resource, (void **)&mem->dedicated_res)))
+@@ -2889,10 +2906,16 @@
+          goto cleanup;
+    }
+ 
++#ifndef _WIN32
++   dzn_imported_memory_fd_finish(&imported_fd, true);
++#endif
+    *out = dzn_device_memory_to_handle(mem);
+    return VK_SUCCESS;
+ 
+ cleanup:
++#ifndef _WIN32
++   dzn_imported_memory_fd_finish(&imported_fd, false);
++#endif
+ #ifdef _WIN32
+    if (handle_from_name)
+       CloseHandle(handle_from_name);
+--- /dev/null
++++ b/src/microsoft/vulkan/dzn_imported_memory_fd.h
+@@ -0,0 +1,44 @@
++/* SPDX-License-Identifier: MIT
++ * Transactional Linux FD ownership for Vulkan memory import.
++ */
++#ifndef DZN_IMPORTED_MEMORY_FD_H
++#define DZN_IMPORTED_MEMORY_FD_H
++#include <stdbool.h>
++#include <errno.h>
++#include <unistd.h>
++#include <vulkan/vulkan_core.h>
++#include "util/os_file.h"
++
++struct dzn_imported_memory_fd {
++   int source_fd;
++   int duplicate_fd;
++};
++
++static inline VkResult
++dzn_imported_memory_fd_open(struct dzn_imported_memory_fd *owner, int source)
++{
++   if (source < 0 || owner->duplicate_fd >= 0)
++      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
++   const int duplicate = os_dupfd_cloexec(source);
++   if (duplicate < 0)
++      return (errno == EBADF || errno == EINVAL) ?
++         VK_ERROR_INVALID_EXTERNAL_HANDLE : VK_ERROR_OUT_OF_HOST_MEMORY;
++   owner->source_fd = source;
++   owner->duplicate_fd = duplicate;
++   return VK_SUCCESS;
++}
++
++static inline void
++dzn_imported_memory_fd_finish(struct dzn_imported_memory_fd *owner, bool success)
++{
++   if (owner->duplicate_fd < 0)
++      return;
++   const int duplicate = owner->duplicate_fd;
++   const int source = owner->source_fd;
++   owner->source_fd = owner->duplicate_fd = -1;
++   /* Do not retry close on EINTR: Linux may already have reused the number. */
++   close(duplicate);
++   if (success)
++      close(source);
++}
++#endif

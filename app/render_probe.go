@@ -101,6 +101,8 @@ func startWithGPU(mode string, probe *renderProbe, runtimeID, displayDriver stri
 		return false, "CPU rendering chosen in settings"
 	case renderGPU:
 		return true, "GPU rendering chosen in settings"
+	case renderDXG:
+		return false, "virtio-dxg rendering chosen"
 	}
 	if probe != nil && probe.Result == renderCPU && probe.current(runtimeID, displayDriver, now) {
 		return false, fmt.Sprintf("GPU rendering failed with this runtime and driver on %s; using CPU rendering (choose GPU in Settings to retry now)",
@@ -131,10 +133,10 @@ func parseRenderMode(value string) (string, error) {
 	switch v := strings.ToLower(strings.TrimSpace(value)); v {
 	case "", renderAuto:
 		return renderAuto, nil
-	case renderGPU, renderCPU:
+	case renderGPU, renderCPU, renderDXG:
 		return v, nil
 	}
-	return "", fmt.Errorf("render must be auto, gpu, or cpu")
+	return "", fmt.Errorf("render must be auto, gpu, cpu, or dxg")
 }
 
 // runtimeIdentity names the QEMU runtime for the probe record: the recorded

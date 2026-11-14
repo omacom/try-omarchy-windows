@@ -1,0 +1,25 @@
+diff -ruN a/src/gallium/auxiliary/vl/vl_winsys_drm.c b/src/gallium/auxiliary/vl/vl_winsys_drm.c
+--- a/src/gallium/auxiliary/vl/vl_winsys_drm.c
++++ b/src/gallium/auxiliary/vl/vl_winsys_drm.c
+@@ -61,6 +61,21 @@
+    if (pipe_loader_drm_probe_fd(&vscreen->dev, fd, false))
+       vscreen->pscreen = pipe_loader_create_screen(vscreen->dev, false);
+ 
++#ifdef HAVE_DRISW_KMS
++   /*
++    * A KMS device without a hardware driver (virtio-gpu in 2D mode, as with
++    * virtio-dxg): decode with the software path's driver (GALLIUM_DRIVER,
++    * d3d12 there), sharing buffers with KMS as kms_swrast does for GL.
++    */
++   if (!vscreen->pscreen) {
++      if (vscreen->dev)
++         pipe_loader_release(&vscreen->dev, 1);
++      vscreen->dev = NULL;
++      if (pipe_loader_sw_probe_kms(&vscreen->dev, fd))
++         vscreen->pscreen = pipe_loader_create_screen(vscreen->dev, false);
++   }
++#endif
++
+    if (libva_owned_fd >= 0 && libva_owned_fd != fd)
+       close(fd);
+ 

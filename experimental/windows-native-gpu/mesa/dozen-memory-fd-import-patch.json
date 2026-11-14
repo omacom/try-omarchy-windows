@@ -1,0 +1,18 @@
+{
+  "mesaVersion": "26.0.8",
+  "archiveSha256": "caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc",
+  "predecessorPatchSha256": "a312c7f335279fffe14aab324408dad97e81f31484dc33ec853eaea2a254e7f9",
+  "patchSha256": "d6ea41397861f77e7cc0871a05375d9ce9788e216b994a09fdaa00199cdb2462",
+  "files": {
+    "src/microsoft/vulkan/dzn_device.c": {
+      "originalSha256": "8246372fe4eb3539a6ea3e980d62e5495c0ee3eaf8c3d45b8df10d4c9c8b0fdd",
+      "patchedSha256": "802f9b9e6cdbe34bee53423fdf85f33948cf23023dcd5e5b6fba1170bfcab5b7"
+    },
+    "src/microsoft/vulkan/dzn_imported_memory_fd.h": {
+      "originalSha256": null,
+      "patchedSha256": "03155a0ea2ba1f9f2b42a20342340060b7ed9a10461a2ab0551293ed50e2271c"
+    }
+  },
+  "specification": "https://docs.vulkan.org/refpages/latest/refpages/source/VkImportMemoryFdInfoKHR.html",
+  "errorCodeSpecification": "https://docs.vulkan.org/refpages/latest/refpages/source/vkAllocateMemory.html"
+}

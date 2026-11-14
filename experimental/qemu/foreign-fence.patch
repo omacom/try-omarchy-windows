@@ -1,0 +1,87 @@
+diff --git a/accel/whpx/whpx-common.c b/accel/whpx/whpx-common.c
+index 2ab6830..c941db6 100644
+--- a/accel/whpx/whpx-common.c
++++ b/accel/whpx/whpx-common.c
+@@ -19,6 +19,8 @@
+ #include "qemu/main-loop.h"
+ #include "hw/core/boards.h"
+ #include "hw/intc/ioapic.h"
++#include "hw/misc/wddm-fence-lab.h"
++#include "hw/misc/wddm-allocation-hub.h"
+ #include "qemu/error-report.h"
+ #include "qapi/error.h"
+ #include "qapi/qapi-types-common.h"
+@@ -296,6 +298,58 @@ static void whpx_set_phys_mem(MemoryRegionSection *section, bool add)
+     uint64_t size = int128_get64(section->size);
+     HRESULT hr;
+     void *mem;
++    void *foreign_process, *foreign_source;
++    uint64_t foreign_bytes;
++
++    /* Writable allocation memory is separate from read-only synchronization
++     * pages. Only the native owner chooses these source ranges over QMP. */
++    if (wddm_allocation_hub_mapping(area, &foreign_process, &foreign_source,
++                                      &foreign_bytes)) {
++        if (!QEMU_IS_ALIGNED(size, page_size) || !size ||
++            !QEMU_IS_ALIGNED(gva, page_size) ||
++            !QEMU_IS_ALIGNED((uintptr_t)foreign_source, page_size) ||
++            foreign_bytes > 1024 * 1024 ||
++            section->offset_within_region > foreign_bytes ||
++            size > foreign_bytes - section->offset_within_region ||
++            !whp_dispatch.WHvMapGpaRange2) {
++            error_report("WHPX: invalid foreign allocation aperture");
++            abort();
++        }
++        hr = add ? whp_dispatch.WHvMapGpaRange2(whpx->partition,
++                    foreign_process,
++                    (char *)foreign_source + section->offset_within_region,
++                    gva, size, WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite)
++                 : whp_dispatch.WHvUnmapGpaRange(whpx->partition, gva, size);
++        if (FAILED(hr)) {
++            error_report("WHPX: foreign allocation mapping failed, hr=%08lx", hr);
++            abort();
++        }
++        return;
++    }
++
++    /* The host-created lab device owns this read-only foreign page. Its MMIO
++     * callbacks cover QEMU accesses; WHPX guest loads use the real driver page.
++     * No guest can supply a process handle, host pointer, or mapping flags. */
++    if (wddm_fence_lab_mapping(area, &foreign_process, &foreign_source)) {
++        if (!QEMU_IS_ALIGNED(size, page_size) ||
++            !QEMU_IS_ALIGNED(gva, page_size) ||
++            section->offset_within_region > 4096 ||
++            size > 4096 - section->offset_within_region ||
++            !whp_dispatch.WHvMapGpaRange2) {
++            error_report("WHPX: invalid foreign fence aperture");
++            abort();
++        }
++        hr = add ? whp_dispatch.WHvMapGpaRange2(whpx->partition,
++                    foreign_process,
++                    (char *)foreign_source + section->offset_within_region,
++                    gva, size, WHvMapGpaRangeFlagRead)
++                 : whp_dispatch.WHvUnmapGpaRange(whpx->partition, gva, size);
++        if (FAILED(hr)) {
++            error_report("WHPX: foreign fence mapping failed, hr=%08lx", hr);
++            abort();
++        }
++        return;
++    }
+ 
+     if (!memory_region_is_ram(area)) {
+         if (writable) {
+diff --git a/include/system/whpx-internal.h b/include/system/whpx-internal.h
+index cd7a399..2ef593e 100644
+--- a/include/system/whpx-internal.h
++++ b/include/system/whpx-internal.h
+@@ -78,6 +78,10 @@ void whpx_apic_get(APICCommonState *s);
+  * on all versions and are not critical for basic functionality.
+  */
+ #define LIST_WINHVPLATFORM_FUNCTIONS_SUPPLEMENTAL(X) \
++  X(HRESULT, WHvMapGpaRange2, \
++        (WHV_PARTITION_HANDLE Partition, HANDLE Process, VOID *SourceAddress, \
++         WHV_GUEST_PHYSICAL_ADDRESS GuestAddress, UINT64 SizeInBytes, \
++         WHV_MAP_GPA_RANGE_FLAGS Flags)) \
+   X(HRESULT, WHvSuspendPartitionTime, (WHV_PARTITION_HANDLE Partition)) \
+   X(HRESULT, WHvRequestInterrupt, (WHV_PARTITION_HANDLE Partition, \
+         WHV_INTERRUPT_CONTROL* Interrupt, UINT32 InterruptControlSize)) \

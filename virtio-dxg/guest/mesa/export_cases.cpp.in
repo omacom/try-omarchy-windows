@@ -1,0 +1,63 @@
+// Linux descriptor ownership and control flow only. The producer completion
+// and DRM sync_file creation are substitutes; no device or library is loaded.
+#include <cassert>
+#include <cstdio>
+#include <fcntl.h>
+#include <unistd.h>
+
+struct pipe_screen { int completed_sync_fd = -1; };
+struct d3d12_screen : pipe_screen {};
+struct pipe_fence_handle { int sync_fd = -1; int type = 1; };
+struct d3d12_fence : pipe_fence_handle {};
+#define d3d12_screen(s) static_cast<struct d3d12_screen *>(s)
+#define d3d12_fence(f) static_cast<struct d3d12_fence *>(f)
+constexpr int PIPE_FD_TYPE_NATIVE_SYNC = 1;
+constexpr unsigned OS_TIMEOUT_INFINITE = ~0U;
+static bool enabled = true, complete = true;
+static int probe_fd = -1, probes, waits;
+
+static bool debug_get_bool_option(const char *, bool) { return enabled; }
+static int d3d12_signaled_sync_file(struct d3d12_screen *) { ++probes; return probe_fd; }
+static bool d3d12_fence_finish(struct d3d12_fence *, unsigned) { ++waits; return complete; }
+static int os_dupfd_cloexec(int fd) { return fcntl(fd, F_DUPFD_CLOEXEC, 0); }
+
+// ACTUAL_FUNCTIONS
+
+int main()
+{
+   struct d3d12_screen screen;
+   struct d3d12_fence fence;
+   enabled = false;
+   assert(!d3d12_screen_native_fences(&screen) && probes == 0);
+   enabled = true;
+   assert(!d3d12_screen_native_fences(&screen) && probes == 1);
+   assert(fence_get_fd(&screen, &fence) == -1 && waits == 0);
+
+   // Exercise descriptor zero for the cache and independent caller ownership.
+   close(0);
+   probe_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+   assert(probe_fd == 0 && d3d12_screen_native_fences(&screen));
+   for (int frame = 0; frame < 240; ++frame) {
+      int fd = fence_get_fd(&screen, &fence);
+      assert(fd > 0 && (fcntl(fd, F_GETFD) & FD_CLOEXEC));
+      assert(close(fd) == 0);
+   }
+   assert(waits == 240 && probes == 2);
+   complete = false;
+   assert(fence_get_fd(&screen, &fence) == -1 && waits == 241);
+   fence.type = 0;
+   assert(fence_get_fd(&screen, &fence) == -1 && waits == 241);
+
+   int pipefds[2];
+   assert(pipe(pipefds) == 0);
+   fence.sync_fd = pipefds[0];
+   int imported = fence_get_fd(&screen, &fence);
+   assert(imported >= 0 && waits == 241 && (fcntl(imported, F_GETFD) & FD_CLOEXEC));
+   close(pipefds[0]);
+   close(screen.completed_sync_fd);
+   char byte = 0;
+   assert(write(pipefds[1], "x", 1) == 1 && read(imported, &byte, 1) == 1 && byte == 'x');
+   close(imported);
+   close(pipefds[1]);
+   std::puts("NATIVE_EXPORT_CPU_PASS");
+}

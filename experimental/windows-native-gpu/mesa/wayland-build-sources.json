@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "sources": [
+    {
+      "url": "https://gitlab.freedesktop.org/wayland/wayland/-/releases/1.26.0/downloads/wayland-1.26.0.tar.xz",
+      "sha256": "64176eaa46e4969903e286f8e5ef8331affc17fdf03ac9b58381d2b23162b7a3",
+      "bytes": 612384,
+      "filename": "wayland-1.26.0.tar.xz",
+      "version": "1.26.0"
+    },
+    {
+      "url": "https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/1.47/downloads/wayland-protocols-1.47.tar.xz",
+      "sha256": "5fd4349bcbc9bab9a46f8cf77d1f434296a7a052c87440a094f63fcf62a58e20",
+      "bytes": 136148,
+      "filename": "wayland-protocols-1.47.tar.xz",
+      "version": "1.47"
+    }
+  ]
+}

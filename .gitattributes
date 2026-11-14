@@ -1,9 +1,233 @@
 app/testdata/SHA256SUMS.* text eol=lf
 
+# The boot scripts and hash-pinned virtio-dxg recipe need identical bytes on Windows.
+virtio-dxg/** text=auto eol=lf
+virtio-dxg/guest/mesa/**/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+
 # Runtime patches are digest-pinned and must be byte-identical on Windows.
 runtime-build/patches/**/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+experimental/qemu/socket-reconnect-yank.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+experimental/qemu/test_socket_reconnect.py text eol=lf
+# Frozen audit source and evidence hashes use the committed LF bytes.
+experimental/windows-native-gpu/**/*.py text eol=lf
+docs/evidence/*.json text eol=lf
+experimental/windows-native-gpu/mesa/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+experimental/windows-native-gpu/aquamarine-*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+# Keep the published evidence JSON byte-identical across platform checkouts.
+docs/evidence/HYPRLAND-LOGGING-LIFETIME-DEVELOPMENT-2026-10-15.json text eol=lf
+docs/evidence/HYPRLAND-COMPOSITOR-CAPTURE-DEVELOPMENT-2026-10-15.json text eol=lf
+docs/evidence/HYPRLAND-NATIVE-WINDOW-DEVELOPMENT-2026-10-15.json text eol=lf
+docs/evidence/HYPRLAND-FRAME-PACING-DEVELOPMENT-2026-10-15.json text eol=lf
+docs/evidence/HYPRLAND-QUEUED-PRESENTATION-DEVELOPMENT-2026-10-15.json text eol=lf
+docs/evidence/HYPRLAND-WAYLAND-SCENE-DEVELOPMENT-2026-10-15.json text eol=lf
+docs/evidence/NORMAL-OMARCHY-ROOT-BOOT-DEVELOPMENT-2026-10-16.json text eol=lf
+experimental/windows-native-gpu/normal_root_guest_init.c text eol=lf
+experimental/windows-native-gpu/normal_root_graphics_service.c text eol=lf
+experimental/windows-native-gpu/runtime_guest_init.c text eol=lf
+experimental/windows-native-gpu/guest_graphics_broker.cpp text eol=lf
+experimental/windows-native-gpu/compositor_presenter.h text eol=lf
+experimental/windows-native-gpu/driver_coordinator.h text eol=lf
+experimental/windows-native-gpu/driver_coordinator_test.cpp text eol=lf
+experimental/windows-native-gpu/guest_coordinator.h text eol=lf
+experimental/windows-native-gpu/qemu_runtime_host.h text eol=lf
+experimental/windows-native-gpu/bounded_input_channel.h text eol=lf
+experimental/windows-native-gpu/bounded_input_channel_test.cpp text eol=lf
+experimental/windows-native-gpu/input_delivery_diagnostic.h text eol=lf
+experimental/windows-native-gpu/tcp_peer_owner.h text eol=lf
+experimental/windows-native-gpu/tcp_peer_owner_test.cpp text eol=lf
+experimental/windows-native-gpu/staging_reclaim.h text eol=lf
+experimental/windows-native-gpu/staging_reclaim_test.cpp text eol=lf
+experimental/windows-native-gpu/verify_reclaimed_staging_input_response.py text eol=lf
+experimental/windows-native-gpu/test_staging_reclaim_policy.py text eol=lf
+experimental/windows-native-gpu/test_reclaimed_staging_milestone.py text eol=lf
+experimental/windows-native-gpu/verify_sustained_uwsm_gpu.py text eol=lf
+experimental/windows-native-gpu/verify_sustained_uwsm_resize.py text eol=lf
+experimental/windows-native-gpu/test_sustained_uwsm_resize_milestone.py text eol=lf
+experimental/windows-native-gpu/sdl-interop/sdl_d3d12_interop.cpp text eol=lf
+experimental/windows-native-gpu/sdl-interop/build.ps1 text eol=lf
+experimental/windows-native-gpu/sdl-interop/gl_external_api.h text eol=lf
+experimental/windows-native-gpu/sdl-relay-producer/d3d12_named_producer.cpp text eol=lf
+experimental/windows-native-gpu/sdl-relay-producer/build.ps1 text eol=lf
+experimental/windows-native-gpu/sdl-relay-producer/accept_qemu.py text eol=lf
+experimental/windows-native-gpu/sdl-relay-producer/test_cli.py text eol=lf
+experimental/windows-native-gpu/sdl-relay-output/** text eol=lf
+experimental/windows-native-gpu/active-frame-probe/** text eol=lf
+experimental/windows-native-gpu/framed_write.h text eol=lf
+experimental/windows-native-gpu/framed_write_test.cpp text eol=lf
+experimental/windows-native-gpu/compositor_capture_wire.h text eol=lf
+experimental/windows-native-gpu/driver_wire_test.cpp text eol=lf
+experimental/windows-native-gpu/verify_sdl_interop.py text eol=lf
+experimental/windows-native-gpu/test_sdl_interop_milestone.py text eol=lf
+experimental/windows-native-gpu/verify_sdl_shared_context.py text eol=lf
+experimental/windows-native-gpu/verify_qemu_sdl_relay.py text eol=lf
+experimental/windows-native-gpu/test_qemu_sdl_relay_milestone.py text eol=lf
+docs/evidence/QEMU-SDL-GPU-RELAY-2026-10-21.json text eol=lf
+experimental/windows-native-gpu/test_sdl_shared_context_milestone.py text eol=lf
+docs/evidence/SDL-SHARED-CONTEXT-2026-10-20.json text eol=lf
+docs/evidence/QEMU-SDL-OPENGL-CANDIDATE-2026-10-20.json text eol=lf
+experimental/qemu/prepare_sdl_candidate.py text eol=lf
+experimental/qemu/verify_sdl_candidate.py text eol=lf
+experimental/qemu/wddm-sdl-relay.c text eol=lf
+experimental/qemu/wddm-sdl-command.h text eol=lf
+experimental/qemu/sdl_command_test.c text eol=lf
+experimental/qemu/test_sdl_relay_cli.py text eol=lf
+experimental/qemu/build_qemu.sh text eol=lf
+docs/evidence/SDL-D3D12-INTEROP-2026-10-20.json text eol=lf
+docs/evidence/OMARCHY-4K-SUSTAINED-RESIZE-2026-10-20.json text eol=lf
+docs/evidence/OMARCHY-4K-STAGING-RECLAIM-2026-10-20.json text eol=lf
+experimental/windows-native-gpu/shared_texture_presenter.h text eol=lf
+experimental/windows-native-gpu/build.ps1 text eol=lf
+experimental/windows-native-gpu/test_owned_runtime_qemu.py text eol=lf
+experimental/windows-native-gpu/test_coordinator_cli.py text eol=lf
+experimental/windows-native-gpu/verify_qmp_input_delivery.py text eol=lf
+experimental/windows-native-gpu/verify_qmp_input_response.py text eol=lf
+experimental/windows-native-gpu/test_qmp_input_response_milestone.py text eol=lf
+docs/evidence/OMARCHY-4K-QMP-INPUT-RESPONSE-2026-10-20.json text eol=lf
+experimental/windows-native-gpu/apply_aquamarine_native_input_patch.py text eol=lf
+experimental/windows-native-gpu/test_aquamarine_input_patch.py text eol=lf
+experimental/windows-native-gpu/aquamarine-native-input.lock.json text eol=lf
+# Preserve the original byte-pinned build receipt, including its CRLF newlines.
+experimental/windows-native-gpu/aquamarine-native-capture.lock.json -text whitespace=cr-at-eol
+experimental/windows-native-gpu/verify_uwsm_native_input_devices.py text eol=lf
+experimental/windows-native-gpu/test_uwsm_native_input_devices_milestone.py text eol=lf
+docs/evidence/OMARCHY-4K-NATIVE-INPUT-DISCOVERY-2026-10-20.json text eol=lf
+experimental/windows-native-gpu/verify_uwsm_demand_staging.py text eol=lf
+experimental/windows-native-gpu/test_uwsm_demand_staging_milestone.py text eol=lf
+docs/evidence/OMARCHY-4K-DEMAND-STAGING-2026-10-19.json text eol=lf
+experimental/windows-native-gpu/guest_primary_identity.h text eol=lf
+experimental/windows-native-gpu/guest_primary_identity_test.cpp text eol=lf
+experimental/windows-native-gpu/guest_session_process.h text eol=lf
+experimental/windows-native-gpu/uwsm_compositor_exec.c text eol=lf
+experimental/windows-native-gpu/uwsm_environment_test.c text eol=lf
+experimental/windows-native-gpu/verify_uwsm_gpu_session.py text eol=lf
+experimental/windows-native-gpu/test_uwsm_gpu_session_milestone.py text eol=lf
+docs/evidence/OMARCHY-4K-UWSM-GPU-SESSION-2026-10-19.json text eol=lf
+experimental/windows-native-gpu/wayland_scene.sh text eol=lf
+experimental/windows-native-gpu/gpu-terminal-scene.sh text eol=lf
+experimental/windows-native-gpu/wayland_scene.ini text eol=lf
+experimental/windows-native-gpu/compositor-fonts.conf text eol=lf
+# Keep scene source checkouts consistent; receipts retain original build bytes.
+experimental/windows-native-gpu/driver_bridge.cpp text eol=lf
+experimental/windows-native-gpu/driver_wire.h text eol=lf
+experimental/windows-native-gpu/opengl_profile.h text eol=lf
+experimental/windows-native-gpu/linux_ioctl_bridge.cpp text eol=lf
+experimental/windows-native-gpu/hyprland_startup_probe.c text eol=lf
+experimental/windows-native-gpu/hyprland_queue_probe.h text eol=lf
+experimental/windows-native-gpu/verify_omarchy_desktop_content.py text eol=lf
+experimental/windows-native-gpu/verify_omarchy_desktop_references.py text eol=lf
+experimental/windows-native-gpu/verify_omarchy_live_gpu_lifecycles.py text eol=lf
+docs/evidence/OMARCHY-4K-READABLE-GPU-DESKTOP-2026-10-19.json text eol=lf
+docs/evidence/OMARCHY-4K-REFERENCE-FIX-GPU-DESKTOP-2026-10-19.json text eol=lf
+docs/evidence/OMARCHY-4K-LIVE-GPU-LIFECYCLES-2026-10-19.json text eol=lf
+
+docs/evidence/OMARCHY-VIRTIO-TRACE-DESKTOP-2026-10-21.json text eol=lf
+experimental/windows-native-gpu/virtio-trace-probe/** text eol=lf
+experimental/windows-native-gpu/sustained-frame-probe/** text eol=lf
+experimental/windows-native-gpu/pressure-frame-probe/** text eol=lf
+experimental/windows-native-gpu/multiwindow-frame-probe/** text eol=lf
+experimental/windows-native-gpu/interactive-frame-probe/** text eol=lf
+experimental/windows-native-gpu/guest_direct_read_probe.h text eol=lf
+experimental/windows-native-gpu/guest_direct_read_probe_test.cpp text eol=lf
+experimental/windows-native-gpu/guest_direct_read_mapping_test.cpp text eol=lf
+experimental/windows-native-gpu/guest_paging_fence.h text eol=lf
+experimental/windows-native-gpu/guest_kernel_aperture.h text eol=lf
+experimental/windows-native-gpu/guest_async_cpu_wait.h text eol=lf
+experimental/windows-native-gpu/async_cpu_wait_workload.h text eol=lf
+experimental/windows-native-gpu/umd_context_probe.cpp text eol=lf
+experimental/windows-native-gpu/vulkan_device_probe.cpp text eol=lf
+experimental/windows-native-gpu/vulkan_compute_probe.cpp text eol=lf
+experimental/windows-native-gpu/vulkan_compute_workload.h text eol=lf
+experimental/windows-native-gpu/vulkan_compute.comp text eol=lf
+experimental/windows-native-gpu/vulkan_memory_fd_probe.cpp text eol=lf
+experimental/windows-native-gpu/vulkan_memory_fd_workload.h text eol=lf
+experimental/windows-native-gpu/vulkan_memory_roundtrip_probe.cpp text eol=lf
+experimental/windows-native-gpu/vulkan_memory_roundtrip_workload.h text eol=lf
+experimental/windows-native-gpu/imported_gpuva_profile_test.cpp text eol=lf
+experimental/windows-native-gpu/guest_eventfd_handle.h text eol=lf
+experimental/windows-native-gpu/guest_eventfd_handle_test.cpp text eol=lf
+experimental/windows-native-gpu/guest_eventfd_preload_test.cpp text eol=lf
+experimental/windows-native-gpu/native_buffer_preparation.h text eol=lf
+experimental/windows-native-gpu/native_buffer_preparation_test.cpp text eol=lf
+experimental/windows-native-gpu/shared_buffer_profile.h text eol=lf
+experimental/windows-native-gpu/shared_buffer_profile_test.cpp text eol=lf
+experimental/windows-native-gpu/shared_resource_probe.h text eol=lf
+experimental/windows-native-gpu/mesa/dozen_memory_fd_contract.cpp text eol=lf
+experimental/windows-native-gpu/mesa/dozen-memory-fd-patch.json text eol=lf
+experimental/windows-native-gpu/mesa/dozen-memory-fd-import-patch.json text eol=lf
+experimental/windows-native-gpu/mesa/dozen_memory_fd_import_contract.cpp text eol=lf
+experimental/windows-native-gpu/guest-kernel/*.h text eol=lf
+experimental/windows-native-gpu/guest-kernel/*.c text eol=lf
+experimental/windows-native-gpu/guest_allocation_memory.h text eol=lf
+experimental/windows-native-gpu/aperture_admission_audit.py text eol=lf
+experimental/windows-native-gpu/verify_multiwindow_attempt.py text eol=lf
+experimental/windows-native-gpu/verify_four_actor_legacy_desktop.py text eol=lf
+experimental/windows-native-gpu/test_multiwindow_attempts_milestone.py text eol=lf
+experimental/windows-native-gpu/test_multiwindow_frame_probe_milestone.py text eol=lf
+docs/evidence/OMARCHY-MULTIWINDOW-ATTEMPTS-2026-10-23.json text eol=lf
+experimental/windows-native-gpu/d3d12_va_pressure_probe.cpp text eol=lf
+experimental/windows-native-gpu/gpu_pressure_pattern.h text eol=lf
+experimental/windows-native-gpu/build_gpu_va_pressure_probe.sh text eol=lf
+experimental/windows-native-gpu/virtio_trace.py text eol=lf
+experimental/windows-native-gpu/verify_virtio_trace_desktop.py text eol=lf
+experimental/windows-native-gpu/verify_sustained_virtio_desktop.py text eol=lf
+experimental/windows-native-gpu/aggregate_gpu_budget.h text eol=lf
+experimental/windows-native-gpu/aggregate_gpu_budget_test.cpp text eol=lf
+experimental/windows-native-gpu/snapshot-nvidia-wsl-runtime.ps1 text eol=lf
 
 # Unified-diff context lines and format-patch trailers carry intentional spaces.
 guest-build/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
 scripts/gpu/blender/*.sh text eol=lf
 scripts/gpu/blender/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+
+experimental/windows-native-gpu/native_buffer_metadata.h text eol=lf
+experimental/windows-native-gpu/mesa/dzn_wddm_native_gpu_buffer.h text eol=lf
+experimental/windows-native-gpu/mesa/dozen_native_gpu_buffer_contract.cpp text eol=lf
+experimental/windows-native-gpu/mesa/test_dozen_native_gpu_buffer.py text eol=lf
+experimental/windows-native-gpu/mesa/0007-linux-dozen-native-gpu-buffers.patch text eol=lf
+experimental/windows-native-gpu/mesa/apply_mesa_dozen_native_gpu_buffer.py text eol=lf
+experimental/windows-native-gpu/mesa/dozen-native-gpu-buffer-patch.json text eol=lf
+
+experimental/windows-native-gpu/vulkan_typed_buffer_evidence.py text eol=lf
+experimental/windows-native-gpu/test_vulkan_typed_buffer_evidence.py text eol=lf
+experimental/windows-native-gpu/verify_vulkan_typed_buffers.py text eol=lf
+
+experimental/windows-native-gpu/native_metadata_attempt.h text eol=lf
+experimental/windows-native-gpu/native_metadata_attempt_test.cpp text eol=lf
+
+experimental/windows-native-gpu/native_buffer_admission_reply.h text eol=lf
+experimental/windows-native-gpu/native_buffer_admission_reply_test.cpp text eol=lf
+experimental/windows-native-gpu/mesa/0008-linux-dozen-buffer-admission-errors.patch text eol=lf
+experimental/windows-native-gpu/mesa/apply_mesa_dozen_buffer_admission.py text eol=lf
+experimental/windows-native-gpu/mesa/dozen-buffer-admission-patch.json text eol=lf
+experimental/windows-native-gpu/mesa/dozen_native_gpu_buffer_admission_contract.cpp text eol=lf
+experimental/windows-native-gpu/mesa/dzn_wddm_native_gpu_buffer_admission.h text eol=lf
+experimental/windows-native-gpu/mesa/test_dozen_buffer_admission.py text eol=lf
+experimental/windows-native-gpu/vulkan_gpu_pressure_evidence.py text eol=lf
+experimental/windows-native-gpu/test_vulkan_gpu_pressure_evidence.py text eol=lf
+experimental/windows-native-gpu/verify_vulkan_gpu_pressure.py text eol=lf
+experimental/windows-native-gpu/qemu_graphics_arguments.h text eol=lf
+experimental/windows-native-gpu/qemu_graphics_arguments_test.cpp text eol=lf
+experimental/windows-native-gpu/qemu_launcher_arguments_test.cpp text eol=lf
+experimental/windows-native-gpu/test_launcher_graphics_arguments.py text eol=lf
+experimental/windows-native-gpu/launcher-args-probe/export_test.go text eol=lf
+experimental/windows-native-gpu/verify_graphics_launch_arguments.py text eol=lf
+experimental/windows-native-gpu/owned_qemu_process.h text eol=lf
+experimental/windows-native-gpu/owned_qemu_process_test.cpp text eol=lf
+experimental/windows-native-gpu/verify_owned_qemu_process.py text eol=lf
+experimental/windows-native-gpu/launcher_lifetime.h text eol=lf
+experimental/windows-native-gpu/launcher_lifetime_test.cpp text eol=lf
+experimental/windows-native-gpu/test_launcher_lifetime_cli.py text eol=lf
+experimental/windows-native-gpu/launcher_lifetime_runtime_qemu.py text eol=lf
+experimental/windows-native-gpu/test_launcher_lifetime_protocol.py text eol=lf
+experimental/windows-native-gpu/verify_launcher_lifetime.py text eol=lf
+app/native_gpu_owner_windows.go text eol=lf
+app/native_gpu_owner_windows_test.go text eol=lf
+experimental/windows-native-gpu/go_owner_runtime_qemu.py text eol=lf
+experimental/windows-native-gpu/verify_go_native_owner.py text eol=lf
+app/native_gpu_profile_windows.go text eol=lf
+app/native_gpu_profile_windows_test.go text eol=lf
+experimental/windows-native-gpu/launcher_profile.h text eol=lf
+experimental/windows-native-gpu/launcher_profile_test.cpp text eol=lf
+experimental/windows-native-gpu/launcher_binding_fixture.cpp text eol=lf
+experimental/windows-native-gpu/test_launcher_profile.py text eol=lf
+experimental/windows-native-gpu/verify_launcher_profile.py text eol=lf

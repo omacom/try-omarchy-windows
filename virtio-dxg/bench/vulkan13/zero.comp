@@ -1,0 +1,6 @@
+#version 450
+#extension GL_EXT_null_initializer : require
+layout(local_size_x = 256) in;
+shared uint s[256] = {};
+layout(set = 0, binding = 0) buffer Out { uint o[]; };
+void main() { uint i = gl_LocalInvocationIndex; o[i] = s[255u - i] + 1u; }

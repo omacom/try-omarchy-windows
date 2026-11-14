@@ -1,0 +1,33 @@
+From ddf5738503e2ba6adb74359abf3b6e7aa81af420 Mon Sep 17 00:00:00 2001
+From: Fabiano Rosas <farosas@suse.de>
+Subject: [PATCH] chardev: Don't unregister yank upon async path connection failure
+
+Backport of upstream QEMU ddf5738503e2ba6adb74359abf3b6e7aa81af420.
+https://github.com/qemu/qemu/commit/ddf5738503e2ba6adb74359abf3b6e7aa81af420
+
+The pinned base registers the socket's yank function only after connection
+success. Removing it after an asynchronous connection failure aborts QEMU.
+Retain successful connection/disconnection and reconnect behavior.
+
+Signed-off-by: Fabiano Rosas <farosas@suse.de>
+Reviewed-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+---
+ chardev/char-socket.c | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/chardev/char-socket.c b/chardev/char-socket.c
+index e064b105c50b..99e01a4875a 100644
+--- a/chardev/char-socket.c
++++ b/chardev/char-socket.c
+@@ -1128,11 +1128,6 @@ static void qemu_chr_socket_connected(QIOTask *task, void *opaque)
+ 
+     if (qio_task_propagate_error(task, &err)) {
+         tcp_chr_change_state(s, TCP_CHARDEV_STATE_DISCONNECTED);
+-        if (s->registered_yank) {
+-            yank_unregister_function(CHARDEV_YANK_INSTANCE(chr->label),
+-                                     char_socket_yank_iochannel,
+-                                     QIO_CHANNEL(sioc));
+-        }
+         check_report_connect_error(chr, err);
+         goto cleanup;
+     }

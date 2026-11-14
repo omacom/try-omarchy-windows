@@ -1,0 +1,201 @@
+#!/usr/bin/ash
+# mkinitcpio late hook for virtio-dxg boots, added to the launcher's own
+# initramfs by mkdevinitramfs.py. Runs as root before the real root starts:
+# loads the guest module (it stays loaded after switch_root) and mounts the
+# shares the VM was started with:
+#
+#   wsllib       System32\lxss\lib (NVIDIA's dxgkrnl user-mode libraries)
+#   wslcore      Program Files\WSL\lib (libdxcore, libd3d12)
+#   wsldrivers   the DriverStore FileRepository, read-only, as under WSL2
+#   vdxgpayload  virtio-dxg's guest payload from the launcher (Mesa build)
+#   vdxgshare    development files and results (development VMs only)
+#   vdxgdrivers  NVIDIA's driver folder for Wine (development VMs only)
+#
+# Nothing is written to the guest's disk: everything the session needs is
+# under /run (a tmpfs that switch_root carries into the system), so a later
+# boot without virtio-dxg starts exactly as before.
+
+# mount_share TAG DIR [rw]: mounts the VM's 9p share TAG if it has one. A
+# mount point this creates for a share the VM does not have is removed
+# again, so the root file system keeps no trace of absent shares.
+mount_share() {
+    created=
+    [ -d "$2" ] || { mkdir -p "$2" && created=1; }
+    # Read-only shares (the driver files) do not change during a session:
+    # cache=loose keeps what was read in the guest's page cache, so every
+    # GPU application after the first loads NVIDIA's libraries (hundreds of
+    # MB) from memory instead of through QEMU's main loop, which also
+    # presents the display. The writable development share stays uncached
+    # (cache=mmap: mappable, always current).
+    cache=loose
+    [ "${3:-ro}" = ro ] || cache=mmap
+    if mount -t 9p -o "trans=virtio,version=9p2000.L,msize=1048576,cache=$cache,${3:-ro}" \
+            "$1" "$2" 2>/dev/null; then
+        echo ":: virtio-dxg: mounted $1 on $2"
+        return 0
+    fi
+    [ -n "$created" ] && rmdir "$2" 2>/dev/null
+    return 1
+}
+
+# Unpacks virtio-dxg's Mesa build into /run and writes the session
+# environment that selects it (systemd reads /run/environment.d).
+setup_desktop() {
+    m=/run/virtio-dxg-mesa
+    # Paths as the real system sees them (the tools below run in it).
+    tarball=
+    for f in /run/virtio-dxg/payload/mesa-virtio-dxg.tar \
+             /mnt/vdxgshare/out/mesa-virtio-dxg.tar; do
+        case $f in /run/*) src=$f ;; *) src=/new_root$f ;; esac
+        [ -f "$src" ] && { tarball=$f; break; }
+    done
+    if [ -z "$tarball" ]; then
+        echo ":: virtio-dxg: no Mesa build; the desktop stays on CPU rendering" >&2
+        return 1
+    fi
+    # The initramfs has no Python: use the real root's interpreter with
+    # this /run bound in. Only select a complete, hash-matched Mesa cohort.
+    mkdir -p /run/virtio-dxg || return 1
+    cp /virtio-dxg/desktop_payload.py /virtio-dxg/chromium-wrapper \
+        /virtio-dxg/mesa-recipe.json /run/virtio-dxg/ || return 1
+    mount -o bind /run /new_root/run || return 1
+    # Window buffers (the guest module offers them unless
+    # virtio_dxg.winbuf=0): applications hand the compositor GPU textures,
+    # and Chromium runs on the GPU as a native Wayland client. Without them
+    # applications use wl_shm, and Chromium needs its Xwayland wrapper.
+    winbuf=
+    # A disabled bool module parameter still has a sysfs file.
+    case "$(cat /sys/module/dxgkrnl_virtio/parameters/winbuf 2>/dev/null)" in
+    Y|1) winbuf=1 ;;
+    esac
+    case " $(cat /proc/cmdline) " in *" virtio_dxg.winbuf=0 "*) winbuf= ;; esac
+    browser=
+    case "$winbuf $(cat /proc/cmdline) " in
+    1*|*" virtio_dxg.chromium=wayland "*) ;;
+    *) browser='--browser-wrapper /run/virtio-dxg/chromium-wrapper' ;;
+    esac
+    # shellcheck disable=SC2086
+    if ! chroot /new_root /usr/bin/python3 /run/virtio-dxg/desktop_payload.py \
+            "$tarball" "$m" --recipe /run/virtio-dxg/mesa-recipe.json $browser; then
+        umount /new_root/run
+        echo ":: virtio-dxg: Mesa payload rejected; GPU environment not selected" >&2
+        return 1
+    fi
+    umount /new_root/run || return 1
+
+    mkdir -p /run/environment.d || return 1
+    # The compositor renders on d3d12 into KMS-mirrored scanout buffers.
+    # Applications: with window buffers, Mesa's KMS winsys on the render
+    # node (MESA_LOADER_DRIVER_OVERRIDE: the node's own driver, virtio_gpu,
+    # does not exist), whose GBM buffers are GPU textures the compositor
+    # samples directly; otherwise Mesa's software winsys (wl_shm buffers)
+    # with d3d12 rendering, as under WSLg. NVIDIA's libraries come from
+    # the shares.
+    # Xwayland's glamor allocates window pixmaps through GBM on the render
+    # node. With window buffers that works (X11 windows and DRI3 clients
+    # are zero-copy too); without them X11 windows would never reach the
+    # compositor, so glamor is off and they go as wl_shm buffers (X11
+    # applications' own OpenGL still renders on d3d12).
+    # Vulkan: Dozen is added to the drivers the loader finds (it lists the
+    # GPU ahead of llvmpipe). VK_DRIVER_FILES would replace the search, and
+    # Wine passes the session's environment to Windows programs, whose
+    # Vulkan loader would then ignore its registered drivers (dxgvk).
+    if [ -n "$winbuf" ]; then
+        clients=MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
+        xwayland=       # an empty line in the file
+    else
+        clients=LIBGL_ALWAYS_SOFTWARE=1
+        xwayland=XWAYLAND_NO_GLAMOR=1
+    fi
+    printf '%s\n' GALLIUM_DRIVER=d3d12 "$clients" "$xwayland" \
+        MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA LIBVA_DRIVER_NAME=d3d12 \
+        "LD_LIBRARY_PATH=$m/lib:/usr/lib/wsl/lib:/usr/lib/wsl/core" \
+        "LIBGL_DRIVERS_PATH=$m/lib/dri" "GBM_BACKENDS_PATH=$m/lib/gbm" \
+        "LIBVA_DRIVERS_PATH=$m/lib/dri" \
+        "VK_ADD_DRIVER_FILES=$m/share/vulkan/icd.d/dzn_icd.x86_64.json" \
+        >/run/environment.d/90-virtio-dxg.conf.pending || return 1
+    mv /run/environment.d/90-virtio-dxg.conf.pending \
+        /run/environment.d/90-virtio-dxg.conf || return 1
+    # The payload helper prepares both PATH and desktop-menu launch paths.
+    # Chromium retains its sandbox. Known-broken VA-API encode is disabled
+    # in that wrapper; hardware decode and full browser acceptance are open.
+    echo ":: virtio-dxg: desktop selects d3d12 (Mesa $(cat "$m/lib/virtio-dxg-mesa-version")${winbuf:+, zero-copy windows})"
+}
+
+# System tools (lspci, fastfetch, desktop info) name PCI devices from the
+# PCI ID database, which knows virtio-dxg (1af4:107e) at best as a virtio
+# device. Give them the host GPU's own name, in a copy under /run mounted
+# over the database for this boot only.
+setup_gpu_name() {
+    ids=/new_root/usr/share/hwdata/pci.ids
+    name=$(cat /sys/module/dxgkrnl_virtio/parameters/gpu_name 2>/dev/null)
+    [ -n "$name" ] && [ -f "$ids" ] || return 0
+    mkdir -p /run/virtio-dxg
+    awk -v name="$name" '
+        /^1af4  / && !done { print; print "\t107e  " name; done = 1; next }
+        /^\t107e  / && done == 1 { next }
+        /^[0-9a-f]/ && done == 1 { done = 2 }
+        { print }' "$ids" >/run/virtio-dxg/pci.ids &&
+        mount -o bind,ro /run/virtio-dxg/pci.ids "$ids" &&
+        echo ":: virtio-dxg: GPU is $name"
+}
+
+run_latehook() {
+    # dxgkrnl_virtio.<param>=<value> on the kernel command line, as
+    # modprobe would pass them (busybox insmod does not read it).
+    params=
+    for arg in $(cat /proc/cmdline); do
+        case $arg in dxgkrnl_virtio.*) params="$params ${arg#dxgkrnl_virtio.}" ;; esac
+    done
+    # shellcheck disable=SC2086
+    if insmod /virtio-dxg/dxgkrnl_virtio.ko $params; then
+        echo ":: virtio-dxg: dxgkrnl_virtio loaded"
+    else
+        echo ":: virtio-dxg: loading dxgkrnl_virtio failed" >&2
+        return
+    fi
+    # Wine 11 makes one 32 GiB address-space reservation that the default
+    # overcommit heuristic refuses in an 8 GiB guest.
+    echo 1 >/proc/sys/vm/overcommit_memory
+    modprobe -q 9pnet_virtio
+    modprobe -q 9p
+    # NVIDIA's libraries look for the driver store at /usr/lib/wsl/drivers.
+    mount_share wsllib /new_root/usr/lib/wsl/lib
+    mount_share wslcore /new_root/usr/lib/wsl/core
+    mount_share wsldrivers /new_root/usr/lib/wsl/drivers
+    mount_share vdxgpayload /run/virtio-dxg/payload
+    mount_share vdxgshare /new_root/mnt/vdxgshare rw
+    mount_share vdxgdrivers /new_root/mnt/vdxgdrivers
+
+    setup_gpu_name
+    case " $(cat /proc/cmdline) " in
+    *" virtio_dxg.desktop=1 "*) setup_desktop ;;
+    esac
+
+    # virtio_dxg.root=1 (development VMs with a snapshot disk only): run
+    # vdxgshare/root.sh as root once the network is up.
+    case " $(cat /proc/cmdline) " in
+    *" virtio_dxg.root=1 "*)
+        mkdir -p /run/systemd/system/multi-user.target.wants
+        cat >/run/systemd/system/virtio-dxg-root.service <<'EOF'
+[Unit]
+Description=virtio-dxg development root script
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/bin/bash /mnt/vdxgshare/root.sh >/mnt/vdxgshare/out/root.log 2>&1'
+EOF
+        ln -sf ../virtio-dxg-root.service \
+            /run/systemd/system/multi-user.target.wants/
+        ;;
+    esac
+    # Development VMs: the account the per-boot SSH authorizes (same rule
+    # as the launcher's request-sshd), so the host test knows whom to use.
+    if [ -d /new_root/mnt/vdxgshare/out ]; then
+        awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /nologin|false/ {
+            print $1; exit }' /new_root/etc/passwd \
+            >/new_root/mnt/vdxgshare/out/account
+    fi
+}

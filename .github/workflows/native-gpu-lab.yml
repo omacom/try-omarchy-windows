@@ -1,0 +1,475 @@
+name: Native GPU experiment
+on:
+  workflow_dispatch:
+  push:
+    branches: [master, windows-nvgpu-lab]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: native-gpu-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  guest-kernel-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Compile the guest aperture driver; never load it on the runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends linux-headers-generic
+          headers=$(printf '%s\n' /usr/src/linux-headers-*-generic | sort -V | tail -n 1)
+          sh experimental/windows-native-gpu/build_guest_aperture.sh "$headers" "$RUNNER_TEMP/wddm-guest-kernel"
+          sh experimental/windows-native-gpu/build_guest_render.sh "$headers" "$RUNNER_TEMP/wddm-render-kernel"
+  windows-build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - shell: pwsh
+        run: |
+          scripts/fork/build.ps1
+          experimental/windows-native-gpu/build.ps1
+          python experimental/windows-native-gpu/test_launcher_graphics_arguments.py --go (Get-Command go).Source --composer-test experimental/windows-native-gpu/build/qemu-launcher-arguments-test.exe --output (Join-Path $env:RUNNER_TEMP 'native-launcher-arguments')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_driver_cli.py --bridge experimental/windows-native-gpu/build/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_launcher_lifetime_cli.py --bridge experimental/windows-native-gpu/build/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_launcher_lifetime_protocol.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_sdl_failure_cli.py --bridge experimental/windows-native-gpu/build/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_graphics_trace_cli.py --bridge experimental/windows-native-gpu/build/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_deferred_residency_cli.py --bridge experimental/windows-native-gpu/build/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_coordinator_cli.py --bridge experimental/windows-native-gpu/build/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_native_stream_cli.py --probe experimental/windows-native-gpu/build/native-stream-probe.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          experimental/windows-native-gpu/build.ps1 -HighResolutionDiagnostic
+          python experimental/windows-native-gpu/test_4k_cli.py --bridge experimental/windows-native-gpu/build-4k/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_launcher_lifetime_cli.py --bridge experimental/windows-native-gpu/build-4k/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_sdl_failure_cli.py --bridge experimental/windows-native-gpu/build-4k/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_graphics_trace_cli.py --bridge experimental/windows-native-gpu/build-4k/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_deferred_residency_cli.py --bridge experimental/windows-native-gpu/build-4k/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_coordinator_cli.py --bridge experimental/windows-native-gpu/build-4k/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $profileGoHost = Join-Path $env:RUNNER_TEMP 'launcher-profile-go.test.exe'
+          go -C app test -c -o $profileGoHost .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_launcher_profile.py --go-host $profileGoHost --native-probe experimental/windows-native-gpu/build-4k/launcher-profile-test.exe --binding-fixture experimental/windows-native-gpu/build-4k/launcher-binding-fixture.exe --bridge experimental/windows-native-gpu/build-4k/driver-bridge.exe --default-bridge experimental/windows-native-gpu/build/driver-bridge.exe --output (Join-Path $env:RUNNER_TEMP 'launcher-profile-controls')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python experimental/windows-native-gpu/test_native_stream_cli.py --probe experimental/windows-native-gpu/build-4k/native-stream-probe.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          experimental/windows-native-gpu/build.ps1 -StreamingDiagnostic
+          python experimental/windows-native-gpu/test_4k_cli.py --bridge experimental/windows-native-gpu/build-stream/driver-bridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          experimental/windows-native-gpu/sdl-interop/build.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'sdl-d3d12-interop')
+          experimental/windows-native-gpu/sdl-relay-producer/build.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'd3d12-named-producer')
+          python experimental/windows-native-gpu/sdl-relay-producer/test_cli.py --producer (Join-Path $env:RUNNER_TEMP 'd3d12-named-producer/d3d12-named-producer.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-gpu-experiment
+          path: |
+            experimental/windows-native-gpu/build/native-gpu.exe
+            experimental/windows-native-gpu/build/driver-bridge.exe
+            experimental/windows-native-gpu/build/rgba-oracle.exe
+            experimental/windows-native-gpu/build/native-stream-probe.exe
+            experimental/windows-native-gpu/build-4k/driver-bridge.exe
+            experimental/windows-native-gpu/build-4k/native-stream-probe.exe
+            experimental/windows-native-gpu/build-4k/rgba-oracle.exe
+            experimental/windows-native-gpu/build-stream/driver-bridge.exe
+            experimental/windows-native-gpu/build-stream/rgba-oracle.exe
+            experimental/windows-native-gpu/build/nlohmann-json-LICENSE.MIT
+            dist/TryOmarchy-7Wdev.exe
+  milestone-replays:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Compile the independent pixel oracle
+        run: c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/rgba_oracle.cpp -o /tmp/rgba-oracle
+      - name: Replay every milestone module in this partition
+        run: python3 experimental/windows-native-gpu/run_milestone_checks.py --shard-index ${{ matrix.shard }} --shard-count 4
+  portable-checks:
+    runs-on: ubuntu-latest
+    # Archived GPU-buffer replays run separately so they cannot starve builds.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Read the pinned pre-fix teardown header
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 0a2dea044fdbb429055077c939f88d99eee39547
+          path: .teardown-baseline
+          sparse-checkout: experimental/windows-native-gpu/driver_wire.h
+          sparse-checkout-cone-mode: false
+      - name: Compare teardown failure paths using CPU-only mock drivers
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 experimental/windows-native-gpu/test_teardown_parent_guard.py --baseline-header .teardown-baseline/experimental/windows-native-gpu/driver_wire.h --output "$RUNNER_TEMP/teardown-parent-controls"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: teardown-parent-cpu-controls
+          path: |
+            ${{ runner.temp }}/teardown-parent-controls/result.json
+            ${{ runner.temp }}/teardown-parent-controls/*.txt
+          retention-days: 14
+      - name: Check named graphics port discovery without opening devices
+        run: |
+          sudo python3 experimental/windows-native-gpu/test_guest_graphics_port.py --device-fixtures -v
+          python3 experimental/windows-native-gpu/launcher-guest-bootstrap/generate.py "$RUNNER_TEMP/launcher-guest-bootstrap"
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iexperimental/windows-native-gpu "$RUNNER_TEMP/launcher-guest-bootstrap/normal_root_graphics_service.c" -o "$RUNNER_TEMP/launcher-guest-bootstrap/service"
+      - name: Check guest trace preservation and bounded progress reads
+        run: |
+          python3 experimental/windows-native-gpu/test_guest_bridge_log.py
+          python3 experimental/windows-native-gpu/test_guest_progress_snapshot.py
+          python3 experimental/windows-native-gpu/test_launcher_guest_broker_session.py
+          python3 experimental/windows-native-gpu/test_normal_session_bootstrap.py --output "$RUNNER_TEMP/normal-session-bootstrap-controls"
+          python3 experimental/windows-native-gpu/test_hyprland_session.py --output "$RUNNER_TEMP/hyprland-session-controls"
+          python3 experimental/windows-native-gpu/test_hyprland_session_entry.py
+          python3 experimental/windows-native-gpu/test_browser_target_retirement.py
+          python3 experimental/windows-native-gpu/test_sustained_terminal_pulse.py
+          python3 experimental/windows-native-gpu/test_normal_scene_gate.py
+          python3 experimental/windows-native-gpu/test_qmp_deadline_contract.py
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/qmp_deadline_budget_test.cpp -o /tmp/qmp-deadline-budget-test
+          /tmp/qmp-deadline-budget-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/qmp_relay_transaction_test.cpp -o /tmp/qmp-relay-transaction-test
+          /tmp/qmp-relay-transaction-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/stopped_group_retirement_poll_test.cpp -o /tmp/stopped-group-retirement-poll-test
+          /tmp/stopped-group-retirement-poll-test
+      - name: Check bounded SDL relay host command grammar
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror experimental/qemu/sdl_command_test.c -o /tmp/sdl-command-test
+          /tmp/sdl-command-test
+          cc -std=c11 -O2 -Wall -Wextra -Werror experimental/qemu/sdl_boot_test.c -o /tmp/sdl-boot-test
+          /tmp/sdl-boot-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/framed_write_test.cpp -o /tmp/framed-write-test
+          /tmp/framed-write-test
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: microsoft/DirectX-Headers
+          ref: adbd6f3ba40795c46a8d0f33af00bcb57ff0f0a4
+          path: .runtime-headers
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: microsoft/libdxg
+          ref: 5c28ebb4ead460c23ec5e87decb7d1af7285bb59
+          path: .runtime-dxg
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: hyprwm/aquamarine
+          ref: f31c47a1b9d300847d8fc3108ad959448103dfc1
+          path: .aquamarine-native-check
+      - name: Check the pinned Aquamarine prototype and startup observer source
+        run: |
+          python3 experimental/windows-native-gpu/apply_aquamarine_native_render_patch.py .aquamarine-native-check
+          python3 experimental/windows-native-gpu/apply_aquamarine_native_render_patch.py .aquamarine-native-check
+          python3 experimental/windows-native-gpu/apply_aquamarine_native_render_patch.py .aquamarine-native-check --patch logging-lifetime
+          python3 experimental/windows-native-gpu/apply_aquamarine_native_render_patch.py .aquamarine-native-check --patch logging-lifetime
+          python3 experimental/windows-native-gpu/apply_aquamarine_native_input_patch.py .aquamarine-native-check
+          python3 experimental/windows-native-gpu/apply_aquamarine_native_input_patch.py .aquamarine-native-check
+          python3 experimental/windows-native-gpu/test_aquamarine_input_patch.py .aquamarine-native-check "$RUNNER_TEMP/aquamarine-input-controls"
+          python3 experimental/windows-native-gpu/test_aquamarine_session.py .aquamarine-native-check "$RUNNER_TEMP/aquamarine-session-controls"
+          python3 experimental/windows-native-gpu/test_aquamarine_session_selection.py "$RUNNER_TEMP/aquamarine-session-controls/source" "$RUNNER_TEMP/aquamarine-session-selection-controls"
+          cc -std=c11 -O2 -Wall -Wextra -Werror -shared -fPIC experimental/windows-native-gpu/hyprland_startup_probe.c -ldl -pthread -o /tmp/hyprland-startup-probe.so
+          cc -std=c11 -O2 -Wall -Wextra -Werror -DWDDM_BRIDGE_COMPOSITOR_HOST_CAPTURE=1 -shared -fPIC experimental/windows-native-gpu/hyprland_startup_probe.c -ldl -pthread -o /tmp/hyprland-capture-probe.so
+          cc -std=c11 -O2 -Wall -Wextra -Werror -DWDDM_BRIDGE_COMPOSITOR_HOST_PRESENT=1 -shared -fPIC experimental/windows-native-gpu/hyprland_startup_probe.c -ldl -pthread -o /tmp/hyprland-present-probe.so
+          cc -std=c11 -O2 -Wall -Wextra -Werror -DWDDM_BRIDGE_COMPOSITOR_HOST_PRESENT=1 -DWDDM_BRIDGE_COMPOSITOR_HOST_SCENE=1 -shared -fPIC experimental/windows-native-gpu/hyprland_startup_probe.c -ldl -pthread -o /tmp/hyprland-scene-probe.so
+          cc -std=c11 -O2 -Wall -Wextra -Werror -DWDDM_BRIDGE_COMPOSITOR_HOST_PRESENT=1 -DWDDM_BRIDGE_COMPOSITOR_HOST_SCENE=1 -DHYPRLAND_QUEUE_FRAMES=300 -shared -fPIC experimental/windows-native-gpu/hyprland_startup_probe.c -ldl -pthread -o /tmp/hyprland-scene-300-probe.so
+          cc -std=c11 -O2 -Wall -Wextra -Werror -DWDDM_BRIDGE_COMPOSITOR_HOST_PRESENT=1 -DWDDM_BRIDGE_COMPOSITOR_HOST_SCENE=1 -DWDDM_BRIDGE_DESKTOP_RESIZE_PROBE=1 -DHYPRLAND_QUEUE_FRAMES=300 -shared -fPIC experimental/windows-native-gpu/hyprland_startup_probe.c -ldl -pthread -o /tmp/hyprland-resize-300-probe.so
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/atomic_line_log_test.cpp -o /tmp/atomic-line-log-test
+          /tmp/atomic-line-log-test
+      - run: |
+          c++ -std=c++17 -Wall -Wextra -Werror experimental/windows-native-gpu/wire_test.cpp -o /tmp/native-wire-test
+          /tmp/native-wire-test
+          c++ -std=c++17 -Wall -Wextra -Werror experimental/windows-native-gpu/driver_wire_test.cpp -o /tmp/driver-wire-test
+          c++ -std=c++17 -Wall -Wextra -Werror experimental/windows-native-gpu/native_resource_preparation_test.cpp -o /tmp/native-resource-preparation-test
+          /tmp/native-resource-preparation-test
+          c++ -std=c++17 -Wall -Wextra -Werror experimental/windows-native-gpu/native_buffer_preparation_test.cpp -o /tmp/native-buffer-preparation-test
+          /tmp/native-buffer-preparation-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/native_metadata_attempt_test.cpp -o /tmp/native-metadata-attempt-test
+          /tmp/native-metadata-attempt-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/qemu_graphics_arguments_test.cpp -o /tmp/qemu-graphics-arguments-test
+          /tmp/qemu-graphics-arguments-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/native_buffer_admission_reply_test.cpp -o /tmp/native-buffer-admission-reply-test
+          /tmp/native-buffer-admission-reply-test
+          c++ -std=c++17 -Wall -Wextra -Werror experimental/windows-native-gpu/guest_eventfd_handle_test.cpp -o /tmp/guest-eventfd-handle-test
+          /tmp/guest-eventfd-handle-test
+          /tmp/driver-wire-test
+          c++ -std=c++17 -Wall -Wextra -Werror experimental/windows-native-gpu/driver_actor_router_test.cpp -o /tmp/driver-actor-router-test
+          /tmp/driver-actor-router-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/driver_coordinator_test.cpp -o /tmp/driver-coordinator-test
+          /tmp/driver-coordinator-test
+          c++ -std=c++17 -Wall -Wextra -Werror experimental/windows-native-gpu/sync_sharing_wire_test.cpp -o /tmp/sync-sharing-wire-test
+          /tmp/sync-sharing-wire-test
+          c++ -std=c++17 -Wall -Wextra -Werror experimental/windows-native-gpu/native_worker_protocol_test.cpp -o /tmp/native-worker-protocol-test
+          /tmp/native-worker-protocol-test
+          c++ -std=c++17 -Wall -Wextra -Werror experimental/windows-native-gpu/cpu_aperture_test.cpp -o /tmp/cpu-aperture-test
+          /tmp/cpu-aperture-test
+          c++ -std=c++17 -Wall -Wextra -Werror -DWDDM_BRIDGE_4K_LAB=1 experimental/windows-native-gpu/cpu_capacity_test.cpp -o /tmp/cpu-capacity-test
+          /tmp/cpu-capacity-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/compositor_audit_tiles_test.cpp -o /tmp/compositor-audit-tiles-test
+          /tmp/compositor-audit-tiles-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -shared -fPIC experimental/windows-native-gpu/guest_broker_finalizer_probe.cpp -o /tmp/broker-finalizer.so
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/guest_broker_peer_test.cpp -ldl -o /tmp/broker-peer-test
+          /tmp/broker-peer-test /tmp/broker-finalizer.so
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/guest_aperture_info_test.cpp -o /tmp/guest-aperture-info-test
+          sudo /tmp/guest-aperture-info-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -DWDDM_BRIDGE_4K_LAB=1 -DWDDM_BRIDGE_MANAGED_GPUVA=1 -DWDDM_BRIDGE_WIDE_KERNEL_LEASES=1 -DWDDM_BRIDGE_FOUR_ACTOR_OBJECTS=1 -DWDDM_BRIDGE_MULTIAPP_CPU=1 experimental/windows-native-gpu/guest_aperture_info_test.cpp -o /tmp/guest-aperture-info-multiapp-test
+          sudo /tmp/guest-aperture-info-multiapp-test
+          cc -std=c11 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/guest_trace_line_test.c -o /tmp/guest-trace-line-test
+          python3 experimental/windows-native-gpu/test_interactive_frame_probe.py -v
+          sudo python3 experimental/windows-native-gpu/test_guest_direct_read_probe.py -v
+          python3 experimental/windows-native-gpu/test_broker_runtime_evidence.py -v
+          python3 experimental/windows-native-gpu/test_background_shader_evidence.py -v
+          python3 experimental/windows-native-gpu/test_async_cpu_wait_evidence.py -v
+          python3 experimental/windows-native-gpu/test_vulkan_memory_fd_evidence.py -v
+          python3 experimental/windows-native-gpu/test_vulkan_memory_roundtrip_evidence.py -v
+          python3 experimental/windows-native-gpu/test_vulkan_typed_buffer_evidence.py -v
+          python3 experimental/windows-native-gpu/test_vulkan_gpu_pressure_evidence.py -v
+          python3 experimental/windows-native-gpu/mesa/test_dozen_memory_fd_evidence.py -v
+          python3 experimental/windows-native-gpu/mesa/test_dozen_memory_fd_import_evidence.py -v
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/shared_buffer_profile_test.cpp -o /tmp/shared-buffer-profile-test
+          /tmp/shared-buffer-profile-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/imported_gpuva_profile_test.cpp -o /tmp/imported-gpuva-profile-test
+          /tmp/imported-gpuva-profile-test
+          /tmp/guest-trace-line-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/guest_primary_identity_test.cpp -o /tmp/guest-primary-identity-test
+          sudo install -o root -g root -m 0755 /tmp/guest-primary-identity-test /tmp/guest-primary-identity-owned-test
+          sudo /tmp/guest-primary-identity-owned-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/guest_broker_session_test.cpp -o /tmp/guest-broker-session-test
+          sudo install -o root -g root -m 0755 /tmp/guest-broker-session-test /tmp/guest-broker-session-owned-test
+          sudo /tmp/guest-broker-session-owned-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/guest_retirement_witness_test.cpp -o /tmp/guest-retirement-witness-test
+          sudo install -o root -g root -m 0755 /tmp/guest-retirement-witness-test /tmp/guest-retirement-witness-owned-test
+          sudo /tmp/guest-retirement-witness-owned-test
+          sudo python3 experimental/windows-native-gpu/test_session_exec.py --output "$RUNNER_TEMP/native-session-exec-controls"
+          sudo python3 experimental/windows-native-gpu/test_root_session_service.py --output "$RUNNER_TEMP/root-session-service-controls"
+          cc -std=c11 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/uwsm_environment_test.c -o /tmp/uwsm-environment-test
+          /tmp/uwsm-environment-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/guest_graphics_broker.cpp -o /tmp/guest-graphics-broker
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -DWDDM_BRIDGE_4K_LAB=1 -DWDDM_BRIDGE_MANAGED_GPUVA=1 -DWDDM_BRIDGE_WIDE_KERNEL_LEASES=1 experimental/windows-native-gpu/guest_graphics_broker.cpp -o /tmp/guest-graphics-broker-wide
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -DWDDM_BRIDGE_4K_LAB=1 -DWDDM_BRIDGE_MANAGED_GPUVA=1 -DWDDM_BRIDGE_WIDE_KERNEL_LEASES=1 -DWDDM_BRIDGE_FOUR_ACTOR_OBJECTS=1 experimental/windows-native-gpu/guest_graphics_broker.cpp -o /tmp/guest-graphics-broker-four
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -DWDDM_BRIDGE_4K_LAB=1 -DWDDM_BRIDGE_MANAGED_GPUVA=1 -DWDDM_BRIDGE_WIDE_KERNEL_LEASES=1 -DWDDM_BRIDGE_FOUR_ACTOR_OBJECTS=1 -DWDDM_BRIDGE_MULTIAPP_CPU=1 experimental/windows-native-gpu/guest_graphics_broker.cpp -o /tmp/guest-graphics-broker-multiapp
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/diagnostic_alias_refusal_test.cpp -o /tmp/diagnostic-alias-refusal-test
+          /tmp/diagnostic-alias-refusal-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -DWDDM_BRIDGE_4K_LAB=1 -DWDDM_BRIDGE_MANAGED_GPUVA=1 -DWDDM_BRIDGE_WIDE_KERNEL_LEASES=1 -DWDDM_BRIDGE_FOUR_ACTOR_OBJECTS=1 -DWDDM_BRIDGE_MULTIAPP_CPU=1 -DWDDM_BRIDGE_DIAGNOSTIC_ALIAS_REFUSAL_FRAME=100 experimental/windows-native-gpu/guest_graphics_broker.cpp -o /tmp/guest-graphics-broker-diagnostic-alias
+          python3 -c "from pathlib import Path; marker=b'BROKER_DIAGNOSTIC_ALIAS_REFUSAL_'; assert marker not in Path('/tmp/guest-graphics-broker-multiapp').read_bytes(); assert marker in Path('/tmp/guest-graphics-broker-diagnostic-alias').read_bytes()"
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/guest_broker_routing_test.cpp -o /tmp/broker-routing-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/guest_broker_objects_test.cpp -o /tmp/broker-objects-test
+          sudo /tmp/broker-objects-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -DWDDM_BRIDGE_4K_LAB=1 experimental/windows-native-gpu/guest_broker_objects_test.cpp -o /tmp/broker-objects-4k-test
+          sudo /tmp/broker-objects-4k-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/guest_coordinator_test.cpp -o /tmp/guest-coordinator-test
+          /tmp/guest-coordinator-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -DWDDM_BRIDGE_4K_LAB=1 -DWDDM_BRIDGE_MANAGED_GPUVA=1 -DWDDM_BRIDGE_WIDE_KERNEL_LEASES=1 -DWDDM_BRIDGE_FOUR_ACTOR_OBJECTS=1 -DWDDM_BRIDGE_MULTIAPP_CPU=1 experimental/windows-native-gpu/guest_coordinator_test.cpp -o /tmp/guest-coordinator-multiapp-test
+          /tmp/guest-coordinator-multiapp-test
+          application_gpu_flags=(-DWDDM_BRIDGE_4K_LAB=1 -DWDDM_BRIDGE_MANAGED_GPUVA=1 -DWDDM_BRIDGE_WIDE_KERNEL_LEASES=1 -DWDDM_BRIDGE_FOUR_ACTOR_OBJECTS=1 -DWDDM_BRIDGE_MULTIAPP_CPU=1 -DWDDM_BRIDGE_APPLICATION_ACTORS=1 -DWDDM_BRIDGE_APPLICATION_REFERENCES=1)
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread "${application_gpu_flags[@]}" experimental/windows-native-gpu/guest_coordinator_test.cpp -o /tmp/guest-coordinator-application-test
+          /tmp/guest-coordinator-application-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread "${application_gpu_flags[@]}" experimental/windows-native-gpu/guest_graphics_broker.cpp -o /tmp/guest-graphics-broker-application
+          c++ -std=c++17 -Wall -Wextra -Werror "${application_gpu_flags[@]}" -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include -shared -fPIC experimental/windows-native-gpu/linux_ioctl_bridge.cpp -pthread -o /tmp/linux-ioctl-bridge-application.so
+          application_memory_flags=("${application_gpu_flags[@]}" -DWDDM_BRIDGE_APPLICATION_MEMORY=1)
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread "${application_memory_flags[@]}" experimental/windows-native-gpu/guest_coordinator_test.cpp -o /tmp/guest-coordinator-application-memory-test
+          /tmp/guest-coordinator-application-memory-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread "${application_memory_flags[@]}" experimental/windows-native-gpu/guest_graphics_broker.cpp -o /tmp/guest-graphics-broker-application-memory
+          c++ -std=c++17 -Wall -Wextra -Werror "${application_memory_flags[@]}" -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include -shared -fPIC experimental/windows-native-gpu/linux_ioctl_bridge.cpp -pthread -o /tmp/linux-ioctl-bridge-application-memory.so
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/guest_broker_receipts_test.cpp -o /tmp/guest-broker-receipts-test
+          /tmp/guest-broker-receipts-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/bounded_gpu_retirement_wait_test.cpp -o /tmp/bounded-gpu-retirement-wait-test
+          /tmp/bounded-gpu-retirement-wait-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/checked_fence_completion_test.cpp -o /tmp/checked-fence-completion-test
+          /tmp/checked-fence-completion-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/deferred_residency_test.cpp -o /tmp/deferred-residency-test
+          /tmp/deferred-residency-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/mapped_residency_admission_test.cpp -o /tmp/mapped-residency-admission-test
+          /tmp/mapped-residency-admission-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/application_memory_profile_test.cpp -o /tmp/application-memory-profile-test
+          /tmp/application-memory-profile-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/gpu_mapping_accounting_test.cpp -o /tmp/gpu-mapping-accounting-test
+          /tmp/gpu-mapping-accounting-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/fair_rpc_mutex_test.cpp -o /tmp/fair-rpc-mutex-test
+          /tmp/fair-rpc-mutex-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/diagnostic_profile_test.cpp -o /tmp/profile-test
+          /tmp/profile-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -DWDDM_BRIDGE_4K_LAB=1 experimental/windows-native-gpu/diagnostic_profile_test.cpp -o /tmp/profile-4k-test
+          /tmp/profile-4k-test
+          cc -std=c11 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/virtio-trace-probe/trace_control.c -o /tmp/virtio-trace-control
+          /tmp/virtio-trace-control
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/aggregate_gpu_budget_test.cpp -o /tmp/aggregate-gpu-budget-test
+          /tmp/aggregate-gpu-budget-test
+          python3 -m unittest discover -s experimental/windows-native-gpu -p 'test_opengl_packaging.py'
+          c++ -std=c++17 -Wall -Wextra -Werror experimental/windows-native-gpu/qmp_protocol_test.cpp -o /tmp/qmp-protocol-test
+          /tmp/qmp-protocol-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread experimental/windows-native-gpu/bounded_input_channel_test.cpp -o /tmp/bounded-input-channel-test
+          /tmp/bounded-input-channel-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/staging_reclaim_test.cpp -o /tmp/staging-reclaim-test
+          /tmp/staging-reclaim-test
+          python3 -m unittest discover -s experimental/windows-native-gpu -p 'test_staging_reclaim_policy.py'
+          sh experimental/windows-native-gpu/build_guest.sh
+          python3 -m unittest discover -s scripts/fork -p 'test_*.py'
+          cc -std=c11 -Wall -Wextra -Werror experimental/qemu/fence_map_test.c -o /tmp/fence-map-test
+          /tmp/fence-map-test
+          cc -std=c11 -Wall -Wextra -Werror experimental/qemu/allocation_map_test.c -o /tmp/allocation-map-test
+          /tmp/allocation-map-test
+      - name: Linux runtime bridge fault tests (no vendor binaries or hardware)
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include -shared -fPIC experimental/windows-native-gpu/linux_ioctl_bridge.cpp -pthread -o /tmp/linux-ioctl-bridge.so
+          c++ -std=c++17 -Wall -Wextra -Werror -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include experimental/windows-native-gpu/linux_ioctl_bridge_test.cpp -ldl -o /tmp/linux-ioctl-bridge-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -DWDDM_BRIDGE_SAMPLED_DIRECT_READS=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include -shared -fPIC experimental/windows-native-gpu/linux_ioctl_bridge.cpp -pthread -o /tmp/linux-ioctl-bridge-sampled.so
+          python3 experimental/windows-native-gpu/test_linux_ioctl_bridge.py --shim /tmp/linux-ioctl-bridge-sampled.so --probe /tmp/linux-ioctl-bridge-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include experimental/windows-native-gpu/guest_broker_shim_probe.cpp -o /tmp/broker-shim-probe
+          sudo /tmp/broker-routing-test /tmp/broker-shim-probe /tmp/linux-ioctl-bridge.so
+          c++ -std=c++17 -Wall -Wextra -Werror -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -c experimental/windows-native-gpu/umd_context_probe.cpp -o /tmp/runtime-probe.o
+          c++ -std=c++17 -Wall -Wextra -Werror -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include -c experimental/windows-native-gpu/sync_fd_probe.cpp -o /tmp/sync-fd-probe.o
+          c++ -std=c++17 -Wall -Wextra -Werror -shared -fPIC -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include experimental/windows-native-gpu/exit_lifetime_probe.cpp -o /tmp/exit-lifetime-probe.so
+          c++ -std=c++17 -Wall -Wextra -Werror -DWDDM_BRIDGE_4K_LAB=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include -shared -fPIC experimental/windows-native-gpu/linux_ioctl_bridge.cpp -pthread -o /tmp/linux-ioctl-bridge-4k.so
+          python3 experimental/windows-native-gpu/test_idle_preload.py --shim /tmp/linux-ioctl-bridge-4k.so
+          c++ -std=c++17 -Wall -Wextra -Werror -DWDDM_BRIDGE_4K_LAB=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -c experimental/windows-native-gpu/umd_context_probe.cpp -o /tmp/runtime-probe-4k.o
+          c++ -std=c++17 -Wall -Wextra -Werror -DWDDM_BRIDGE_4K_LAB=1 -DWDDM_BRIDGE_TEST_GPU_TIMELINE=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -c experimental/windows-native-gpu/umd_context_probe.cpp -o /tmp/runtime-probe-timeline.o
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -DWDDM_BRIDGE_4K_LAB=1 -DWDDM_BRIDGE_MANAGED_GPUVA=1 -DWDDM_BRIDGE_WIDE_KERNEL_LEASES=1 -DWDDM_BRIDGE_FOUR_ACTOR_OBJECTS=1 -DWDDM_BRIDGE_MULTIAPP_CPU=1 -DWDDM_BRIDGE_ASYNC_CPU_WAITS=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include -shared -fPIC experimental/windows-native-gpu/linux_ioctl_bridge.cpp -pthread -o /tmp/linux-ioctl-bridge-async-cpu.so
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/guest_eventfd_preload_test.cpp -o /tmp/guest-eventfd-preload-test
+          LD_PRELOAD=/tmp/linux-ioctl-bridge.so /tmp/guest-eventfd-preload-test 0
+          LD_PRELOAD=/tmp/linux-ioctl-bridge-async-cpu.so /tmp/guest-eventfd-preload-test 1
+          c++ -std=c++17 -Wall -Wextra -Werror -DWDDM_BRIDGE_TEST_ASYNC_CPU_WAITS=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -c experimental/windows-native-gpu/umd_context_probe.cpp -o /tmp/runtime-probe-async-cpu.o
+          c++ -std=c++17 -Wall -Wextra -Werror -DWDDM_BRIDGE_TEST_ASYNC_CPU_WAITS=1 -DWDDM_BRIDGE_TEST_ASYNC_EXIT=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -c experimental/windows-native-gpu/umd_context_probe.cpp -o /tmp/runtime-probe-async-exit.o
+          python3 experimental/windows-native-gpu/test_linux_ioctl_bridge.py --shim /tmp/linux-ioctl-bridge.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_opengl_transport.py --disabled-profile --shim /tmp/linux-ioctl-bridge.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_opengl_transport.py --disabled-profile --extended-profile --shim /tmp/linux-ioctl-bridge.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_opengl_transport.py --disabled-profile --compositor-profile --shim /tmp/linux-ioctl-bridge.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_opengl_transport.py --disabled-profile --compositor-render-profile --shim /tmp/linux-ioctl-bridge.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_opengl_transport.py --disabled-profile --desktop-profile --shim /tmp/linux-ioctl-bridge.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_opengl_transport.py --shim /tmp/linux-ioctl-bridge-4k.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_opengl_transport.py --extended-profile --shim /tmp/linux-ioctl-bridge-4k.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_opengl_transport.py --compositor-profile --shim /tmp/linux-ioctl-bridge-4k.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_opengl_transport.py --compositor-render-profile --shim /tmp/linux-ioctl-bridge-4k.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_opengl_transport.py --desktop-profile --shim /tmp/linux-ioctl-bridge-4k.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_opengl_transport.py --desktop-4k-profile --shim /tmp/linux-ioctl-bridge-4k.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_opengl_transport.py --disabled-profile --desktop-4k-profile --shim /tmp/linux-ioctl-bridge.so --probe /tmp/linux-ioctl-bridge-test
+          python3 experimental/windows-native-gpu/test_stream_transport.py --disabled-profile --shim /tmp/linux-ioctl-bridge.so --probe /tmp/linux-ioctl-bridge-test
+          c++ -std=c++17 -Wall -Wextra -Werror -DWDDM_BRIDGE_4K_LAB=1 -DWDDM_BRIDGE_STREAM_LAB=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include -shared -fPIC experimental/windows-native-gpu/linux_ioctl_bridge.cpp -pthread -o /tmp/linux-ioctl-bridge-stream.so
+          c++ -std=c++17 -Wall -Wextra -Werror -DWDDM_BRIDGE_4K_LAB=1 -DWDDM_BRIDGE_STREAM_LAB=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -c experimental/windows-native-gpu/umd_context_probe.cpp -o /tmp/runtime-probe-stream.o
+          python3 experimental/windows-native-gpu/test_stream_transport.py --shim /tmp/linux-ioctl-bridge-stream.so --probe /tmp/linux-ioctl-bridge-test
+          cc -static -std=c11 -Wall -Wextra -Werror -O2 experimental/windows-native-gpu/runtime_guest_init.c -o /tmp/runtime-init
+          cc -static -std=c11 -Wall -Wextra -Werror -O2 experimental/windows-native-gpu/normal_root_guest_init.c -o /tmp/normal-root-init
+          cc -std=c11 -Wall -Wextra -Werror -O2 experimental/windows-native-gpu/normal_root_graphics_service.c -o /tmp/normal-root-graphics-service
+          cc -std=c11 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/hyprland_control_path_test.c -ldl -pthread -o /tmp/hyprland-control-path-test
+          /tmp/hyprland-control-path-test
+          cc -std=c11 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/hyprland_scene_receipt_test.c -ldl -pthread -o /tmp/hyprland-scene-receipt-test
+          /tmp/hyprland-scene-receipt-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/readonly_rootfs_args_test.cpp -o /tmp/readonly-rootfs-args-test
+          /tmp/readonly-rootfs-args-test
+          python3 -m py_compile experimental/windows-native-gpu/make_normal_root_initramfs.py
+          python3 -m py_compile experimental/windows-native-gpu/make_runtime_initramfs.py experimental/windows-native-gpu/test_runtime_qemu.py experimental/windows-native-gpu/test_owned_runtime_qemu.py
+      - name: Compile the OpenGL probe without running against the CI host GPU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl-dev libgl-dev libgbm-dev libdrm-dev
+          cc -std=c11 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/egl_gl_probe.c -lEGL -ldl -o /tmp/egl-gl-probe
+          cc -std=c11 -O2 -Wall -Wextra -Werror -DWDDM_BRIDGE_EXIT_LIFETIME_TEST=1 experimental/windows-native-gpu/egl_gl_probe.c -lEGL -ldl -o /tmp/egl-gl-exit-probe
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror $(pkg-config --cflags gbm libdrm egl) -c experimental/windows-native-gpu/gbm_native_probe.cpp -o /tmp/gbm-native-probe.o
+          cc -std=c11 -O2 -Wall -Wextra -Werror -DWDDM_BRIDGE_GBM_TEST=1 -c experimental/windows-native-gpu/egl_gl_probe.c -o /tmp/egl-gl-gbm-probe.o
+          c++ /tmp/egl-gl-gbm-probe.o /tmp/gbm-native-probe.o $(pkg-config --libs gbm libdrm egl) -ldl -o /tmp/egl-gl-gbm-probe
+      - name: Restore the exact pinned Mesa source archive
+        id: mesa-source-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: /tmp/mesa-26.0.8.tar.xz
+          key: linux-mesa-source-26.0.8-caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc
+      - name: Download and verify Mesa source on cache miss
+        if: steps.mesa-source-cache.outputs.cache-hit != 'true'
+        run: |
+          curl --fail --location --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 180 --connect-timeout 15 --max-time 60 https://archive.mesa3d.org/mesa-26.0.8.tar.xz -o /tmp/mesa-26.0.8.tar.xz
+          echo 'caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc  /tmp/mesa-26.0.8.tar.xz' | sha256sum --check
+      - name: Save only the verified Mesa source archive
+        if: steps.mesa-source-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: /tmp/mesa-26.0.8.tar.xz
+          key: linux-mesa-source-26.0.8-caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc
+      - name: Verify the pinned experimental Mesa patch and compile its fence-FD probe
+        run: |
+          echo 'caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc  /tmp/mesa-26.0.8.tar.xz' | sha256sum --check
+          tar -xJf /tmp/mesa-26.0.8.tar.xz -C /tmp
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_fence_fd.py /tmp/mesa-26.0.8
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_fence_fd.py /tmp/mesa-26.0.8
+          c++ -std=c++17 -Wall -Wextra -Werror -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem /tmp/mesa-26.0.8/include -isystem /tmp/mesa-26.0.8/src/gallium/drivers/d3d12 -c experimental/windows-native-gpu/mesa_fence_fd_probe.cpp -o /tmp/mesa-fence-fd-probe.o
+          cc -std=c11 -Wall -Wextra -Werror -DWDDM_BRIDGE_MESA_FENCE_FD_TEST=1 -c experimental/windows-native-gpu/egl_gl_probe.c -o /tmp/egl-gl-fence-fd.o
+          c++ -std=c++17 -Wall -Wextra -Werror -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem /tmp/mesa-26.0.8/include -isystem /tmp/mesa-26.0.8/src/gallium/drivers/d3d12 -c experimental/windows-native-gpu/mesa_resource_fd_probe.cpp -o /tmp/mesa-resource-fd-probe.o
+          c++ -std=c++17 -Wall -Wextra -Werror -DWDDM_BRIDGE_RESOURCE_FD_BAD_COLOR=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem /tmp/mesa-26.0.8/include -isystem /tmp/mesa-26.0.8/src/gallium/drivers/d3d12 -c experimental/windows-native-gpu/mesa_resource_fd_probe.cpp -o /tmp/mesa-resource-fd-bad-color.o
+          c++ -std=c++17 -Wall -Wextra -Werror -DWDDM_BRIDGE_RESOURCE_FD_FULL_READBACK=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem /tmp/mesa-26.0.8/include -isystem /tmp/mesa-26.0.8/src/gallium/drivers/d3d12 -c experimental/windows-native-gpu/mesa_resource_fd_probe.cpp -o /tmp/mesa-resource-fd-full-readback.o
+          c++ -std=c++17 -Wall -Wextra -Werror -DWDDM_BRIDGE_RESOURCE_FD_FULL_READBACK=1 -DWDDM_BRIDGE_RESOURCE_FD_RECIPIENT=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem /tmp/mesa-26.0.8/include -isystem /tmp/mesa-26.0.8/src/gallium/drivers/d3d12 -c experimental/windows-native-gpu/mesa_resource_fd_probe.cpp -o /tmp/mesa-resource-fd-recipient.o
+          cc -std=c11 -Wall -Wextra -Werror -DWDDM_BRIDGE_MESA_RESOURCE_FD_TEST=1 -c experimental/windows-native-gpu/egl_gl_probe.c -o /tmp/egl-gl-resource-fd.o
+          c++ -std=c++17 -Wall -Wextra -Werror -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include -isystem /tmp/mesa-26.0.8/include -isystem /tmp/mesa-26.0.8/src/gallium/drivers/d3d12 -c experimental/windows-native-gpu/native_sync_file_probe.cpp -o /tmp/native-sync-file-probe.o
+          c++ -std=c++17 -Wall -Wextra -Werror -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem .runtime-dxg/include -isystem /tmp/mesa-26.0.8/include -isystem /tmp/mesa-26.0.8/src/gallium/drivers/d3d12 -c experimental/windows-native-gpu/native_sync_lineage_probe.cpp -o /tmp/native-sync-lineage-probe.o
+          cc -std=c11 -Wall -Wextra -Werror -DWDDM_BRIDGE_NATIVE_SYNC_FILE_TEST=1 -c experimental/windows-native-gpu/egl_gl_probe.c -o /tmp/egl-gl-native-sync-file.o
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_native_sync.py /tmp/mesa-26.0.8
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_native_sync.py /tmp/mesa-26.0.8
+          c++ -std=c++17 -Wall -Wextra -Werror -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem /tmp/mesa-26.0.8/include -isystem /tmp/mesa-26.0.8/src/gallium/drivers/d3d12 -c experimental/windows-native-gpu/egl_native_sync_probe.cpp -o /tmp/egl-native-sync-probe.o
+          c++ -std=c++17 -Wall -Wextra -Werror -DWDDM_BRIDGE_EGL_NATIVE_SYNC_DISABLED=1 -isystem .runtime-headers/include -isystem .runtime-headers/include/wsl/stubs -isystem /tmp/mesa-26.0.8/include -isystem /tmp/mesa-26.0.8/src/gallium/drivers/d3d12 -c experimental/windows-native-gpu/egl_native_sync_probe.cpp -o /tmp/egl-native-sync-disabled-probe.o
+          cc -std=c11 -Wall -Wextra -Werror -DWDDM_BRIDGE_NATIVE_SYNC_FILE_TEST=1 -DWDDM_BRIDGE_EGL_NATIVE_SYNC_TEST=1 -c experimental/windows-native-gpu/egl_gl_probe.c -o /tmp/egl-gl-native-sync-enabled.o
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_native_images.py /tmp/mesa-26.0.8
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_native_render.py /tmp/mesa-26.0.8
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_native_render.py /tmp/mesa-26.0.8
+      - name: Check pinned uploader failure ownership with CPU callbacks
+        run: |
+          python3 experimental/windows-native-gpu/mesa/test_mesa_upload_failure.py --source /tmp/mesa-26.0.8 --output "$RUNNER_TEMP/mesa-upload-failure"
+      - name: Check pinned constant-buffer failure and retry with CPU callbacks
+        run: |
+          python3 experimental/windows-native-gpu/mesa/test_mesa_constbuf_failure.py --source /tmp/mesa-26.0.8 --output "$RUNNER_TEMP/mesa-constbuf-failure"
+      - name: Verify original and patched Dozen memory FD contracts; CPU only
+        run: |
+          if python3 experimental/windows-native-gpu/mesa/test_dozen_memory_fd.py --source /tmp/mesa-26.0.8 --vulkan-include /tmp/mesa-26.0.8/include --output "$RUNNER_TEMP/dozen-fd-original"; then
+            echo 'Original FD bug was not reproduced'
+            exit 1
+          else
+            test "$?" -eq 1
+          fi
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_dozen_memory_fd.py /tmp/mesa-26.0.8
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_dozen_memory_fd.py /tmp/mesa-26.0.8
+          python3 experimental/windows-native-gpu/mesa/test_dozen_memory_fd.py --source /tmp/mesa-26.0.8 --vulkan-include /tmp/mesa-26.0.8/include --output "$RUNNER_TEMP/dozen-fd-patched"
+          python3 experimental/windows-native-gpu/mesa/verify_dozen_memory_fd_contract.py --baseline "$RUNNER_TEMP/dozen-fd-original" --patched "$RUNNER_TEMP/dozen-fd-patched"
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_dozen_memory_fd_import.py /tmp/mesa-26.0.8
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_dozen_memory_fd_import.py /tmp/mesa-26.0.8
+          python3 experimental/windows-native-gpu/mesa/test_dozen_memory_fd_import.py --source /tmp/mesa-26.0.8 --vulkan-include /tmp/mesa-26.0.8/include --output "$RUNNER_TEMP/dozen-fd-import"
+          python3 experimental/windows-native-gpu/mesa/verify_dozen_memory_fd_import_contract.py --source /tmp/mesa-26.0.8 --vulkan-include /tmp/mesa-26.0.8/include --contract "$RUNNER_TEMP/dozen-fd-import"
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_dozen_native_gpu_buffer.py /tmp/mesa-26.0.8
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_dozen_native_gpu_buffer.py /tmp/mesa-26.0.8
+          python3 experimental/windows-native-gpu/mesa/test_dozen_native_gpu_buffer.py --source /tmp/mesa-26.0.8 --directx-headers .runtime-headers --output "$RUNNER_TEMP/dozen-native-gpu-buffer"
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_dozen_buffer_admission.py /tmp/mesa-26.0.8
+          python3 experimental/windows-native-gpu/mesa/apply_mesa_dozen_buffer_admission.py /tmp/mesa-26.0.8
+          python3 experimental/windows-native-gpu/mesa/test_dozen_buffer_admission.py --source /tmp/mesa-26.0.8 --directx-headers .runtime-headers --output "$RUNNER_TEMP/dozen-buffer-admission"
+          c++ -std=c++17 -Wall -Wextra -Werror -I /tmp/mesa-26.0.8/include -c experimental/windows-native-gpu/vulkan_memory_fd_probe.cpp -o /tmp/vulkan-memory-fd-probe.o
+          python3 experimental/windows-native-gpu/build_vulkan_memory_roundtrip_probe.py --vulkan-include /tmp/mesa-26.0.8/include --icd /opt/wddm-vulkan/libvulkan_dzn.so --output "$RUNNER_TEMP/vulkan-memory-roundtrip-probes"
+      - name: Validate Vulkan compute shaders and compile their probes; no GPU workload
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends glslang-tools spirv-tools
+          python3 experimental/windows-native-gpu/build_vulkan_compute_probe.py --glslang /usr/bin/glslangValidator --spirv-val /usr/bin/spirv-val --vulkan-include /tmp/mesa-26.0.8/include --icd /opt/wddm-vulkan/libvulkan_dzn.so --output "$RUNNER_TEMP/vulkan-compute-probes"
+          python3 experimental/windows-native-gpu/test_vulkan_compute_evidence.py -v
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wddm-bridge-guest-probe
+          path: |
+            experimental/windows-native-gpu/build/bridge-test.cpio
+            experimental/windows-native-gpu/build/fence-test.cpio

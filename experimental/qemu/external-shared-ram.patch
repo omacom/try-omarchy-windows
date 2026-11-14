@@ -1,0 +1,74 @@
+diff --git a/include/system/memory.h b/include/system/memory.h
+index d7b18b6..d52ccd1 100644
+--- a/include/system/memory.h
++++ b/include/system/memory.h
+@@ -1508,6 +1508,12 @@ void memory_region_init_ram_ptr(MemoryRegion *mr,
+                                 uint64_t size,
+                                 void *ptr);
+ 
++/* External RAM with explicit sharing. Only RAM_SHARED is accepted in flags.
++ * The caller retains ownership of ptr until the region's owner is finalized. */
++void memory_region_init_ram_ptr_flags(MemoryRegion *mr, Object *owner,
++                                     const char *name, uint64_t size,
++                                     void *ptr, uint32_t flags);
++
+ /**
+  * memory_region_init_ram_device_ptr:  Initialize RAM device memory region from
+  *                                     a user-provided pointer.
+diff --git a/include/system/ramblock.h b/include/system/ramblock.h
+index 4435f8d..d381660 100644
+--- a/include/system/ramblock.h
++++ b/include/system/ramblock.h
+@@ -270,6 +270,9 @@ RAMBlock *qemu_ram_alloc_from_fd(ram_addr_t size, ram_addr_t max_size,
+ 
+ RAMBlock *qemu_ram_alloc_from_ptr(ram_addr_t size, void *host,
+                                   MemoryRegion *mr, Error **errp);
++RAMBlock *qemu_ram_alloc_from_ptr_flags(ram_addr_t size, void *host,
++                                       uint32_t flags, MemoryRegion *mr,
++                                       Error **errp);
+ RAMBlock *qemu_ram_alloc(ram_addr_t size, uint32_t ram_flags, MemoryRegion *mr,
+                          Error **errp);
+ RAMBlock *qemu_ram_alloc_resizeable(ram_addr_t size, ram_addr_t max_size,
+diff --git a/system/memory.c b/system/memory.c
+index 56f3225..fe8f569 100644
+--- a/system/memory.c
++++ b/system/memory.c
+@@ -1670,6 +1670,17 @@ void memory_region_init_ram_ptr(MemoryRegion *mr, Object *owner,
+     memory_region_set_ram_ptr(mr, size, ptr);
+ }
+ 
++void memory_region_init_ram_ptr_flags(MemoryRegion *mr, Object *owner,
++                                     const char *name, uint64_t size,
++                                     void *ptr, uint32_t flags)
++{
++    assert(ptr != NULL);
++    memory_region_init(mr, owner, name, size);
++    mr->ram = true;
++    memory_region_set_ram_block(mr, qemu_ram_alloc_from_ptr_flags(
++        size, ptr, flags, mr, &error_abort));
++}
++
+ void memory_region_init_ram_device_ptr(MemoryRegion *mr, Object *owner,
+                                        const char *name, uint64_t size,
+                                        void *ptr)
+diff --git a/system/physmem.c b/system/physmem.c
+index 4e26f1a..a61d360 100644
+--- a/system/physmem.c
++++ b/system/physmem.c
+@@ -2553,7 +2553,15 @@ RAMBlock *qemu_ram_alloc_internal(ram_addr_t size, ram_addr_t max_size,
+ RAMBlock *qemu_ram_alloc_from_ptr(ram_addr_t size, void *host,
+                                    MemoryRegion *mr, Error **errp)
+ {
+-    return qemu_ram_alloc_internal(size, size, NULL, host, RAM_PREALLOC, mr,
++    return qemu_ram_alloc_from_ptr_flags(size, host, 0, mr, errp);
++}
++
++RAMBlock *qemu_ram_alloc_from_ptr_flags(ram_addr_t size, void *host,
++                                      uint32_t flags, MemoryRegion *mr,
++                                      Error **errp)
++{
++    assert((flags & ~RAM_SHARED) == 0);
++    return qemu_ram_alloc_internal(size, size, NULL, host, RAM_PREALLOC | flags, mr,
+                                    errp);
+ }
+ 

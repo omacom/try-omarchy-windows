@@ -1,0 +1,105 @@
+name: Mesa 26.2.6 candidate source build
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - experimental/windows-native-gpu/mesa/**
+      - .github/workflows/mesa-2626-candidate.yml
+permissions:
+  contents: read
+concurrency:
+  group: mesa-2626-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  candidate-compile-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [graphics, dozen]
+    env:
+      MESA_PROFILE: ${{ matrix.profile }}
+      SOURCE_COMMIT: ${{ github.sha }}
+      SOURCE_HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: microsoft/DirectX-Headers
+          ref: adbd6f3ba40795c46a8d0f33af00bcb57ff0f0a4
+          path: .runtime-headers
+      - name: Install CPU compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential ninja-build pkg-config bison flex python3-venv python3-mako python3-yaml python3-packaging libdrm-dev libexpat1-dev libzstd-dev zlib1g-dev libelf-dev libffi-dev
+          python3 -m venv --system-site-packages "$RUNNER_TEMP/meson-env"
+          "$RUNNER_TEMP/meson-env/bin/python" -m pip install --only-binary=:all: --require-hashes -r experimental/windows-native-gpu/mesa/source-build-tools.txt
+      - name: Compile and stage pinned DirectX headers; tests disabled
+        run: |
+          "$RUNNER_TEMP/meson-env/bin/meson" setup "$RUNNER_TEMP/headers-build" .runtime-headers --prefix "$RUNNER_TEMP/headers-install" --libdir lib -Dbuild-test=false
+          "$RUNNER_TEMP/meson-env/bin/meson" install -C "$RUNNER_TEMP/headers-build"
+      - name: Build pinned Wayland libraries, scanner and protocol data; tests disabled
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          records = json.loads(pathlib.Path('experimental/windows-native-gpu/mesa/wayland-build-sources.json').read_text())['sources']
+          for record in records:
+              name = record['filename']
+              if pathlib.Path(name).name != name:
+                  raise RuntimeError('Source archive name escapes build directory')
+              path = root / name
+              subprocess.run(['curl', '--fail', '--location', '--retry', '3', '--retry-all-errors', '--connect-timeout', '15', '--max-time', '180', record['url'], '-o', str(path)], check=True)
+              if hashlib.sha256(path.read_bytes()).hexdigest() != record['sha256']:
+                  raise RuntimeError('Pinned Wayland archive hash differs')
+              subprocess.run(['tar', '-xJf', str(path), '-C', str(root)], check=True)
+          PY
+          meson="$RUNNER_TEMP/meson-env/bin/meson"
+          "$meson" setup "$RUNNER_TEMP/wayland-build" "$RUNNER_TEMP/wayland-1.26.0" --prefix "$RUNNER_TEMP/wayland-install" --libdir lib --buildtype=release -Dtests=false -Ddocumentation=false -Ddtd_validation=false
+          "$meson" compile -C "$RUNNER_TEMP/wayland-build" -j 2
+          "$meson" install -C "$RUNNER_TEMP/wayland-build" --no-rebuild
+          export PATH="$RUNNER_TEMP/wayland-install/bin:$PATH"
+          export PKG_CONFIG_PATH="$RUNNER_TEMP/wayland-install/lib/pkgconfig"
+          test "$(pkg-config --modversion wayland-client)" = '1.26.0'
+          wayland-scanner --version
+          "$meson" setup "$RUNNER_TEMP/protocols-build" "$RUNNER_TEMP/wayland-protocols-1.47" --prefix "$RUNNER_TEMP/protocols-install" --buildtype=release -Dtests=false
+          "$meson" compile -C "$RUNNER_TEMP/protocols-build" -j 2
+          "$meson" install -C "$RUNNER_TEMP/protocols-build" --no-rebuild
+      - name: Restore pinned Mesa archive
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: /tmp/mesa-26.2.6.tar.xz
+          key: linux-mesa-source-26.2.6-b9436b3e1a8be76fbd4823dc884f90596ab7c6ac5e1867a305e66ffccfb31a92
+      - name: Fetch and verify the Mesa source archive as data
+        run: |
+          if [ ! -f /tmp/mesa-26.2.6.tar.xz ]; then
+            curl --fail --location --retry 3 --retry-all-errors --connect-timeout 15 --max-time 180 https://archive.mesa3d.org/mesa-26.2.6.tar.xz -o /tmp/mesa-26.2.6.tar.xz
+          fi
+          echo 'b9436b3e1a8be76fbd4823dc884f90596ab7c6ac5e1867a305e66ffccfb31a92  /tmp/mesa-26.2.6.tar.xz' | sha256sum --check
+          tar -xJf /tmp/mesa-26.2.6.tar.xz -C "$RUNNER_TEMP"
+      - name: Run CPU controls, compile and inspect; never activate Mesa or a GPU
+        run: bash experimental/windows-native-gpu/mesa/build_mesa_recipe_ci.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mesa-26.2.6-${{ matrix.profile }}-components
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/mesa-26.2.6-${{ matrix.profile }}-components.tar.gz
+            ${{ runner.temp }}/mesa-26.2.6-${{ matrix.profile }}-components.tar.gz.sha256
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mesa-26.2.6-${{ matrix.profile }}-compile-evidence
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/mesa-${{ matrix.profile }}-source-build.json
+            ${{ runner.temp }}/mesa-${{ matrix.profile }}-source-build-abi-observations.json
+            ${{ runner.temp }}/mesa-${{ matrix.profile }}-recipe-controls/*.log
+            ${{ runner.temp }}/mesa-${{ matrix.profile }}-recipe-controls/result.json
+            ${{ runner.temp }}/mesa-${{ matrix.profile }}-build/meson-logs/meson-log.txt
+            ${{ runner.temp }}/mesa-graphics-alias-controls/result.json
+            ${{ runner.temp }}/mesa-dozen-layout-controls.json
+            ${{ runner.temp }}/headers-build/meson-logs/meson-log.txt
+          retention-days: 14
