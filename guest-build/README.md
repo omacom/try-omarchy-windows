@@ -108,6 +108,27 @@ now stops and shows as failed when its device is missing, instead of waiting
 as active.
 Patch 0179 refreshes the package lock, which brings in kernel 7.2.15.
 
+Patch 0181 lets `omarchy refresh pacman` finish (#408). Channel switches and
+package reinstalls run it too. Omarchy copies its stable templates over
+`pacman.conf` and the mirrorlist, then runs `pacman -Syyuu`, which may
+downgrade. The templates have no `[try-omarchy]` repository and no kernel hold,
+and they point Arch at Omarchy's stable mirror snapshot. The transaction tried
+to move the system back to that snapshot and was refused, since its aquamarine
+0.15.1 breaks the runtime's dependency, and the disk was left on the snapshot
+without the local repository or the hold. A reviewed patch to
+`omarchy-refresh-pacman`, guarded by its digests, has the new `pacman-layer`
+helper put back the `linux linux-headers` hold, `[try-omarchy]` after the Arch
+repositories and the Arch mirrorlist right after Omarchy writes its templates,
+before the user's `pre-refresh-pacman` hook and the transaction. The mirrorlist
+is the one Omarchy saved as `.bak` when it lists Arch mirrors, otherwise the
+image's copy in `/usr/share/try-omarchy/arch-mirrorlist`. The guest still
+follows rolling Arch. The refresh and `omarchy-reinstall-pkgs` pass
+`--ignore aquamarine` to their `-uu` transactions while Arch offers the same
+version as the installed rebuild or an older one, so the patched build stays.
+A newer Arch release still replaces it, with a Hyprland that needs it.
+Compatibility revision 71 repairs disks a refused refresh already rewrote, and
+runtime `4.5.0-16` carries the patched commands.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME

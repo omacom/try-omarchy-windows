@@ -106,7 +106,11 @@ The managed rebuild keeps Arch's package name, dependencies and SONAME provide.
 The local repository is after Arch. An unchanged Arch `0.15.1-1` keeps the
 installed patched `0.15.1-1.1`. A newer Arch release or version replaces it in
 the ordinary update transaction, including a new SONAME required by Hyprland.
-No version hold or custom provider blocks the upgrade. Until we re-pin the new
+No version hold or custom provider blocks the upgrade. Omarchy's
+downgrade-capable refresh is the one exception: `omarchy refresh pacman` and
+`omarchy-reinstall-pkgs` ignore aquamarine while Arch offers the same version
+or an older one, so `-uu` keeps the rebuild. A newer Arch release still
+replaces it there too. Until we re-pin the new
 source, the cursor can return to being drawn within desktop frames. The host
 cursor presentation fix is separate from this guest groundwork.
 
@@ -133,6 +137,25 @@ Omarchy 4.5 also removes orphaned packages without asking during later updates;
 packages the guest needs are explicit or runtime dependencies, so they are not
 orphans. The upgrade smoke runs a second update to check that nothing is
 removed.
+
+Compatibility revision 71 keeps the guest's pacman setup through
+`omarchy refresh pacman`, which channel switches and package reinstalls also
+run. Omarchy's refresh replaces `pacman.conf` and the mirrorlist with its
+stable templates, which have no `[try-omarchy]` repository, no kernel hold
+and Omarchy's stable mirror snapshot in place of the Arch mirrors. Its
+`-Syyuu` then tried to downgrade the system, was refused, and left the disk
+on that snapshot. With runtime `4.5.0-16` the refresh puts the hold, the local
+repository and the Arch mirrors back before the transaction runs, so it
+completes without downgrading anything. The Arch mirrors are the ones Omarchy
+saved in `mirrorlist.bak` when they are the guest's own, otherwise the image's
+copy. Disks a refused refresh already rewrote are repaired before login: when
+`pacman.conf` has no `[try-omarchy]` and the mirrorlist lists only Omarchy's
+mirrors, catch-up restores `pacman.conf.bak` if it is the guest's own (or adds
+the local repository and hold to the current file) and restores the Arch
+mirrors. Any other `pacman.conf` or mirrorlist is left alone, and no package
+transaction runs during boot. The next **Update > Omarchy** then installs the
+new runtime as usual. The guest keeps following rolling Arch rather than
+Omarchy's stable snapshot.
 
 If repository publication fails, inspect:
 

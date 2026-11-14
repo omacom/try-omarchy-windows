@@ -1,0 +1,1487 @@
+From 68e5a4efeaae77204f9ea699fbfa96a6a2340cf1 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 14 Nov 2026 10:06:13 -0500
+Subject: [PATCH] Keep the guest's pacman layer through omarchy refresh pacman
+
+omarchy refresh pacman, which channel switches and package reinstalls run, copies Omarchy's stable templates over pacman.conf and the mirrorlist, then runs a downgrade-capable -Syyuu. The templates leave out the local try-omarchy repository, the linux and linux-headers hold and the guest's Arch mirrors, so the transaction tried to move the system to Omarchy's stable mirror snapshot and was refused (aquamarine 0.15.1 breaks the runtime's dependency). The disk was left on that snapshot without the local repository or the hold.
+
+A reviewed patch to omarchy-refresh-pacman has the new pacman-layer helper put the hold, the local repository and the Arch mirrors back right after Omarchy writes its templates, before the user hook and the transaction. The Arch mirrorlist is the one Omarchy saved as .bak when it is the guest's own, otherwise the image's copy. Both downgrade-capable transactions (refresh and reinstall) ignore an installed managed rebuild while Arch offers the same or an older version, so -uu keeps the patched aquamarine, and a newer Arch release still replaces it.
+
+Compatibility revision 71 repairs disks a refused refresh already rewrote: when pacman.conf has no try-omarchy repository and the mirrorlist names only Omarchy's mirrors, catch-up restores pacman.conf.bak when it is the guest's own, otherwise adds the layer, and restores the Arch mirrors. Other configurations are left alone and no package transaction runs. Runtime 4.5.0-16 carries the patched commands.
+---
+ guest/README.md                               |   4 +
+ guest/build.sh                                |   1 +
+ .../usr/local/lib/try-omarchy/catch-up        |  13 +
+ .../usr/local/lib/try-omarchy/pacman-layer    | 221 +++++++
+ .../omarchy/refresh-pacman-guest-layer.patch  |  41 ++
+ guest/scripts/configure-rootfs.sh             |   5 +
+ guest/scripts/finalize-rootfs.sh              |   7 +-
+ guest/spec.json                               |  21 +-
+ .../omarchy-4.5.0/bin/omarchy-apply-pacman    |  95 +++
+ .../omarchy-4.5.0/bin/omarchy-refresh-pacman  |  68 +++
+ .../omarchy-4.5.0/bin/omarchy-reinstall-pkgs  |  25 +
+ .../omarchy-4.5.0/install/helpers/pacman.sh   |  34 ++
+ guest/tests/test_aquamarine_contract.py       |   2 +-
+ guest/tests/test_battery_details.py           |   2 +-
+ guest/tests/test_clipboard_pull.py            |   2 +-
+ guest/tests/test_compositor_health.py         |   2 +-
+ guest/tests/test_guest_qol.py                 |   2 +-
+ guest/tests/test_kernel_headers_hold.py       |   2 +-
+ guest/tests/test_live_update.py               |   2 +-
+ guest/tests/test_native_nightlight.py         |   2 +-
+ guest/tests/test_notification_privacy.py      |   4 +-
+ guest/tests/test_qt612_palette.py             |   4 +-
+ guest/tests/test_refresh_pacman.py            | 558 ++++++++++++++++++
+ guest/tests/test_snapper_guest.py             |   4 +-
+ guest/tests/test_url_schemes.py               |   2 +-
+ guest/tests/test_windows_volume_sync.py       |   2 +-
+ guest/tests/verify.py                         |  15 +-
+ 27 files changed, 1119 insertions(+), 21 deletions(-)
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/pacman-layer
+ create mode 100644 guest/patches/omarchy/refresh-pacman-guest-layer.patch
+ create mode 100755 guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-apply-pacman
+ create mode 100755 guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-refresh-pacman
+ create mode 100755 guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-reinstall-pkgs
+ create mode 100644 guest/tests/fixtures/omarchy-4.5.0/install/helpers/pacman.sh
+ create mode 100644 guest/tests/test_refresh_pacman.py
+
+diff --git a/guest/README.md b/guest/README.md
+index 36505fc..d50ab35 100644
+--- a/guest/README.md
++++ b/guest/README.md
+@@ -64,6 +64,10 @@ images ship the rebuild and normal updates keep it while Arch is unchanged.
+ Existing disks take Arch's release with their next update. A newer Arch package release or source version
+ wins normally, including a coordinated Hyprland/SONAME update; there is no
+ IgnorePkg, exact-version hold, custom provider or pre-transaction replacement.
++Omarchy's downgrade-capable refresh (`omarchy refresh pacman`, channel
++switches and package reinstalls) is the one exception: it passes
++`--ignore aquamarine` while Arch offers the same version or an older one, so
++`-uu` keeps the rebuild, and lets a newer Arch release through.
+ The patch can disappear after that bump, restoring the previous in-frame cursor
+ behavior while allowing the desktop upgrade. The real libalpm fixture tests
+ cover these transactions and run a linked consumer after each upgrade.
+diff --git a/guest/build.sh b/guest/build.sh
+index 6dc7a31..588d669 100755
+--- a/guest/build.sh
++++ b/guest/build.sh
+@@ -81,6 +81,7 @@ done
+ # Real libalpm resilience tests require Arch/root and run before staging.
+ REQUIRE_ALPM_TESTS=1 python3 -m unittest discover -s "$guest_dir/tests" -p 'test_aquamarine_upgrade.py'
+ REQUIRE_ALPM_TESTS=1 python3 -m unittest discover -s "$guest_dir/tests" -p 'test_kernel_headers_hold.py'
++REQUIRE_ALPM_TESTS=1 python3 -m unittest discover -s "$guest_dir/tests" -p 'test_refresh_pacman.py'
+ 
+ output=$(mkdir -p "$output" && cd "$output" && pwd)
+ work=$(mkdir -p "$work" && cd "$work" && pwd)
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+index 6d5c611..94e1a61 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+@@ -15,6 +15,8 @@
+ #   - remove the Foot-only xdg-terminal-exec an older image put in
+ #     /usr/local/bin, when it is still our unchanged copy
+ #   - hold linux-headers with the linux package, once per disk
++#   - put back the local repository, kernel hold and Arch mirrors on a disk
++#     that a refused omarchy refresh pacman left on Omarchy's mirrors
+ # Runs once per integration revision, before the display manager.
+ set -euo pipefail
+ 
+@@ -48,6 +50,17 @@ if [[ -x $battery_installer ]] && { [[ ! $previous_revision =~ ^[0-9]+$ ]] || ((
+   "$battery_installer"
+ fi
+ 
++# Before revision 71, omarchy refresh pacman (and so channel switches and
++# package reinstalls) replaced pacman.conf and the mirrorlist with Omarchy's
++# templates, then its transaction was refused. Such a disk was left on
++# Omarchy's stable mirror snapshot without the local repository or the kernel
++# hold. Put them back; a pacman.conf or mirrorlist set up some other way is
++# left alone. No package transaction runs here.
++pacman_layer=${TRY_OMARCHY_PACMAN_LAYER:-/usr/local/lib/try-omarchy/pacman-layer}
++if [[ -x $pacman_layer ]] && { [[ ! $previous_revision =~ ^[0-9]+$ ]] || (( previous_revision < 71 )); }; then
++  "$pacman_layer" repair || true
++fi
++
+ # Hold linux-headers with the kernel. Disks from before revision 70 hold only
+ # linux, so Update > Omarchy moved the headers past the kernel the launcher
+ # boots and the DKMS hooks removed the camera and battery modules from it.
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/pacman-layer b/guest/factory-overlay/usr/local/lib/try-omarchy/pacman-layer
+new file mode 100755
+index 0000000..eb97011
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/pacman-layer
+@@ -0,0 +1,221 @@
++#!/bin/bash
++# Keeps the guest's own pacman layer when Omarchy resets pacman's files.
++#
++# `omarchy refresh pacman` (and so channel switches and package reinstalls)
++# copies Omarchy's channel templates over /etc/pacman.conf and the mirrorlist,
++# then runs a full -Syyuu that may downgrade packages. Those templates do not
++# know the guest: they drop the local [try-omarchy] repository that carries the
++# runtime and the patched aquamarine, the IgnorePkg hold that keeps linux and
++# linux-headers on the kernel the launcher boots, and the rolling Arch mirrors
++# the image was built against. The transaction was then refused, and the disk
++# was left on Omarchy's stable mirror snapshot without the local repository.
++#
++#   refresh  After Omarchy wrote its templates, put the guest's layer back:
++#            the kernel hold, [try-omarchy] after the Arch repositories, and
++#            the guest's Arch mirrorlist (the one Omarchy saved as .bak when it
++#            is the guest's own, otherwise the image's copy). Then refresh the
++#            package databases for that configuration.
++#   ignore   Print the installed managed rebuilds, comma separated, that a
++#            transaction allowed to downgrade must leave alone. The local
++#            repository comes after Arch, so -uu would replace the patched
++#            aquamarine with Arch's build of the same version, or an older one.
++#            A newer Arch release is not listed: it replaces the rebuild, as in
++#            an ordinary update, along with a Hyprland that needs it.
++#   repair   Before login: a disk that a refused refresh left on Omarchy's
++#            mirrors without [try-omarchy] gets its pacman.conf back (the .bak
++#            when it is the guest's own) and the guest's Arch mirrorlist.
++#            Anything else is left alone. No package transaction runs.
++set -euo pipefail
++
++config=${TRY_OMARCHY_PACMAN_CONF:-/etc/pacman.conf}
++mirrorlist=${TRY_OMARCHY_MIRRORLIST:-/etc/pacman.d/mirrorlist}
++arch_mirrors=${TRY_OMARCHY_ARCH_MIRRORLIST:-/usr/share/try-omarchy/arch-mirrorlist}
++repo=${TRY_OMARCHY_LOCAL_REPO:-/usr/share/try-omarchy/repo}
++pacman=${TRY_OMARCHY_PACMAN:-pacman}
++
++regular() {
++  [[ -f $1 && ! -L $1 ]]
++}
++
++# The active Server lines of a mirrorlist.
++servers() {
++  sed -n 's/^[[:space:]]*Server[[:space:]]*=[[:space:]]*//p' "$1"
++}
++
++# A mirrorlist that only names Omarchy's mirrors (stable-mirror, rc-mirror,
++# mirror, and the regional copies).
++omarchy_mirrors() {
++  local server count=0
++  regular "$1" || return 1
++  while IFS= read -r server; do
++    [[ $server =~ ^https?://([a-z0-9-]+\.)*omarchy\.(org|cn)/ ]] || return 1
++    count=$((count + 1))
++  done < <(servers "$1")
++  (( count > 0 ))
++}
++
++# A mirrorlist with Arch mirrors and none of Omarchy's.
++guest_mirrors() {
++  local server count=0
++  regular "$1" || return 1
++  while IFS= read -r server; do
++    [[ ! $server =~ ^https?://([a-z0-9-]+\.)*omarchy\.(org|cn)/ ]] || return 1
++    count=$((count + 1))
++  done < <(servers "$1")
++  (( count > 0 ))
++}
++
++has_local_repo() {
++  grep -q '^[[:space:]]*\[try-omarchy\][[:space:]]*$' "$1"
++}
++
++# Replace file with the text on stdin, keeping its owner and mode.
++replace() {
++  local file=$1 tmp
++  tmp=$(mktemp "$(dirname "$file")/.${file##*/}.XXXXXX")
++  cat >"$tmp"
++  chown --reference="$file" "$tmp"
++  chmod --reference="$file" "$tmp"
++  mv -f "$tmp" "$file"
++}
++
++# Hold linux and linux-headers in [options]: add the missing names to the
++# first IgnorePkg line there, or add a line after HoldPkg (or the header).
++hold_kernel() {
++  local text
++  text=$(awk '
++    function section(line) { return line ~ /^[[:space:]]*\[.*\][[:space:]]*$/ }
++    { lines[NR] = $0 }
++    section($0) { options = ($0 ~ /^[[:space:]]*\[options\][[:space:]]*$/); if (options && !header) header = NR; next }
++    options && /^[[:space:]]*IgnorePkg[[:space:]]*=/ {
++      value = $0; sub(/^[^=]*=/, "", value)
++      count = split(value, names, /[[:space:]]+/)
++      for (i = 1; i <= count; i++) held[names[i]] = 1
++      if (!ignore) ignore = NR
++    }
++    options && /^[[:space:]]*HoldPkg[[:space:]]*=/ { hold = NR }
++    END {
++      missing = ""
++      if (!("linux" in held)) missing = missing " linux"
++      if (!("linux-headers" in held)) missing = missing " linux-headers"
++      if (missing == "" || !header) { exit 1 }
++      for (n = 1; n <= NR; n++) {
++        line = lines[n]
++        if (n == ignore) { sub(/[[:space:]]*$/, missing, line) }
++        print line
++        if (!ignore && n == (hold ? hold : header)) {
++          print "# Try Omarchy: the launcher boots its own kernel; keep its modules and headers."
++          print "IgnorePkg =" missing
++        }
++      }
++    }
++  ' "$config") || return 0
++  printf '%s\n' "$text" | replace "$config"
++  echo "held linux and linux-headers in $config" >&2
++}
++
++add_local_repo() {
++  has_local_repo "$config" && return 0
++  { cat "$config"; cat <<EOF
++
++# Immutable packages assembled from the checksummed Try Omarchy build spec.
++[try-omarchy]
++SigLevel = Optional TrustAll
++Server = file://$repo
++EOF
++  } | replace "$config"
++  echo "added the Try Omarchy package repository to $config" >&2
++}
++
++# The guest's Arch mirrorlist: what Omarchy saved as .bak when it is the
++# guest's own (it may be an administrator's choice of Arch mirrors), or the
++# image's copy.
++mirror_source() {
++  if guest_mirrors "$mirrorlist.bak"; then
++    echo "$mirrorlist.bak"
++  elif guest_mirrors "$arch_mirrors"; then
++    echo "$arch_mirrors"
++  else
++    return 1
++  fi
++}
++
++restore_mirrors() {
++  local source=$1
++  cmp -s "$source" "$mirrorlist" && return 0
++  replace "$mirrorlist" <"$source"
++  echo "restored the Arch mirrors in $mirrorlist from $source" >&2
++}
++
++refresh() {
++  local source
++  regular "$config" || { echo "pacman-layer: $config is not a regular file" >&2; exit 1; }
++  regular "$mirrorlist" || { echo "pacman-layer: $mirrorlist is not a regular file" >&2; exit 1; }
++  source=$(mirror_source) || {
++    echo "pacman-layer: no Arch mirrorlist to restore; $mirrorlist.bak and $arch_mirrors are missing or name Omarchy's mirrors" >&2
++    exit 1
++  }
++  hold_kernel
++  add_local_repo
++  restore_mirrors "$source"
++  "$pacman" --config "$config" -Sy >&2
++}
++
++ignore() {
++  local database=$repo/try-omarchy.db names=() name version installed other
++  [[ -r $database ]] || return 0
++  while IFS=' ' read -r name version; do
++    [[ -n $name && $name != try-omarchy-* ]] || continue
++    installed=$("$pacman" --config "$config" -Q "$name" 2>/dev/null) || continue
++    [[ $installed == "$name $version" ]] || continue
++    # The version the first other repository offers, which -uu would take.
++    other=$(LC_ALL=C "$pacman" --config "$config" -Si "$name" 2>/dev/null | awk '
++      $1 == "Repository" { repository = $3 }
++      $1 == "Version" && repository != "try-omarchy" { print $3; exit }
++    ') || true
++    [[ -n $other ]] || continue
++    (( $(vercmp "$other" "$version") > 0 )) || names+=("$name")
++  done < <(tar -xzOf "$database" --wildcards '*/desc' 2>/dev/null | awk '
++    /^%NAME%$/ { getline name; next }
++    /^%VERSION%$/ { getline version; print name, version }
++  ')
++  (( ${#names[@]} )) || return 0
++  local IFS=,
++  echo "${names[*]}"
++}
++
++repair() {
++  local source
++  if ! regular "$config"; then
++    echo "left $config alone: not a regular file"
++    return 0
++  fi
++  has_local_repo "$config" && return 0
++  if ! omarchy_mirrors "$mirrorlist"; then
++    echo "left $config alone: it has no Try Omarchy repository, but the mirrorlist is not Omarchy's"
++    return 0
++  fi
++  if ! source=$(mirror_source); then
++    echo "left $config alone: no Arch mirrorlist to restore"
++    return 0
++  fi
++  # A refused refresh changed no packages, so put back what it replaced when
++  # Omarchy's backup is the guest's own.
++  if regular "$config.bak" && has_local_repo "$config.bak"; then
++    replace "$config" <"$config.bak"
++    echo "restored $config from $config.bak"
++  fi
++  hold_kernel 2>&1
++  add_local_repo 2>&1
++  restore_mirrors "$source" 2>&1
++}
++
++case ${1:-} in
++  refresh) refresh ;;
++  ignore) ignore ;;
++  repair) repair ;;
++  *)
++    echo "Usage: pacman-layer refresh|ignore|repair" >&2
++    exit 2
++    ;;
++esac
+diff --git a/guest/patches/omarchy/refresh-pacman-guest-layer.patch b/guest/patches/omarchy/refresh-pacman-guest-layer.patch
+new file mode 100644
+index 0000000..5a37569
+--- /dev/null
++++ b/guest/patches/omarchy/refresh-pacman-guest-layer.patch
+@@ -0,0 +1,41 @@
++diff --git a/bin/omarchy-refresh-pacman b/bin/omarchy-refresh-pacman
++--- a/bin/omarchy-refresh-pacman
+++++ b/bin/omarchy-refresh-pacman
++@@ -49,6 +49,11 @@
++ sudo cp -f "$rendered/mirrorlist" /etc/pacman.d/mirrorlist
++ rm -rf "$rendered"
++ 
+++# Try Omarchy: the templates leave out the guest's local package repository,
+++# the hold on the kernel the launcher boots and the guest's Arch mirrors. Put
+++# them back before anything else shapes the transaction below.
+++sudo /usr/local/lib/try-omarchy/pacman-layer refresh
+++
++ # Allow user customization of /etc/pacman.conf before the upgrade runs, so
++ # custom repositories and IgnorePkg entries shape the downgrade-capable
++ # transaction below.
++@@ -63,6 +68,11 @@
++ if [[ $channel == "stable" || $channel == "rc" ]]; then
++   ignore=(--ignore omarchy-dev,omarchy-settings-dev)
++ fi
+++# Try Omarchy: the local repository comes after Arch, so -uu would replace an
+++# installed rebuild such as the patched aquamarine with Arch's build of the
+++# same version. Leave the rebuilds to the ordinary update.
+++guest_ignore=$(/usr/local/lib/try-omarchy/pacman-layer ignore)
+++[[ -z $guest_ignore ]] || ignore+=(--ignore "$guest_ignore")
++ 
++ # Reset all package DBs and then update
++ omarchy-update-pacman -Syyuu --noconfirm "${ignore[@]}"
++diff --git a/bin/omarchy-reinstall-pkgs b/bin/omarchy-reinstall-pkgs
++--- a/bin/omarchy-reinstall-pkgs
+++++ b/bin/omarchy-reinstall-pkgs
++@@ -15,7 +15,9 @@
++ omarchy-refresh-pacman "$channel"
++ 
++ # Downgrade any packages to that channel's setup
++-omarchy-update-pacman -Suu --noconfirm
+++# Try Omarchy: except the managed rebuilds, as in omarchy-refresh-pacman.
+++guest_ignore=$(/usr/local/lib/try-omarchy/pacman-layer ignore)
+++omarchy-update-pacman -Suu --noconfirm ${guest_ignore:+--ignore "$guest_ignore"}
++ 
++ # Ensure this platform's default packages are installed
++ default_packages=$(omarchy-pkg-defaults)
+diff --git a/guest/scripts/configure-rootfs.sh b/guest/scripts/configure-rootfs.sh
+index d0bcf42..3849515 100755
+--- a/guest/scripts/configure-rootfs.sh
++++ b/guest/scripts/configure-rootfs.sh
+@@ -104,6 +104,11 @@ pacman_input=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["
+ [[ -n $pacman_input ]] || fail "native guest spec must provide pacmanConfig"
+ install -m 0644 "$guest_dir/$pacman_input" "$root/etc/pacman.conf"
+ install -m 0644 /etc/pacman.d/mirrorlist "$root/etc/pacman.d/mirrorlist"
++# Keep a copy of those Arch mirrors. Omarchy's pacman refresh replaces the
++# mirrorlist with its own, and pacman-layer puts this one back.
++grep -q '^[[:space:]]*Server[[:space:]]*=' /etc/pacman.d/mirrorlist || fail "the builder's mirrorlist has no Arch mirrors"
++! grep -q '^[[:space:]]*Server[[:space:]]*=.*omarchy\.' /etc/pacman.d/mirrorlist || fail "the builder's mirrorlist names Omarchy's mirrors"
++install -D -m 0644 /etc/pacman.d/mirrorlist "$root/usr/share/try-omarchy/arch-mirrorlist"
+ 
+ provision_unit="$root/usr/share/omarchy/install/provisioning/omarchy-provision-owner.service"
+ [[ -f $provision_unit ]] || fail "pinned upstream owner-provisioning service is missing"
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 81ace91..61f73ca 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -182,6 +182,8 @@ compat_paths=(
+   usr/local/lib/try-omarchy/compositor-health
+   usr/local/lib/try-omarchy/update-battery-dkms
+   usr/local/lib/try-omarchy/hold-kernel-headers
++  usr/local/lib/try-omarchy/pacman-layer
++  usr/share/try-omarchy/arch-mirrorlist
+   usr/local/lib/try-omarchy/battery-apply
+   usr/local/lib/try-omarchy/apply-host-locale
+   usr/local/lib/try-omarchy/catch-up
+@@ -265,7 +267,10 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 70 holds linux-headers with the kernel, puts back the camera and
+ # battery modules an Update had removed, and stops the camera bridge when
+ # its device is missing.
+-compat_revision=70
++# Revision 71 keeps the guest's local repository, kernel hold and Arch mirrors
++# through omarchy refresh pacman, and repairs disks a refused refresh left on
++# Omarchy's mirrors without them.
++compat_revision=71
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/spec.json b/guest/spec.json
+index c4d3db0..4230267 100644
+--- a/guest/spec.json
++++ b/guest/spec.json
+@@ -30,7 +30,7 @@
+     "versionFile": "4.0.0.alpha",
+     "channel": "stable",
+     "license": "MIT",
+-    "packageRelease": 15,
++    "packageRelease": 16,
+     "integrationDepends": [
+       "disktree-bin",
+       "fcitx5",
+@@ -315,6 +315,25 @@
+             "afterSha256": "85a5b848a34d2366ece7539c48d41d60534e769ab1070028c283e2cb23b44cc5"
+           }
+         ]
++      },
++      {
++        "id": "refresh-pacman-guest-layer",
++        "description": "Keep the guest's local package repository, kernel hold and Arch mirrors through omarchy refresh pacman, and leave the managed rebuilds out of its downgrade-capable transactions.",
++        "reference": "https://github.com/omacom/try-omarchy-windows/issues/408",
++        "patch": "patches/omarchy/refresh-pacman-guest-layer.patch",
++        "patchSha256": "ee280300d69b61477c6f9a454c8c3f2868a4bb3ea42112c86cb4d8c889d3723b",
++        "targets": [
++          {
++            "path": "bin/omarchy-refresh-pacman",
++            "beforeSha256": "e2832cb1963ee951fb2ab32b2989083cbb599c77c30c97f720cc19c43dca369e",
++            "afterSha256": "06ec6fc53ab75fb846efec08d5a10ab41b71e4f4573e3107179b6e2aea74e28e"
++          },
++          {
++            "path": "bin/omarchy-reinstall-pkgs",
++            "beforeSha256": "c3767c3b27e7ccad073d8a79738da4a69710cdad12e4767668054ce1954f4070",
++            "afterSha256": "353f12a240e7747e3b9425bfbe7382de31362a85c6e734fbd77b305f87a6625b"
++          }
++        ]
+       }
+     ],
+     "requiredPaths": [
+diff --git a/guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-apply-pacman b/guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-apply-pacman
+new file mode 100755
+index 0000000..7e7c7dc
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-apply-pacman
+@@ -0,0 +1,95 @@
++#!/bin/bash
++
++# omarchy:summary=Restore channel and regional pacman defaults in an installed target
++# omarchy:args=<stable|rc|edge> [target-root] | --render <stable|rc|edge> <output-dir> [target-root]
++# omarchy:requires-sudo=true
++# omarchy:hidden=true
++
++set -euo pipefail
++
++usage() {
++  echo "Usage: omarchy-apply-pacman <stable|rc|edge> [target-root]" >&2
++  echo "       omarchy-apply-pacman --render <stable|rc|edge> <output-dir> [target-root]" >&2
++  exit 1
++}
++
++# --render only builds the two files, so an unprivileged caller can hand root
++# nothing but plain copies of the finished result.
++render_dir=""
++if [[ ${1:-} == "--render" ]]; then
++  (( $# == 3 || $# == 4 )) || usage
++  channel="$2"
++  render_dir="$3"
++  [[ -d $render_dir ]] || { echo "Render directory not found: $render_dir" >&2; exit 1; }
++  etc="${4:-/}/etc"
++else
++  (( $# >= 1 && $# <= 2 )) || usage
++  channel="$1"
++  etc="${2:-/}/etc"
++fi
++
++case "$channel" in
++  stable|rc|edge) ;;
++  *) echo "Invalid pacman channel: $channel" >&2; exit 1 ;;
++esac
++
++# The ISO writes this plain-text marker before target finalization. Missing
++# markers keep existing installations global; never source it as shell code.
++region=global
++if [[ -e $etc/omarchy/region ]]; then
++  region=$(<"$etc/omarchy/region")
++fi
++case "$region" in
++  global|cn) ;;
++  *) echo "Unsupported region: $region (expected global or cn)" >&2; exit 1 ;;
++esac
++
++# Each platform has its own channel templates (install/helpers/pacman.sh).
++source "$OMARCHY_PATH/install/helpers/pacman.sh"
++platform=$(omarchy-hw-platform)
++templates=$(omarchy_pacman_templates "$platform")
++if [[ ! -f $templates/pacman-$channel.conf || ! -f $templates/mirrorlist-$channel ]]; then
++  echo "Omarchy has no $channel channel for $platform." >&2
++  exit 1
++fi
++
++# Build both files before replacing either. Explicit refreshes retain backups;
++# ordinary updates do not call this command or enforce regional defaults.
++if [[ -n $render_dir ]]; then
++  staging="$render_dir"
++else
++  staging=$(mktemp -d)
++  trap 'rm -rf "$staging"' EXIT
++fi
++# Regional profiles carry x86 mirrors only so far, so other platforms keep
++# their channel templates as they are.
++if [[ $region == "global" || $platform != "x86" ]]; then
++  cp "$templates/pacman-$channel.conf" "$staging/pacman.conf"
++  cp "$templates/mirrorlist-$channel" "$staging/mirrorlist"
++else
++  profile="$OMARCHY_PATH/default/regions/$region/pacman"
++  for fragment in "omarchy-$channel.prepend" "mirrorlist-$channel.prepend"; do
++    [[ -r $profile/$fragment ]] || { echo "Region $region lacks $profile/$fragment" >&2; exit 1; }
++  done
++  # pacman tries servers in order, so each regional mirror leads and the
++  # channel's own server stays as the fallback, for [omarchy] and for Arch.
++  awk -v fragment="$profile/omarchy-$channel.prepend" '
++    { print }
++    $0 == "[omarchy]" { while ((getline line < fragment) > 0) print line; found++ }
++    END { exit found == 1 ? 0 : 1 }
++  ' "$templates/pacman-$channel.conf" > "$staging/pacman.conf" ||
++    { echo "pacman-$channel.conf has no single [omarchy] section" >&2; exit 1; }
++  cat "$profile/mirrorlist-$channel.prepend" "$templates/mirrorlist-$channel" > "$staging/mirrorlist"
++fi
++
++if [[ -z $render_dir ]]; then
++  mkdir -p "$etc/pacman.d"
++  for file in pacman.conf pacman.d/mirrorlist; do
++    if [[ -e $etc/$file ]]; then
++      cp -f "$etc/$file" "$etc/$file.bak"
++    fi
++  done
++  # Copying over an existing file keeps its owner and mode, as refresh always has.
++  cp -f "$staging/pacman.conf" "$etc/pacman.conf"
++  cp -f "$staging/mirrorlist" "$etc/pacman.d/mirrorlist"
++fi
+diff --git a/guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-refresh-pacman b/guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-refresh-pacman
+new file mode 100755
+index 0000000..26f3377
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-refresh-pacman
+@@ -0,0 +1,68 @@
++#!/bin/bash
++
++# omarchy:summary=Overwrite the package configuration for /etc/pacman with the Omarchy default of using its dedicated mirrors and repositories, then update all packages.
++# omarchy:requires-sudo=true
++
++set -e
++
++channel="${1:-}"
++if [[ -n $channel && $channel != "stable" && $channel != "rc" && $channel != "edge" ]]; then
++  echo "Invalid channel: $channel" >&2
++  exit 2
++fi
++
++source "$OMARCHY_PATH/install/helpers/pacman.sh"
++if ! platform=$(omarchy-hw-platform); then
++  echo "Cannot tell this machine's platform. No repository configuration changed." >&2
++  exit 1
++fi
++templates=$(omarchy_pacman_templates "$platform") || exit 1
++if [[ -z $channel ]]; then
++  channel=$(omarchy-channel-current) || exit 1
++  case "$channel" in
++    stable | rc | edge) ;;
++    # A linked checkout uses the edge packages, just like channel-set dev.
++    dev) channel=edge ;;
++    unknown) channel=$(omarchy_pacman_default_channel "$platform") || exit 1 ;;
++    *)
++      echo "Cannot tell this machine's channel. No repository configuration changed." >&2
++      exit 1
++      ;;
++  esac
++fi
++if [[ ! -f $templates/pacman-$channel.conf || ! -f $templates/mirrorlist-$channel ]]; then
++  echo "Omarchy has no $channel channel for $platform. No repository configuration changed." >&2
++  exit 1
++fi
++
++# Render the channel templates plus this machine's regional additions as the
++# caller, so root only copies finished files. The scratch directory goes on
++# every exit, including a failed render, a refused sudo prompt, or a signal.
++rendered=$(mktemp -d)
++trap 'rm -rf "$rendered"' EXIT
++"$OMARCHY_PATH/bin/omarchy-apply-pacman" --render "$channel" "$rendered"
++
++sudo cp -f /etc/pacman.conf /etc/pacman.conf.bak
++sudo cp -f /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.bak
++echo "Setting channel to $channel"
++sudo cp -f "$rendered/pacman.conf" /etc/pacman.conf
++sudo cp -f "$rendered/mirrorlist" /etc/pacman.d/mirrorlist
++rm -rf "$rendered"
++
++# Allow user customization of /etc/pacman.conf before the upgrade runs, so
++# custom repositories and IgnorePkg entries shape the downgrade-capable
++# transaction below.
++omarchy-hook pre-refresh-pacman
++
++# Stable and rc publish omarchy and omarchy-settings; the -dev pair is edge's.
++# A stable or rc repository can still list an old -dev build (stable's listed
++# 4.0.0.r1832 from August to October 2026), and -uu would move an edge machine
++# onto it here, before omarchy-channel-set swaps the pair, and leave the
++# machine on that old build. The -dev pair is left to the swap.
++ignore=()
++if [[ $channel == "stable" || $channel == "rc" ]]; then
++  ignore=(--ignore omarchy-dev,omarchy-settings-dev)
++fi
++
++# Reset all package DBs and then update
++omarchy-update-pacman -Syyuu --noconfirm "${ignore[@]}"
+diff --git a/guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-reinstall-pkgs b/guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-reinstall-pkgs
+new file mode 100755
+index 0000000..2fce729
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.5.0/bin/omarchy-reinstall-pkgs
+@@ -0,0 +1,25 @@
++#!/bin/bash
++
++# omarchy:summary=Reinstall all default Omarchy packages from the stable channel, or on Apple Silicon the edge channel
++# omarchy:requires-sudo=true
++
++set -e
++
++# Reinstall all default Omarchy packages from the platform's default channel
++# (stable, or edge on Apple Silicon) and downgrade any packages that are too new.
++
++# Set the package repository to the platform's default channel
++source "$OMARCHY_PATH/install/helpers/pacman.sh"
++platform=$(omarchy-hw-platform)
++channel=$(omarchy_pacman_default_channel "$platform")
++omarchy-refresh-pacman "$channel"
++
++# Downgrade any packages to that channel's setup
++omarchy-update-pacman -Suu --noconfirm
++
++# Ensure this platform's default packages are installed
++default_packages=$(omarchy-pkg-defaults)
++mapfile -t packages <<<"$default_packages"
++# --ask 4 accepts removing a stock package a default replaces, such as
++# power-profiles-daemon for omarchy-power-profiles-daemon.
++omarchy-update-pacman -Syu --noconfirm --ask 4 --needed "${packages[@]}"
+diff --git a/guest/tests/fixtures/omarchy-4.5.0/install/helpers/pacman.sh b/guest/tests/fixtures/omarchy-4.5.0/install/helpers/pacman.sh
+new file mode 100644
+index 0000000..4ca3f42
+--- /dev/null
++++ b/guest/tests/fixtures/omarchy-4.5.0/install/helpers/pacman.sh
+@@ -0,0 +1,34 @@
++# Pacman repository templates. Every platform has a pacman.conf and mirrorlist
++# for each channel it offers, copied into place whole, as x86's always were:
++# x86's in default/pacman, each ARM platform's in a directory named for it.
++# Sourcing this file only defines functions; it never changes the system.
++
++# The directory holding <platform>'s pacman-<channel>.conf and
++# mirrorlist-<channel>. A channel without both files isn't offered there.
++omarchy_pacman_templates() {
++  case ${1:-} in
++    x86) echo "$OMARCHY_PATH/default/pacman" ;;
++    aarch64 | aarch64-apple) echo "$OMARCHY_PATH/default/pacman/$1" ;;
++    # Snapdragon, the N1x and the GB10 use Arch Linux ARM and Omarchy's aarch64
++    # repository like any other ARM machine, so they share its templates.
++    aarch64-qualcomm | aarch64-n1x | aarch64-gb10) echo "$OMARCHY_PATH/default/pacman/aarch64" ;;
++    *)
++      echo "Error: Unknown platform '${1:-}'." >&2
++      return 1
++      ;;
++  esac
++}
++
++# The channel a machine takes when none is named: stable, except on Apple
++# Silicon, whose machines have followed edge from the start and stay there
++# unless they choose another channel.
++omarchy_pacman_default_channel() {
++  case ${1:-} in
++    x86 | aarch64 | aarch64-qualcomm | aarch64-n1x | aarch64-gb10) echo stable ;;
++    aarch64-apple) echo edge ;;
++    *)
++      echo "Error: Unknown platform '${1:-}'." >&2
++      return 1
++      ;;
++  esac
++}
+diff --git a/guest/tests/test_aquamarine_contract.py b/guest/tests/test_aquamarine_contract.py
+index fc821de..ecb6c36 100644
+--- a/guest/tests/test_aquamarine_contract.py
++++ b/guest/tests/test_aquamarine_contract.py
+@@ -76,7 +76,7 @@ class AquamarineContractTests(unittest.TestCase):
+         runtime = (GUEST / 'scripts/register-omarchy-runtime.sh').read_text()
+         self.assertIn('depend = aquamarine>={version}', runtime)
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=70', finalizer)
++        self.assertIn('compat_revision=71', finalizer)
+         self.assertIn('cp /usr/share/try-omarchy/repo/*.pkg.tar.zst', finalizer)
+         self.assertIn('usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua', finalizer)
+         repo = (GUEST / 'scripts/register-local-repository.sh').read_text()
+diff --git a/guest/tests/test_battery_details.py b/guest/tests/test_battery_details.py
+index 34cd11e..14b5147 100644
+--- a/guest/tests/test_battery_details.py
++++ b/guest/tests/test_battery_details.py
+@@ -204,7 +204,7 @@ class BatteryDetailsFlowTests(unittest.TestCase):
+     def test_compatibility_delivery_and_dkms_version(self):
+         overlay = GUEST / "factory-overlay"
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=70", finalize)
++        self.assertIn("compat_revision=71", finalize)
+         self.assertIn("usr/src/try-omarchy-battery-1.1.0", finalize)
+         self.assertIn("usr/local/lib/try-omarchy/update-battery-dkms", finalize)
+         self.assertIn('PACKAGE_VERSION="1.1.0"', (MODULE_SOURCE.parent / "dkms.conf").read_text())
+diff --git a/guest/tests/test_clipboard_pull.py b/guest/tests/test_clipboard_pull.py
+index efb6a60..e52d3e1 100644
+--- a/guest/tests/test_clipboard_pull.py
++++ b/guest/tests/test_clipboard_pull.py
+@@ -71,4 +71,4 @@ class ClipboardPullTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn('usr/local/bin/clipboard-bridge', paths)
+-        self.assertIn('compat_revision=70', finalizer)
++        self.assertIn('compat_revision=71', finalizer)
+diff --git a/guest/tests/test_compositor_health.py b/guest/tests/test_compositor_health.py
+index 1bc9793..c04739b 100644
+--- a/guest/tests/test_compositor_health.py
++++ b/guest/tests/test_compositor_health.py
+@@ -55,7 +55,7 @@ class CompositorHealthTests(unittest.TestCase):
+ 
+     def test_existing_disks_receive_health_files(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=70', finalizer)
++        self.assertIn('compat_revision=71', finalizer)
+         for name in ['agent', 'compositor-health']:
+             self.assertIn('  usr/local/lib/try-omarchy/' + name, finalizer)
+         self.assertTrue(HELPER.stat().st_mode & 0o111)
+diff --git a/guest/tests/test_guest_qol.py b/guest/tests/test_guest_qol.py
+index 626fd12..6ed20d9 100644
+--- a/guest/tests/test_guest_qol.py
++++ b/guest/tests/test_guest_qol.py
+@@ -225,7 +225,7 @@ class GuestQolTests(unittest.TestCase):
+     def test_compatibility_delivers_guarded_payload_once_per_revision(self):
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalize.split("compat_paths=(", 1)[1].split(")", 1)[0]
+-        self.assertIn("compat_revision=70", finalize)
++        self.assertIn("compat_revision=71", finalize)
+         for path in ("usr/local/bin/omarchy-native-screensaver-text", "usr/local/lib/try-omarchy/install-guest-qol", "usr/share/try-omarchy/guest-qol", "usr/local/bin/omarchy-windows-audio-bridge"):
+             self.assertIn(path, paths)
+         self.assertNotIn("etc/fonts/conf.d/30-try-omarchy.conf", paths)
+diff --git a/guest/tests/test_kernel_headers_hold.py b/guest/tests/test_kernel_headers_hold.py
+index bfa0c99..300909d 100644
+--- a/guest/tests/test_kernel_headers_hold.py
++++ b/guest/tests/test_kernel_headers_hold.py
+@@ -133,7 +133,7 @@ class HoldTests(unittest.TestCase):
+         finalize = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalize.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
+         self.assertIn('usr/local/lib/try-omarchy/hold-kernel-headers', paths)
+-        self.assertIn('compat_revision=70', finalize)
++        self.assertIn('compat_revision=71', finalize)
+         self.assertTrue(os.access(HOLD, os.X_OK))
+ 
+ 
+diff --git a/guest/tests/test_live_update.py b/guest/tests/test_live_update.py
+index a6cbe8c..706feff 100644
+--- a/guest/tests/test_live_update.py
++++ b/guest/tests/test_live_update.py
+@@ -176,7 +176,7 @@ class LiveUpdateTests(unittest.TestCase):
+ 
+     def test_delivery_and_best_effort_hook(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=70', finalizer)
++        self.assertIn('compat_revision=71', finalizer)
+         for path in ['usr/local/lib/try-omarchy/live-update', 'etc/pacman.d/hooks/00-try-omarchy-live-update.hook', 'etc/pacman.d/hooks/zz-try-omarchy-live-update.hook']:
+             self.assertIn(path, finalizer)
+         pre = (GUEST / 'factory-overlay/etc/pacman.d/hooks/00-try-omarchy-live-update.hook').read_text()
+diff --git a/guest/tests/test_native_nightlight.py b/guest/tests/test_native_nightlight.py
+index 00565d8..03d7c23 100644
+--- a/guest/tests/test_native_nightlight.py
++++ b/guest/tests/test_native_nightlight.py
+@@ -214,5 +214,5 @@ class PersistentNightlightTests(unittest.TestCase):
+         catch_up = (self.overlay / 'usr/local/lib/try-omarchy/catch-up').read_text()
+         for path in ['usr/local/bin/omarchy-native-nightlight', 'usr/local/share/try-omarchy/nightlight.frag', 'usr/local/lib/try-omarchy/install-nightlight', 'usr/share/try-omarchy/nightlight']:
+             self.assertIn(path, finalizer)
+-        self.assertIn('compat_revision=70', finalizer)
++        self.assertIn('compat_revision=71', finalizer)
+         self.assertIn('previous_revision < 55', catch_up)
+diff --git a/guest/tests/test_notification_privacy.py b/guest/tests/test_notification_privacy.py
+index 532cbb5..e9be504 100644
+--- a/guest/tests/test_notification_privacy.py
++++ b/guest/tests/test_notification_privacy.py
+@@ -116,8 +116,8 @@ for (const state of [null, {screensaverStateKnown:false}, {screensaverStateKnown
+     def test_compatibility_overlay_and_catch_up_revision(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         catch_up = (GUEST / 'factory-overlay/usr/local/lib/try-omarchy/catch-up').read_text()
+-        self.assertIn('compat_revision=70', finalizer)
++        self.assertIn('compat_revision=71', finalizer)
+         self.assertIn('usr/share/try-omarchy/notifications', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-notifications', finalizer)
+         self.assertIn('previous_revision < 52', catch_up)
+-        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 15)
++        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 16)
+diff --git a/guest/tests/test_qt612_palette.py b/guest/tests/test_qt612_palette.py
+index cbb789b..13f39b9 100644
+--- a/guest/tests/test_qt612_palette.py
++++ b/guest/tests/test_qt612_palette.py
+@@ -170,10 +170,10 @@ class Qt612PaletteTests(unittest.TestCase):
+     def test_compatibility_delivery_runs_after_older_repairs_and_before_login(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+-        self.assertIn('compat_revision=70', finalizer)
++        self.assertIn('compat_revision=71', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-qt612-palette', paths)
+         self.assertIn('usr/share/try-omarchy/qt612-palette', paths)
+-        self.assertEqual(self.build_spec['upstream']['packageRelease'], 15)
++        self.assertEqual(self.build_spec['upstream']['packageRelease'], 16)
+         service = (OVERLAY / 'etc/systemd/system/try-omarchy-catch-up.service').read_text()
+         self.assertIn('Before=display-manager.service', service)
+         catch_up = OVERLAY / 'usr/local/lib/try-omarchy/catch-up'
+diff --git a/guest/tests/test_refresh_pacman.py b/guest/tests/test_refresh_pacman.py
+new file mode 100644
+index 0000000..8922acd
+--- /dev/null
++++ b/guest/tests/test_refresh_pacman.py
+@@ -0,0 +1,558 @@
++"""omarchy refresh pacman keeps the guest's pacman layer (#408).
++
++Omarchy's refresh copies its channel templates over pacman.conf and the
++mirrorlist and runs a downgrade-capable -Syyuu. On the guest that dropped the
++local [try-omarchy] repository, the kernel hold and the rolling Arch mirrors,
++and the transaction was refused, leaving the disk on Omarchy's stable mirror
++snapshot. These tests cover the reviewed patch to Omarchy's scripts, the
++pacman-layer helper, and the catch-up repair for disks a refused refresh
++already rewrote. The pacman tests run the patched refresh with real libalpm
++transactions on Arch builders and are skipped elsewhere.
++"""
++import hashlib
++import json
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import tarfile
++import tempfile
++import time
++import unittest
++
++GUEST = Path(__file__).resolve().parents[1]
++OVERLAY = GUEST / 'factory-overlay'
++LAYER = OVERLAY / 'usr/local/lib/try-omarchy/pacman-layer'
++CATCH_UP = OVERLAY / 'usr/local/lib/try-omarchy/catch-up'
++PATCH = GUEST / 'patches/omarchy/refresh-pacman-guest-layer.patch'
++UPSTREAM = GUEST / 'tests/fixtures/omarchy-4.5.0'
++
++# Omarchy 4.5.0's default/pacman/pacman-stable.conf and mirrorlist-stable.
++STABLE_CONF = '''# See the pacman.conf(5) manpage for option and repository directives
++
++[options]
++Color
++ILoveCandy
++VerbosePkgLists
++HoldPkg = pacman glibc
++Architecture = auto
++CheckSpace
++ParallelDownloads = 5
++DownloadUser = alpm
++
++# By default, pacman accepts packages signed by keys that its local keyring
++# trusts (see pacman-key and its man page), as well as unsigned packages.
++SigLevel = Required DatabaseOptional
++LocalFileSigLevel = Optional
++
++# pacman searches repositories in the order defined here
++[omarchy]
++Server = https://pkgs.omarchy.org/stable/$arch
++
++[core]
++Include = /etc/pacman.d/mirrorlist
++
++[extra]
++Include = /etc/pacman.d/mirrorlist
++
++[multilib]
++Include = /etc/pacman.d/mirrorlist
++'''
++STABLE_MIRRORS = 'Server = https://stable-mirror.omarchy.org/$repo/os/$arch\n'
++ARCH_MIRRORS = ('Server = https://fastly.mirror.pkgbuild.com/$repo/os/$arch\n'
++                'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch\n')
++LOCAL_REPO = '''
++# Immutable packages assembled from the checksummed Try Omarchy build spec.
++[try-omarchy]
++SigLevel = Optional TrustAll
++Server = file:///usr/share/try-omarchy/repo
++'''
++# What a v0.15.0 image ships: the guest's pacman-x86_64.conf plus the local repository.
++GUEST_CONF = (GUEST / 'pacman-x86_64.conf').read_text() + LOCAL_REPO
++
++ALPM = os.geteuid() == 0 and all(shutil.which(x) for x in ('pacman', 'repo-add'))
++if os.environ.get('REQUIRE_ALPM_TESTS') == '1' and not ALPM:
++    raise RuntimeError('required Arch transaction tools unavailable')
++
++
++def digest(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def ignored(config):
++    """Package names pacman ignores, read the way pacman reads [options]."""
++    names, options = [], False
++    for line in config.splitlines():
++        line = line.strip()
++        if line.startswith('['):
++            options = line == '[options]'
++        elif options and line.split('=')[0].strip() == 'IgnorePkg':
++            names += line.split('=', 1)[1].split()
++    return names
++
++
++def sections(config):
++    return [line.strip()[1:-1] for line in config.splitlines() if line.strip().startswith('[')]
++
++
++def patched(destination):
++    """Omarchy 4.5.0's refresh and reinstall commands with the reviewed patch."""
++    (destination / 'bin').mkdir(parents=True, exist_ok=True)
++    for name in ('omarchy-refresh-pacman', 'omarchy-reinstall-pkgs'):
++        shutil.copy(UPSTREAM / 'bin' / name, destination / 'bin' / name)
++    applied = subprocess.run(['git', 'apply', '--no-index', '--unidiff-zero', '--whitespace=error', str(PATCH)],
++                             cwd=destination, text=True, capture_output=True)
++    if applied.returncode:
++        raise AssertionError(applied.stderr)
++
++
++class BackportTests(unittest.TestCase):
++    def test_patch_is_reviewed_against_omarchy_4_5_0(self):
++        spec = json.loads((GUEST / 'spec.json').read_text())
++        entry = next(e for e in spec['authenticity']['backports'] if e['id'] == 'refresh-pacman-guest-layer')
++        self.assertEqual(entry['patch'], 'patches/omarchy/refresh-pacman-guest-layer.patch')
++        self.assertEqual(entry['patchSha256'], digest(PATCH))
++        targets = {t['path']: t for t in entry['targets']}
++        self.assertEqual(set(targets), {'bin/omarchy-refresh-pacman', 'bin/omarchy-reinstall-pkgs'})
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            for path, target in targets.items():
++                self.assertEqual(target['beforeSha256'], digest(UPSTREAM / path))
++            patched(root)
++            for path, target in targets.items():
++                self.assertEqual(target['afterSha256'], digest(root / path))
++
++    def test_layer_goes_back_before_the_user_hook_and_the_transaction(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            patched(root)
++            refresh = (root / 'bin/omarchy-refresh-pacman').read_text()
++            order = ['sudo cp -f "$rendered/mirrorlist" /etc/pacman.d/mirrorlist',
++                     'sudo /usr/local/lib/try-omarchy/pacman-layer refresh',
++                     'omarchy-hook pre-refresh-pacman',
++                     'guest_ignore=$(/usr/local/lib/try-omarchy/pacman-layer ignore)',
++                     'omarchy-update-pacman -Syyuu --noconfirm "${ignore[@]}"']
++            self.assertEqual([refresh.index(line) for line in order], sorted(refresh.index(line) for line in order))
++            reinstall = (root / 'bin/omarchy-reinstall-pkgs').read_text()
++            self.assertIn('omarchy-update-pacman -Suu --noconfirm ${guest_ignore:+--ignore "$guest_ignore"}\n', reinstall)
++
++    def test_image_and_existing_disks_get_the_helper(self):
++        finalize = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
++        paths = finalize.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
++        self.assertIn('usr/local/lib/try-omarchy/pacman-layer', paths)
++        self.assertIn('usr/share/try-omarchy/arch-mirrorlist', paths)
++        self.assertIn('compat_revision=71', finalize)
++        self.assertTrue(os.access(LAYER, os.X_OK))
++        configure = (GUEST / 'scripts/configure-rootfs.sh').read_text()
++        self.assertIn('install -D -m 0644 /etc/pacman.d/mirrorlist "$root/usr/share/try-omarchy/arch-mirrorlist"',
++                      configure)
++        build = (GUEST / 'build.sh').read_text()
++        self.assertIn("REQUIRE_ALPM_TESTS=1 python3 -m unittest discover -s \"$guest_dir/tests\" -p 'test_refresh_pacman.py'",
++                      build)
++
++
++class LayerTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.root = Path(self.tmp.name)
++        self.config = self.root / 'pacman.conf'
++        self.mirrorlist = self.root / 'mirrorlist'
++        self.arch = self.root / 'arch-mirrorlist'
++        self.arch.write_text(ARCH_MIRRORS)
++        # The databases refresh with the restored configuration.
++        self.synced = self.root / 'synced'
++        fake = self.root / 'pacman'
++        fake.write_text(f'#!/bin/sh\necho "$@" >>{self.synced}\n')
++        fake.chmod(0o755)
++        self.env = {**os.environ, 'TRY_OMARCHY_PACMAN': str(fake), 'TRY_OMARCHY_PACMAN_CONF': str(self.config),
++                    'TRY_OMARCHY_MIRRORLIST': str(self.mirrorlist), 'TRY_OMARCHY_ARCH_MIRRORLIST': str(self.arch)}
++
++    def disk(self, config, mirrors, config_bak=None, mirrors_bak=None):
++        for path, text in [(self.config, config), (self.mirrorlist, mirrors),
++                           (Path(f'{self.config}.bak'), config_bak), (Path(f'{self.mirrorlist}.bak'), mirrors_bak)]:
++            if text is not None:
++                path.write_text(text)
++
++    def layer(self, command, status=0):
++        result = subprocess.run([str(LAYER), command], env=self.env, text=True, capture_output=True)
++        self.assertEqual(result.returncode, status, result.stdout + result.stderr)
++        return result
++
++    def assert_guest_layer(self, text):
++        self.assertEqual(ignored(text)[:2], ['linux', 'linux-headers'])
++        self.assertEqual(sections(text), ['options', 'omarchy', 'core', 'extra', 'multilib', 'try-omarchy'])
++        self.assertIn('[try-omarchy]\nSigLevel = Optional TrustAll\nServer = file:///usr/share/try-omarchy/repo\n', text)
++
++    def test_refresh_puts_the_layer_on_omarchys_templates(self):
++        # What omarchy-refresh-pacman leaves just before its hook runs.
++        self.disk(STABLE_CONF, STABLE_MIRRORS, GUEST_CONF, ARCH_MIRRORS)
++        self.config.chmod(0o640)
++        self.layer('refresh')
++        text = self.config.read_text()
++        self.assert_guest_layer(text)
++        self.assertIn('HoldPkg = pacman glibc\n# Try Omarchy: the launcher boots its own kernel; keep its modules and headers.\n'
++                      'IgnorePkg = linux linux-headers\nArchitecture = auto\n', text)
++        self.assertEqual(text.replace(LOCAL_REPO, '').replace(
++            '# Try Omarchy: the launcher boots its own kernel; keep its modules and headers.\n'
++            'IgnorePkg = linux linux-headers\n', ''), STABLE_CONF)
++        self.assertEqual(self.mirrorlist.read_text(), ARCH_MIRRORS)
++        self.assertEqual(self.config.stat().st_mode & 0o777, 0o640)
++        self.assertEqual(self.synced.read_text(), f'--config {self.config} -Sy\n')
++        # A second run changes nothing.
++        self.layer('refresh')
++        self.assertEqual(self.config.read_text(), text)
++
++    def test_refresh_keeps_an_administrators_arch_mirrors(self):
++        mine = 'Server = https://mirror.example.org/archlinux/$repo/os/$arch\n'
++        self.disk(STABLE_CONF, STABLE_MIRRORS, GUEST_CONF, mine)
++        self.layer('refresh')
++        self.assertEqual(self.mirrorlist.read_text(), mine)
++
++    def test_refresh_uses_the_image_mirrors_when_the_backup_is_omarchys(self):
++        # A second refresh on a disk the old refresh rewrote: .bak is the snapshot.
++        for backup in [STABLE_MIRRORS, '# no servers\n', None]:
++            Path(f'{self.mirrorlist}.bak').unlink(missing_ok=True)
++            self.disk(STABLE_CONF, STABLE_MIRRORS, STABLE_CONF, backup)
++            self.layer('refresh')
++            self.assertEqual(self.mirrorlist.read_text(), ARCH_MIRRORS)
++
++    def test_refresh_extends_held_packages(self):
++        conf = STABLE_CONF.replace('HoldPkg = pacman glibc\n', 'HoldPkg = pacman glibc\nIgnorePkg = firefox linux\n')
++        self.disk(conf, STABLE_MIRRORS, GUEST_CONF, ARCH_MIRRORS)
++        self.layer('refresh')
++        self.assertEqual(ignored(self.config.read_text()), ['firefox', 'linux', 'linux-headers'])
++
++    def test_refresh_stops_without_arch_mirrors(self):
++        self.arch.unlink()
++        self.disk(STABLE_CONF, STABLE_MIRRORS, STABLE_CONF, STABLE_MIRRORS)
++        result = self.layer('refresh', status=1)
++        self.assertIn('no Arch mirrorlist', result.stderr)
++        self.assertFalse(self.synced.exists())
++        self.assertEqual(self.config.read_text(), STABLE_CONF)
++        self.assertEqual(self.mirrorlist.read_text(), STABLE_MIRRORS)
++
++    def test_repair_restores_a_disk_a_refused_refresh_rewrote(self):
++        self.disk(STABLE_CONF, STABLE_MIRRORS, GUEST_CONF, ARCH_MIRRORS)
++        self.config.chmod(0o640)
++        output = self.layer('repair').stdout
++        self.assertIn('restored', output)
++        self.assertEqual(self.config.read_text(), GUEST_CONF)
++        self.assertEqual(self.mirrorlist.read_text(), ARCH_MIRRORS)
++        self.assertEqual(self.config.stat().st_mode & 0o777, 0o640)
++        self.assertEqual(self.layer('repair').stdout, '')
++
++    def test_repair_layers_the_templates_when_the_backup_is_not_the_guests(self):
++        # Refreshed twice: both backups are already Omarchy's templates.
++        self.disk(STABLE_CONF, STABLE_MIRRORS, STABLE_CONF, STABLE_MIRRORS)
++        self.layer('repair')
++        self.assert_guest_layer(self.config.read_text())
++        self.assertEqual(self.mirrorlist.read_text(), ARCH_MIRRORS)
++
++    def test_repair_puts_the_headers_hold_on_an_older_backup(self):
++        old = GUEST_CONF.replace('IgnorePkg = linux linux-headers\n', 'IgnorePkg = linux\n')
++        self.disk(STABLE_CONF, STABLE_MIRRORS, old, ARCH_MIRRORS)
++        self.layer('repair')
++        self.assertEqual(self.config.read_text(), GUEST_CONF)
++
++    def test_repair_leaves_customized_and_healthy_disks_alone(self):
++        mine = 'Server = https://mirror.example.org/archlinux/$repo/os/$arch\n'
++        cases = [
++            (GUEST_CONF, ARCH_MIRRORS, STABLE_CONF, STABLE_MIRRORS, ''),  # already fine
++            (GUEST_CONF, STABLE_MIRRORS, None, None, ''),  # has the local repository
++            (STABLE_CONF, mine, GUEST_CONF, ARCH_MIRRORS, 'the mirrorlist is not Omarchy'),
++            (STABLE_CONF, STABLE_MIRRORS + mine, GUEST_CONF, ARCH_MIRRORS, 'the mirrorlist is not Omarchy'),
++        ]
++        for config, mirrors, config_bak, mirrors_bak, message in cases:
++            for path in self.root.glob('*.bak'):
++                path.unlink()
++            self.disk(config, mirrors, config_bak, mirrors_bak)
++            output = self.layer('repair').stdout
++            self.assertIn(message, output) if message else self.assertEqual(output, '')
++            self.assertEqual(self.config.read_text(), config)
++            self.assertEqual(self.mirrorlist.read_text(), mirrors)
++
++    def test_repair_leaves_a_linked_configuration(self):
++        target = self.root / 'elsewhere.conf'
++        target.write_text(STABLE_CONF)
++        self.config.symlink_to(target)
++        self.disk(None, STABLE_MIRRORS, GUEST_CONF, ARCH_MIRRORS)
++        self.assertIn('not a regular file', self.layer('repair').stdout)
++        self.assertEqual(target.read_text(), STABLE_CONF)
++        self.assertEqual(self.mirrorlist.read_text(), STABLE_MIRRORS)
++
++    def test_catch_up_runs_the_repair_below_revision_71(self):
++        state = self.root / 'state'
++        version = self.root / 'compat-version'
++        version.write_text('71:7.2.15-arch1-1\n')
++        homes = self.root / 'home'
++        homes.mkdir()
++        log = self.root / 'repaired'
++        layer = self.root / 'layer'
++        layer.write_text(f'#!/bin/sh\necho "$@" >> {log}\n')
++        layer.chmod(0o755)
++        env = {**os.environ, 'TRY_OMARCHY_COMPAT_VERSION': str(version), 'TRY_OMARCHY_STATE_DIR': str(state),
++               'TRY_OMARCHY_HOMES': str(homes), 'TRY_OMARCHY_PACMAN_LAYER': str(layer),
++               'TRY_OMARCHY_HEADERS_HOLD': '/nonexistent', 'TRY_OMARCHY_SSHD_CONFIG_DIR': str(self.root / 'sshd'),
++               'TRY_OMARCHY_TERMINAL_SHIM': str(self.root / 'shim')}
++        for name in ('QOL', 'BATTERY', 'NIGHTLIGHT', 'NOTIFICATIONS', 'PALETTE'):
++            env[f'TRY_OMARCHY_{name}_INSTALLER'] = '/nonexistent'
++        runs = []
++        for previous in ['', '68', '70', '71']:
++            state.mkdir(exist_ok=True)
++            marker = state / 'catch-up-revision'
++            marker.unlink(missing_ok=True)
++            if previous:
++                marker.write_text(previous + '\n')
++            log.unlink(missing_ok=True)
++            result = subprocess.run(['bash', str(CATCH_UP)], env=env, text=True, capture_output=True)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            runs.append(log.read_text() if log.exists() else None)
++        self.assertEqual(runs, ['repair\n', 'repair\n', 'repair\n', None])
++
++
++FAKES = {
++    # The refresh asks for root with sudo; the tests already run as root.
++    'sudo': '#!/bin/bash\nexec "$@"\n',
++    'omarchy-hw-platform': '#!/bin/bash\necho x86\n',
++    'omarchy-channel-current': '#!/bin/bash\necho stable\n',
++    'omarchy-hook': '#!/bin/bash\nexit 0\n',
++    'omarchy-pkg-defaults': '#!/bin/bash\necho foo\n',
++    'omarchy-update-pacman': '#!/bin/bash\nexec pacman --config "$PACMAN_CONF" "$@"\n',
++}
++
++
++@unittest.skipUnless(ALPM, 'requires an Arch builder as root')
++class RefreshTransactionTests(unittest.TestCase):
++    """The patched refresh against an older stable snapshot, with real pacman.
++
++    The rolling Arch repository matches what is installed, Omarchy's stable
++    snapshot is older than it, and the local repository carries the patched
++    aquamarine as a .1 rebuild of Arch's version.
++    """
++
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.base = Path(self.tmp.name)
++        self.root = self.base / 'root'
++        for name in ('var/lib/pacman/local', 'var/lib/pacman/sync', 'var/cache/pacman/pkg', 'var/log', 'tmp'):
++            (self.root / name).mkdir(parents=True, exist_ok=True)
++        self.etc = self.base / 'etc'
++        (self.etc / 'pacman.d').mkdir(parents=True)
++        self.config = self.etc / 'pacman.conf'
++        self.mirrorlist = self.etc / 'pacman.d/mirrorlist'
++        self.repos = {name: self.base / name for name in ('rolling/extra', 'snapshot/extra', 'omarchy', 'local')}
++        for path in self.repos.values():
++            path.mkdir(parents=True)
++        self.arch_mirrors = f'Server = file://{self.base}/rolling/$repo\n'
++        (self.base / 'arch-mirrorlist').write_text(self.arch_mirrors)
++
++        # Omarchy's stable templates, pointed at the fixture repositories.
++        options = f'''[options]
++HoldPkg = pacman glibc
++Architecture = x86_64
++RootDir = {self.root}
++DBPath = {self.root}/var/lib/pacman/
++CacheDir = {self.root}/var/cache/pacman/pkg/
++LogFile = {self.root}/var/log/pacman.log
++SigLevel = Never
++LocalFileSigLevel = Never
++DisableSandbox
++'''
++        repositories = f'''
++[omarchy]
++Server = file://{self.repos['omarchy']}
++
++[extra]
++Include = {self.mirrorlist}
++'''
++        self.omarchy = self.base / 'omarchy-path'
++        templates = self.omarchy / 'default/pacman'
++        templates.mkdir(parents=True)
++        (templates / 'pacman-stable.conf').write_text(options + repositories)
++        (templates / 'mirrorlist-stable').write_text(f'Server = file://{self.base}/snapshot/$repo\n')
++        for path in ('bin/omarchy-apply-pacman', 'install/helpers/pacman.sh'):
++            (self.omarchy / path).parent.mkdir(parents=True, exist_ok=True)
++            shutil.copy(UPSTREAM / path, self.omarchy / path)
++
++        # The guest disk before the refresh.
++        self.guest_conf = (options.replace('HoldPkg = pacman glibc\n', 'HoldPkg = pacman glibc\nIgnorePkg = linux linux-headers\n')
++                           + repositories + f'\n[try-omarchy]\nSigLevel = Optional TrustAll\nServer = file://{self.repos["local"]}\n')
++        self.config.write_text(self.guest_conf)
++        self.mirrorlist.write_text(self.arch_mirrors)
++
++        self.bin = self.base / 'bin'
++        self.bin.mkdir()
++        for name, body in FAKES.items():
++            (self.bin / name).write_text(body)
++            (self.bin / name).chmod(0o755)
++        self.env = {'PATH': f'{self.bin}:/usr/bin:/bin', 'HOME': str(self.base), 'OMARCHY_PATH': str(self.omarchy),
++                    'PACMAN_CONF': str(self.config), 'TRY_OMARCHY_PACMAN_CONF': str(self.config),
++                    'TRY_OMARCHY_MIRRORLIST': str(self.mirrorlist),
++                    'TRY_OMARCHY_ARCH_MIRRORLIST': str(self.base / 'arch-mirrorlist'),
++                    'TRY_OMARCHY_LOCAL_REPO': str(self.repos['local'])}
++
++        installed = [self.package('local', 'aquamarine', '0.16.0-1.1', provides='libaquamarine.so=15-64'),
++                     self.package('local', 'try-omarchy-runtime', '4.5.0-16', depends='aquamarine>=0.16.0-1'),
++                     self.package('rolling/extra', 'hyprland', '2-1', depends='libaquamarine.so=15-64'),
++                     self.package('rolling/extra', 'linux', '2-1'),
++                     self.package('rolling/extra', 'linux-headers', '2-1'),
++                     self.package('rolling/extra', 'foo', '2-1'),
++                     self.package('omarchy', 'omarchy-fixture', '1-1')]
++        self.package('rolling/extra', 'aquamarine', '0.16.0-1', provides='libaquamarine.so=15-64')
++        self.package('rolling/extra', 'linux', '3-1')
++        self.package('rolling/extra', 'linux-headers', '3-1')
++        self.package('rolling/extra', 'foo', '3-1')
++        # Omarchy's stable snapshot is older than everything installed.
++        self.package('snapshot/extra', 'aquamarine', '0.15.1-1', provides='libaquamarine.so=14-64')
++        self.package('snapshot/extra', 'hyprland', '1-1', depends='libaquamarine.so=14-64')
++        for name in ('linux', 'linux-headers', 'foo'):
++            self.package('snapshot/extra', name, '1-1')
++        self.pacman('-U', '--noscriptlet', *map(str, installed))
++        self.publish()
++        self.pacman('-Syy')
++        self.before = self.installed()
++
++    def package(self, repository, name, version, depends=None, provides=None):
++        stage = self.base / 'stage' / repository / f'{name}-{version}'
++        stage.mkdir(parents=True)
++        info = [f'pkgname = {name}', f'pkgver = {version}', 'pkgdesc = fixture', 'arch = x86_64', 'size = 1']
++        info += [f'depend = {depends}'] if depends else []
++        info += [f'provides = {provides}'] if provides else []
++        (stage / '.PKGINFO').write_text('\n'.join(info) + '\n')
++        archive = self.repos[repository] / f'{name}-{version}-x86_64.pkg.tar.gz'
++        with tarfile.open(archive, 'w:gz') as tar:
++            tar.add(stage / '.PKGINFO', arcname='.PKGINFO')
++        return archive
++
++    def publish(self):
++        # pacman -Sy fetches a file:// database only when it is newer than
++        # its copy, and these are written within the same second.
++        self.published = getattr(self, 'published', time.time()) + 10
++        names = {'rolling/extra': 'extra', 'snapshot/extra': 'extra', 'omarchy': 'omarchy', 'local': 'try-omarchy'}
++        for repository, path in self.repos.items():
++            for old in path.glob('*.db*'):
++                old.unlink()
++            archives = sorted(path.glob('*.pkg.tar.gz'))
++            database = path / f'{names[repository]}.db.tar.gz'
++            subprocess.run(['repo-add', '-q', str(database), *map(str, archives)], check=True, capture_output=True)
++            os.utime(database, (self.published, self.published))
++
++    def pacman(self, *args, config=None):
++        result = subprocess.run(['pacman', '--noconfirm', '--config', str(config or self.config), *args],
++                                text=True, capture_output=True)
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++        return result.stdout
++
++    def installed(self):
++        return dict(line.split() for line in self.pacman('-Q').splitlines())
++
++    def command(self, name, patch=True):
++        """Omarchy's command, patched or not, writing this fixture's /etc."""
++        directory = self.base / ('patched' if patch else 'upstream')
++        if patch:
++            patched(directory)
++        else:
++            (directory / 'bin').mkdir(parents=True, exist_ok=True)
++            shutil.copy(UPSTREAM / 'bin' / name, directory / 'bin' / name)
++        script = directory / 'bin' / name
++        text = script.read_text()
++        for before, after in [('/etc/pacman.d/mirrorlist', str(self.mirrorlist)), ('/etc/pacman.conf', str(self.config)),
++                              ('/usr/local/lib/try-omarchy/pacman-layer', str(LAYER))]:
++            text = text.replace(before, after)
++        script.write_text(text)
++        script.chmod(0o755)
++        # omarchy-reinstall-pkgs runs the refresh by name.
++        shutil.copy(script, self.bin / name)
++        return script
++
++    def run_command(self, name, patch=True):
++        if name != 'omarchy-refresh-pacman':
++            self.command('omarchy-refresh-pacman', patch)
++        return subprocess.run([str(self.command(name, patch))], env=self.env, text=True, capture_output=True)
++
++    def assert_nothing_downgraded(self):
++        log = (self.root / 'var/log/pacman.log').read_text()
++        self.assertNotIn('downgraded', log)
++        after = self.installed()
++        for name, version in self.before.items():
++            ran = subprocess.run(['vercmp', after[name], version], text=True, capture_output=True, check=True)
++            self.assertGreaterEqual(int(ran.stdout), 0, (name, version, after[name]))
++        return after
++
++    def assert_guest_layer(self):
++        text = self.config.read_text()
++        self.assertEqual(ignored(text), ['linux', 'linux-headers'])
++        self.assertEqual(sections(text), ['options', 'omarchy', 'extra', 'try-omarchy'])
++        self.assertEqual(self.mirrorlist.read_text(), self.arch_mirrors)
++
++    def test_upstream_refresh_is_refused_and_leaves_the_disk_rewritten(self):
++        result = self.run_command('omarchy-refresh-pacman', patch=False)
++        self.assertNotEqual(result.returncode, 0)
++        self.assertIn('try-omarchy-runtime', result.stdout + result.stderr)
++        self.assertNotIn('[try-omarchy]', self.config.read_text())
++        self.assertIn('snapshot', self.mirrorlist.read_text())
++        self.assertEqual(self.installed(), self.before)
++
++    def test_patched_refresh_completes_without_downgrades(self):
++        listed = subprocess.run([str(LAYER), 'ignore'], env=self.env, text=True, capture_output=True)
++        self.assertEqual((listed.returncode, listed.stdout), (0, 'aquamarine\n'), listed.stderr)
++        result = self.run_command('omarchy-refresh-pacman')
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++        after = self.assert_nothing_downgraded()
++        self.assertEqual(after['aquamarine'], '0.16.0-1.1')
++        self.assertEqual(after['linux'], '2-1')
++        self.assertEqual(after['linux-headers'], '2-1')
++        self.assertEqual(after['foo'], '3-1')
++        self.assertEqual(after['try-omarchy-runtime'], '4.5.0-16')
++        self.assert_guest_layer()
++        self.pacman('-Dk')
++        # Running it again is just as quiet.
++        result = self.run_command('omarchy-refresh-pacman')
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++        self.assert_nothing_downgraded()
++        self.assert_guest_layer()
++
++    def test_newer_arch_aquamarine_still_replaces_the_rebuild(self):
++        result = self.run_command('omarchy-refresh-pacman')
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++        self.package('rolling/extra', 'aquamarine', '0.16.1-1', provides='libaquamarine.so=15-64')
++        self.publish()
++        # The ordinary update takes it, as docs/GUEST-UPGRADES.md describes.
++        self.pacman('-Syu')
++        self.assertEqual(self.installed()['aquamarine'], '0.16.1-1')
++
++    def test_refresh_takes_a_new_aquamarine_abi_that_hyprland_needs(self):
++        self.package('rolling/extra', 'aquamarine', '0.17.0-1', provides='libaquamarine.so=16-64')
++        self.package('rolling/extra', 'hyprland', '3-1', depends='libaquamarine.so=16-64')
++        self.publish()
++        result = self.run_command('omarchy-refresh-pacman')
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++        after = self.assert_nothing_downgraded()
++        self.assertEqual((after['aquamarine'], after['hyprland']), ('0.17.0-1', '3-1'))
++        self.pacman('-Dk')
++
++    def test_patched_reinstall_completes_without_downgrades(self):
++        result = self.run_command('omarchy-reinstall-pkgs')
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++        after = self.assert_nothing_downgraded()
++        self.assertEqual(after['aquamarine'], '0.16.0-1.1')
++        self.assert_guest_layer()
++
++    def test_repaired_disk_updates_without_downgrades(self):
++        # A disk the upstream refresh left rewritten, repaired before login.
++        self.run_command('omarchy-refresh-pacman', patch=False)
++        # The fixture's snapshot is a local path; the real one is Omarchy's.
++        self.mirrorlist.write_text(STABLE_MIRRORS)
++        repaired = subprocess.run([str(LAYER), 'repair'], env=self.env, text=True, capture_output=True)
++        self.assertEqual(repaired.returncode, 0, repaired.stderr)
++        self.assertEqual(self.config.read_text(), self.guest_conf)
++        self.assertEqual(self.mirrorlist.read_text(), self.arch_mirrors)
++        self.pacman('-Syu')
++        after = self.assert_nothing_downgraded()
++        self.assertEqual(after['aquamarine'], '0.16.0-1.1')
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/guest/tests/test_snapper_guest.py b/guest/tests/test_snapper_guest.py
+index 3a6ca63..de0ccd7 100644
+--- a/guest/tests/test_snapper_guest.py
++++ b/guest/tests/test_snapper_guest.py
+@@ -44,5 +44,5 @@ class GuestSnapperTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn(TARGET, paths)
+-        self.assertIn('compat_revision=70', finalizer)
+-        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 15)
++        self.assertIn('compat_revision=71', finalizer)
++        self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 16)
+diff --git a/guest/tests/test_url_schemes.py b/guest/tests/test_url_schemes.py
+index 3b98363..e64fcbe 100644
+--- a/guest/tests/test_url_schemes.py
++++ b/guest/tests/test_url_schemes.py
+@@ -398,7 +398,7 @@ class DeliveryTests(unittest.TestCase):
+     def test_revision_62_delivers_the_link_helper(self) -> None:
+         finalizer = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalizer.split("compat_paths=(", 1)[1].split(")", 1)[0].split()
+-        self.assertIn("compat_revision=70", finalizer)
++        self.assertIn("compat_revision=71", finalizer)
+         self.assertIn("# Revision 62 opens links from Windows for approved URL schemes.", finalizer)
+         for path in ("usr/local/lib/try-omarchy/url-schemes", "usr/local/lib/try-omarchy/agent"):
+             self.assertIn(path, paths)
+diff --git a/guest/tests/test_windows_volume_sync.py b/guest/tests/test_windows_volume_sync.py
+index 0ad3e76..ad938b1 100644
+--- a/guest/tests/test_windows_volume_sync.py
++++ b/guest/tests/test_windows_volume_sync.py
+@@ -285,7 +285,7 @@ class VolumeSyncTests(unittest.TestCase):
+ 
+     def test_revision_delivers_bridge_to_existing_disks(self):
+         finalize = (Path(__file__).resolve().parents[1] / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=70", finalize)
++        self.assertIn("compat_revision=71", finalize)
+         self.assertIn("usr/local/bin/omarchy-windows-audio-bridge", finalize)
+ 
+ 
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 9f4d36a..c4fd126 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -68,7 +68,7 @@ def main() -> None:
+     backports = authenticity["backports"]
+     check(
+         [backport.get("id") for backport in backports]
+-        == ["notification-screen-privacy", "setup-host-timezone", "clock-timezone-refresh", "screensaver-terminal-fit", "update-free-space-message", "first-run-update-notification", "windows-power-profile", "virtio-nightlight", "mute-terminal-bell", "cpu-animations-toggle"],
++        == ["notification-screen-privacy", "setup-host-timezone", "clock-timezone-refresh", "screensaver-terminal-fit", "update-free-space-message", "first-run-update-notification", "windows-power-profile", "virtio-nightlight", "mute-terminal-bell", "cpu-animations-toggle", "refresh-pacman-guest-layer"],
+         "Omarchy backports are explicitly ordered and identified",
+     )
+     for backport in backports:
+@@ -81,7 +81,7 @@ def main() -> None:
+         )
+         check(
+             backport.get("reference", "").startswith(
+-                ("https://github.com/basecamp/omarchy/", "https://github.com/omacom/omarchy/pull/", "https://github.com/omacom/try-omarchy/commit/", "https://doc.qt.io/qt-6/qml-qtqml-date.html#timeZoneUpdated-method")
++                ("https://github.com/basecamp/omarchy/", "https://github.com/omacom/omarchy/pull/", "https://github.com/omacom/try-omarchy/commit/", "https://github.com/omacom/try-omarchy-windows/issues/", "https://doc.qt.io/qt-6/qml-qtqml-date.html#timeZoneUpdated-method")
+             ),
+             f"backport has a review reference: {backport['id']}",
+         )
+@@ -326,13 +326,22 @@ def main() -> None:
+         and "usr/local/lib/try-omarchy/hold-kernel-headers" in compat_paths,
+         "linux-headers stays with the kernel the launcher boots on new and existing disks",
+     )
++    # omarchy refresh pacman writes Omarchy's templates, which leave out the
++    # local repository, the kernel hold and the guest's Arch mirrors.
++    check(
++        "usr/local/lib/try-omarchy/pacman-layer" in compat_paths
++        and "usr/share/try-omarchy/arch-mirrorlist" in compat_paths
++        and "sudo /usr/local/lib/try-omarchy/pacman-layer refresh"
++        in read(GUEST / "patches/omarchy/refresh-pacman-guest-layer.patch"),
++        "omarchy refresh pacman keeps the guest's pacman layer on new and existing disks",
++    )
+     watchdog_dropin = read(GUEST / "factory-overlay/etc/systemd/system/service.d/10-try-omarchy-watchdog.conf")
+     check(
+         "[Service]\nWatchdogSec=0\n" in watchdog_dropin,
+         "system services run without watchdogs, which fire after Windows sleeps",
+     )
+     check(
+-        "compat_revision=70" in finalize_rootfs
++        "compat_revision=71" in finalize_rootfs
+         and "usr/local/bin/mpv" in compat_paths
+         and "usr/share/dkms/modules_to_force_install/try-omarchy" in compat_paths
+         and "usr/local/lib/try-omarchy/try-omarchy-import.pyz" in compat_paths
+-- 
+2.56.1
+
