@@ -148,6 +148,11 @@ once per session, under the agent's write lock. Launchers that do not know
 the line ignore it. Compatibility revision 72 delivers the agent and the
 helper to existing disks.
 
+Patch 0183 has the lock PAM tests set the modes of their `etc` and `pam.d`
+directories. They took them from the caller's umask, and under 0002 the
+repair rightly refused the group-writable directory, so the contract suite
+failed with Ubuntu's default umask.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME
