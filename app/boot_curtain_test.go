@@ -8,35 +8,76 @@ import (
 func TestBootCurtainLiftsWhenTheDesktopIsDrawn(t *testing.T) {
 	boot := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
 	times := bootCurtainTimes{boot: boot, ready: boot.Add(22 * time.Second), session: boot.Add(37 * time.Second)}
-	if reason := times.liftReason(boot.Add(38*time.Second), false); reason != "" {
+	if reason := times.liftReason(boot.Add(38 * time.Second)); reason != "" {
 		t.Fatalf("lifted %q one second into the session with nothing drawn", reason)
 	}
-	if reason := times.liftReason(boot.Add(38*time.Second), true); reason == "" {
-		t.Fatal("stayed up with the desktop drawn")
+	if reason := times.liftReason(boot.Add(37*time.Second + curtainDrawWait - time.Second)); reason != "" {
+		t.Fatalf("lifted %q before the draw wait ran out", reason)
 	}
-	if reason := times.liftReason(boot.Add(37*time.Second+curtainPaintWait), false); reason == "" {
-		t.Fatal("waited past the paint wait for a wallpaper that cannot be told from an empty screen")
+	if reason := times.liftReason(boot.Add(37*time.Second + curtainDrawWait)); reason == "" {
+		t.Fatal("waited past the draw wait for a guest that does not report the desktop")
+	}
+	times.drawn = boot.Add(50 * time.Second)
+	if reason := times.liftReason(boot.Add(50 * time.Second)); reason != "Omarchy reported its desktop drawn" {
+		t.Fatalf("stayed up or lifted %q with the desktop drawn", reason)
+	}
+}
+
+func TestBootCurtainNeverLiftsOnADrawnReportBeforeTheSession(t *testing.T) {
+	boot := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
+	early := bootCurtainTimes{boot: boot, ready: boot.Add(20 * time.Second), drawn: boot.Add(25 * time.Second)}
+	if reason := early.liftReason(boot.Add(26 * time.Second)); reason != "" {
+		t.Fatalf("lifted %q before the session started", reason)
+	}
+	early.session = boot.Add(30 * time.Second)
+	if reason := early.liftReason(boot.Add(30 * time.Second)); reason != "Omarchy reported its desktop drawn" {
+		t.Fatalf("got %q once the session started", reason)
 	}
 }
 
 func TestBootCurtainWaitsForAMissingSessionAndASlowBoot(t *testing.T) {
 	boot := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
 	ready := bootCurtainTimes{boot: boot, ready: boot.Add(20 * time.Second)}
-	if reason := ready.liftReason(boot.Add(20*time.Second+curtainSessionWait-time.Second), false); reason != "" {
+	if reason := ready.liftReason(boot.Add(20*time.Second + curtainSessionWait - time.Second)); reason != "" {
 		t.Fatalf("lifted %q before the session wait ran out", reason)
 	}
-	if reason := ready.liftReason(boot.Add(20*time.Second+curtainSessionWait), false); reason == "" {
+	if reason := ready.liftReason(boot.Add(20*time.Second + curtainSessionWait)); reason == "" {
 		t.Fatal("kept a login screen or a broken session invisible")
 	}
 	stuck := bootCurtainTimes{boot: boot}
 	if stuck.checkPaint() {
 		t.Fatal("read the screen before userspace was up")
 	}
-	if reason := stuck.liftReason(boot.Add(curtainBootWait-time.Second), false); reason != "" {
+	if reason := stuck.liftReason(boot.Add(curtainBootWait - time.Second)); reason != "" {
 		t.Fatalf("lifted %q before the boot wait ran out", reason)
 	}
-	if reason := stuck.liftReason(boot.Add(curtainBootWait), false); reason == "" {
+	if reason := stuck.liftReason(boot.Add(curtainBootWait)); reason == "" {
 		t.Fatal("kept a boot that never came up invisible")
+	}
+}
+
+func TestShownWindowRects(t *testing.T) {
+	// A 1280x800 monitor with a 48 pixel taskbar, and Windows 11's frame at
+	// 100%: 8 pixel borders and a 23 pixel title bar.
+	work := screenRect{0, 0, 1280, 752}
+	border := screenRect{8, 31, 8, 8}
+	// Maximized without its frame the window covered the whole monitor; with
+	// its frame its client area is the work area under the title bar.
+	outer, client := shownWindowRects(screenRect{0, 0, 1280, 800}, true, work, border)
+	if outer != (screenRect{-8, -8, 1288, 760}) || client != (screenRect{0, 23, 1280, 752}) {
+		t.Fatalf("maximized: outer %v client %v", outer, client)
+	}
+	// A second monitor to the left.
+	left := screenRect{-1920, 0, 0, 1040}
+	if _, client := shownWindowRects(screenRect{}, true, left, border); client != (screenRect{-1920, 23, 0, 1040}) {
+		t.Fatalf("maximized on the left monitor: client %v", client)
+	}
+	// Placed at its remembered framed rectangle: the frame goes back on the
+	// same rectangle, so the client area is what lies inside it.
+	placed := screenRect{100, 50, 1100, 750}
+	outer, client = shownWindowRects(placed, false, work, border)
+	if outer != placed || client != (screenRect{108, 81, 1092, 742}) {
+		t.Fatalf("placed: outer %v client %v", outer, client)
 	}
 }
 

@@ -11,14 +11,18 @@ import (
 // text, "Display output is not active", then black and Hyprland's empty grey
 // until the shell draws the wallpaper. The launcher keeps the window
 // invisible for that time and the setup window stays up with the starter
-// keys. The window appears once the wallpaper is on screen, or after one of
-// the waits below if it never seems to be. On Windows the hidden window has
-// an empty region, so its picture cannot be read and it appears after the
-// waits (boot_curtain_windows.go).
+// keys. The window appears once the guest's agent says the desktop is drawn
+// (the shell's wallpaper and bar are up), or after one of the waits below if
+// it never does: an older guest, or a shell that did not start. The hidden
+// window's own picture cannot be read (boot_curtain_windows.go).
 const (
-	// After the desktop session starts. The wallpaper took about 6 seconds
-	// on the test laptop; a few wallpapers cannot be told from an empty screen.
-	curtainPaintWait = 10 * time.Second
+	// After the desktop session starts, for a guest that does not report
+	// the drawn desktop: an older guest, or a shell that never maps its bar.
+	// With CPU rendering in a nested Windows VM the report came 18 to 23
+	// seconds into the session, and the wallpaper was drawn about 23 seconds
+	// in on a Ryzen Embedded PC; a dark wallpaper adds the guest's 8 second
+	// wait. Lifting earlier would show a black desktop.
+	curtainDrawWait = 40 * time.Second
 	// After Omarchy reports that it is up, for a session that never starts
 	// (a login screen, a broken config).
 	curtainSessionWait = 60 * time.Second
@@ -85,19 +89,22 @@ func (s *desktopStreak) reset() { s.look(time.Time{}, false) }
 
 type bootCurtainTimes struct {
 	boot, ready, session time.Time
+	// drawn is when the guest's agent said the desktop is drawn.
+	drawn time.Time
 	// hostCapture.blindTime when ready and session were recorded, so time
 	// the screen could not be seen is left out of the blank-desktop wait.
 	readyBlind, sessionBlind time.Duration
 }
 
 // liftReason says why the window may be shown now, or "" while it should
-// stay invisible. painted is true once the wallpaper has been seen.
-func (t bootCurtainTimes) liftReason(now time.Time, painted bool) string {
+// stay invisible. The drawn desktop counts only once the session has started:
+// before that, the window would show an empty desktop.
+func (t bootCurtainTimes) liftReason(now time.Time) string {
 	switch {
-	case painted:
-		return "the desktop is on screen"
-	case !t.session.IsZero() && now.Sub(t.session) >= curtainPaintWait:
-		return "the desktop session started a while ago"
+	case !t.session.IsZero() && !t.drawn.IsZero():
+		return "Omarchy reported its desktop drawn"
+	case !t.session.IsZero() && now.Sub(t.session) >= curtainDrawWait:
+		return "the desktop session started a while ago and no drawn desktop was reported"
 	case !t.ready.IsZero() && t.session.IsZero() && now.Sub(t.ready) >= curtainSessionWait:
 		return "no desktop session started"
 	case !t.boot.IsZero() && now.Sub(t.boot) >= curtainBootWait:
@@ -121,6 +128,25 @@ func (t bootCurtainTimes) blankDesktopDue(now time.Time, looks int32, blind time
 // checkPaint is true once the screen can show something other than boot
 // output: firmware text sits on the screen until userspace is up.
 func (t bootCurtainTimes) checkPaint() bool { return !t.ready.IsZero() || !t.session.IsZero() }
+
+// shownWindowRects is where a hidden window will be once the curtain gives
+// its frame back, and the client area it will have there. QEMU's guest takes
+// the size of the client area, so the curtain gives the frameless window
+// that client area while the desktop is drawn: otherwise the guest has to
+// redraw it at the new size as the curtain lifts, which takes seconds with
+// CPU rendering. now is the window's rectangle, frame the size of its frame
+// on each side (Left, Top, Right, Bottom) and work the work area of its
+// monitor. A maximized window with its frame covers the work area, with its
+// side and bottom borders past its edges.
+func shownWindowRects(now screenRect, maximized bool, work, frame screenRect) (outer, client screenRect) {
+	if maximized {
+		outer = screenRect{work.Left - frame.Left, work.Top - frame.Bottom, work.Right + frame.Right, work.Bottom + frame.Bottom}
+	} else {
+		outer = now
+	}
+	client = screenRect{outer.Left + frame.Left, outer.Top + frame.Top, outer.Right - frame.Right, outer.Bottom - frame.Bottom}
+	return outer, client
+}
 
 var (
 	bootCurtainMu    sync.Mutex

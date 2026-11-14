@@ -19,6 +19,9 @@ import (
 //   guest -> host: "compositor ok|unresponsive|busy|inactive" bounded Hyprland IPC probe;
 //                  busy means unresponsive while a package update runs
 //   guest -> host: "zero-fill done|failed" the fill finished
+//   guest -> host: "desktop drawn"         once per desktop session, when the shell's
+//                  wallpaper and bar are up (guest compatibility revision 72);
+//                  launchers before it ignore the line
 //   host -> guest: "url-approved <base64 JSON>" the link types allowed in Settings
 //   guest -> host: "url-schemes <base64 JSON>" link types the guest can open, after each url-approved
 //   host -> guest: "open-url <base64 link>" open an allowed link clicked in Windows
@@ -45,6 +48,7 @@ type guestAgent struct {
 	dropDrag      func(id string, x, y int) error
 	peerAllowed   func(net.Conn) bool
 	health        *compositorHealth
+	desktopDrawn  func()
 	lastAppLaunch time.Time
 	lastFileOpen  time.Time
 	// urlSend keeps each url-approved snapshot and the open-url that follows
@@ -67,7 +71,7 @@ type guestAgent struct {
 }
 
 func newGuestAgent() *guestAgent {
-	return &guestAgent{now: time.Now, openSettings: requestTraySettings, batteryLine: hostBatteryLine}
+	return &guestAgent{now: time.Now, openSettings: requestTraySettings, batteryLine: hostBatteryLine, desktopDrawn: guestDesktopDrawn}
 }
 
 func (a *guestAgent) accept(l net.Listener) {
@@ -355,6 +359,14 @@ func (a *guestAgent) read(c net.Conn, r *bufio.Reader) {
 				}
 			}
 			a.reportMu.Unlock()
+		case line == "desktop drawn\n":
+			a.mu.Lock()
+			current := a.conn == c
+			a.mu.Unlock()
+			if current && a.desktopDrawn != nil {
+				logf("agent: guest desktop drawn")
+				a.desktopDrawn()
+			}
 		case strings.HasPrefix(line, "hello"):
 			logf("agent: guest agent connected (%s)", strings.TrimSpace(strings.TrimPrefix(line, "hello")))
 		case strings.TrimSpace(line) == "zero-fill done":

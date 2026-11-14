@@ -69,6 +69,11 @@ type curtainWindow struct {
 	outer, client screenRect
 	resized       bool
 	tabRemoved    bool
+	// border is the size of the frame on each side, and bordered says it
+	// was measured. fitted is set once the window has been given the client
+	// area it will have when shown (fitCurtainWindows).
+	border           screenRect
+	bordered, fitted bool
 }
 
 // Windows draws a window's title bar and border even when its region is
@@ -182,7 +187,13 @@ func concealForCurtain(hwnd uintptr) {
 	curtainWindows[hwnd] = window
 	curtainMu.Unlock()
 
+	started := time.Now()
 	hidden := hideCurtainWindow(hwnd, window)
+	// The window shows until this returns, and it waits on QEMU's window
+	// thread, which may be busy setting up the display.
+	if took := time.Since(started); hidden && took >= 250*time.Millisecond {
+		logf("startup: hiding the window took %v", took.Round(time.Millisecond))
+	}
 
 	curtainMu.Lock()
 	current := curtainWindows[hwnd] == window
@@ -239,6 +250,10 @@ func hideCurtainWindow(hwnd uintptr, window *curtainWindow) bool {
 	client, clientOK := clientScreenRect(hwnd)
 	zoomed, _, _ := procIsZoomed.Call(hwnd)
 	gotOuter, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&outer)))
+	if gotOuter != 0 && clientOK {
+		window.border = screenRect{client.Left - outer.Left, client.Top - outer.Top, outer.Right - client.Right, outer.Bottom - client.Bottom}
+		window.bordered = true
+	}
 	procSetWindowLongW.Call(hwnd, gwlStyle, style&^curtainFrameStyles)
 	if zoomed == 0 && gotOuter != 0 && clientOK {
 		window.outer, window.client, window.resized = outer, client, true
@@ -346,9 +361,13 @@ func curtainTick(primary uintptr) {
 		curtainBoot = times.boot
 	}
 	now := time.Now()
-	if reason := times.liftReason(now, false); reason != "" {
+	if reason := times.liftReason(now); reason != "" {
 		liftCurtain(reason)
 		return
+	}
+	// From now on the guest takes the size of the window.
+	if guestFollowsWindow.Load() && !enumTitleFullscreen {
+		fitCurtainWindows()
 	}
 	// Cancel puts its own status up.
 	if !setupCancelled() {
@@ -367,7 +386,66 @@ func curtainTick(primary uintptr) {
 		}
 	}
 	// The concealed window has an empty region, so there is no picture to
-	// look at until the curtain lifts; watchDesktop takes over from there.
+	// look at: the guest's agent says when the desktop is drawn, and
+	// watchDesktop looks at the shown window from there.
+}
+
+// fitCurtainWindows gives each hidden window, once, the client area it will
+// have when the curtain lifts, so the guest draws its desktop at that size
+// and does not redraw it as the window appears. Without its frame a
+// maximized window covers the whole monitor, and one the title enforcer
+// placed takes its framed rectangle as its client area. It runs once the
+// guest follows the window: before that QEMU resizes the window to the
+// guest's boot display.
+func fitCurtainWindows() {
+	type fit struct {
+		hwnd   uintptr
+		window *curtainWindow
+		border screenRect
+	}
+	var fits []fit
+	curtainMu.Lock()
+	for hwnd, window := range curtainWindows {
+		if window.ready && window.bordered && !window.fitted {
+			window.fitted = true
+			fits = append(fits, fit{hwnd, window, window.border})
+		}
+	}
+	curtainMu.Unlock()
+	for _, f := range fits {
+		var now screenRect
+		if ok, _, _ := procGetWindowRect.Call(f.hwnd, uintptr(unsafe.Pointer(&now))); ok == 0 {
+			continue
+		}
+		zoomed, _, _ := procIsZoomed.Call(f.hwnd)
+		curtainMu.Lock()
+		// The curtain shrank it to its old client area and nothing moved it
+		// since: the frame goes back around that area.
+		keep := f.window.resized && now == f.window.client
+		curtainMu.Unlock()
+		if keep && zoomed == 0 {
+			continue
+		}
+		var work screenRect
+		if zoomed != 0 {
+			monitor, ok := hostMonitorForWindow(f.hwnd)
+			if !ok {
+				continue
+			}
+			work = monitor.Work
+		}
+		outer, client := shownWindowRects(now, zoomed != 0, work, f.border)
+		if client.width() <= 0 || client.height() <= 0 || now == client {
+			continue
+		}
+		setWindowFrameRect(f.hwnd, client)
+		curtainMu.Lock()
+		if curtainWindows[f.hwnd] == f.window {
+			f.window.outer, f.window.client, f.window.resized = outer, client, true
+		}
+		curtainMu.Unlock()
+		logf("startup: sized the hidden window to its shown client area, %dx%d", client.width(), client.height())
+	}
 }
 
 // watchDesktop keeps looking at a shown window every few seconds until it

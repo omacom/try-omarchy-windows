@@ -132,6 +132,22 @@ restores `pacman.conf.bak` only while `pacman.conf` is still exactly one of
 Omarchy's templates; an edited file keeps its edits and gets the hold and
 `[try-omarchy]` added. Runtime `4.5.0-16` carries the patched commands.
 
+Patch 0182 tells the launcher when the desktop is drawn, so it shows its
+window then instead of on a timer, which with CPU rendering showed a black
+window for several seconds. Agent version 7 runs the new `desktop-drawn`
+helper for each launcher connection. It reads Hyprland's layers over the
+compositor's own sockets until, on the first monitor, the shell's wallpaper
+layer and bar are mapped and its black startup cover is gone. The shell lifts
+that cover after 10 seconds even while the wallpaper is still being decoded,
+so the helper then takes a scaled-down `grim` capture as the session user and
+looks for a wallpaper where the bar, dock and notifications leave the screen
+free; the capture stays in memory. A dark wallpaper looks like an empty
+screen, so the helper reports 8 seconds after the layers anyway, and at once
+when the capture fails. After a half second settle it sends `desktop drawn`,
+once per session, under the agent's write lock. Launchers that do not know
+the line ignore it. Compatibility revision 72 delivers the agent and the
+helper to existing disks.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME
