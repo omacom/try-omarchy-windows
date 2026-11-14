@@ -215,3 +215,31 @@ Normal-version installations never automatically switch to a preview. The
 workflow also prevents a later preview or older version from replacing a newer
 normal Latest release. Retain the bridge feed on every future normal release so
 infrequently used installations can still update.
+
+## Following Omarchy releases
+
+The `Follow Omarchy releases` workflow checks upstream's latest published stable
+release daily at 07:37 UTC and can be started manually. When that release is
+newer than the guest's pinned version, it exports the patched builder and adds
+one numbered guest patch that pins the release's commit, tree, normalized
+digest and literal version file, and resets `packageRelease` to 1. Existing
+backports and authenticity checks stay in place, so an upstream change that
+needs compatibility work fails validation instead of dropping a Windows fix.
+
+The workflow refreshes the package transaction lock, pushes
+`omarchy-release/vX.Y.Z` and opens a draft PR. A PR created with
+`GITHUB_TOKEN` does not trigger pull-request workflows, so it dispatches CI with
+`build_guest=true` and the Shell canary for the same commit. Only when both
+complete runs pass for the unchanged PR head, including the guest image build
+and boot, does it mark the PR ready for review. It never merges: a maintainer
+reviews the upstream changes and new migrations, then merges. A failed lock
+refresh or any failed, skipped or cancelled job leaves the draft for manual
+work. Windows hardware acceptance, the existing-disk upgrade check and signed
+release publication stay manual; merging does not update published downloads
+or existing VMs.
+
+Bot PR creation needs the Actions setting that allows it. If creation is
+denied, the workflow keeps the pushed branch and reports a compare link. Forks
+do not run the job. An existing open or closed PR, or a leftover branch, for a
+release is never overwritten or recreated; after repairing it, dispatch CI with
+`build_guest=true` and merge it through the normal review process.

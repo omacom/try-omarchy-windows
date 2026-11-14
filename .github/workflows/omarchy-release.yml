@@ -1,0 +1,29 @@
+name: Follow Omarchy releases
+
+on:
+  schedule:
+    - cron: "37 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: omarchy-release
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    if: github.repository == 'omacom/try-omarchy-windows'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Propose and validate the latest stable Omarchy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release/follow-omarchy.py
