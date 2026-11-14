@@ -119,15 +119,18 @@ without the local repository or the hold. A reviewed patch to
 `omarchy-refresh-pacman`, guarded by its digests, has the new `pacman-layer`
 helper put back the `linux linux-headers` hold, `[try-omarchy]` after the Arch
 repositories and the Arch mirrorlist right after Omarchy writes its templates,
-before the user's `pre-refresh-pacman` hook and the transaction. The mirrorlist
+before the user's `pre-refresh-pacman` hook, then syncs the package databases
+after the hook, so a hook that changes servers still applies. The mirrorlist
 is the one Omarchy saved as `.bak` when it lists Arch mirrors, otherwise the
 image's copy in `/usr/share/try-omarchy/arch-mirrorlist`. The guest still
 follows rolling Arch. The refresh and `omarchy-reinstall-pkgs` pass
 `--ignore aquamarine` to their `-uu` transactions while Arch offers the same
 version as the installed rebuild or an older one, so the patched build stays.
 A newer Arch release still replaces it, with a Hyprland that needs it.
-Compatibility revision 71 repairs disks a refused refresh already rewrote, and
-runtime `4.5.0-16` carries the patched commands.
+Compatibility revision 71 repairs disks a refused refresh already rewrote. It
+restores `pacman.conf.bak` only while `pacman.conf` is still exactly one of
+Omarchy's templates; an edited file keeps its edits and gets the hold and
+`[try-omarchy]` added. Runtime `4.5.0-16` carries the patched commands.
 
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine

@@ -145,14 +145,16 @@ stable templates, which have no `[try-omarchy]` repository, no kernel hold
 and Omarchy's stable mirror snapshot in place of the Arch mirrors. Its
 `-Syyuu` then tried to downgrade the system, was refused, and left the disk
 on that snapshot. With runtime `4.5.0-16` the refresh puts the hold, the local
-repository and the Arch mirrors back before the transaction runs, so it
+repository and the Arch mirrors back before the user's `pre-refresh-pacman`
+hook, then syncs the package databases after the hook, so the transaction
 completes without downgrading anything. The Arch mirrors are the ones Omarchy
 saved in `mirrorlist.bak` when they are the guest's own, otherwise the image's
 copy. Disks a refused refresh already rewrote are repaired before login: when
 `pacman.conf` has no `[try-omarchy]` and the mirrorlist lists only Omarchy's
-mirrors, catch-up restores `pacman.conf.bak` if it is the guest's own (or adds
-the local repository and hold to the current file) and restores the Arch
-mirrors. Any other `pacman.conf` or mirrorlist is left alone, and no package
+mirrors, catch-up restores the Arch mirrors and the local repository and
+hold. It puts back `pacman.conf.bak` when that is the guest's own and
+`pacman.conf` is still exactly Omarchy's template; a `pacman.conf` edited since
+keeps its edits and only gets the missing pieces. Any other `pacman.conf` or mirrorlist is left alone, and no package
 transaction runs during boot. The next **Update > Omarchy** then installs the
 new runtime as usual. The guest keeps following rolling Arch rather than
 Omarchy's stable snapshot.
