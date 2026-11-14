@@ -468,3 +468,29 @@ func keyboardEnvironment(env []string, enabled bool) []string {
 	}
 	return result
 }
+
+// A runtime with this patch can create its display windows hidden and leave
+// showing them to the launcher, so the boot curtain hides a window before it
+// is ever on screen (boot_curtain_windows.go). A window the launcher has not
+// shown heldWindowWait after QEMU starts handling window messages shows
+// itself.
+const heldWindowsPatch = "patches/qemu/0026-hold-sdl-windows-for-the-launcher.patch"
+const heldWindowsEnv = "OMARCHY_SDL_HOLD_WINDOWS_MS"
+const heldWindowWait = 10 * time.Second
+
+func runtimeHoldsWindows(qemu string) bool {
+	return runtimeHasPatch(qemu, heldWindowsPatch)
+}
+
+func heldWindowsEnvironment(env []string, enabled bool) []string {
+	result := make([]string, 0, len(env)+1)
+	for _, value := range env {
+		if !strings.EqualFold(strings.SplitN(value, "=", 2)[0], heldWindowsEnv) {
+			result = append(result, value)
+		}
+	}
+	if enabled {
+		result = append(result, fmt.Sprintf("%s=%d", heldWindowsEnv, heldWindowWait.Milliseconds()))
+	}
+	return result
+}

@@ -24,6 +24,15 @@ import (
 // screen again, even after the style is removed (#358). With an empty region
 // its picture cannot be read either, so the curtain lifts on the session
 // timers rather than on a drawn wallpaper.
+//
+// Windows carries out the region, style and position calls on QEMU's window
+// thread, which goes on setting up the guest for a second or more after it
+// creates the window and handles no messages until then. A window that QEMU
+// showed at once stayed on screen with its frame and no region for that time
+// (#413). A runtime that can hold its windows (heldWindowsPatch) creates them
+// hidden while the curtain is up and marks them with heldWindowProperty; the
+// launcher shows such a window only once the curtain has hidden it. An older
+// runtime shows its windows itself and the curtain hides them as before.
 
 var (
 	procSetWindowRgn       = user32.NewProc("SetWindowRgn")
@@ -38,6 +47,8 @@ var (
 	procDeleteDC           = gdi32.NewProc("DeleteDC")
 	procCreateRectRgn      = gdi32.NewProc("CreateRectRgn")
 	procClientToScreen     = user32.NewProc("ClientToScreen")
+	procGetPropW           = user32.NewProc("GetPropW")
+	heldWindowProperty, _  = syscall.UTF16PtrFromString("TryOmarchy.HeldWindow")
 
 	// curtainUp is true from launch until the window is shown for the first
 	// time. Reboots after that show the guest's window as they always did.
@@ -172,15 +183,20 @@ func wakeTitleEnforcer() {
 // layered (see the top of this file). It runs from the window hooks as QEMU
 // creates and shows the window, before its first frame, and again from the
 // title enforcer. The window calls run outside curtainMu, since they wait on
-// QEMU's window thread.
+// QEMU's window thread. A held window is shown once it is hidden.
 func concealForCurtain(hwnd uintptr) {
 	if !curtainUp.Load() {
 		return
 	}
 	curtainMu.Lock()
 	// The curtain may have lifted while this waited for the lock.
-	if _, known := curtainWindows[hwnd]; known || !curtainUp.Load() {
+	if window, known := curtainWindows[hwnd]; known || !curtainUp.Load() {
+		// Whoever is still hiding it shows it when done.
+		hidden := known && window.ready
 		curtainMu.Unlock()
+		if hidden {
+			showHeldWindow(hwnd)
+		}
 		return
 	}
 	window := &curtainWindow{}
@@ -205,9 +221,16 @@ func concealForCurtain(hwnd uintptr) {
 		window.ready = true
 	}
 	curtainMu.Unlock()
+	// A held window appears now that it is hidden. One that could not be
+	// hidden stays held: a later try shows it, or QEMU does after
+	// heldWindowWait.
+	if hidden && current {
+		showHeldWindow(hwnd)
+	}
 	// The curtain lifted, or the window was destroyed, while this hid it.
 	if hidden && !current && isQemuDisplayWindow(hwnd, qemuPid.Load()) {
 		showCurtainWindow(hwnd, window)
+		showHeldWindow(hwnd)
 	}
 	if !current {
 		curtainMu.Lock()
@@ -224,6 +247,37 @@ func curtainConcealed(hwnd uintptr) bool {
 	defer curtainMu.Unlock()
 	_, ok := curtainWindows[hwnd]
 	return ok && curtainUp.Load() || curtainLifting[hwnd]
+}
+
+// windowHeld reports whether QEMU created hwnd hidden for the launcher to
+// show. QEMU drops the mark once the window is shown.
+func windowHeld(hwnd uintptr) bool {
+	held, _, _ := procGetPropW.Call(hwnd, uintptr(unsafe.Pointer(heldWindowProperty)))
+	return held != 0
+}
+
+// releaseHeldWindow shows a window QEMU holds, once the curtain has hidden
+// it, or at once when the curtain is down. It runs from the window hooks and
+// the title enforcer, which leaves hidden windows alone otherwise.
+func releaseHeldWindow(hwnd uintptr) {
+	if !windowHeld(hwnd) {
+		return
+	}
+	concealForCurtain(hwnd)
+	if !curtainUp.Load() {
+		showHeldWindow(hwnd)
+	}
+}
+
+func showHeldWindow(hwnd uintptr) {
+	if visible, _, _ := procIsWindowVisible.Call(hwnd); visible != 0 || !windowHeld(hwnd) {
+		return
+	}
+	// As SDL would have shown it. The call waits for QEMU's window thread.
+	procShowWindow.Call(hwnd, swShow)
+	if curtainUp.Load() {
+		logf("startup: showed QEMU's window behind the curtain")
+	}
 }
 
 func hideCurtainWindow(hwnd uintptr, window *curtainWindow) bool {
@@ -375,7 +429,7 @@ func curtainTick(primary uintptr) {
 		switch {
 		case runtimeLoaderPreparing.Load():
 			status = uiText("status.preparing_runtime")
-		case !times.boot.IsZero() && now.Sub(times.boot) >= curtainSlowNotice:
+		case times.slowStart(now):
 			status = uiText("status.slow_start")
 		case times.checkPaint():
 			status = uiText("status.starting_desktop")

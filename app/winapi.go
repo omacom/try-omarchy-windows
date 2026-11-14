@@ -278,6 +278,8 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		return 1
 	}
 	if visible, _, _ := procIsWindowVisible.Call(hwnd); visible == 0 {
+		// In case the window hooks missed it.
+		releaseHeldWindow(hwnd)
 		return 1
 	}
 	enumTitleSeen[hwnd] = true

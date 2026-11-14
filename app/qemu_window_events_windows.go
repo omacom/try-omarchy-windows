@@ -21,7 +21,8 @@ import (
 //     is placed right away instead of up to a second later, and a resize QEMU
 //     makes while the guest boots or shuts down is undone before it lingers.
 //     While Omarchy first boots, a window is made invisible as it is created,
-//     before SDL shows it (boot_curtain_windows.go).
+//     and a window the runtime holds hidden is shown only after that
+//     (boot_curtain_windows.go).
 //   - The start and end of a move or resize the user makes with the mouse or
 //     the window menu. Those, and maximizing, are the only placements the
 //     enforcer remembers.
@@ -104,6 +105,11 @@ func qemuWindowEvent(_, event, hwnd, idObject, idChild, _, _ uintptr) uintptr {
 	switch event {
 	case eventObjectCreate, eventObjectShow:
 		concealForCurtain(hwnd)
+	}
+	// A runtime that holds its windows marks one just after creating it, and
+	// names it next.
+	releaseHeldWindow(hwnd)
+	switch event {
 	case eventObjectNameChange:
 		restoreDisplayTitle(hwnd)
 	case eventSystemMoveSizeStart:
