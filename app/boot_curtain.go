@@ -122,6 +122,25 @@ func (t bootCurtainTimes) blankDesktopDue(now time.Time, looks int32, blind time
 // output: firmware text sits on the screen until userspace is up.
 func (t bootCurtainTimes) checkPaint() bool { return !t.ready.IsZero() || !t.session.IsZero() }
 
+// shownWindowRects is where a hidden window will be once the curtain gives
+// its frame back, and the client area it will have there. QEMU's guest takes
+// the size of the client area, so the curtain gives the frameless window
+// that client area while the desktop is drawn: otherwise the guest has to
+// redraw it at the new size as the curtain lifts, which takes seconds with
+// CPU rendering. now is the window's rectangle, frame the size of its frame
+// on each side (Left, Top, Right, Bottom) and work the work area of its
+// monitor. A maximized window with its frame covers the work area, with its
+// side and bottom borders past its edges.
+func shownWindowRects(now screenRect, maximized bool, work, frame screenRect) (outer, client screenRect) {
+	if maximized {
+		outer = screenRect{work.Left - frame.Left, work.Top - frame.Bottom, work.Right + frame.Right, work.Bottom + frame.Bottom}
+	} else {
+		outer = now
+	}
+	client = screenRect{outer.Left + frame.Left, outer.Top + frame.Top, outer.Right - frame.Right, outer.Bottom - frame.Bottom}
+	return outer, client
+}
+
 var (
 	bootCurtainMu    sync.Mutex
 	bootCurtainState bootCurtainTimes

@@ -40,6 +40,31 @@ func TestBootCurtainWaitsForAMissingSessionAndASlowBoot(t *testing.T) {
 	}
 }
 
+func TestShownWindowRects(t *testing.T) {
+	// A 1280x800 monitor with a 48 pixel taskbar, and Windows 11's frame at
+	// 100%: 8 pixel borders and a 23 pixel title bar.
+	work := screenRect{0, 0, 1280, 752}
+	border := screenRect{8, 31, 8, 8}
+	// Maximized without its frame the window covered the whole monitor; with
+	// its frame its client area is the work area under the title bar.
+	outer, client := shownWindowRects(screenRect{0, 0, 1280, 800}, true, work, border)
+	if outer != (screenRect{-8, -8, 1288, 760}) || client != (screenRect{0, 23, 1280, 752}) {
+		t.Fatalf("maximized: outer %v client %v", outer, client)
+	}
+	// A second monitor to the left.
+	left := screenRect{-1920, 0, 0, 1040}
+	if _, client := shownWindowRects(screenRect{}, true, left, border); client != (screenRect{-1920, 23, 0, 1040}) {
+		t.Fatalf("maximized on the left monitor: client %v", client)
+	}
+	// Placed at its remembered framed rectangle: the frame goes back on the
+	// same rectangle, so the client area is what lies inside it.
+	placed := screenRect{100, 50, 1100, 750}
+	outer, client = shownWindowRects(placed, false, work, border)
+	if outer != placed || client != (screenRect{108, 81, 1092, 742}) {
+		t.Fatalf("placed: outer %v client %v", outer, client)
+	}
+}
+
 // frame builds a BGRX frame of one colour, with fill painting parts of it.
 func frame(width, height int, bgr [3]byte, fill func(x, y int) ([3]byte, bool)) []byte {
 	pixels := make([]byte, width*height*4)
