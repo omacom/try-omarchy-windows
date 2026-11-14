@@ -151,6 +151,10 @@
       {
         "file": "patches/virglrenderer/0008-compile-storage-buffer-shaders-as-glsl-430.patch",
         "sha256": "717350fa4fa96bff69c90b8b694eab4096054a311db0ff233ed18ff5a0062bbf"
+      },
+      {
+        "file": "patches/virglrenderer/0009-join-venus-workers-without-the-workers-lock.patch",
+        "sha256": "106ff0a56f7f4e4dc498cf364f857f215fd06ac2171b96efbdd621c1db8c2b9b"
       }
     ]
   }

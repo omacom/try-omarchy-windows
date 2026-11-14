@@ -14,6 +14,10 @@
   one version short of what Ghostty asks for, so no window appeared. Ghostty
   now starts with 4.3 on those PCs, however it is opened, and nothing changes
   for other apps or other PCs (#383).
+- Vulkan apps no longer freeze Omarchy. Closing one, such as vkcube or Zed,
+  and then starting another could stop the whole guest, so the window,
+  SSH and the launcher all stopped responding. The Windows graphics runtime
+  could deadlock while it tore down the closed app's context (#407).
 
 ## v0.15.0 - 2026-11-10
 

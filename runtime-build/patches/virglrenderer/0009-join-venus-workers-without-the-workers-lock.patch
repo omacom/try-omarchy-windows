@@ -1,0 +1,351 @@
+--- a/src/proxy/proxy_server.c
++++ b/src/proxy/proxy_server.c
+@@ -6,6 +6,7 @@
+ #include "proxy_server.h"
+ 
+ #ifdef _WIN32
++#include <winsock2.h>
+ #include <windows.h>
+ #include <errno.h>
+ #include <io.h>
+@@ -77,6 +78,10 @@ struct server_context_worker {
+    char name[32];
+    uint32_t name_len;
+    int socket_fd;
++   /* Set by server_destroy_worker to stop the worker. */
++   HANDLE stop_event;
++   /* Completion event for the worker's own socket transfers. */
++   WSAEVENT io_event;
+ 
+    /* shared memory for timeline seqnos (mapped by proxy_context) */
+    void *shmem_ptr;
+@@ -132,15 +137,73 @@ server_send_all(int fd, const void *data, size_t len)
+    return true;
+ }
+ 
++/*
++ * Socket transfers of a context worker.
++ *
++ * Only server_destroy_worker closes a worker's socket, after the worker has
++ * exited, so the handle value cannot be reused while the worker may still use
++ * it. To stop a worker, the server sets stop_event instead. Each transfer is
++ * overlapped and waits for its completion or for stop_event; a stopped
++ * transfer is cancelled, and waited for, before it returns. A worker that is
++ * busy in a command when the stop comes sees it before its next transfer.
++ * shutdown() is no substitute: on Windows it does not wake a blocked recv
++ * while QEMU's end of the socket is still open.
++ */
+ static bool
+-server_recv_with_fds(int fd, void *data, size_t size,
++server_worker_transfer(struct server_context_worker *w, bool out,
++                       void *data, size_t len)
++{
++   const SOCKET s = (SOCKET)w->socket_fd;
++   char *p = data;
++   while (len > 0) {
++      if (WaitForSingleObject(w->stop_event, 0) != WAIT_TIMEOUT)
++         return false;
++
++      WSABUF buf = { .len = (ULONG)len, .buf = p };
++      WSAOVERLAPPED ov = { .hEvent = w->io_event };
++      DWORD flags = 0;
++      WSAResetEvent(w->io_event);
++      const int ret = out ? WSASend(s, &buf, 1, NULL, 0, &ov, NULL)
++                          : WSARecv(s, &buf, 1, NULL, &flags, &ov, NULL);
++      if (ret == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING)
++         return false;
++
++      const HANDLE events[2] = { w->stop_event, w->io_event };
++      const DWORD woken = WaitForMultipleObjects(2, events, FALSE, INFINITE);
++      if (woken != WAIT_OBJECT_0 + 1)
++         CancelIoEx((HANDLE)s, (LPOVERLAPPED)&ov);
++
++      DWORD got = 0;
++      const BOOL done = WSAGetOverlappedResult(s, &ov, &got, TRUE, &flags);
++      if (!done || woken != WAIT_OBJECT_0 + 1 || got == 0)
++         return false;
++      p += got;
++      len -= got;
++   }
++   return true;
++}
++
++static bool
++server_worker_recv(struct server_context_worker *w, void *data, size_t len)
++{
++   return server_worker_transfer(w, false, data, len);
++}
++
++static bool
++server_worker_send(struct server_context_worker *w, const void *data, size_t len)
++{
++   return server_worker_transfer(w, true, (void *)data, len);
++}
++
++static bool
++server_recv_with_fds(struct server_context_worker *w, void *data, size_t size,
+                      int *fds, int max_fds, int *out_fd_count)
+ {
+-   if (!server_recv_all(fd, data, size))
++   if (!server_worker_recv(w, data, size))
+       return false;
+ 
+    uint32_t fd_count = 0;
+-   if (!server_recv_all(fd, &fd_count, sizeof(fd_count)))
++   if (!server_worker_recv(w, &fd_count, sizeof(fd_count)))
+       return false;
+ 
+    if ((int)fd_count > max_fds) {
+@@ -149,7 +212,7 @@ server_recv_with_fds(int fd, void *data, size_t size,
+    }
+ 
+    if (fd_count > 0) {
+-      if (!server_recv_all(fd, fds, sizeof(int) * fd_count))
++      if (!server_worker_recv(w, fds, sizeof(int) * fd_count))
+          return false;
+    }
+ 
+@@ -158,9 +221,19 @@ server_recv_with_fds(int fd, void *data, size_t size,
+ }
+ 
+ static bool
+-server_send_reply(int fd, const void *data, size_t size)
++server_send_reply(struct server_context_worker *w, const void *data, size_t size)
+ {
+-   return server_send_all(fd, data, size);
++   return server_worker_send(w, data, size);
++}
++
++static bool
++server_send_reply_with_fd(struct server_context_worker *w, const void *data,
++                          size_t size, int fd)
++{
++   const uint32_t count = 1;
++   return server_worker_send(w, data, size) &&
++          server_worker_send(w, &count, sizeof(count)) &&
++          server_worker_send(w, &fd, sizeof(fd));
+ }
+ 
+ static bool
+@@ -271,7 +344,7 @@ server_context_worker_thread(void *arg)
+ 
+    while (true) {
+       struct render_context_op_header hdr;
+-      if (!server_recv_all(w->socket_fd, &hdr, sizeof(hdr))) {
++      if (!server_worker_recv(w, &hdr, sizeof(hdr))) {
+          break;
+       }
+ 
+@@ -283,20 +356,20 @@ server_context_worker_thread(void *arg)
+           */
+          uint32_t init_flags;
+          size_t init_shmem_size;
+-         if (!server_recv_all(w->socket_fd, &init_flags, sizeof(init_flags)))
++         if (!server_worker_recv(w, &init_flags, sizeof(init_flags)))
+             goto done;
+-         if (!server_recv_all(w->socket_fd, &init_shmem_size, sizeof(init_shmem_size)))
++         if (!server_worker_recv(w, &init_shmem_size, sizeof(init_shmem_size)))
+             goto done;
+ 
+          int fds[2];
+          uint32_t fd_count = 0;
+-         if (!server_recv_all(w->socket_fd, &fd_count, sizeof(fd_count)))
++         if (!server_worker_recv(w, &fd_count, sizeof(fd_count)))
+             goto done;
+          if (fd_count < 1 || fd_count > 2) {
+             proxy_log("server worker: bad fd count %u for INIT", fd_count);
+             goto done;
+          }
+-         if (!server_recv_all(w->socket_fd, fds, sizeof(int) * fd_count))
++         if (!server_worker_recv(w, fds, sizeof(int) * fd_count))
+             goto done;
+ 
+          w->shmem_fd = fds[0];
+@@ -340,7 +413,7 @@ server_context_worker_thread(void *arg)
+             uint32_t size;
+             char cmd[256];
+          } cmd_body;
+-         if (!server_recv_all(w->socket_fd, &cmd_body,
++         if (!server_worker_recv(w, &cmd_body,
+                               sizeof(cmd_body.size) + sizeof(cmd_body.cmd)))
+             goto done;
+ 
+@@ -352,7 +425,7 @@ server_context_worker_thread(void *arg)
+                goto done;
+             memcpy(large_cmd, cmd_body.cmd, sizeof(cmd_body.cmd));
+             size_t remain = cmd_body.size - sizeof(cmd_body.cmd);
+-            if (!server_recv_all(w->socket_fd,
++            if (!server_worker_recv(w,
+                                  (char *)large_cmd + sizeof(cmd_body.cmd),
+                                  remain)) {
+                free(large_cmd);
+@@ -376,7 +449,7 @@ server_context_worker_thread(void *arg)
+             uint32_t ring_index;
+             uint32_t seqno;
+          } fence_body;
+-         if (!server_recv_all(w->socket_fd, &fence_body, sizeof(fence_body)))
++         if (!server_worker_recv(w, &fence_body, sizeof(fence_body)))
+             goto done;
+ 
+          mtx_lock(&state->renderer_mutex);
+@@ -396,10 +469,10 @@ server_context_worker_thread(void *arg)
+          uint64_t blob_id;
+          uint64_t blob_size;
+          uint32_t blob_flags;
+-         if (!server_recv_all(w->socket_fd, &res_id, sizeof(res_id)) ||
+-             !server_recv_all(w->socket_fd, &blob_id, sizeof(blob_id)) ||
+-             !server_recv_all(w->socket_fd, &blob_size, sizeof(blob_size)) ||
+-             !server_recv_all(w->socket_fd, &blob_flags, sizeof(blob_flags)))
++         if (!server_worker_recv(w, &res_id, sizeof(res_id)) ||
++             !server_worker_recv(w, &blob_id, sizeof(blob_id)) ||
++             !server_worker_recv(w, &blob_size, sizeof(blob_size)) ||
++             !server_worker_recv(w, &blob_flags, sizeof(blob_flags)))
+             goto done;
+ 
+          struct render_context_op_create_resource_reply reply = {
+@@ -417,10 +490,9 @@ server_context_worker_thread(void *arg)
+ 
+          if (!ok || res_fd < 0) {
+             reply.fd_type = VIRGL_RESOURCE_FD_INVALID;
+-            server_send_reply(w->socket_fd, &reply, sizeof(reply));
++            server_send_reply(w, &reply, sizeof(reply));
+          } else {
+-            server_send_reply_with_fds(w->socket_fd, &reply, sizeof(reply),
+-                                       &res_fd, 1);
++            server_send_reply_with_fd(w, &reply, sizeof(reply), res_fd);
+          }
+          break;
+       }
+@@ -434,7 +506,7 @@ server_context_worker_thread(void *arg)
+ 
+          int fds[1];
+          int fd_count;
+-         if (!server_recv_with_fds(w->socket_fd, &imp_body, sizeof(imp_body),
++         if (!server_recv_with_fds(w, &imp_body, sizeof(imp_body),
+                                    fds, 1, &fd_count))
+             goto done;
+ 
+@@ -454,7 +526,7 @@ server_context_worker_thread(void *arg)
+          struct {
+             uint32_t res_id;
+          } destroy_body;
+-         if (!server_recv_all(w->socket_fd, &destroy_body, sizeof(destroy_body)))
++         if (!server_worker_recv(w, &destroy_body, sizeof(destroy_body)))
+             goto done;
+ 
+          mtx_lock(&state->renderer_mutex);
+@@ -484,22 +556,50 @@ done:
+    if (w->shmem_ptr)
+       UnmapViewOfFile(w->shmem_ptr);
+ 
+-   closesocket((SOCKET)w->socket_fd);
++   /* The socket is closed by server_destroy_worker, not here. */
+    return 0;
+ }
+ 
++/*
++ * Stops a worker that has already been unlinked from state->workers.
++ *
++ * Call it without workers_mutex held. The worker's vkr_context_destroy joins
++ * the context's queue threads, and a queue thread retiring a fence takes
++ * workers_mutex in server_retire_fence_cb. Joining the worker with the mutex
++ * held deadlocks the server thread, and with it QEMU's main loop, which waits
++ * for the server's reply to the next context creation.
++ *
++ * The worker's socket is closed only here, once the worker has exited; see
++ * server_worker_transfer for how the worker is stopped. The worker used to
++ * close it as well, after the server had closed it to wake the worker, which
++ * could close an unrelated handle that reused the value.
++ */
+ static void
+-server_destroy_worker(struct server_thread_state *state,
+-                      struct server_context_worker *w)
++server_destroy_worker(struct server_context_worker *w)
+ {
+-   /* Close our end; worker thread will exit when recv fails */
+-   closesocket((SOCKET)w->socket_fd);
++   SetEvent(w->stop_event);
+    thrd_join(w->thread, NULL);
+-
+-   list_del(&w->head);
++   closesocket((SOCKET)w->socket_fd);
++   CloseHandle(w->stop_event);
++   WSACloseEvent(w->io_event);
+    free(w);
+ }
+ 
++static void
++server_destroy_all_workers(struct server_thread_state *state)
++{
++   struct list_head doomed;
++   list_inithead(&doomed);
++
++   mtx_lock(&state->workers_mutex);
++   list_splicetail(&state->workers, &doomed);
++   list_inithead(&state->workers);
++   mtx_unlock(&state->workers_mutex);
++
++   list_for_each_entry_safe(struct server_context_worker, w, &doomed, head)
++      server_destroy_worker(w);
++}
++
+ /*
+  * Server main thread — handles client protocol messages.
+  *
+@@ -560,12 +660,20 @@ server_main_thread(void *arg)
+          w->socket_fd = socket_fds[0];
+          w->shmem_fd = -1;
+          w->fence_eventfd = -1;
++         w->stop_event = CreateEventA(NULL, TRUE, FALSE, NULL);
++         w->io_event = WSACreateEvent();
+ 
+-         int ret = thrd_create(&w->thread, server_context_worker_thread, w);
++         int ret = thrd_error;
++         if (w->stop_event && w->io_event != WSA_INVALID_EVENT)
++            ret = thrd_create(&w->thread, server_context_worker_thread, w);
+          if (ret != thrd_success) {
+             proxy_log("server thread: failed to create worker thread");
+             closesocket((SOCKET)socket_fds[0]);
+             closesocket((SOCKET)socket_fds[1]);
++            if (w->stop_event)
++               CloseHandle(w->stop_event);
++            if (w->io_event != WSA_INVALID_EVENT)
++               WSACloseEvent(w->io_event);
+             free(w);
+             struct render_client_op_create_context_reply reply = { .ok = false };
+             server_send_reply_with_fds(state->socket_fd, &reply, sizeof(reply),
+@@ -593,17 +701,15 @@ server_main_thread(void *arg)
+          mtx_lock(&state->workers_mutex);
+          struct server_context_worker *w = server_find_worker(state, ctx_id);
+          if (w)
+-            server_destroy_worker(state, w);
++            list_del(&w->head);
+          mtx_unlock(&state->workers_mutex);
++         if (w)
++            server_destroy_worker(w);
+          break;
+       }
+ 
+       case RENDER_CLIENT_OP_RESET: {
+-         mtx_lock(&state->workers_mutex);
+-         list_for_each_entry_safe(struct server_context_worker, w,
+-                                  &state->workers, head)
+-            server_destroy_worker(state, w);
+-         mtx_unlock(&state->workers_mutex);
++         server_destroy_all_workers(state);
+          break;
+       }
+ 
+@@ -620,11 +726,7 @@ done:
+    proxy_log("server thread: exiting");
+ 
+    /* Clean up remaining workers */
+-   mtx_lock(&state->workers_mutex);
+-   list_for_each_entry_safe(struct server_context_worker, w,
+-                            &state->workers, head)
+-      server_destroy_worker(state, w);
+-   mtx_unlock(&state->workers_mutex);
++   server_destroy_all_workers(state);
+ 
+    if (state->vkr_initialized)
+       vkr_renderer_fini();
