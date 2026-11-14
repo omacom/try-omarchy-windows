@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- `omarchy refresh pacman`, switching the Omarchy channel and reinstalling
+  Omarchy's packages finish again instead of failing on a dependency error.
+  They had replaced the package setup with Omarchy's own, which left out Try
+  Omarchy's package repository and kernel hold and pointed at an older package
+  snapshot. The refresh now keeps both and the current Arch mirrors, and
+  downgrades nothing. Installs a failed refresh had left that way are put back
+  on their next start (#408).
+
 ## v0.15.0 - 2026-11-10
 
 - Omarchy 4.5.0 (Quattro RS). New installs start on it, and existing installs
