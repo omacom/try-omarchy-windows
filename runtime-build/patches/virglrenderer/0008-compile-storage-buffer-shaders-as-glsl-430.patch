@@ -1,0 +1,80 @@
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -405,6 +405,8 @@ struct global_renderer_state {
+    bool pitch_copy_imports : 1;
+    /* Swap R and B when sampling BGRA images imported as memory objects. */
+    bool memobj_bgra_swap : 1;
++   /* Compile shaders with SSBOs as GLSL 4.30 when the host supports it. */
++   bool ssbo_glsl430 : 1;
+    /* these appeared broken on at least one driver */
+    bool use_explicit_locations : 1;
+    /* threaded sync */
+@@ -7878,6 +7880,12 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+    vrend_state.memobj_bgra_swap = !(bgra_swap && !strcmp(bgra_swap, "off"));
+    virgl_info("imported BGRA memory object swizzle %s\n",
+               vrend_state.memobj_bgra_swap ? "on" : "off");
++   /* See vrend_convert_shader. TRYOMARCHY_SSBO_GLSL430=off keeps shaders
++    * with SSBOs at the GLSL version the rest of the shader needs, as before. */
++   const char *ssbo_glsl430 = getenv("TRYOMARCHY_SSBO_GLSL430");
++   vrend_state.ssbo_glsl430 = !(ssbo_glsl430 && !strcmp(ssbo_glsl430, "off"));
++   virgl_info("GLSL 4.30 for shaders with storage buffers %s\n",
++              vrend_state.ssbo_glsl430 ? "on" : "off");
+ 
+    init_features(gles ? 0 : gl_ver,
+                  gles ? gl_ver : 0);
+@@ -8243,6 +8251,7 @@ struct vrend_context *vrend_create_context(int id, uint32_t nlen, const char *de
+    grctx->shader_cfg.max_shader_patch_varyings = vrend_state.max_shader_patch_varyings;
+    grctx->shader_cfg.use_gles = vrend_state.use_gles;
+    grctx->shader_cfg.use_core_profile = vrend_state.use_core_profile;
++   grctx->shader_cfg.ssbo_glsl430 = vrend_state.ssbo_glsl430;
+    grctx->shader_cfg.use_explicit_locations = vrend_state.use_explicit_locations;
+    grctx->shader_cfg.max_draw_buffers = vrend_state.max_draw_buffers;
+    grctx->shader_cfg.has_arrays_of_arrays = has_feature(feat_arrays_of_arrays);
+--- a/src/vrend/vrend_shader.c
++++ b/src/vrend/vrend_shader.c
+@@ -5546,13 +5546,16 @@ iter_instruction(struct tgsi_iterate_context *iter,
+          prepare_so_movs(ctx);
+ 
+       /* GLES doesn't allow invariant specifiers on inputs, but on GL with
+-       * GLSL < 4.30 it is required to match the output of the previous stage */
++       * GLSL < 4.30 it is required to match the output of the previous stage.
++       * GLSL 4.30 rejects it on inputs and no longer needs it to match, which
++       * matters for storage-buffer shaders compiled as GLSL 4.30. */
+       if (!ctx->cfg->use_gles) {
+          for (uint32_t i = 0; i < ctx->num_inputs; ++i) {
+             uint32_t bit_pos = varying_bit_from_semantic_and_index(ctx->inputs[i].name, ctx->inputs[i].sid);
+             uint32_t slot = bit_pos / 32;
+             uint32_t bit = 1u << (bit_pos & 0x1f);
+-            if (ctx->key->force_invariant_inputs[slot] & bit)
++            if ((ctx->key->force_invariant_inputs[slot] & bit) &&
++                ctx->glsl_ver_required < 430)
+                ctx->inputs[i].invariant = 1;
+             else
+                ctx->inputs[i].invariant = 0;
+@@ -8172,6 +8175,16 @@ bool vrend_convert_shader(const struct vrend_context *rctx,
+    if (ctx.info.indirect_files & (1 << TGSI_FILE_SAMPLER))
+       ctx.shader_req_bits |= SHADER_REQ_GPU_SHADER5;
+ 
++   /* SSBO declarations always use the std430 layout. AMD's Windows GL driver
++    * rejects std430 in a GLSL 1.30-1.50 shader even with
++    * GL_ARB_shader_storage_buffer_object enabled ("not supported with this
++    * profile"), and the failed compile puts the whole context in error, so
++    * every later draw is dropped. Ask for GLSL 4.30 up front, before any
++    * declaration picks a pre-1.40 built-in name. */
++   if (cfg->ssbo_glsl430 && !cfg->use_gles && cfg->use_core_profile &&
++       cfg->glsl_version >= 430 && ctx.info.file_count[TGSI_FILE_BUFFER])
++      ctx.glsl_ver_required = require_glsl_ver(&ctx, 430);
++
+    if (!allocate_strbuffers(&ctx.glsl_strbufs))
+       goto fail;
+ 
+--- a/src/vrend/vrend_shader.h
++++ b/src/vrend/vrend_shader.h
+@@ -259,6 +259,7 @@ struct vrend_shader_cfg {
+    uint32_t has_texture_shadow_lod : 1;
+    uint32_t has_vs_layer : 1;
+    uint32_t has_vs_viewport_index : 1;
++   uint32_t ssbo_glsl430 : 1;
+ };
+ 
+ struct vrend_context;

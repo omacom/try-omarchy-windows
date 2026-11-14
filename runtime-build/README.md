@@ -57,6 +57,20 @@ order. `TRYOMARCHY_BGRA_SWAP=off` restores the old sampling. `test-bgra-swap.py
 <patched-renderer-source>` covers the switch, BGRA and RGBA views, swizzles with
 constants and the unchanged Linux path against fake sampler views.
 
+`0008-compile-storage-buffer-shaders-as-glsl-430.patch` keeps OpenGL apps that
+use shader storage buffers drawing, such as Ghostty (#383). The renderer
+declares every storage buffer with the `std430` layout but wrote such shaders
+as GLSL 1.30 to 1.50 with `GL_ARB_shader_storage_buffer_object`. AMD's Windows
+driver rejects `std430` there ("not supported with this profile"), and the
+failed compile puts the whole GL context in error, so the app's later draws
+are dropped too and its window stays empty. When the host offers GLSL 4.30 in
+a core profile, a shader with storage buffers is now written as GLSL 4.30.
+Its inputs then drop the `invariant` qualifier that older versions need to
+match an invariant output, because GLSL 4.30 rejects it on inputs.
+`TRYOMARCHY_SSBO_GLSL430=off` restores the old version choice.
+`test-ssbo-glsl430.py <patched-renderer-source>` covers the switch, the
+version choice and invariant inputs against fake shader configs.
+
 `test-image-capabilities.py <patched-renderer-source>` compiles the actual image
 dispatch against mocked Vulkan entry points. It runs on Linux or MSYS2 without
 a GPU or desktop and covers capability rejection, usable fallback masks,
