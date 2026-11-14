@@ -383,6 +383,18 @@
  void
  d3d12_fence_wait_impl(struct d3d12_fence *fence, ID3D12CommandQueue *queue, uint64_t value);
  void
+--- a/src/gallium/drivers/d3d12/d3d12_format.c
++++ b/src/gallium/drivers/d3d12/d3d12_format.c
+@@ -91,6 +91,9 @@
+    MAP_FORMAT_X8(R8G8B8, SNORM) \
+    MAP_FORMAT_X8(R8G8B8, UINT) \
+    MAP_FORMAT_X8(R8G8B8, SINT) \
++   /* virtio-dxg: opaque float16 and 10-bit window buffers */ \
++   MAP_FORMAT2(R16G16B16X16, FLOAT, R16G16B16A16, FLOAT) \
++   MAP_FORMAT2(R10G10B10X2, UNORM, R10G10B10A2, UNORM) \
+ \
+    MAP_FORMAT(B8G8R8A8, UNORM) \
+ \
 --- a/src/gallium/drivers/d3d12/d3d12_resource.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_resource.cpp
 @@ -37,6 +37,29 @@
@@ -1538,9 +1550,34 @@
  
           int uniform_bytes = params->UniformBytes;
           if (uniform_bytes)
+--- a/src/microsoft/compiler/nir_to_dxil.c
++++ b/src/microsoft/compiler/nir_to_dxil.c
+@@ -3662,7 +3662,10 @@
+    if (ctx->mod.shader_kind == DXIL_PIXEL_SHADER &&
+       ctx->opts->interpolate_at_vertex &&
+       ctx->opts->provoking_vertex != 0 &&
+-      (nir_intrinsic_dest_type(intr) & nir_type_float)) {
++      ((nir_intrinsic_dest_type(intr) & nir_type_float) ||
++       (ctx->opts->provoking_vertex_ints &&
++        (nir_alu_type_get_base_type(nir_intrinsic_dest_type(intr)) == nir_type_int ||
++         nir_alu_type_get_base_type(nir_intrinsic_dest_type(intr)) == nir_type_uint)))) {
+       nir_variable *var = nir_find_variable_with_driver_location(ctx->shader, nir_var_shader_in, nir_intrinsic_base(intr));
+ 
+       attr_at_vertex = var && var->data.interpolation == INTERP_MODE_FLAT;
+--- a/src/microsoft/compiler/nir_to_dxil.h
++++ b/src/microsoft/compiler/nir_to_dxil.h
+@@ -82,6 +82,8 @@
+    bool last_ubo_is_not_arrayed;
+    bool advanced_texture_ops;
+    unsigned provoking_vertex;
++   /* virtio-dxg: attributeAtVertex for integer flat inputs as well */
++   bool provoking_vertex_ints;
+    unsigned num_kernel_globals;
+    unsigned input_clip_size;
+    enum dxil_environment environment;
 --- a/src/microsoft/spirv_to_dxil/dxil_spirv_nir.c
 +++ b/src/microsoft/spirv_to_dxil/dxil_spirv_nir.c
-@@ -80,6 +80,10 @@
+@@ -80,6 +80,15 @@
     .Float64 = true,
     .Tessellation = true,
     .PhysicalStorageBufferAddresses = true,
@@ -1548,10 +1585,148 @@
 +   .DemoteToHelperInvocation = true,
 +   .VulkanMemoryModel = true,
 +   .VulkanMemoryModelDeviceScope = true,
++   /* virtio-dxg: multiple viewports, viewport index and layer anywhere */
++   .MultiViewport = true,
++   .ShaderViewportIndexLayerEXT = true,
++   .ShaderViewportIndex = true,
++   .ShaderLayer = true,
  };
  
  static const struct spirv_to_nir_options
-@@ -1023,11 +1027,18 @@
+@@ -520,11 +529,132 @@
+    return true;
+ }
+ 
++/* virtio-dxg: multiple viewports. The flip masks have a bit per viewport;
++ * the viewport is the ViewportIndex the shader writes, known only once the
++ * vertex is complete: keep the position and index written in temporaries
++ * and store the flipped position again at each EmitVertex, or at the end. */
++static void
++yz_flip_store_multi_viewport(nir_builder *b, nir_variable *pos_out,
++                             nir_variable *pos_tmp, nir_variable *vp_tmp,
++                             const struct dxil_spirv_runtime_conf *rt_conf,
++                             bool *reads_sysval_ubo)
++{
++   nir_def *pos = nir_load_var(b, pos_tmp);
++   nir_def *vp = nir_load_var(b, vp_tmp);
++   nir_def *y_pos = nir_channel(b, pos, 1);
++   nir_def *z_pos = nir_channel(b, pos, 2);
++   nir_def *y_flip_mask = NULL, *z_flip_mask = NULL, *dyn_yz_flip_mask = NULL;
++
++   if (rt_conf->yz_flip.mode & DXIL_SPIRV_YZ_FLIP_CONDITIONAL) {
++      unsigned offset =
++         offsetof(struct dxil_spirv_vertex_runtime_data, yz_flip_mask);
++      nir_address_format ubo_format = nir_address_format_32bit_index_offset;
++      nir_def *index = nir_vulkan_resource_index(
++         b, nir_address_format_num_components(ubo_format),
++         nir_address_format_bit_size(ubo_format),
++         nir_imm_int(b, 0),
++         .desc_set = rt_conf->runtime_data_cbv.register_space,
++         .binding = rt_conf->runtime_data_cbv.base_shader_register,
++         .desc_type = nir_descriptor_type_uniform_buffer);
++      nir_def *load_desc = nir_load_vulkan_descriptor(
++         b, nir_address_format_num_components(ubo_format),
++         nir_address_format_bit_size(ubo_format),
++         index, .desc_type = nir_descriptor_type_uniform_buffer);
++
++      dyn_yz_flip_mask =
++         nir_load_ubo(b, 1, 32, nir_channel(b, load_desc, 0),
++                      nir_imm_int(b, offset), .align_mul = 256,
++                      .align_offset = offset, .range_base = offset, .range = 4);
++      *reads_sysval_ubo = true;
++   }
++
++   if (rt_conf->yz_flip.mode & DXIL_SPIRV_Y_FLIP_UNCONDITIONAL)
++      y_flip_mask = nir_imm_int(b, rt_conf->yz_flip.y_mask);
++   else if (rt_conf->yz_flip.mode & DXIL_SPIRV_Y_FLIP_CONDITIONAL)
++      y_flip_mask = nir_iand_imm(b, dyn_yz_flip_mask, DXIL_SPIRV_Y_FLIP_MASK);
++
++   if (rt_conf->yz_flip.mode & DXIL_SPIRV_Z_FLIP_UNCONDITIONAL)
++      z_flip_mask = nir_imm_int(b, rt_conf->yz_flip.z_mask);
++   else if (rt_conf->yz_flip.mode & DXIL_SPIRV_Z_FLIP_CONDITIONAL)
++      z_flip_mask = nir_ushr_imm(b, dyn_yz_flip_mask, DXIL_SPIRV_Z_FLIP_SHIFT);
++
++   if (y_flip_mask) {
++      nir_def *flip = nir_test_mask(b, nir_ushr(b, y_flip_mask, vp), 1);
++      y_pos = nir_bcsel(b, flip, nir_fneg(b, y_pos), y_pos);
++   }
++   if (z_flip_mask) {
++      nir_def *flip = nir_test_mask(b, nir_ushr(b, z_flip_mask, vp), 1);
++      z_pos = nir_bcsel(b, flip, nir_fadd_imm(b, nir_fneg(b, z_pos), 1.0f), z_pos);
++   }
++
++   nir_store_var(b, pos_out,
++                 nir_vec4(b, nir_channel(b, pos, 0), y_pos, z_pos, nir_channel(b, pos, 3)),
++                 0xf);
++}
++
++static bool
++lower_yz_flip_multi_viewport(nir_shader *shader,
++                             nir_variable *pos_out, nir_variable *vp_out,
++                             const struct dxil_spirv_runtime_conf *rt_conf,
++                             bool *reads_sysval_ubo)
++{
++   nir_function_impl *impl = nir_shader_get_entrypoint(shader);
++   nir_variable *pos_tmp =
++      nir_local_variable_create(impl, glsl_vec4_type(), "yz_flip_position");
++   nir_variable *vp_tmp =
++      nir_local_variable_create(impl, glsl_int_type(), "yz_flip_viewport");
++   nir_builder b = nir_builder_at(nir_before_impl(impl));
++
++   nir_store_var(&b, pos_tmp, nir_imm_vec4(&b, 0.0f, 0.0f, 0.0f, 1.0f), 0xf);
++   nir_store_var(&b, vp_tmp, nir_imm_int(&b, 0), 0x1);
++
++   nir_foreach_block(block, impl) {
++      nir_foreach_instr_safe(instr, block) {
++         if (instr->type != nir_instr_type_intrinsic)
++            continue;
++
++         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
++         if (intr->intrinsic == nir_intrinsic_store_deref) {
++            nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
++            nir_variable *var = nir_intrinsic_get_var(intr, 0);
++
++            if ((var != pos_out && var != vp_out) || deref->deref_type != nir_deref_type_var)
++               continue;
++            b.cursor = nir_after_instr(instr);
++            nir_store_var(&b, var == pos_out ? pos_tmp : vp_tmp,
++                          intr->src[1].ssa, nir_intrinsic_write_mask(intr));
++         } else if (intr->intrinsic == nir_intrinsic_emit_vertex ||
++                    intr->intrinsic == nir_intrinsic_emit_vertex_with_counter) {
++            b.cursor = nir_before_instr(instr);
++            yz_flip_store_multi_viewport(&b, pos_out, pos_tmp, vp_tmp,
++                                         rt_conf, reads_sysval_ubo);
++         }
++      }
++   }
++
++   if (shader->info.stage != MESA_SHADER_GEOMETRY) {
++      b.cursor = nir_after_impl(impl);
++      yz_flip_store_multi_viewport(&b, pos_out, pos_tmp, vp_tmp,
++                                   rt_conf, reads_sysval_ubo);
++   }
++
++   return nir_progress(true, impl, nir_metadata_none);
++}
++
+ bool
+ dxil_spirv_nir_lower_yz_flip(nir_shader *shader,
+                              const struct dxil_spirv_runtime_conf *rt_conf,
+                              bool *reads_sysval_ubo)
+ {
++   nir_variable *pos_out =
++      nir_find_variable_with_location(shader, nir_var_shader_out, VARYING_SLOT_POS);
++   nir_variable *vp_out =
++      nir_find_variable_with_location(shader, nir_var_shader_out, VARYING_SLOT_VIEWPORT);
++   if (pos_out && vp_out && glsl_type_is_vector(pos_out->type) &&
++       glsl_type_is_scalar(vp_out->type))
++      return lower_yz_flip_multi_viewport(shader, pos_out, vp_out, rt_conf,
++                                          reads_sysval_ubo);
++
+    struct lower_yz_flip_data data = {
+       .rt_conf = rt_conf,
+       .reads_sysval_ubo = reads_sysval_ubo,
+@@ -1023,11 +1153,18 @@
     NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_global,
                nir_address_format_32bit_index_offset_pack64);
  
@@ -2302,7 +2477,23 @@
  
  #define MAX_TIER2_MEMORY_TYPES 4
  
-@@ -101,6 +114,23 @@
+@@ -72,9 +85,15 @@
+ static const struct vk_instance_extension_table instance_extensions = {
+    .KHR_get_physical_device_properties2      = true,
+    .KHR_device_group_creation                = true,
++   /* virtio-dxg: core in 1.1, asked for by name (external_capabilities) */
++   .KHR_external_fence_capabilities          = true,
++   .KHR_external_memory_capabilities         = true,
++   .KHR_external_semaphore_capabilities      = true,
+ #ifdef DZN_USE_WSI_PLATFORM
+    .KHR_surface                              = true,
+    .KHR_get_surface_capabilities2            = true,
++   /* virtio-dxg: float16 windows (swapchain_colorspace) */
++   .EXT_swapchain_colorspace                 = true,
+ #endif
+ #ifdef VK_USE_PLATFORM_WIN32_KHR
+    .KHR_win32_surface                        = true,
+@@ -101,6 +120,23 @@
     pdev->vk.supported_extensions = (struct vk_device_extension_table) {
        .KHR_16bit_storage                     = pdev->options4.Native16BitShaderOpsSupported,
        .KHR_bind_memory2                      = true,
@@ -2326,7 +2517,38 @@
        .KHR_buffer_device_address             = pdev->shader_model >= D3D_SHADER_MODEL_6_6,
        .KHR_create_renderpass2                = true,
        .KHR_dedicated_allocation              = true,
-@@ -781,33 +811,40 @@
+@@ -157,6 +193,9 @@
+       .EXT_vertex_attribute_divisor          = true,
+       .EXT_memory_budget                     = true,
+       .MSFT_layered_driver                   = true,
++      .EXT_provoking_vertex                  = pdev->options3.BarycentricsSupported,
++      .EXT_shader_viewport_index_layer       =
++         pdev->options.VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation,
+    };
+ }
+ 
+@@ -676,8 +715,9 @@
+       .geometryShader = true,
+       .tessellationShader = false,
+       .sampleRateShading = true,
+-      .dualSrcBlend = false,
+-      .logicOp = false,
++      /* virtio-dxg: Blender's Vulkan backend (provokingVertexLast) */
++      .dualSrcBlend = true,
++      .logicOp = pdev->options.OutputMergerLogicOp,
+       .multiDrawIndirect = true,
+       .drawIndirectFirstInstance = true,
+       .depthClamp = true,
+@@ -687,7 +727,7 @@
+       .wideLines = instance->drirc.debug.claim_wide_lines,
+       .largePoints = false,
+       .alphaToOne = false,
+-      .multiViewport = false,
++      .multiViewport = true,
+       .samplerAnisotropy = true,
+       .textureCompressionETC2 = false,
+       .textureCompressionASTC_LDR = false,
+@@ -781,33 +821,46 @@
        .bufferDeviceAddress                = pdev->shader_model >= D3D_SHADER_MODEL_6_6,
        .bufferDeviceAddressCaptureReplay   = false,
        .bufferDeviceAddressMultiDevice     = false,
@@ -2335,8 +2557,12 @@
 +      .vulkanMemoryModel                  = true,
 +      .vulkanMemoryModelDeviceScope       = true,
        .vulkanMemoryModelAvailabilityVisibilityChains = false,
-       .shaderOutputViewportIndex          = false,
-       .shaderOutputLayer                  = false,
+-      .shaderOutputViewportIndex          = false,
+-      .shaderOutputLayer                  = false,
++      .shaderOutputViewportIndex          =
++         pdev->options.VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation,
++      .shaderOutputLayer                  =
++         pdev->options.VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation,
        .subgroupBroadcastDynamicId         = true,
  
 -      .robustImageAccess                  = false,
@@ -2374,10 +2600,23 @@
 +      .extendedDynamicState2              = true,
 +      .extendedDynamicState2LogicOp       = false,
 +      .extendedDynamicState2PatchControlPoints = false,
++
++      /* virtio-dxg: VK_EXT_provoking_vertex (attributeAtVertex) */
++      .provokingVertexLast                = pdev->options3.BarycentricsSupported,
++      .transformFeedbackPreservesProvokingVertex = false,
     };
  }
  
-@@ -1064,6 +1101,22 @@
+@@ -898,7 +951,7 @@
+       .maxGeometryTotalOutputComponents = D3D12_REQ_GS_INVOCATION_32BIT_OUTPUT_COMPONENT_LIMIT,
+       .maxFragmentInputComponents = D3D12_PS_INPUT_REGISTER_COUNT * D3D12_PS_INPUT_REGISTER_COMPONENTS,
+       .maxFragmentOutputAttachments = D3D12_PS_OUTPUT_REGISTER_COUNT,
+-      .maxFragmentDualSrcAttachments = 0,
++      .maxFragmentDualSrcAttachments = 1,
+       .maxFragmentCombinedOutputResources = D3D12_PS_OUTPUT_REGISTER_COUNT,
+       .maxComputeSharedMemorySize = D3D12_CS_TGSM_REGISTER_COUNT * sizeof(float),
+       .maxComputeWorkGroupCount = { D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION,
+@@ -1064,6 +1117,22 @@
        .integerDotProduct4x8BitPackedUnsignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
        .integerDotProductAccumulatingSaturating4x8BitPackedSignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
        .integerDotProductAccumulatingSaturating4x8BitPackedUnsignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
@@ -2400,7 +2639,19 @@
  
        /* VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT */
        .maxVertexAttribDivisor = UINT32_MAX,
-@@ -1629,6 +1682,26 @@
+@@ -1073,6 +1142,11 @@
+ 
+       /* VkPhysicalDeviceLayeredDriverPropertiesMSFT */
+       .underlyingAPI = VK_LAYERED_DRIVER_UNDERLYING_API_D3D12_MSFT,
++
++      /* virtio-dxg: VkPhysicalDeviceProvokingVertexPropertiesEXT (the mode is
++       * compiled into each pipeline's fragment shader) */
++      .provokingVertexModePerPipeline = true,
++      .transformFeedbackPreservesTriangleFanProvokingVertex = false,
+    };
+ 
+    if (strlen(instance->drirc.debug.force_vk_devicename) > 0) {
+@@ -1629,6 +1703,26 @@
     VK_FROM_HANDLE(dzn_physical_device, pdev, physicalDevice);
  
     dzn_physical_device_get_format_properties(pdev, format, pFormatProperties);
@@ -2427,7 +2678,7 @@
  }
  
  VKAPI_ATTR VkResult VKAPI_CALL
-@@ -2567,6 +2640,8 @@
+@@ -2567,6 +2661,8 @@
  #else
     if ((intptr_t)mem->export_handle >= 0)
        close((int)(intptr_t)mem->export_handle);
@@ -2436,7 +2687,7 @@
  #endif
  
     vk_object_base_finish(&mem->base);
-@@ -2593,6 +2668,126 @@
+@@ -2593,6 +2689,128 @@
     return properties;
  }
  
@@ -2529,7 +2780,9 @@
 +   struct drm_virtgpu_resource_create create = {
 +      .target = 2,
 +      .format = 1,
-+      .width = (uint32_t)image->desc.Width,
++      /* a float16 texel is two 32-bit virtio-gpu texels */
++      .width = (uint32_t)image->desc.Width *
++               MAX2(1u, (uint32_t)(row_size / image->desc.Width) / 4),
 +      .height = image->desc.Height,
 +      .depth = 1,
 +      .array_size = 1,
@@ -2563,7 +2816,7 @@
  static VkResult
  dzn_device_memory_create(struct dzn_device *device,
                           const VkMemoryAllocateInfo *pAllocateInfo,
-@@ -2607,6 +2802,10 @@
+@@ -2607,6 +2825,10 @@
  
     VkExternalMemoryHandleTypeFlags export_flags = 0;
     HANDLE import_handle = NULL;
@@ -2574,7 +2827,7 @@
     bool imported_from_d3d11 = false;
     void *host_pointer = NULL;
  #ifdef _WIN32
-@@ -2662,7 +2861,9 @@
+@@ -2662,7 +2884,9 @@
           default:
              return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
           }
@@ -2585,7 +2838,7 @@
           break;
        }
  #endif
-@@ -2711,6 +2912,10 @@
+@@ -2711,6 +2935,10 @@
         VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP_BIT);
     if (image && imported_from_d3d11)
        valid_flags |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
@@ -2596,7 +2849,7 @@
  
     if (export_flags & ~valid_flags)
        return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
-@@ -2778,7 +2983,17 @@
+@@ -2778,7 +3006,17 @@
  #else
        goto cleanup;
  #endif
@@ -2614,7 +2867,7 @@
        error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
        if (image || buffer) {
           if (FAILED(ID3D12Device_OpenSharedHandle(device->dev, import_handle, &IID_ID3D12Resource, (void **)&mem->dedicated_res)))
-@@ -2921,10 +3136,27 @@
+@@ -2921,10 +3159,27 @@
           goto cleanup;
     }
  
@@ -2642,7 +2895,7 @@
  #ifdef _WIN32
     if (handle_from_name)
        CloseHandle(handle_from_name);
-@@ -3691,6 +3923,56 @@
+@@ -3691,6 +3946,56 @@
     *pPeerMemoryFeatures = 0;
  }
  
@@ -2699,7 +2952,7 @@
  VKAPI_ATTR void VKAPI_CALL
  dzn_GetImageSparseMemoryRequirements2(VkDevice device,
                                        const VkImageSparseMemoryRequirementsInfo2* pInfo,
-@@ -3772,16 +4054,33 @@
+@@ -3772,16 +4077,33 @@
                     int *pFd)
  {
     VK_FROM_HANDLE(dzn_device_memory, mem, pGetFdInfo->memory);
@@ -2784,9 +3037,153 @@
 +      close(source);
 +}
 +#endif
+--- a/src/microsoft/vulkan/dzn_image.c
++++ b/src/microsoft/vulkan/dzn_image.c
+@@ -207,6 +207,15 @@
+        !pdev->options12.RelaxedFormatCastingSupported)
+       image->desc.Format = dzn_get_typeless_dxgi_format(image->desc.Format);
+ 
++#ifndef _WIN32
++   /* virtio-dxg: typeless window buffers. A dma-buf image is opened by
++    * another process in the dma-buf's format (UNORM for an sRGB swapchain). */
++   const VkExternalMemoryImageCreateInfo *dxg_ext =
++      vk_find_struct_const(pCreateInfo->pNext, EXTERNAL_MEMORY_IMAGE_CREATE_INFO);
++   if (dxg_ext && (dxg_ext->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT))
++      image->desc.Format = dzn_get_typeless_dxgi_format(image->desc.Format);
++#endif
++
+    if (image->desc.SampleDesc.Count > 1)
+       image->desc.Alignment = D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT;
+    else
+@@ -1427,7 +1436,9 @@
+                                                    false, false,
+                                                    iview);
+       }
+-      if (iview->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT) {
++      /* virtio-dxg: no sRGB UAVs */
++      if ((iview->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT) &&
++          !vk_format_is_srgb(iview->vk.view_format)) {
+          iview->uav_bindless_slot = dzn_device_descriptor_heap_alloc_slot(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+          if (iview->uav_bindless_slot < 0) {
+             dzn_image_view_destroy(iview, pAllocator);
 --- a/src/microsoft/vulkan/dzn_pipeline.c
 +++ b/src/microsoft/vulkan/dzn_pipeline.c
-@@ -1243,6 +1243,16 @@
+@@ -412,6 +412,7 @@
+ dzn_pipeline_compile_shader(struct dzn_device *device,
+                             nir_shader *nir,
+                             uint32_t input_clip_size,
++                            unsigned provoking_vertex,
+                             D3D12_SHADER_BYTECODE *slot)
+ {
+    struct dzn_instance *instance =
+@@ -428,6 +429,10 @@
+       .shader_model_max = dzn_get_shader_model(pdev),
+       .input_clip_size = input_clip_size,
+       .advanced_texture_ops = pdev->options14.AdvancedTextureOpsSupported,
++      /* virtio-dxg: VK_EXT_provoking_vertex (dzn_last_vertex_index) */
++      .provoking_vertex = provoking_vertex,
++      .interpolate_at_vertex = provoking_vertex != 0,
++      .provoking_vertex_ints = provoking_vertex != 0,
+ #ifdef _WIN32
+       .validator_version_max = dxil_get_validator_version(instance->dxil_validator),
+ #endif
+@@ -746,6 +751,28 @@
+    _mesa_blake3_final(&ctx, result);
+ }
+ 
++/* virtio-dxg: VK_EXT_provoking_vertex, last vertex: the index of the
++ * primitive's last vertex in attributeAtVertex for a topology class. */
++static unsigned
++dzn_last_vertex_index(VkPrimitiveTopology topology)
++{
++   switch (topology) {
++   case VK_PRIMITIVE_TOPOLOGY_LINE_LIST:
++   case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP:
++   case VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY:
++   case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY:
++      return 1;
++   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST:
++   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP:
++   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN:
++   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY:
++   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY:
++      return 2;
++   default:
++      return 0;
++   }
++}
++
+ static VkResult
+ dzn_graphics_pipeline_compile_shaders(struct dzn_device *device,
+                                       struct dzn_graphics_pipeline *pipeline,
+@@ -842,6 +869,17 @@
+       info->pMultisampleState &&
+       info->pMultisampleState->sampleShadingEnable;
+ 
++   /* virtio-dxg: VK_EXT_provoking_vertex. With the last vertex, the fragment
++    * shader reads flat inputs from the primitive's last vertex. pv_key is 0
++    * (first vertex) or 1 + that vertex for the pipeline's topology class. */
++   const VkPipelineRasterizationProvokingVertexStateCreateInfoEXT *pv_info =
++      vk_find_struct_const(info->pRasterizationState->pNext,
++                           PIPELINE_RASTERIZATION_PROVOKING_VERTEX_STATE_CREATE_INFO_EXT);
++   uint32_t pv_key =
++      pv_info && pv_info->provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT &&
++      info->pInputAssemblyState ?
++      1 + dzn_last_vertex_index(info->pInputAssemblyState->topology) : 0;
++
+    if (cache) {
+       dzn_graphics_pipeline_hash_attribs(attribs, vi_conversions, attribs_hash);
+ 
+@@ -856,6 +894,7 @@
+       _mesa_blake3_update(&pipeline_hash_ctx, &force_sample_rate_shading, sizeof(force_sample_rate_shading));
+       _mesa_blake3_update(&pipeline_hash_ctx, &lower_view_index, sizeof(lower_view_index));
+       _mesa_blake3_update(&pipeline_hash_ctx, &pipeline->use_gs_for_polygon_mode_point, sizeof(pipeline->use_gs_for_polygon_mode_point));
++      _mesa_blake3_update(&pipeline_hash_ctx, &pv_key, sizeof(pv_key));
+ 
+       u_foreach_bit(stage, active_stage_mask) {
+          const VkPipelineShaderStageRequiredSubgroupSizeCreateInfo *subgroup_size_info =
+@@ -1004,6 +1043,21 @@
+       }
+    }
+ 
++   /* virtio-dxg: the last vertex of the primitives the fragment shader sees */
++   unsigned fs_provoking_vertex = 0;
++   if (pv_key) {
++      const nir_shader *gs = pipeline->templates.shaders[MESA_SHADER_GEOMETRY].nir;
++
++      if (pipeline->use_gs_for_polygon_mode_point)
++         fs_provoking_vertex = 0;
++      else if (gs)
++         fs_provoking_vertex =
++            gs->info.gs.output_primitive == MESA_PRIM_TRIANGLE_STRIP ? 2 :
++            gs->info.gs.output_primitive == MESA_PRIM_LINE_STRIP ? 1 : 0;
++      else
++         fs_provoking_vertex = pv_key - 1;
++   }
++
+    u_foreach_bit(stage, active_stage_mask) {
+       uint8_t bindings_hash[BLAKE3_KEY_LEN];
+ 
+@@ -1019,6 +1073,8 @@
+          _mesa_blake3_update(&dxil_hash_ctx, stages[stage].link_hashes[0], sizeof(stages[stage].link_hashes[0]));
+          _mesa_blake3_update(&dxil_hash_ctx, stages[stage].link_hashes[1], sizeof(stages[stage].link_hashes[1]));
+          _mesa_blake3_update(&dxil_hash_ctx, bindings_hash, sizeof(bindings_hash));
++         if (stage == MESA_SHADER_FRAGMENT)
++            _mesa_blake3_update(&dxil_hash_ctx, &fs_provoking_vertex, sizeof(fs_provoking_vertex));
+          _mesa_blake3_final(&dxil_hash_ctx, stages[stage].dxil_hash);
+          dxil_hashes[stage] = stages[stage].dxil_hash;
+ 
+@@ -1088,7 +1144,8 @@
+       D3D12_SHADER_BYTECODE *slot =
+          dzn_pipeline_get_gfx_shader_slot(out, stage);
+ 
+-      ret = dzn_pipeline_compile_shader(device, pipeline->templates.shaders[stage].nir, prev_stage_output_clip_size, slot);
++      ret = dzn_pipeline_compile_shader(device, pipeline->templates.shaders[stage].nir, prev_stage_output_clip_size,
++                                        stage == MESA_SHADER_FRAGMENT ? fs_provoking_vertex : 0, slot);
+       if (ret != VK_SUCCESS)
+          return ret;
+ 
+@@ -1243,6 +1300,16 @@
     }
  }
  
@@ -2803,7 +3200,7 @@
  static VkResult
  dzn_graphics_pipeline_translate_ia(struct dzn_device *device,
                                     struct dzn_graphics_pipeline *pipeline,
-@@ -1857,6 +1867,99 @@
+@@ -1857,6 +1924,99 @@
     vk_free2(&pipeline->base.base.device->alloc, alloc, pipeline);
  }
  
@@ -2903,7 +3300,7 @@
  static VkResult
  dzn_graphics_pipeline_create(struct dzn_device *device,
                               VkPipelineCache cache,
-@@ -1877,6 +1980,16 @@
+@@ -1877,6 +2037,16 @@
     VkResult ret;
     HRESULT hres = 0;
     D3D12_VIEW_INSTANCE_LOCATION vi_locs[D3D12_MAX_VIEW_INSTANCE_COUNT];
@@ -2920,7 +3317,7 @@
  
     struct dzn_graphics_pipeline *pipeline =
        vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*pipeline), 8,
-@@ -1945,11 +2058,69 @@
+@@ -1945,11 +2115,69 @@
           case VK_DYNAMIC_STATE_LINE_WIDTH:
              /* Nothing to do since we just support lineWidth = 1. */
              break;
@@ -2991,7 +3388,7 @@
     ret = dzn_graphics_pipeline_translate_ia(device, pipeline, stream_desc, pCreateInfo);
     if (ret)
        goto out;
-@@ -2180,6 +2351,105 @@
+@@ -2180,6 +2408,105 @@
     }
  }
  
@@ -3097,7 +3494,7 @@
  ID3D12PipelineState *
  dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
                                  const struct dzn_graphics_pipeline_variant_key *key)
-@@ -2204,6 +2474,14 @@
+@@ -2204,6 +2531,14 @@
  
     mask_key_for_stencil_state(pdev, pipeline, key, &masked_key);
  
@@ -3112,7 +3509,7 @@
     struct hash_entry *he =
        _mesa_hash_table_search(pipeline->variants, &masked_key);
  
-@@ -2235,6 +2513,7 @@
+@@ -2235,6 +2570,7 @@
        }
  
        update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
@@ -3120,7 +3517,16 @@
  
        ASSERTED HRESULT hres = ID3D12Device4_CreatePipelineState(device->dev, &stream_desc,
                                                                  &IID_ID3D12PipelineState,
-@@ -2590,6 +2869,11 @@
+@@ -2563,7 +2899,7 @@
+       }
+    }
+ 
+-   ret = dzn_pipeline_compile_shader(device, nir, 0, shader);
++   ret = dzn_pipeline_compile_shader(device, nir, 0, 0, shader);
+    if (ret != VK_SUCCESS)
+       goto out;
+ 
+@@ -2590,6 +2926,11 @@
     VK_FROM_HANDLE(dzn_pipeline_layout, layout, pCreateInfo->layout);
     VK_FROM_HANDLE(vk_pipeline_cache, pcache, cache);
  
@@ -3334,20 +3740,35 @@
  /*
   * Copyright © 2015 Intel Corporation
   * Copyright © 2026 NXP
-@@ -424,6 +428,12 @@
+@@ -424,6 +428,9 @@
     if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))
        return NULL;
  
-+   /* virtio-dxg window buffers: the compositor opens the texture in the
-+    * dma-buf's format, and D3D12 has no UNORM view of a texture that was
-+    * created sRGB. Applications get the UNORM formats. */
-+   if (display->wsi_wl->wsi->dxg_window_buffers && vk_format_is_srgb(format))
-+      return NULL;
++   /* virtio-dxg: typeless window buffers. The shared texture is typeless
++    * (dzn_image.c), so sRGB swapchains are offered too. */
 +
     struct u_vector modifiers;
     if (!u_vector_init_pow2(&modifiers, 4, sizeof(uint64_t)))
        return NULL;
-@@ -1792,7 +1802,7 @@
+@@ -1255,12 +1262,11 @@
+ static bool
+ needs_color_surface(struct wsi_wl_display *display, VkColorSpaceKHR colorspace)
+ {
+-   if (colorspace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+-      /* we want to use a color surface to set sRGB if possible, but
+-       * only if the compositor actually supports sRGB */
+-      return vector_contains(&display->color_primaries, WP_COLOR_MANAGER_V1_PRIMARIES_SRGB)
+-          && vector_contains(&display->color_transfer_funcs, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB);
+-   }
++   /* virtio-dxg: untagged sRGB. Surfaces without an image description are
++    * sRGB already; applications that manage color themselves (Blender) own
++    * the surface's one color-management object. */
++   if (colorspace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
++      return false;
+    return colorspace != VK_COLOR_SPACE_PASS_THROUGH_EXT;
+ }
+ 
+@@ -1792,7 +1798,7 @@
  
     struct wsi_wl_display display;
     VkResult ret = wsi_wl_display_init(wsi, &display, wl_display, false,
@@ -3356,7 +3777,7 @@
     if (ret == VK_SUCCESS)
        wsi_wl_display_finish(&display);
  
-@@ -1868,7 +1878,7 @@
+@@ -1868,7 +1874,7 @@
  
     if (!wsi_wl_surface->display) {
        if (wsi_wl_display_init(wsi, &temp_display, surface->display, true,
@@ -3365,7 +3786,7 @@
           return VK_ERROR_SURFACE_LOST_KHR;
        display = &temp_display;
     }
-@@ -1929,7 +1939,7 @@
+@@ -1929,7 +1935,7 @@
     struct wsi_wl_display display;
  
     if (wsi_wl_display_init(wsi, &display, surface->display, true,
@@ -3374,7 +3795,7 @@
        return VK_ERROR_SURFACE_LOST_KHR;
  
     if (has_wp_presentation)
-@@ -1963,7 +1973,7 @@
+@@ -1963,7 +1969,7 @@
  
     struct wsi_wl_display display;
     if (wsi_wl_display_init(wsi, &display, surface->display, true,
@@ -3383,7 +3804,7 @@
        return VK_ERROR_SURFACE_LOST_KHR;
  
     VkPresentModeKHR present_modes[WSI_WL_MAX_PRESENT_MODES];
-@@ -2171,7 +2181,7 @@
+@@ -2171,7 +2177,7 @@
  
     struct wsi_wl_display display;
     if (wsi_wl_display_init(wsi, &display, surface->display, true,
@@ -3392,7 +3813,19 @@
        return VK_ERROR_SURFACE_LOST_KHR;
  
     VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormatKHR, out,
-@@ -2216,7 +2226,7 @@
+@@ -2179,6 +2185,11 @@
+ 
+    VkColorSpaceKHR *cs;
+    u_vector_foreach(cs, &display.colorspaces) {
++      /* virtio-dxg: 8-bit window buffers */
++      if (wsi_device->dxg_window_buffers &&
++          *cs != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR &&
++          *cs != VK_COLOR_SPACE_PASS_THROUGH_EXT)
++         continue;
+       struct wsi_wl_format *disp_fmt;
+       u_vector_foreach(disp_fmt, &display.formats) {
+          /* Skip formats for which we can't support both alpha & opaque
+@@ -2216,7 +2227,7 @@
  
     struct wsi_wl_display display;
     if (wsi_wl_display_init(wsi, &display, surface->display, true,
@@ -3401,7 +3834,19 @@
        return VK_ERROR_SURFACE_LOST_KHR;
  
     VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormat2KHR, out,
-@@ -2509,7 +2519,7 @@
+@@ -2224,6 +2235,11 @@
+ 
+    VkColorSpaceKHR *cs;
+    u_vector_foreach(cs, &display.colorspaces) {
++      /* virtio-dxg: 8-bit window buffers */
++      if (wsi_device->dxg_window_buffers &&
++          *cs != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR &&
++          *cs != VK_COLOR_SPACE_PASS_THROUGH_EXT)
++         continue;
+       struct wsi_wl_format *disp_fmt;
+       u_vector_foreach(disp_fmt, &display.formats) {
+          /* Skip formats for which we can't support both alpha & opaque
+@@ -2509,7 +2525,7 @@
        return VK_SUCCESS;
  
     result = wsi_wl_display_create(wsi, wsi_wl_surface->base.display,
@@ -3410,7 +3855,7 @@
     if (result != VK_SUCCESS)
        goto fail;
  
-@@ -3309,6 +3319,15 @@
+@@ -3309,6 +3325,15 @@
     if (chain->retired)
        return VK_ERROR_OUT_OF_DATE_KHR;
  
@@ -3426,7 +3871,7 @@
     struct wsi_wl_surface *wsi_wl_surface = chain->wsi_wl_surface;
     bool mode_fifo = chain->base.present_mode == VK_PRESENT_MODE_FIFO_KHR;
  
-@@ -3866,7 +3885,7 @@
+@@ -3866,7 +3891,7 @@
     struct wsi_drm_image_params drm_image_params;
     uint32_t num_drm_modifiers = 0;
     const uint64_t *drm_modifiers = NULL;

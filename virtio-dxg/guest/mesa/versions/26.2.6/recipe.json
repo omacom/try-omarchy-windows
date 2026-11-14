@@ -7,7 +7,7 @@
   "profiles": {
     "graphics": {
       "patchFile": "graphics.patch",
-      "patchSha256": "0b196bf0bb9694ade3675c3ce8f24aa6062aa0655b786e5eda0a28920e0366ba",
+      "patchSha256": "bbdefbf84f196e54318b29fa5ef5648b3ffb24dd5f6849e59fb48b41a85df02d",
       "files": {
         "VERSION": {
           "originalSha256": "982a353702e30cae7604c76ff1a99db8b959088c79b12dd1ea480141241f2e48",
@@ -49,6 +49,10 @@
           "originalSha256": "c0dfb38246345f1572f0e777d6caaeb6aea95222539cca790875dac69a2d184a",
           "patchedSha256": "04b8736a2cefda83db4cfa3854bfcc299ceff983b8fc3a831d06f799b6b42823"
         },
+        "src/gallium/drivers/d3d12/d3d12_format.c": {
+          "originalSha256": "c985b81fa2de5ae093ec13dd25d6c619fa7f848264cc8c06184f34d3926c0736",
+          "patchedSha256": "799421c21d99c83f543a8ff0d891e9b75f074eebeb0e0b92372d12cb82cb5e32"
+        },
         "src/gallium/drivers/d3d12/d3d12_resource.cpp": {
           "originalSha256": "b03b1d70e20342b13b615807534aaeed23688955477b014f21ecb5a09aec486b",
           "patchedSha256": "7b5b1325379a377456ce6d730c8336c0109af0bd161a8f1cbbf5eea3dbc76b49"
@@ -73,9 +77,17 @@
           "originalSha256": "a0140c9954053b256f969f4e2d2074c83a91cbe221e2dab6c47d96f67d130856",
           "patchedSha256": "d40c57cf8141666ffc6465c18fd3a8ffccc023b2e878e9ab9383733a550f3d3a"
         },
+        "src/microsoft/compiler/nir_to_dxil.c": {
+          "originalSha256": "9102fd40db4f5441c34576c64d9e65dc8c6948d01dc5ab6f29b0ac027db76777",
+          "patchedSha256": "eb7bc14f219e6ebdaf74b20382dfd40558a4fd5ab1c470360fcce8308697ffd6"
+        },
+        "src/microsoft/compiler/nir_to_dxil.h": {
+          "originalSha256": "444945c6d593b52b66c942c1a923c51ce2615dc52b6b70ae44f6240ac103a915",
+          "patchedSha256": "6025f044675bf8cbf1f9322d33a0165da96a79e1c13154014346b14ad7d9c7d8"
+        },
         "src/microsoft/spirv_to_dxil/dxil_spirv_nir.c": {
           "originalSha256": "7de0c6d801a4dfa0ad888ba29ec54b5a9d0bc43b2541ea715d2e52aa72cc8bfd",
-          "patchedSha256": "84d56bd48ba866611f5284f889dabf5b0382686408456eee2776c8131197646c"
+          "patchedSha256": "0c5375b1b1314665f06dc1b674bc8ac5f15ba8aa08036e0cf658ae820005e0d8"
         },
         "src/microsoft/vulkan/dzn_cmd_buffer.c": {
           "originalSha256": "1daea02a1357f6b571eee959a8f7288f32c23b7a77906b013fbeeb653ad1fada",
@@ -87,7 +99,11 @@
         },
         "src/microsoft/vulkan/dzn_device.c": {
           "originalSha256": "837bbdd6851ee4bf9073628f6029329d5bf50a6e93f179d7429ea61f70fd400a",
-          "patchedSha256": "799df52f1cdcaa647190f34c128fe1a1f28eea0385acebad99fa3a5eaeee7497"
+          "patchedSha256": "7f6a96495764ccd24ce7126a065db07eff16c2be652fe6872a801172f072b5d1"
+        },
+        "src/microsoft/vulkan/dzn_image.c": {
+          "originalSha256": "7a3b791b956996a411a543eac940dc646366f8391013d445e676084ad22af6ec",
+          "patchedSha256": "3c6cdbc5a5a9d628eaaa7c7d73f6d6b709fd01c9f346def269678104b2dc4eb6"
         },
         "src/microsoft/vulkan/dzn_imported_memory_fd.h": {
           "originalSha256": null,
@@ -95,7 +111,7 @@
         },
         "src/microsoft/vulkan/dzn_pipeline.c": {
           "originalSha256": "d1b80c48c053199d9be1802a7ca27145b90b81dd20ad51b76f7f8adea0dab24c",
-          "patchedSha256": "ad6514685da371a188d9fd0cf65bf807c3c0e256ce45f37babf86f96bd4e51b1"
+          "patchedSha256": "b0c5435b60614f3ae4db4de8f5e04d3a9f0486a26906ccb98837cfbeba3c5779"
         },
         "src/microsoft/vulkan/dzn_private.h": {
           "originalSha256": "d787ec1f37d336142e3e023edf5f020e4e9d55bb12180c27f0ded8e399218d5c",
@@ -123,7 +139,7 @@
         },
         "src/vulkan/wsi/wsi_common_wayland.c": {
           "originalSha256": "74a64c3e24e3ba2abc3e7423f070cf898abe98af9d1bb1325e41354f2b902396",
-          "patchedSha256": "470b5d18e87cd5f5204b4c7713046a3040dd3cd55a79f8eff27fbb9d10e5dee3"
+          "patchedSha256": "72008b7ac81e1c9aa6b7ab54aad7d9fa6efb6b1e33d04a0c85c1499b8c5ddbc0"
         },
         "subprojects/DirectX-Headers.wrap": {
           "originalSha256": "cd7710ccaa92dc9dabe4c6040b47c701c48b22c179d435debd5f7409142fcbe1",

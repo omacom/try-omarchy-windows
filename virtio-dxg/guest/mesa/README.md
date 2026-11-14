@@ -83,8 +83,30 @@ nothing is emulated in software:
   pipeline creation cache control, the 1.3 limits.
 
 `bench/vulkan13` checks these with rendered pixels and read-back buffers.
-Dozen still lacks tessellation, multiple viewports, dual-source blending
-and logic ops, which are optional in 1.3; Vulkan 1.4 is the next step.
+
+What Blender 5.2's Vulkan backend needs beyond 1.3, each a D3D12 feature:
+
+- **Multiple viewports** with the viewport index written by the vertex
+  shader (`SV_ViewportArrayIndex`, which NVIDIA's D3D12 driver accepts from
+  any stage feeding the rasterizer); the Y/Z flip Dozen applies to positions
+  is done per viewport.
+- **Dual-source blending** (one attachment) and **logic ops**
+  (`OutputMergerLogicOp`).
+- **The last vertex as provoking vertex** (`VK_EXT_provoking_vertex`, per
+  pipeline): flat inputs, integers included, are read at the last vertex with
+  `GetAttributeAtVertex`. D3D12 orders the vertices of odd strip triangles
+  differently, so those still take the wrong vertex.
+- **Window formats and color spaces.** Window-buffer images are typeless,
+  so sRGB views of 8-bit swapchains work; FP16 (`XB4H`) and 10-bit (`XB30`)
+  window buffers; `VK_EXT_swapchain_colorspace` with sRGB and pass-through.
+  The Wayland WSI leaves untagged sRGB surfaces alone, so an application
+  that attaches its own color-management surface (Blender does) is not
+  disconnected for a second one. In bindless mode sRGB views get no UAV.
+- The external fence, memory and semaphore capability queries at instance
+  level.
+
+Dozen still lacks tessellation and a viewport index written by geometry
+shaders; Vulkan 1.4 is the next step.
 
 ## Building the inactive cohort
 
