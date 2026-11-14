@@ -165,6 +165,15 @@ and bar are on screen, checked with a small screen capture. The launcher shows i
 are updated before login on their first boot with a launcher that carries the
 revision, so they report on that same boot. Older launchers ignore the line.
 
+Compatibility revision 73 covers the time before that **Update > Omarchy**.
+On a disk still on an older 4.5.0 runtime, catch-up replaces Omarchy's
+refresh and reinstall commands with the patched ones before login, only when
+they are exactly Omarchy's reviewed originals, so `omarchy refresh pacman`
+keeps the guest's setup at once. The repair above now runs at every boot
+instead of once, so a disk that an unpatched refresh rewrote again is put back
+on its next start. A healthy or otherwise configured disk is not written, and
+no package transaction runs during boot.
+
 If repository publication fails, inspect:
 
 ```sh

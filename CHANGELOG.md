@@ -7,8 +7,9 @@
   They had replaced the package setup with Omarchy's own, which left out Try
   Omarchy's package repository and kernel hold and pointed at an older package
   snapshot. The refresh now keeps both and the current Arch mirrors, and
-  downgrades nothing. Installs a failed refresh had left that way are put back
-  on their next start (#408).
+  downgrades nothing. Existing installs get the fixed refresh on their next
+  start, before **Update > Omarchy**, and an install a failed refresh had left
+  that way is put back on its next start (#408).
 
 ## v0.15.0 - 2026-11-10
 
