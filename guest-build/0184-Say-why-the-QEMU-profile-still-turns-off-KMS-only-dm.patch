@@ -1,0 +1,55 @@
+From 72e99b6b1443a1b35ffb0e739e0d7996bdd00372 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 14 Nov 2026 17:54:40 -0500
+Subject: [PATCH] Say why the QEMU profile still turns off KMS-only dmabuf
+ formats
+
+Hyprland 0.57.0 turned quirks:skip_non_kms_dmabuf_formats on by default and 0.57.1 turned it off again (hyprwm/Hyprland 82109f95), so on the image's 0.57.2 the line only restates the default. It stays: the fragment is also what catch-up writes to existing disks, and a disk still running 0.57.0 would get black transparent layers back on GPU rendering without it. The comment now says so.
+---
+ .../skel-fragments/hypr-monitors-qemu.append.lua         | 9 +++++----
+ guest/fragments/hypr-monitors-qemu.append.lua            | 9 +++++----
+ 2 files changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua b/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
+index 2a6c363..0ea95a2 100644
+--- a/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
++++ b/guest/factory-overlay/usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua
+@@ -92,10 +92,11 @@ end
+ if omarchy_kernel_option_enabled("omarchy.qemu=1") then
+   -- Virgl cursor GPU buffers arrive inverted; use a small CPU cursor buffer.
+   hl.config({ cursor = { invisible = false, use_cpu_buffer = 1 } })
+-  -- Virtio GPU scans out only XRGB8888. Hyprland 0.57 offers clients only
+-  -- scanout formats by default, so Mesa drops alpha and transparent layers
+-  -- such as notifications cover the desktop in black. Offer every format the
+-  -- renderer can import, as Hyprland 0.56 did.
++  -- Virtio GPU scans out only XRGB8888. With this quirk on, Hyprland offers
++  -- clients only scanout formats, so Mesa drops alpha and transparent layers
++  -- such as notifications cover the desktop in black. Hyprland 0.57.0 turned
++  -- it on by default and 0.57.1 turned it off again. Keep it off for disks
++  -- still on 0.57.0, and in case the default changes again.
+   hl.config({ quirks = { skip_non_kms_dmabuf_formats = false } })
+   local synced_mode, synced_scale = omarchy_synced_display_mode()
+   if synced_mode then
+diff --git a/guest/fragments/hypr-monitors-qemu.append.lua b/guest/fragments/hypr-monitors-qemu.append.lua
+index 2a6c363..0ea95a2 100644
+--- a/guest/fragments/hypr-monitors-qemu.append.lua
++++ b/guest/fragments/hypr-monitors-qemu.append.lua
+@@ -92,10 +92,11 @@ end
+ if omarchy_kernel_option_enabled("omarchy.qemu=1") then
+   -- Virgl cursor GPU buffers arrive inverted; use a small CPU cursor buffer.
+   hl.config({ cursor = { invisible = false, use_cpu_buffer = 1 } })
+-  -- Virtio GPU scans out only XRGB8888. Hyprland 0.57 offers clients only
+-  -- scanout formats by default, so Mesa drops alpha and transparent layers
+-  -- such as notifications cover the desktop in black. Offer every format the
+-  -- renderer can import, as Hyprland 0.56 did.
++  -- Virtio GPU scans out only XRGB8888. With this quirk on, Hyprland offers
++  -- clients only scanout formats, so Mesa drops alpha and transparent layers
++  -- such as notifications cover the desktop in black. Hyprland 0.57.0 turned
++  -- it on by default and 0.57.1 turned it off again. Keep it off for disks
++  -- still on 0.57.0, and in case the default changes again.
+   hl.config({ quirks = { skip_non_kms_dmabuf_formats = false } })
+   local synced_mode, synced_scale = omarchy_synced_display_mode()
+   if synced_mode then
+-- 
+2.56.1
+

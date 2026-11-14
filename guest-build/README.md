@@ -153,6 +153,12 @@ directories. They took them from the caller's umask, and under 0002 the
 repair rightly refused the group-writable directory, so the contract suite
 failed with Ubuntu's default umask.
 
+Patch 0184 only rewords the QEMU profile's comment on
+`quirks:skip_non_kms_dmabuf_formats` (patch 0152). Hyprland 0.57.1 made
+`false` the default again, so on the image's 0.57.2 the line restates it. It
+stays: catch-up writes the same fragment to existing disks, and one still on
+Hyprland 0.57.0 would get the black transparent layers back on GPU rendering.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME
