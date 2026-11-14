@@ -64,8 +64,18 @@ static void linux_close(int fd)
  * Loads dxgkmt.so through Wine; path is a Windows path to the file. This is
  * what winecrt0's __wine_load_unix_lib() does: Wine dlopen()s the library
  * and returns {module, function table} for __wine_unix_call_dispatcher.
+ *
+ * Wine 10 (Proton 10) has no loading by name (STATUS_INVALID_INFO_CLASS):
+ * there only builtin modules have Unix libraries. When Wine loads a module
+ * marked as builtin from its own library directories (or WINEDLLPATH), it
+ * records <dir>/x86_64-unix/<name>.so next to <dir>/x86_64-windows/<name>.dll
+ * and MemoryWineUnixFuncs on the module returns that library's function
+ * table. dxgvk.dll is built marked as builtin (build.sh) and installed with
+ * dxgkmt.so as dxgvk.so for that case.
  */
+#define MEMORY_WINE_UNIX_FUNCS 1000
 #define MEMORY_WINE_LOAD_UNIX_LIB_BY_NAME 1002
+#define STATUS_INVALID_INFO_CLASS_ ((NTSTATUS)0xc0000003)
 
 static int load_unix_lib(const wchar_t *path)
 {
@@ -75,6 +85,7 @@ static int load_unix_lib(const wchar_t *path)
 	UNICODE_STRING name;
 	uint64_t result[2] = { 0, 0 };
 	void **dispatcher;
+	HMODULE self;
 	NTSTATUS status;
 
 	query = (void *)GetProcAddress(ntdll, "NtQueryVirtualMemory");
@@ -89,13 +100,27 @@ static int load_unix_lib(const wchar_t *path)
 	status = query(GetCurrentProcess(), &name,
 		       MEMORY_WINE_LOAD_UNIX_LIB_BY_NAME, result, sizeof(result),
 		       NULL);
-	if (status) {
-		fprintf(stderr, "[kmt] loading %ls failed: 0x%08lx\n", path,
-			(unsigned long)status);
+	if (!status) {
+		unix_lib = result[1];
+		return 0;
+	}
+	if (status == STATUS_INVALID_INFO_CLASS_ &&
+	    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+			       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			       (LPCWSTR)(void *)load_unix_lib, &self)) {
+		status = query(GetCurrentProcess(), self, MEMORY_WINE_UNIX_FUNCS,
+			       &unix_lib, sizeof(unix_lib), NULL);
+		if (!status && unix_lib)
+			return 0;
+		fprintf(stderr, "[kmt] this Wine loads Unix libraries only for "
+			"builtin modules (0x%08lx): install dxgvk.dll in Wine's "
+			"x86_64-windows directory and dxgkmt.so as "
+			"x86_64-unix/dxgvk.so\n", (unsigned long)status);
 		return -2;
 	}
-	unix_lib = result[1];
-	return 0;
+	fprintf(stderr, "[kmt] loading %ls failed: 0x%08lx\n", path,
+		(unsigned long)status);
+	return -2;
 }
 
 /* Linux _IOWR('G', nr, T) */

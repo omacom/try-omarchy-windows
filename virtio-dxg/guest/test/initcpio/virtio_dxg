@@ -96,6 +96,10 @@ setup_desktop() {
     # are zero-copy too); without them X11 windows would never reach the
     # compositor, so glamor is off and they go as wl_shm buffers (X11
     # applications' own OpenGL still renders on d3d12).
+    # Vulkan: Dozen is added to the drivers the loader finds (it lists the
+    # GPU ahead of llvmpipe). VK_DRIVER_FILES would replace the search, and
+    # Wine passes the session's environment to Windows programs, whose
+    # Vulkan loader would then ignore its registered drivers (dxgvk).
     if [ -n "$winbuf" ]; then
         clients=MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
         xwayland=       # an empty line in the file
@@ -108,7 +112,7 @@ setup_desktop() {
         "LD_LIBRARY_PATH=$m/lib:/usr/lib/wsl/lib:/usr/lib/wsl/core" \
         "LIBGL_DRIVERS_PATH=$m/lib/dri" "GBM_BACKENDS_PATH=$m/lib/gbm" \
         "LIBVA_DRIVERS_PATH=$m/lib/dri" \
-        "VK_DRIVER_FILES=$m/share/vulkan/icd.d/dzn_icd.x86_64.json" \
+        "VK_ADD_DRIVER_FILES=$m/share/vulkan/icd.d/dzn_icd.x86_64.json" \
         >/run/environment.d/90-virtio-dxg.conf.pending || return 1
     mv /run/environment.d/90-virtio-dxg.conf.pending \
         /run/environment.d/90-virtio-dxg.conf || return 1
