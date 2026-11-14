@@ -1,0 +1,923 @@
+From 2a2cc2e1fd5bb995280ad9fa080d019f23674aab Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 14 Nov 2026 12:14:25 -0500
+Subject: [PATCH] Tell the launcher when the desktop is drawn
+
+The launcher hides its window while Omarchy starts and shows it on a timer, which with CPU rendering showed a black window for up to 12 seconds. The agent now runs desktop-drawn for each launcher connection and says "desktop drawn" once per session. It watches Hyprland's layers over the compositor's own sockets until, on the first monitor, the shell's wallpaper layer and bar are mapped and its black startup cover is gone. The shell lifts that cover after 10 seconds even when the wallpaper is still being decoded, which on a slow PC left the desktop black for another 1 to 2 seconds, so the helper then also takes a scaled-down grim capture as the session user and looks for a wallpaper in the area the bar, dock and notifications leave free. A dark wallpaper cannot be told from an empty screen, so it reports 8 seconds after the layers anyway, and right away when the capture fails. A half second settle follows. Layer events wake it, with a one second poll as a fallback. Launchers that do not know the line ignore it.
+
+The agent speaks version 7. Compatibility revision 72 delivers the agent and the helper to existing disks before login.
+---
+ .../usr/local/lib/try-omarchy/agent           |  17 +-
+ .../usr/local/lib/try-omarchy/desktop-drawn   | 281 ++++++++++++++++
+ guest/scripts/finalize-rootfs.sh              |   5 +-
+ guest/tests/test_aquamarine_contract.py       |   2 +-
+ guest/tests/test_battery_details.py           |   2 +-
+ guest/tests/test_clipboard_pull.py            |   2 +-
+ guest/tests/test_compositor_health.py         |   2 +-
+ guest/tests/test_desktop_drawn.py             | 306 ++++++++++++++++++
+ guest/tests/test_guest_qol.py                 |   2 +-
+ guest/tests/test_kernel_headers_hold.py       |   2 +-
+ guest/tests/test_live_update.py               |   2 +-
+ guest/tests/test_native_nightlight.py         |   2 +-
+ guest/tests/test_notification_privacy.py      |   2 +-
+ guest/tests/test_qt612_palette.py             |   2 +-
+ guest/tests/test_refresh_pacman.py            |   2 +-
+ guest/tests/test_snapper_guest.py             |   2 +-
+ guest/tests/test_url_schemes.py               |   8 +-
+ guest/tests/test_windows_volume_sync.py       |   2 +-
+ guest/tests/verify.py                         |   9 +-
+ 19 files changed, 628 insertions(+), 24 deletions(-)
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/desktop-drawn
+ create mode 100644 guest/tests/test_desktop_drawn.py
+
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/agent b/guest/factory-overlay/usr/local/lib/try-omarchy/agent
+index c5aab74..4b130b0 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/agent
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/agent
+@@ -3,16 +3,20 @@
+ # 10.0.2.2:4451 (QEMU user networking) and applies the small things only the
+ # host knows. Today that is the clock: the launcher sends "time <unix>" on
+ # connect, periodically, and after Windows resumes from sleep, and the guest
+-# steps its clock when it has drifted by more than two seconds. Reconnects
+-# forever, quietly, since the launcher may not be listening on every boot.
++# steps its clock when it has drifted by more than two seconds. It also says
++# "desktop drawn" once per desktop session, when the shell has drawn its
++# wallpaper and bar, so the launcher can show its window. Launchers that do
++# not know the line ignore it. Reconnects forever, quietly, since the
++# launcher may not be listening on every boot.
+ set -u
+ 
+ host=${TRY_OMARCHY_AGENT_HOST:-10.0.2.2}
+ port=${TRY_OMARCHY_AGENT_PORT:-4451}
+ set_time=${TRY_OMARCHY_SET_TIME:-date -s}
+ fill_dir=${TRY_OMARCHY_FILL_DIR:-/var/tmp}
+-version=6
++version=7
+ health_probe=${TRY_OMARCHY_HEALTH_PROBE:-/usr/local/lib/try-omarchy/compositor-health}
++desktop_probe=${TRY_OMARCHY_DESKTOP_PROBE:-/usr/local/lib/try-omarchy/desktop-drawn}
+ app_sync=${TRY_OMARCHY_APP_SYNC:-/usr/local/lib/try-omarchy/approved-apps-sync}
+ url_schemes=${TRY_OMARCHY_URL_SCHEMES:-/usr/local/lib/try-omarchy/url-schemes}
+ url_state=${TRY_OMARCHY_URL_STATE:-/run/try-omarchy/url-schemes-approved}
+@@ -151,11 +155,14 @@ while :; do
+     done
+   ) &
+   health_pid=$!
++  # Reports on the channel under the same write lock, once per session.
++  "$desktop_probe" --fd 3 --lock "$write_lock" &
++  desktop_pid=$!
+   while IFS= read -r line <&3; do
+     handle "${line%$'\r'}"
+   done
+-  kill "$health_pid" 2>/dev/null || true
+-  wait "$health_pid" 2>/dev/null || true
++  kill "$health_pid" "$desktop_pid" 2>/dev/null || true
++  wait "$health_pid" "$desktop_pid" 2>/dev/null || true
+   /usr/local/lib/try-omarchy/battery-apply --offline || true
+   exec 3>&-
+   sleep 5
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/desktop-drawn b/guest/factory-overlay/usr/local/lib/try-omarchy/desktop-drawn
+new file mode 100755
+index 0000000..916dc5a
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/desktop-drawn
+@@ -0,0 +1,281 @@
++#!/usr/bin/env python3
++"""Tell the Windows launcher when the desktop is drawn, once per Hyprland session.
++
++The launcher keeps its window hidden while Omarchy starts and shows it on this
++report. The desktop counts as drawn when, on the first monitor, the shell's
++wallpaper layer and bar are mapped, its black startup cover is gone, and a
++small capture of the screen shows a wallpaper. The shell normally lifts the
++cover once the wallpaper has rendered, but after 10 seconds it lifts it
++anyway, and on a slow PC the wallpaper is then still being decoded. A dark
++wallpaper cannot be told from an empty screen, so the report goes out
++PAINT_WAIT after the layers are up even if the capture never shows one, and
++also when the capture does not work. A short settle then gives the compositor
++time to present the frame. Captures are scaled down, read in memory and
++dropped.
++
++The agent runs this for each launcher connection with the channel on a file
++descriptor and the agent's write lock, and stops it when the connection ends.
++Hyprland's IPC sockets are read directly, so watching the layers costs no
++processes; grim runs only while the wallpaper is awaited, at most twice a second.
++"""
++import argparse
++import fcntl
++import glob
++import json
++import os
++import pathlib
++import pwd
++import re
++import select
++import socket
++import subprocess
++import sys
++import time
++
++BACKGROUND = "omarchy-background"
++BAR = "omarchy-bar"
++# zwlr_layer_shell levels as hyprctl reports them.
++LEVEL_BACKGROUND, LEVEL_OVERLAY = "0", "3"
++SETTLE = 0.5
++IPC_TIMEOUT = 2
++# Events can be missed between connections, so look again at least this often.
++POLL = 1.0
++# How long to look for the wallpaper once the layers are up, and how often.
++PAINT_WAIT = 8.0
++PAINT_POLL = 0.5
++CAPTURE_SCALE = "0.1"
++# Where the wallpaper is sampled, as fractions of the output (left, top,
++# right, bottom): below the bar, above the dock, left of the notifications.
++SAMPLE_AREA = (0.03, 0.12, 0.60, 0.80)
++SAMPLE_COLUMNS, SAMPLE_ROWS = 16, 10
++
++
++def instances(runtime_root="/run/user"):
++    """Hyprland instance directories owned by the session user they belong to."""
++    found = []
++    for path in sorted(glob.glob(f"{runtime_root}/*/hypr/*/.socket.sock")):
++        sock = pathlib.Path(path)
++        try:
++            uid = int(sock.parents[2].name)
++            if sock.stat().st_uid != uid:
++                continue
++        except (OSError, ValueError):
++            continue
++        found.append(sock.parent)
++    return found
++
++
++def request(instance, command, timeout=IPC_TIMEOUT):
++    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
++        conn.settimeout(timeout)
++        conn.connect(str(instance / ".socket.sock"))
++        conn.sendall(command.encode())
++        chunks = []
++        while True:
++            chunk = conn.recv(65536)
++            if not chunk:
++                break
++            chunks.append(chunk)
++    return json.loads(b"".join(chunks))
++
++
++def first_monitor(monitors):
++    if not isinstance(monitors, list) or not monitors:
++        return None
++    return min(monitors, key=lambda m: m.get("id", 0)).get("name")
++
++
++def drawn(layers, monitors):
++    """Whether the first monitor shows the wallpaper and bar, uncovered."""
++    first = first_monitor(monitors)
++    if first is None or not isinstance(layers, dict):
++        return False
++    levels = (layers.get(first) or {}).get("levels") or {}
++
++    def names(level):
++        return {layer.get("namespace") for layer in levels.get(level) or []}
++
++    mapped = set().union(*(names(level) for level in levels)) if levels else set()
++    return (BACKGROUND in names(LEVEL_BACKGROUND)
++            and BAR in mapped
++            and BACKGROUND not in names(LEVEL_OVERLAY))
++
++
++def instance_drawn(instance):
++    try:
++        return drawn(request(instance, "j/layers"), request(instance, "j/monitors"))
++    except (OSError, ValueError):
++        return False
++
++
++def parse_ppm(data):
++    """Width, height and RGB bytes of a binary PPM, as grim writes it."""
++    header = re.match(rb"P6\s+(\d+)\s+(\d+)\s+255\s", data)
++    if not header:
++        raise ValueError("not an 8-bit binary PPM")
++    width, height = int(header[1]), int(header[2])
++    rgb = data[header.end():header.end() + width * height * 3]
++    if len(rgb) < width * height * 3:
++        raise ValueError("short PPM")
++    return width, height, rgb
++
++
++def wallpaper_shown(width, height, rgb):
++    """Whether the part of the frame the bar, dock and notifications leave
++    free shows a wallpaper rather than flat black or Hyprland's #111111.
++    Like the launcher's frame test (app/boot_curtain.go), a frame counts when
++    enough samples differ from the median, or when it is one flat colour
++    that is neither."""
++    if width < SAMPLE_COLUMNS or height < SAMPLE_ROWS or len(rgb) < width * height * 3:
++        return False
++    samples = []
++    for row in range(SAMPLE_ROWS):
++        y = int(height * (SAMPLE_AREA[1] + (SAMPLE_AREA[3] - SAMPLE_AREA[1]) * (row + 0.5) / SAMPLE_ROWS))
++        for column in range(SAMPLE_COLUMNS):
++            x = int(width * (SAMPLE_AREA[0] + (SAMPLE_AREA[2] - SAMPLE_AREA[0]) * (column + 0.5) / SAMPLE_COLUMNS))
++            offset = (y * width + x) * 3
++            samples.append(tuple(rgb[offset:offset + 3]))
++
++    def median(values):
++        return sorted(values)[len(values) // 2]
++
++    lums = [(r * 299 + g * 587 + b * 114) // 1000 for r, g, b in samples]
++    middle = median(lums)
++    if sum(1 for lum in lums if abs(lum - middle) > 6) * 100 >= len(lums) * 15:
++        return True
++    flat = [median([sample[i] for sample in samples]) for i in range(3)]
++    return all(max(abs(c - level) for c in flat) > 6 for level in (0, 0x11))
++
++
++def capture(instance, output):
++    """A scaled-down capture of one output, taken as the session's user."""
++    lock = (instance / "hyprland.lock").read_text().split()
++    if len(lock) < 2 or "/" in lock[1]:
++        raise ValueError("no Wayland display for this instance")
++    runtime = instance.parents[1]
++    env = {"PATH": "/usr/bin:/bin", "XDG_RUNTIME_DIR": str(runtime), "WAYLAND_DISPLAY": lock[1]}
++    user = {}
++    if os.geteuid() == 0:
++        uid = int(runtime.name)
++        user = {"user": uid, "group": pwd.getpwuid(uid).pw_gid, "extra_groups": []}
++    result = subprocess.run(["grim", "-s", CAPTURE_SCALE, "-t", "ppm", "-o", output, "-"],
++                            env=env, capture_output=True, timeout=IPC_TIMEOUT * 2, check=True, **user)
++    return parse_ppm(result.stdout)
++
++
++def instance_painted(instance):
++    """Whether the first monitor shows a wallpaper. True when the screen
++    cannot be captured, so the layer check alone decides."""
++    try:
++        output = first_monitor(request(instance, "j/monitors"))
++        if output is None:
++            return True
++        return wallpaper_shown(*capture(instance, output))
++    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
++        return True
++
++
++def open_events(instance):
++    """Hyprland's event socket, or None. Open it before looking, so a layer
++    that changes while this looks still wakes the wait."""
++    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++    try:
++        conn.settimeout(IPC_TIMEOUT)
++        conn.connect(str(instance / ".socket2.sock"))
++        return conn
++    except OSError:
++        conn.close()
++        return None
++
++
++def wait_for_layers(conn, timeout):
++    """Return when a layer opens or closes, or after timeout."""
++    if conn is None:
++        time.sleep(timeout)
++        return
++    end = time.monotonic() + timeout
++    pending = b""
++    try:
++        while (left := end - time.monotonic()) > 0:
++            if not select.select([conn], [], [], left)[0]:
++                return
++            chunk = conn.recv(65536)
++            if not chunk:
++                time.sleep(max(0, end - time.monotonic()))
++                return
++            pending += chunk
++            *lines, pending = pending.split(b"\n")
++            if any(line.startswith((b"openlayer>>", b"closelayer>>")) for line in lines):
++                return
++    except OSError:
++        time.sleep(max(0, end - time.monotonic()))
++
++
++def watch(emit, runtime_root="/run/user", settle=SETTLE, poll=POLL,
++          is_drawn=instance_drawn, events=open_events, wait=wait_for_layers, rounds=None,
++          is_painted=instance_painted, paint_wait=PAINT_WAIT, paint_poll=PAINT_POLL,
++          clock=time.monotonic):
++    """Emit once for each Hyprland instance whose desktop is drawn."""
++    reported = set()
++    # When each instance's layers were first seen drawn.
++    laid_out = {}
++    while rounds is None or rounds > 0:
++        if rounds is not None:
++            rounds -= 1
++        current = instances(runtime_root)
++        # A logout removes the instance; a new login is a new one.
++        reported &= set(current)
++        laid_out = {i: t for i, t in laid_out.items() if i in current}
++        waiting = [i for i in current if i not in reported]
++        if not waiting:
++            time.sleep(poll)
++            continue
++        conn = events(waiting[0])
++        try:
++            for instance in waiting:
++                if not is_drawn(instance):
++                    laid_out.pop(instance, None)
++                    continue
++                since = laid_out.setdefault(instance, clock())
++                if not is_painted(instance) and clock() - since < paint_wait:
++                    continue
++                time.sleep(settle)
++                if is_drawn(instance):
++                    emit()
++                    reported.add(instance)
++            first = waiting[0]
++            if first not in reported:
++                # While the wallpaper is awaited, nothing on the event
++                # socket announces it, so look again sooner.
++                wait(conn, paint_poll if first in laid_out else poll)
++        finally:
++            if conn is not None:
++                conn.close()
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--fd", type=int, help="write the report to this descriptor")
++    parser.add_argument("--lock", help="hold this lock while writing")
++    parser.add_argument("--runtime-root", default="/run/user", help=argparse.SUPPRESS)
++    args = parser.parse_args()
++
++    def emit():
++        line = b"desktop drawn\n"
++        if args.fd is None:
++            sys.stdout.buffer.write(line)
++            sys.stdout.flush()
++            return
++        with open(args.lock or os.devnull, "a") as lock:
++            if args.lock:
++                fcntl.flock(lock, fcntl.LOCK_EX)
++            os.write(args.fd, line)
++
++    try:
++        watch(emit, args.runtime_root)
++    except (BrokenPipeError, KeyboardInterrupt):
++        pass
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 61f73ca..405c4d2 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -180,6 +180,7 @@ compat_paths=(
+   usr/local/lib/try-omarchy/try-omarchy-import.pyz
+   usr/local/lib/try-omarchy/agent
+   usr/local/lib/try-omarchy/compositor-health
++  usr/local/lib/try-omarchy/desktop-drawn
+   usr/local/lib/try-omarchy/update-battery-dkms
+   usr/local/lib/try-omarchy/hold-kernel-headers
+   usr/local/lib/try-omarchy/pacman-layer
+@@ -270,7 +271,9 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # Revision 71 keeps the guest's local repository, kernel hold and Arch mirrors
+ # through omarchy refresh pacman, and repairs disks a refused refresh left on
+ # Omarchy's mirrors without them.
+-compat_revision=71
++# Revision 72 has the agent tell the launcher when the desktop is drawn, so the
++# launcher shows its window on the wallpaper and bar instead of on a timer.
++compat_revision=72
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_aquamarine_contract.py b/guest/tests/test_aquamarine_contract.py
+index ecb6c36..c57d10e 100644
+--- a/guest/tests/test_aquamarine_contract.py
++++ b/guest/tests/test_aquamarine_contract.py
+@@ -76,7 +76,7 @@ class AquamarineContractTests(unittest.TestCase):
+         runtime = (GUEST / 'scripts/register-omarchy-runtime.sh').read_text()
+         self.assertIn('depend = aquamarine>={version}', runtime)
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=71', finalizer)
++        self.assertIn('compat_revision=72', finalizer)
+         self.assertIn('cp /usr/share/try-omarchy/repo/*.pkg.tar.zst', finalizer)
+         self.assertIn('usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua', finalizer)
+         repo = (GUEST / 'scripts/register-local-repository.sh').read_text()
+diff --git a/guest/tests/test_battery_details.py b/guest/tests/test_battery_details.py
+index 14b5147..5df3e5a 100644
+--- a/guest/tests/test_battery_details.py
++++ b/guest/tests/test_battery_details.py
+@@ -204,7 +204,7 @@ class BatteryDetailsFlowTests(unittest.TestCase):
+     def test_compatibility_delivery_and_dkms_version(self):
+         overlay = GUEST / "factory-overlay"
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=71", finalize)
++        self.assertIn("compat_revision=72", finalize)
+         self.assertIn("usr/src/try-omarchy-battery-1.1.0", finalize)
+         self.assertIn("usr/local/lib/try-omarchy/update-battery-dkms", finalize)
+         self.assertIn('PACKAGE_VERSION="1.1.0"', (MODULE_SOURCE.parent / "dkms.conf").read_text())
+diff --git a/guest/tests/test_clipboard_pull.py b/guest/tests/test_clipboard_pull.py
+index e52d3e1..d33dd89 100644
+--- a/guest/tests/test_clipboard_pull.py
++++ b/guest/tests/test_clipboard_pull.py
+@@ -71,4 +71,4 @@ class ClipboardPullTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn('usr/local/bin/clipboard-bridge', paths)
+-        self.assertIn('compat_revision=71', finalizer)
++        self.assertIn('compat_revision=72', finalizer)
+diff --git a/guest/tests/test_compositor_health.py b/guest/tests/test_compositor_health.py
+index c04739b..d0005c3 100644
+--- a/guest/tests/test_compositor_health.py
++++ b/guest/tests/test_compositor_health.py
+@@ -55,7 +55,7 @@ class CompositorHealthTests(unittest.TestCase):
+ 
+     def test_existing_disks_receive_health_files(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=71', finalizer)
++        self.assertIn('compat_revision=72', finalizer)
+         for name in ['agent', 'compositor-health']:
+             self.assertIn('  usr/local/lib/try-omarchy/' + name, finalizer)
+         self.assertTrue(HELPER.stat().st_mode & 0o111)
+diff --git a/guest/tests/test_desktop_drawn.py b/guest/tests/test_desktop_drawn.py
+new file mode 100644
+index 0000000..fe80dd0
+--- /dev/null
++++ b/guest/tests/test_desktop_drawn.py
+@@ -0,0 +1,306 @@
++import importlib.machinery
++import json
++import os
++from pathlib import Path
++import socket
++import subprocess
++import tempfile
++import threading
++import time
++import unittest
++
++GUEST = Path(__file__).resolve().parents[1]
++HELPER = GUEST / 'factory-overlay/usr/local/lib/try-omarchy/desktop-drawn'
++AGENT = HELPER.parent / 'agent'
++drawn_helper = importlib.machinery.SourceFileLoader('desktop_drawn', str(HELPER)).load_module()
++
++MONITORS = [{'id': 0, 'name': 'Virtual-1'}, {'id': 1, 'name': 'Virtual-2'}]
++
++
++def layers(*per_level, monitor='Virtual-1'):
++    """Layers on one monitor as hyprctl -j layers reports them, by level 0-3."""
++    levels = {str(level): [{'namespace': name, 'w': 1280, 'h': 729} for name in names]
++              for level, names in enumerate(per_level)}
++    for level in range(4):
++        levels.setdefault(str(level), [])
++    return {monitor: {'levels': levels}}
++
++
++# What Omarchy 4.5's shell maps while a session starts, sampled from a guest
++# with hyprctl -j layers.
++STARTING = layers([], [], [], [])
++COVERED = layers([], [], [], ['omarchy-background'])
++COVERED_BAR = layers([], [], ['omarchy-bar'], ['omarchy-background'])
++COVERED_ALL = layers(['omarchy-background'], [], ['omarchy-bar', 'omarchy-dock'], ['omarchy-background'])
++REVEALED = layers(['omarchy-background'], [], ['omarchy-bar', 'omarchy-dock'], ['omarchy-notifications'])
++
++
++class DrawnTests(unittest.TestCase):
++    def test_the_startup_sequence(self):
++        for state in [STARTING, COVERED, COVERED_BAR, COVERED_ALL]:
++            self.assertFalse(drawn_helper.drawn(state, MONITORS), state)
++        self.assertTrue(drawn_helper.drawn(REVEALED, MONITORS))
++
++    def test_needs_wallpaper_and_bar(self):
++        self.assertFalse(drawn_helper.drawn(layers([], [], ['omarchy-bar'], []), MONITORS))
++        self.assertFalse(drawn_helper.drawn(layers(['omarchy-background'], [], [], []), MONITORS))
++        # A theme cover on the bottom level is not the wallpaper.
++        self.assertFalse(drawn_helper.drawn(layers([], ['omarchy-background'], ['omarchy-bar'], []), MONITORS))
++
++    def test_first_monitor_only(self):
++        second = layers(['omarchy-background'], [], ['omarchy-bar'], [], monitor='Virtual-2')
++        self.assertFalse(drawn_helper.drawn(second, MONITORS))
++        both = dict(second, **REVEALED)
++        self.assertTrue(drawn_helper.drawn(both, list(reversed(MONITORS))))
++
++    def test_bad_replies(self):
++        for reply, monitors in [({}, MONITORS), (REVEALED, []), (None, MONITORS), (REVEALED, {}), ([], MONITORS)]:
++            self.assertFalse(drawn_helper.drawn(reply, monitors))
++
++
++def frame(width=128, height=72, fill=(0, 0, 0), boxes=()):
++    """An RGB frame with filled boxes, given as fractions of the frame."""
++    pixels = bytearray(bytes(fill) * width * height)
++    for (left, top, right, bottom), colour in boxes:
++        for y in range(int(top * height), int(bottom * height)):
++            for x in range(int(left * width), int(right * width)):
++                pixels[(y * width + x) * 3:(y * width + x) * 3 + 3] = bytes(colour)
++    return width, height, bytes(pixels)
++
++
++BAR = ((0, 0, 1, 0.04), (40, 40, 60))
++NOTIFICATIONS = ((0.7, 0.05, 1, 0.95), (30, 30, 46))
++DOCK = ((0.35, 0.9, 0.65, 1), (50, 50, 70))
++
++
++class WallpaperTests(unittest.TestCase):
++    def test_an_uncovered_desktop_without_its_wallpaper(self):
++        # What the window showed for 1 to 2 seconds when the shell lifted its
++        # cover on its timer, before the wallpaper was decoded.
++        for fill in [(0, 0, 0), (0x11, 0x11, 0x11)]:
++            self.assertFalse(drawn_helper.wallpaper_shown(*frame(fill=fill, boxes=[BAR, NOTIFICATIONS, DOCK])))
++
++    def test_wallpapers(self):
++        width, height = 128, 72
++        gradient = bytes(v for y in range(height) for x in range(width) for v in (x * 2, y * 3, 90))
++        self.assertTrue(drawn_helper.wallpaper_shown(width, height, gradient))
++        self.assertTrue(drawn_helper.wallpaper_shown(*frame(fill=(40, 60, 120), boxes=[BAR, NOTIFICATIONS])))
++        self.assertFalse(drawn_helper.wallpaper_shown(4, 4, bytes(48)))
++
++    def test_ppm(self):
++        self.assertEqual(drawn_helper.parse_ppm(b'P6\n2 1\n255\n' + bytes(range(6))), (2, 1, bytes(range(6))))
++        for bad in [b'P5\n2 1\n255\n' + bytes(2), b'P6\n2 1\n255\n' + bytes(5), b'']:
++            with self.assertRaises(ValueError):
++                drawn_helper.parse_ppm(bad)
++
++    def test_a_capture_that_fails_leaves_the_layers_to_decide(self):
++        root = tempfile.mkdtemp(dir='/tmp')
++        self.addCleanup(subprocess.run, ['rm', '-rf', root])
++        hypr = FakeHyprland(root, os.getuid(), 'sig')
++        self.addCleanup(hypr.close)
++        [instance] = drawn_helper.instances(root)
++        # No hyprland.lock, so no Wayland display to capture.
++        self.assertTrue(drawn_helper.instance_painted(instance))
++
++
++class FakeHyprland:
++    """A Hyprland instance: request socket answering j/layers and j/monitors,
++    and an event socket that can announce layer changes."""
++
++    def __init__(self, root, uid, signature):
++        self.dir = Path(root) / str(uid) / 'hypr' / signature
++        self.dir.mkdir(parents=True)
++        self.layers = STARTING
++        self.requests = 0
++        self.events = []
++        self.stop = threading.Event()
++        self.servers = []
++        for name, handler in [('.socket.sock', self.answer), ('.socket2.sock', self.stream)]:
++            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++            server.bind(str(self.dir / name))
++            server.listen(8)
++            server.settimeout(0.05)
++            self.servers.append(server)
++            threading.Thread(target=self.serve, args=(server, handler), daemon=True).start()
++
++    def serve(self, server, handler):
++        while not self.stop.is_set():
++            try:
++                conn, _ = server.accept()
++            except (TimeoutError, OSError):
++                continue
++            threading.Thread(target=handler, args=(conn,), daemon=True).start()
++
++    def answer(self, conn):
++        with conn:
++            command = conn.recv(64).decode()
++            self.requests += 1
++            reply = {'j/layers': self.layers, 'j/monitors': MONITORS}.get(command, 'unknown request')
++            conn.sendall(json.dumps(reply).encode())
++
++    def stream(self, conn):
++        # Like Hyprland, a listener only hears events after it connects.
++        with conn:
++            sent = len(self.events)
++            try:
++                while not self.stop.is_set():
++                    while sent < len(self.events):
++                        conn.sendall(self.events[sent] + b'\n')
++                        sent += 1
++                    time.sleep(0.01)
++            except OSError:
++                pass
++
++    def close(self):
++        self.stop.set()
++        for server in self.servers:
++            server.close()
++
++
++class WatchTests(unittest.TestCase):
++    def setUp(self):
++        self.root = tempfile.mkdtemp(dir='/tmp')
++        self.addCleanup(subprocess.run, ['rm', '-rf', self.root])
++
++    def test_ipc_against_a_fake_compositor(self):
++        hypr = FakeHyprland(self.root, os.getuid(), 'sig')
++        self.addCleanup(hypr.close)
++        [instance] = drawn_helper.instances(self.root)
++        self.assertFalse(drawn_helper.instance_drawn(instance))
++        hypr.layers = REVEALED
++        self.assertTrue(drawn_helper.instance_drawn(instance))
++        # Another user's socket is not trusted.
++        other = Path(self.root) / str(os.getuid() + 1) / 'hypr' / 'x'
++        other.mkdir(parents=True)
++        (other / '.socket.sock').touch()
++        self.assertEqual(drawn_helper.instances(self.root), [instance])
++
++    def test_a_layer_event_wakes_the_wait(self):
++        hypr = FakeHyprland(self.root, os.getuid(), 'sig')
++        self.addCleanup(hypr.close)
++        [instance] = drawn_helper.instances(self.root)
++        conn = drawn_helper.open_events(instance)
++        self.addCleanup(conn.close)
++        started = time.monotonic()
++        threading.Timer(0.2, lambda: hypr.events.append(b'activelayout>>kbd,us')).start()
++        threading.Timer(0.4, lambda: hypr.events.append(b'closelayer>>omarchy-background')).start()
++        drawn_helper.wait_for_layers(conn, 5)
++        self.assertLess(time.monotonic() - started, 3)
++        # Without an event socket the wait is a plain timeout.
++        started = time.monotonic()
++        drawn_helper.wait_for_layers(None, 0.1)
++        self.assertGreaterEqual(time.monotonic() - started, 0.1)
++
++    def test_reports_once_per_session_after_the_cover_lifts(self):
++        hypr = FakeHyprland(self.root, os.getuid(), 'first')
++        self.addCleanup(hypr.close)
++        reports = []
++        done = threading.Event()
++
++        def run():
++            drawn_helper.watch(lambda: reports.append(time.monotonic()), self.root, settle=0.05, poll=0.1, rounds=40,
++                               is_painted=lambda i: True)
++            done.set()
++
++        threading.Thread(target=run, daemon=True).start()
++        for state in [COVERED, COVERED_BAR, COVERED_ALL]:
++            hypr.layers = state
++            hypr.events.append(b'openlayer>>omarchy-background')
++            time.sleep(0.3)
++            self.assertEqual(reports, [])
++        lifted = time.monotonic()
++        hypr.layers = REVEALED
++        hypr.events.append(b'closelayer>>omarchy-background')
++        time.sleep(0.5)
++        self.assertEqual(len(reports), 1)
++        # The settle is part of the report's delay, and the event avoids the poll.
++        self.assertGreaterEqual(reports[0] - lifted, 0.05)
++        self.assertLess(reports[0] - lifted, 0.4)
++        # Still drawn: no second report for the same session.
++        time.sleep(0.5)
++        self.assertEqual(len(reports), 1)
++        # Log out and back in: a new instance reports again.
++        hypr.close()
++        subprocess.run(['rm', '-rf', str(hypr.dir)], check=True)
++        again = FakeHyprland(self.root, os.getuid(), 'second')
++        self.addCleanup(again.close)
++        again.layers = REVEALED
++        done.wait(10)
++        self.assertEqual(len(reports), 2)
++
++    def test_a_flash_of_the_desktop_needs_to_last_the_settle(self):
++        instance = Path(self.root) / str(os.getuid()) / 'hypr' / 'x'
++        instance.mkdir(parents=True)
++        (instance / '.socket.sock').touch()
++        states = iter([True, False, False])
++        reports = []
++        drawn_helper.watch(lambda: reports.append(1), self.root, settle=0, poll=0,
++                           is_drawn=lambda i: next(states, False), events=lambda i: None,
++                           wait=lambda c, t: None, rounds=3)
++        self.assertEqual(reports, [])
++
++    def watch_one(self, painted, paint_wait, rounds):
++        instance = Path(self.root) / str(os.getuid()) / 'hypr' / 'x'
++        instance.mkdir(parents=True, exist_ok=True)
++        (instance / '.socket.sock').touch()
++        now = [0.0]
++        reports, waits = [], []
++
++        def wait(conn, timeout):
++            waits.append(timeout)
++            now[0] += timeout
++
++        drawn_helper.watch(lambda: reports.append(now[0]), self.root, settle=0, poll=0.01,
++                           is_drawn=lambda i: True, events=lambda i: None, wait=wait,
++                           is_painted=lambda i: painted(now[0]), paint_wait=paint_wait, paint_poll=0.5,
++                           clock=lambda: now[0], rounds=rounds)
++        return reports, waits
++
++    def test_waits_for_the_wallpaper_after_the_layers(self):
++        reports, waits = self.watch_one(lambda now: now >= 2, paint_wait=8, rounds=20)
++        self.assertEqual(reports, [2.0])
++        self.assertEqual(set(waits[:4]), {0.5})
++
++    def test_a_wallpaper_that_looks_empty_still_reports(self):
++        reports, _ = self.watch_one(lambda now: False, paint_wait=8, rounds=40)
++        self.assertEqual(reports, [8.0])
++
++    def test_command_line_writes_one_line_under_the_lock(self):
++        hypr = FakeHyprland(self.root, os.getuid(), 'sig')
++        self.addCleanup(hypr.close)
++        hypr.layers = REVEALED
++        read_end, write_end = os.pipe()
++        lock = Path(self.root) / 'lock'
++        proc = subprocess.Popen([str(HELPER), '--fd', str(write_end), '--lock', str(lock),
++                                 '--runtime-root', self.root], pass_fds=(write_end,))
++        os.close(write_end)
++        try:
++            with os.fdopen(read_end, 'rb') as out:
++                self.assertEqual(out.read(len(b'desktop drawn\n')), b'desktop drawn\n')
++            self.assertTrue(lock.exists())
++            # The session stays reported; the helper keeps waiting for the next.
++            time.sleep(0.3)
++            self.assertIsNone(proc.poll())
++        finally:
++            proc.kill()
++            proc.wait(timeout=5)
++
++
++class AgentTests(unittest.TestCase):
++    def test_agent_runs_the_probe_per_connection(self):
++        agent = AGENT.read_text()
++        self.assertIn('desktop_probe=${TRY_OMARCHY_DESKTOP_PROBE:-/usr/local/lib/try-omarchy/desktop-drawn}', agent)
++        self.assertIn('"$desktop_probe" --fd 3 --lock "$write_lock" &', agent)
++        self.assertIn('kill "$health_pid" "$desktop_pid"', agent)
++        self.assertTrue(HELPER.stat().st_mode & 0o111)
++
++    def test_existing_disks_receive_the_probe(self):
++        finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
++        self.assertIn('compat_revision=72', finalizer)
++        paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
++        for name in ['agent', 'desktop-drawn']:
++            self.assertIn('usr/local/lib/try-omarchy/' + name, paths)
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/guest/tests/test_guest_qol.py b/guest/tests/test_guest_qol.py
+index 6ed20d9..ee3f25a 100644
+--- a/guest/tests/test_guest_qol.py
++++ b/guest/tests/test_guest_qol.py
+@@ -225,7 +225,7 @@ class GuestQolTests(unittest.TestCase):
+     def test_compatibility_delivers_guarded_payload_once_per_revision(self):
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalize.split("compat_paths=(", 1)[1].split(")", 1)[0]
+-        self.assertIn("compat_revision=71", finalize)
++        self.assertIn("compat_revision=72", finalize)
+         for path in ("usr/local/bin/omarchy-native-screensaver-text", "usr/local/lib/try-omarchy/install-guest-qol", "usr/share/try-omarchy/guest-qol", "usr/local/bin/omarchy-windows-audio-bridge"):
+             self.assertIn(path, paths)
+         self.assertNotIn("etc/fonts/conf.d/30-try-omarchy.conf", paths)
+diff --git a/guest/tests/test_kernel_headers_hold.py b/guest/tests/test_kernel_headers_hold.py
+index 300909d..b012b81 100644
+--- a/guest/tests/test_kernel_headers_hold.py
++++ b/guest/tests/test_kernel_headers_hold.py
+@@ -133,7 +133,7 @@ class HoldTests(unittest.TestCase):
+         finalize = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalize.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
+         self.assertIn('usr/local/lib/try-omarchy/hold-kernel-headers', paths)
+-        self.assertIn('compat_revision=71', finalize)
++        self.assertIn('compat_revision=72', finalize)
+         self.assertTrue(os.access(HOLD, os.X_OK))
+ 
+ 
+diff --git a/guest/tests/test_live_update.py b/guest/tests/test_live_update.py
+index 706feff..005dc2c 100644
+--- a/guest/tests/test_live_update.py
++++ b/guest/tests/test_live_update.py
+@@ -176,7 +176,7 @@ class LiveUpdateTests(unittest.TestCase):
+ 
+     def test_delivery_and_best_effort_hook(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=71', finalizer)
++        self.assertIn('compat_revision=72', finalizer)
+         for path in ['usr/local/lib/try-omarchy/live-update', 'etc/pacman.d/hooks/00-try-omarchy-live-update.hook', 'etc/pacman.d/hooks/zz-try-omarchy-live-update.hook']:
+             self.assertIn(path, finalizer)
+         pre = (GUEST / 'factory-overlay/etc/pacman.d/hooks/00-try-omarchy-live-update.hook').read_text()
+diff --git a/guest/tests/test_native_nightlight.py b/guest/tests/test_native_nightlight.py
+index 03d7c23..688d976 100644
+--- a/guest/tests/test_native_nightlight.py
++++ b/guest/tests/test_native_nightlight.py
+@@ -214,5 +214,5 @@ class PersistentNightlightTests(unittest.TestCase):
+         catch_up = (self.overlay / 'usr/local/lib/try-omarchy/catch-up').read_text()
+         for path in ['usr/local/bin/omarchy-native-nightlight', 'usr/local/share/try-omarchy/nightlight.frag', 'usr/local/lib/try-omarchy/install-nightlight', 'usr/share/try-omarchy/nightlight']:
+             self.assertIn(path, finalizer)
+-        self.assertIn('compat_revision=71', finalizer)
++        self.assertIn('compat_revision=72', finalizer)
+         self.assertIn('previous_revision < 55', catch_up)
+diff --git a/guest/tests/test_notification_privacy.py b/guest/tests/test_notification_privacy.py
+index e9be504..b17840e 100644
+--- a/guest/tests/test_notification_privacy.py
++++ b/guest/tests/test_notification_privacy.py
+@@ -116,7 +116,7 @@ for (const state of [null, {screensaverStateKnown:false}, {screensaverStateKnown
+     def test_compatibility_overlay_and_catch_up_revision(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         catch_up = (GUEST / 'factory-overlay/usr/local/lib/try-omarchy/catch-up').read_text()
+-        self.assertIn('compat_revision=71', finalizer)
++        self.assertIn('compat_revision=72', finalizer)
+         self.assertIn('usr/share/try-omarchy/notifications', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-notifications', finalizer)
+         self.assertIn('previous_revision < 52', catch_up)
+diff --git a/guest/tests/test_qt612_palette.py b/guest/tests/test_qt612_palette.py
+index 13f39b9..de942d0 100644
+--- a/guest/tests/test_qt612_palette.py
++++ b/guest/tests/test_qt612_palette.py
+@@ -170,7 +170,7 @@ class Qt612PaletteTests(unittest.TestCase):
+     def test_compatibility_delivery_runs_after_older_repairs_and_before_login(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+-        self.assertIn('compat_revision=71', finalizer)
++        self.assertIn('compat_revision=72', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-qt612-palette', paths)
+         self.assertIn('usr/share/try-omarchy/qt612-palette', paths)
+         self.assertEqual(self.build_spec['upstream']['packageRelease'], 16)
+diff --git a/guest/tests/test_refresh_pacman.py b/guest/tests/test_refresh_pacman.py
+index 81ba50c..db4f86a 100644
+--- a/guest/tests/test_refresh_pacman.py
++++ b/guest/tests/test_refresh_pacman.py
+@@ -142,7 +142,7 @@ class BackportTests(unittest.TestCase):
+         paths = finalize.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
+         self.assertIn('usr/local/lib/try-omarchy/pacman-layer', paths)
+         self.assertIn('usr/share/try-omarchy/arch-mirrorlist', paths)
+-        self.assertIn('compat_revision=71', finalize)
++        self.assertIn('compat_revision=72', finalize)
+         self.assertTrue(os.access(LAYER, os.X_OK))
+         configure = (GUEST / 'scripts/configure-rootfs.sh').read_text()
+         self.assertIn('install -D -m 0644 /etc/pacman.d/mirrorlist "$root/usr/share/try-omarchy/arch-mirrorlist"',
+diff --git a/guest/tests/test_snapper_guest.py b/guest/tests/test_snapper_guest.py
+index de0ccd7..e361149 100644
+--- a/guest/tests/test_snapper_guest.py
++++ b/guest/tests/test_snapper_guest.py
+@@ -44,5 +44,5 @@ class GuestSnapperTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn(TARGET, paths)
+-        self.assertIn('compat_revision=71', finalizer)
++        self.assertIn('compat_revision=72', finalizer)
+         self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 16)
+diff --git a/guest/tests/test_url_schemes.py b/guest/tests/test_url_schemes.py
+index e64fcbe..b43e6fa 100644
+--- a/guest/tests/test_url_schemes.py
++++ b/guest/tests/test_url_schemes.py
+@@ -289,8 +289,8 @@ class AgentLinkTests(HelperCase):
+         return subprocess.run([str(AGENT), "--handle"], input="".join(line + "\n" for line in lines),
+                               env=self.agent_env(), capture_output=True, text=True, timeout=60)
+ 
+-    def test_agent_speaks_version_6(self) -> None:
+-        self.assertIn("\nversion=6\n", AGENT.read_text())
++    def test_agent_speaks_version_7(self) -> None:
++        self.assertIn("\nversion=7\n", AGENT.read_text())
+ 
+     def test_approval_reports_and_invalid_update_disables(self) -> None:
+         result = self.handle("url-approved " + schemes_line(["zoommtg"]))
+@@ -387,7 +387,7 @@ class AgentFramingTests(unittest.TestCase):
+                 os.killpg(agent.pid, 9)
+                 agent.wait(timeout=5)
+         lines = received.decode().split("\n")[:-1]
+-        self.assertEqual(lines[0], "hello 6")
++        self.assertEqual(lines[0], "hello 7")
+         for line in lines[1:]:
+             self.assertIn(line, (report, health), line[:40] + "...")
+         self.assertEqual(lines.count(report), approvals)
+@@ -398,7 +398,7 @@ class DeliveryTests(unittest.TestCase):
+     def test_revision_62_delivers_the_link_helper(self) -> None:
+         finalizer = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalizer.split("compat_paths=(", 1)[1].split(")", 1)[0].split()
+-        self.assertIn("compat_revision=71", finalizer)
++        self.assertIn("compat_revision=72", finalizer)
+         self.assertIn("# Revision 62 opens links from Windows for approved URL schemes.", finalizer)
+         for path in ("usr/local/lib/try-omarchy/url-schemes", "usr/local/lib/try-omarchy/agent"):
+             self.assertIn(path, paths)
+diff --git a/guest/tests/test_windows_volume_sync.py b/guest/tests/test_windows_volume_sync.py
+index ad938b1..d2e41bd 100644
+--- a/guest/tests/test_windows_volume_sync.py
++++ b/guest/tests/test_windows_volume_sync.py
+@@ -285,7 +285,7 @@ class VolumeSyncTests(unittest.TestCase):
+ 
+     def test_revision_delivers_bridge_to_existing_disks(self):
+         finalize = (Path(__file__).resolve().parents[1] / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=71", finalize)
++        self.assertIn("compat_revision=72", finalize)
+         self.assertIn("usr/local/bin/omarchy-windows-audio-bridge", finalize)
+ 
+ 
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index c4fd126..7a412f8 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -335,13 +335,20 @@ def main() -> None:
+         in read(GUEST / "patches/omarchy/refresh-pacman-guest-layer.patch"),
+         "omarchy refresh pacman keeps the guest's pacman layer on new and existing disks",
+     )
++    # The launcher shows its window when the agent says the desktop is drawn.
++    check(
++        "usr/local/lib/try-omarchy/desktop-drawn" in compat_paths
++        and '"$desktop_probe" --fd 3 --lock "$write_lock" &'
++        in read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/agent"),
++        "the agent reports a drawn desktop on new and existing disks",
++    )
+     watchdog_dropin = read(GUEST / "factory-overlay/etc/systemd/system/service.d/10-try-omarchy-watchdog.conf")
+     check(
+         "[Service]\nWatchdogSec=0\n" in watchdog_dropin,
+         "system services run without watchdogs, which fire after Windows sleeps",
+     )
+     check(
+-        "compat_revision=71" in finalize_rootfs
++        "compat_revision=72" in finalize_rootfs
+         and "usr/local/bin/mpv" in compat_paths
+         and "usr/share/dkms/modules_to_force_install/try-omarchy" in compat_paths
+         and "usr/local/lib/try-omarchy/try-omarchy-import.pyz" in compat_paths
+-- 
+2.56.1
+
