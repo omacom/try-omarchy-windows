@@ -361,7 +361,7 @@ func curtainTick(primary uintptr) {
 		curtainBoot = times.boot
 	}
 	now := time.Now()
-	if reason := times.liftReason(now, false); reason != "" {
+	if reason := times.liftReason(now); reason != "" {
 		liftCurtain(reason)
 		return
 	}
@@ -386,7 +386,8 @@ func curtainTick(primary uintptr) {
 		}
 	}
 	// The concealed window has an empty region, so there is no picture to
-	// look at until the curtain lifts; watchDesktop takes over from there.
+	// look at: the guest's agent says when the desktop is drawn, and
+	// watchDesktop looks at the shown window from there.
 }
 
 // fitCurtainWindows gives each hidden window, once, the client area it will

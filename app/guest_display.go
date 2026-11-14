@@ -41,6 +41,16 @@ func guestSessionStarted() {
 	})
 }
 
+// guestDesktopDrawn runs when the guest's agent says the desktop is drawn.
+// The first report in a boot counts.
+func guestDesktopDrawn() {
+	updateCurtainTimes(func(t *bootCurtainTimes) {
+		if t.drawn.IsZero() {
+			t.drawn = time.Now()
+		}
+	})
+}
+
 func guestAgentConnected() {
 	if bootAnnouncedReady.Load() {
 		guestFollowsWindow.Store(true)
