@@ -187,7 +187,13 @@ func concealForCurtain(hwnd uintptr) {
 	curtainWindows[hwnd] = window
 	curtainMu.Unlock()
 
+	started := time.Now()
 	hidden := hideCurtainWindow(hwnd, window)
+	// The window shows until this returns, and it waits on QEMU's window
+	// thread, which may be busy setting up the display.
+	if took := time.Since(started); hidden && took >= 250*time.Millisecond {
+		logf("startup: hiding the window took %v", took.Round(time.Millisecond))
+	}
 
 	curtainMu.Lock()
 	current := curtainWindows[hwnd] == window
