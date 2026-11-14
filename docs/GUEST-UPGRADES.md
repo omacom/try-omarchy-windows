@@ -159,6 +159,12 @@ transaction runs during boot. The next **Update > Omarchy** then installs the
 new runtime as usual. The guest keeps following rolling Arch rather than
 Omarchy's stable snapshot.
 
+Compatibility revision 72 delivers agent version 7 and its `desktop-drawn`
+helper, which tell the launcher once per session that the shell's wallpaper
+and bar are on screen, checked with a small screen capture. The launcher shows its window on that report. Disks
+are updated before login on their first boot with a launcher that carries the
+revision, so they report on that same boot. Older launchers ignore the line.
+
 If repository publication fails, inspect:
 
 ```sh

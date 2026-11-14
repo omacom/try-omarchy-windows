@@ -811,3 +811,24 @@ func TestAgentBusyReportKeepsCompositorAlive(t *testing.T) {
 		t.Fatalf("busy report not recorded: armed=%v busy=%v lastOK=%v", health.armed, health.busy, health.lastOK)
 	}
 }
+
+func TestAgentReportsTheDrawnDesktopFromTheCurrentConnection(t *testing.T) {
+	for _, current := range []bool{true, false} {
+		host, guest := net.Pipe()
+		drawn := 0
+		a := &guestAgent{now: time.Now, desktopDrawn: func() { drawn++ }}
+		if current {
+			a.conn = host
+		}
+		done := make(chan struct{})
+		go func() { a.read(host, bufio.NewReader(host)); close(done) }()
+		if _, err := guest.Write([]byte("hello 7\ndesktop drawn\ndesktop drawn later\n")); err != nil {
+			t.Fatal(err)
+		}
+		guest.Close()
+		<-done
+		if want := map[bool]int{true: 1, false: 0}[current]; drawn != want {
+			t.Fatalf("current=%v: %d reports, want %d", current, drawn, want)
+		}
+	}
+}
