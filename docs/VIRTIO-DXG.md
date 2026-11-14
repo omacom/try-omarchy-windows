@@ -1,8 +1,10 @@
 # virtio-dxg: driver-level NVIDIA virtualization on a Windows host
 
-The integration includes native Wayland and shared application buffers through
-`8f1d75c`. See the [results](VIRTIO-DXG-RESULTS.md) and the
-[November 11 integration record](VIRTIO-DXG-INTEGRATION.md) for tested limits.
+State on November 14, 2026: the desktop, CUDA and video on NVIDIA's WSL
+drivers; Vulkan 1.3 for Linux applications (Blender 5.2 runs on Vulkan);
+NVIDIA's own Windows Vulkan 1.4 driver for Wine and Proton (Minecraft
+Bedrock runs through vkd3d-proton). See the [results](VIRTIO-DXG-RESULTS.md)
+for measurements and limits.
 
 ## The short version
 
@@ -54,8 +56,8 @@ Under Wine in the Linux guest, with Wine's D3DKMT calls sent to `/dev/dxg`,
 it records command buffers natively in the guest and submits them to the
 host's NVIDIA kernel driver. This is how a Windows VM with Hyper-V GPU
 partitioning works, minus the Windows guest. Proton games (DXVK, vkd3d-proton)
-would need compatible Wine/Proton hooks and presentation; the current
-compute prototype does not demonstrate game execution.
+run on it through dxgvk, below: Minecraft Bedrock's Direct3D 12 renderer
+does.
 
 [`virtio-dxg/wine/`](../virtio-dxg/wine) is the working prototype:
 - `kmt_bridge.c`: D3DKMT on `/dev/dxg`, one ioctl per call, plus the legacy
@@ -176,12 +178,12 @@ executes the work; GPU-bound performance is then the hardware's.
 | NVENC / NVDEC | NVIDIA WSL video libraries | NVENC steady-state samples near native; NVDEC reported at 72–85%. Codec/session limits still apply. |
 | D3D12 | NVIDIA WSL `libnvwgf2umx.so` | Reported feature level 12_1 / shader model 6.7. **DXR is not offered by this path.** |
 | OptiX | CUDA / `nvoptix.bin` | Library loading reported; representative RT workload acceptance open. |
-| Windows Vulkan under Wine | NVIDIA Windows `nvoglv64.dll` with prototype D3DKMT hooks | Reported verified compute dispatch. Windowed games, swapchains and general Proton compatibility remain open. |
-| Vulkan ray tracing | Same Windows-driver prototype | RT extensions reported; actual RT workloads not exercised in the documented results. |
+| Windows Vulkan under Wine and Proton | NVIDIA Windows `nvoglv64.dll` as dxgvk's driver | Vulkan 1.4.357, zero-copy swapchain. DXVK (Direct3D 11) and vkd3d-proton (Direct3D 12) run on it; Minecraft Bedrock (GDK-Proton 10) plays at the display's refresh rate. Broader game compatibility is untested. |
+| Vulkan ray tracing | Same driver | RT extensions and vkd3d-proton's DXR tier 1.2 reported; ray-traced workloads not yet exercised. |
 | DLSS / Reflex / frame generation | Windows-driver prototype and NGX | Extensions and library loading are not proof of working game integration. Workload validation remains open. |
 | Windows OpenGL | NVIDIA Windows driver under Wine | Not tested. |
 | Linux OpenGL | Mesa d3d12 | Reported OpenGL 4.6 samples and compositor rendering. Accurate animations and sustained stability remain open. |
-| Linux Vulkan | Mesa Dozen on D3D12 | Vulkan 1.3 with all required features (extended dynamic state, inline uniform blocks, maintenance4, ...), checked by `bench/vulkan13`; zero-copy windows. Not a conformance claim; no tessellation, multi-viewport, dual-source blend or logic op; 1.4 open. No native NVIDIA Linux ICD. |
+| Linux Vulkan | Mesa Dozen on D3D12 | Vulkan 1.3 with all required features (extended dynamic state, inline uniform blocks, maintenance4, ...) plus multi-viewport, dual-source blending, logic ops and last-vertex provoking (what Blender 5.2 needs), checked by `bench/vulkan13`; zero-copy windows in 8-bit, 10-bit and FP16 formats. Not a conformance claim; no tessellation, no viewport index from geometry shaders; 1.4 open. No native NVIDIA Linux ICD. |
 | VA-API decode | Mesa d3d12 video | Reported H.264 sample; Chromium codec-specific hardware decode still needs verification. |
 | VA-API encode | Mesa d3d12 video | **Blocked: first frame removes the device in the reported test.** Chromium's integration wrapper disables accelerated video encode. NVENC is a separate working sample path. |
 
@@ -197,7 +199,7 @@ but it does not establish native Linux Vulkan, DLSS or ray-traced games.
 | Guest: `dxgkrnl` over virtio (`guest/`) | **Running in the Omarchy VM** (kernels `7.2.9-arch1-1` and `7.2.15-arch1-1`, Omarchy 4.0.4 and 4.5.0 with Hyprland 0.56.2 and 0.57.2), loaded by the development boot hook. |
 | Host: `dxghost` executor (`host/`) | **Running against NVIDIA's driver** inside QEMU: CUDA, D3D12, OpenGL, Vulkan (Wine) and the whole desktop. |
 | QEMU device `virtio-dxg-pci` (`qemu/`) | **Built** (development build and the full winq-emu runtime via `qemu/build-runtime.sh`). |
-| NVIDIA Windows Vulkan driver in Linux (`wine/`) | **Working in the Omarchy VM over virtio-dxg** (and on WSL2's `/dev/dxg`): device creation, guest-side shader compile, compute verified, 96–97% GPU-bound like native. Every D3DKMT call the driver makes succeeds. Prototype hooks; to become a Wine/Proton patch. |
+| NVIDIA Windows Vulkan driver in Linux (`wine/`) | **Working in the Omarchy VM over virtio-dxg** as dxgvk, a Vulkan driver for Wine 10–11 and Proton 10: compute 96–97% GPU-bound like native, zero-copy presentation, DXVK and vkd3d-proton games run. Set up per prefix by `wine/proton-dxgvk.sh`; to become a launcher option. |
 | Whole path in the real guest | The user's Omarchy disk booted read-only (QEMU snapshot), `dxgkrnl_virtio` loaded by an initramfs hook (`guest/test/mkdevinitramfs.py`), NVIDIA's driver store shared read-only over 9p. |
 | Launcher option, guest image staging | **Working**: `TryOmarchy.exe -render dxg` (below). |
 | Whole desktop on the GPU (Hyprland, shell, Xwayland, apps) | **Working**: rendered on NVIDIA through Mesa d3d12 with KMS mirrors (`guest/mesa/`). |
@@ -415,12 +417,14 @@ a copy. FIFO waits for the previous frame to be shown; mailbox and
 immediate do not wait.
 
 ```sh
-# build.sh also writes dxgvk.dll, dxgvk.json, vkpresent.exe and the
-# Khronos loader (vulkan-1.dll), which programs must load natively:
+# build.sh also writes dxgvk.dll, dxgvk.json, vkpresent.exe, the Khronos
+# loader (vulkan-1.dll), which programs must load natively, and dxgs.dll,
+# the loader's DXGI, which goes into the prefix's system32:
 WINEDLLOVERRIDES=vulkan-1=n
 # The Windows loader finds the driver in the prefix's registry:
 wine reg add 'HKLM\SOFTWARE\Khronos\Vulkan\Drivers' /v 'Z:\path\dxgvk.json' /t REG_DWORD /d 0 /f
 DXGVK_DEBUG=1 wine vkpresent.exe 10 [fifo|mailbox|immediate]
+# DXGVK_HUD=1: frames per second and frame time in the window's corner
 ```
 
 Two things made NVIDIA's Windows driver accept a texture made in the VM:
@@ -429,6 +433,35 @@ completed at creation (the allocation's layout) for later openers, and NT
 handles of shared objects are descriptors the bridge marks for Windows code
 (`kmt_bridge_fd_handle`). `d3d12vkimport.c` checks the same import on
 Windows itself.
+
+#### Proton games
+
+`wine/proton-dxgvk.sh PREFIX PROTON GAME_DIR BUILD_DIR` sets up one Proton
+prefix (its header lists every change, and `undo` reverts them); the script
+shows the paths for Minecraft Bedrock with BedrockOnLinux. Three things
+stood between Proton and dxgvk:
+
+- **The session's Vulkan variables.** Wine passes the Linux environment to
+  Windows programs. With `VK_DRIVER_FILES` naming Dozen's Linux manifest,
+  the Windows loader searched only that path and never read its registry.
+  The boot hook now adds Dozen with `VK_ADD_DRIVER_FILES`, which leaves the
+  default search in place on both sides (Dozen still comes first for Linux
+  applications: it is the discrete GPU, llvmpipe the CPU).
+- **Unix libraries in Proton 10's Wine.** dxgvk loads its Linux half
+  (`dxgkmt.so`, the ioctls on `/dev/dxg`) by name, which Wine 11 offers and
+  Proton 10's Wine refuses (`STATUS_INVALID_INFO_CLASS`). There only builtin
+  modules have Unix libraries, so dxgvk.dll is marked builtin and, for
+  Proton, installed with `dxgkmt.so` as `dxgvk.so` in Proton's own library
+  directories; `kmt_bridge.c` falls back to the builtin route.
+- **A deadlock between the loader and DXVK.** The Windows loader creates a
+  DXGI factory while it reads the registered drivers (to check Intel, NVIDIA
+  and AMD's own manifests against the adapters' vendors) and while it sorts
+  physical devices. Under Proton `dxgi.dll` is DXVK's, whose factory creates
+  a Vulkan instance through the same loader: the game's main thread waited
+  on itself with a white window. `patch_loader.py` points the loader at
+  `dxgs.dll` (`dxgs.c`), a DXGI factory without adapters: drivers that are
+  not those vendors' manifests are accepted as before, and the physical
+  device order is the drivers' own.
 
 ### Vulkan 1.3 for Linux applications
 
@@ -445,4 +478,14 @@ glslc edstest.vert -o vert.spv && glslc edstest.frag -o frag.spv
 for s in inline dirty zero; do glslc --target-env=vulkan1.3 $s.comp -o $s.spv; done
 gcc -O2 -o edstest edstest.c -lvulkan && ./edstest      # 27 pixel checks
 gcc -O2 -o vk13test vk13test.c -lvulkan && ./vk13test   # 1.3 features
+# What Blender 5.2's Vulkan backend needs, sRGB views and blits; shader
+# builds and results in bench/vulkan13/README.md
+./bltest && ./samptest && ./srgbtest
 ```
+
+Blender 5.2's Vulkan backend requires multiple viewports, logic ops,
+dual-source blending and `VK_EXT_provoking_vertex`, and draws its windows in
+FP16 with `VK_EXT_swapchain_colorspace`. Dozen now offers all of them (the
+design is in the Mesa README); `bltest` checks each with pixels. Its five
+failures are the known gaps: a viewport index written by a geometry shader,
+and the odd triangles of strips in last-vertex mode.

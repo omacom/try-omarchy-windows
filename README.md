@@ -4,19 +4,48 @@
 
 <h1 align="center">Try Omarchy for Windows</h1>
 
-**NVIDIA desktop development** continues on `integration/wayland-frame-pacing`.
-It combines Claude’s native Wayland Chromium and shared application buffers
-at `8f1d75c` with upstream through `c08b94f`. This branch reduces work on
-completed fence exports and during Mesa staging. It includes an offline WebGL
-animation page for comparing Chromium, Firefox and Electron.
+## NVIDIA GPUs: virtio-dxg (this fork, `main`)
 
-Claude reported 117 fps in Chromium Aquarium on a 120 Hz development VM.
-Sustained 240 Hz on the Windows display, 4K multi-window operation, browser
-video acceleration and game/editor performance still need measurements.
-[Current changes and acceptance criteria](docs/VIRTIO-DXG-INTEGRATION.md) ·
-[Reported runtime measurements](docs/VIRTIO-DXG-RESULTS.md).
+This fork adds **virtio-dxg**, a driver-level GPU backend for NVIDIA
+hosts. The guest runs NVIDIA's own user-mode drivers on the host's GPU, the
+way WSL2 does: Microsoft's `dxgkrnl` kernel interface (`/dev/dxg`) is
+carried over a virtio device to the host's NVIDIA kernel driver. Nothing is
+translated into another graphics API, and frames stay on the GPU from the
+application to the Windows window. [How it works](docs/VIRTIO-DXG.md) ·
+[measurements](docs/VIRTIO-DXG-RESULTS.md).
 
-![Graphics build baseline and candidate desktop acceptance](docs/images/virtio-dxg-integration-progress.svg)
+<table>
+<tr>
+<td width="50%"><img src="docs/images/virtio-dxg-minecraft-world.jpg" alt="Minecraft Bedrock in a world inside Omarchy, frame counter at 112 FPS"></td>
+<td width="50%"><img src="docs/images/virtio-dxg-blender-vulkan.jpg" alt="Blender 5.2.3 with the EEVEE rendered viewport on Vulkan inside Omarchy"></td>
+</tr>
+<tr>
+<td><b>Minecraft Bedrock</b> (GDK-Proton, Direct3D 12 through vkd3d-proton) on
+NVIDIA's own Windows Vulkan 1.4 driver: 112–121 fps in a world, held at the
+VM display's 120 Hz by vsync. The counter is dxgvk's (<code>DXGVK_HUD=1</code>).</td>
+<td><b>Blender 5.2.3</b> on Vulkan, EEVEE's rendered viewport: Mesa's Dozen
+on NVIDIA's D3D12 driver, Vulkan 1.3 with multi-viewport, dual-source
+blending, logic ops and last-vertex provoking.</td>
+</tr>
+</table>
+
+**Status, November 14, 2026** (RTX 5090 Laptop GPU, driver 621.14, Windows 11,
+Omarchy 4.5 / Hyprland 0.57 guest):
+
+| | State |
+| --- | --- |
+| Desktop | Hyprland, its shell, Xwayland and apps on NVIDIA's D3D12 driver; zero-copy scanout: 238 of 240 frames/s at 240 Hz |
+| CUDA, NVENC, NVDEC, OptiX, NGX | NVIDIA's WSL libraries: CUDA bandwidth 97.5–98% of native, NVENC 101–102%, NVDEC 72–85% |
+| OpenGL 4.6 for Linux apps | Mesa d3d12, zero-copy windows (Wayland and X11): glmark2 1080p 2255–2522 |
+| Vulkan for Linux apps | Dozen, **Vulkan 1.3.354**: Blender 5.2.3 on Vulkan, vkmark 720p 4940; `bench/vulkan13` checks |
+| Vulkan for Windows programs (Wine, Proton) | **dxgvk**: NVIDIA's own Windows driver, Vulkan 1.4.357 with ray tracing, mesh shaders, DLSS extensions; zero-copy swapchain |
+| Proton games | Direct3D 12 (vkd3d-proton) and Direct3D 11 (DXVK) on dxgvk: Minecraft Bedrock runs; DXVK test 1452–1876 fps |
+| Open | Blender and game performance against native Windows not yet measured; dxgvk waits for each frame on the CPU before presenting (next); Dozen lacks tessellation and Vulkan 1.4; VA-API encode fails (NVENC works); the Proton setup is a script, not yet a launcher option |
+
+Development builds of the guest graphics stack, the host device and the
+launcher option `-render dxg` are described in
+[VIRTIO-DXG.md](docs/VIRTIO-DXG.md#starting-it-from-the-launcher); upstream
+releases below do not include them.
 
 <details>
 <summary>Earlier private-bridge development and evidence history (October–November 6)</summary>

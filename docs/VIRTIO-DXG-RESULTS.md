@@ -1,8 +1,8 @@
 # virtio-dxg: results before and after
 
-> Runtime measurements reported by Claude through `8f1d75c`. Hardware,
-> resolution, duration and workload matter when comparing these numbers.
-> The [November 11 candidate](VIRTIO-DXG-INTEGRATION.md) awaits hardware testing.
+> Runtime measurements reported by Claude, last updated November 14, 2026.
+> Hardware, resolution, duration and workload matter when comparing these
+> numbers.
 
 
 Measured on one machine: an RTX 5090 Laptop GPU (driver 621.14) driving a
@@ -44,12 +44,23 @@ The pointer itself moves with the Windows cursor (QEMU turns Hyprland's
 cursor into the host cursor), so it was never limited by these rates;
 clicks, drags and keys were.
 
+## Games and editors
+
+Test VM (6 vCPUs, 6 GiB, the guest display at 1280×800 and 120 Hz), boot
+payload of this branch:
+
+| | Before | After | Notes |
+| --- | --- | --- | --- |
+| Minecraft Bedrock 1.26.52 (BedrockOnLinux 2.2.8, GDK-Proton 10-32, vkd3d-proton 3.0.1, Direct3D 12) | crashed with either renderer setting: vkd3d-proton and wined3d ran on Dozen | Main menu and a survival world render on NVIDIA's own Vulkan 1.4 driver (dxgvk): 112–121 fps, 8.3–9.0 ms per frame, held at the display's 120 Hz by vsync | Frame counter: `DXGVK_HUD=1`. Unlocked frame rate and comparison with Windows not yet measured |
+| Blender 5.2.3 on Vulkan | refused to start: Dozen lacked multi-viewport, logic ops, dual-source blending, provoking vertex | UI, Solid and EEVEE rendered viewports on NVIDIA through Dozen; colors match the OpenGL backend within a few levels | Performance against OpenGL and native not yet measured |
+| `bench/vulkan13` on the boot payload | — | `edstest` 27/27, `vk13test` pass (both descriptor modes), `samptest` and `srgbtest` pass, `bltest` 21/26 | `bltest`'s five failures: geometry-shader viewport index, odd strip triangles in last-vertex mode |
+
 ## Graphics
 
 | Test | Before | After | Notes |
 | --- | --- | --- | --- |
 | glmark2 1080p off-screen (OpenGL 4.6, Mesa d3d12) | 1289 (the first desktop build: 42, then a hang) | 2255–2522 | |
-| vkmark 720p windowed (Vulkan on Dozen, test VM) | 627 (frames copied through `wl_shm`) | 4840–6781 | Zero-copy Vulkan windows: swapchain images are window buffers |
+| vkmark 720p windowed (Vulkan on Dozen, test VM) | 627 (frames copied through `wl_shm`) | 4840–6781; 4940 on the November 14 payload | Zero-copy Vulkan windows: swapchain images are window buffers |
 | Vulkan version for Linux applications (Dozen, test VM, boot payload) | 1.2 | 1.3.354 with every required 1.3 feature; `bench/vulkan13`: 27/27 dynamic-state pixel checks, inline uniform blocks, zero-initialized workgroup memory, maintenance4 and format properties 3 pass in both descriptor modes; vkmark 720p 3675 (no regression) | Recipe: extended dynamic state as pipeline variants, inline uniform blocks as pool-backed uniform buffers |
 | Direct3D 11 under Wine (wined3d on OpenGL, 200 draws per frame, `bench/d3d11tri.c`) | Xwayland exited | 231 fps on a 240 Hz display | GLX on the D3D12 driver |
 | Vulkan under Wine on NVIDIA's own Windows driver (dxgvk, `wine/vkpresent.c`, clear + present, test VM) | no driver (Wine's Vulkan was Dozen, 1.2) | Vulkan 1.4.357; 2686–3253 fps immediate, 234 fps FIFO on a 240 Hz display | dxgvk.dll: NVIDIA ICD + zero-copy swapchain |
@@ -127,10 +138,17 @@ Other media:
 | The host accepted CPU waits on at most 32 objects (the GPU-wait limit) | NVIDIA's driver under vkd3d-proton waits on up to 53; D3D12 device creation failed | CPU waits up to 4096 objects |
 | All guest processes share the host process's GPU address space | A fixed-base reservation NVIDIA's driver prefers (12-28 GiB at 8-32 GiB) was taken by another guest process | A taken fixed base is granted at the same offset in a 1 TiB window of the guest process's own |
 | The Windows Vulkan loader read the adapter's VulkanDriverName through the routed D3DKMT | NVIDIA's driver loaded a second time without dxgvk's presentation; D3D12 picked it | The bridge reports no Vulkan registry values; dxgvk is the adapter's driver |
+| The session exported `VK_DRIVER_FILES` (Dozen's Linux manifest) | Wine passed it to Windows programs; their Vulkan loader then searched only that path, so Proton games got no NVIDIA driver | The boot hook adds Dozen with `VK_ADD_DRIVER_FILES` |
+| Proton 10's Wine loads Unix libraries only for builtin modules | dxgvk could not reach `/dev/dxg` under Proton (`STATUS_INVALID_INFO_CLASS`) | dxgvk.dll is marked builtin and installed in Proton's library directories with its Linux half |
+| The Windows Vulkan loader creates a DXGI factory while it reads registered drivers | Under Proton that is DXVK's factory, which creates a Vulkan instance through the same loader: Minecraft's main thread waited on itself with a white window | The loader takes DXGI from `dxgs.dll`, a factory without adapters (`wine/patch_loader.py`) |
 | The debug overlay and idle blanking in measurements | Throttled clients (display off, locked session); Hyprland's overlay can deadlock in hyprgraphics | Benchmarks keep the display on and do not use the overlay |
 
 ## Where the rest of native performance goes
 
-- **Vulkan windows.** Dozen's window system integration still presents
-  through `wl_shm` (a readback per frame): vkcube with vsync reaches about
-  200 fps of 240. OpenGL, GTK, Qt and Chromium windows are zero-copy.
+- **dxgvk's present.** Before handing a frame to the X server, dxgvk waits
+  on the CPU until the GPU has finished it, so a game's CPU and GPU work do
+  not overlap across frames. Next: present from a thread, frames in flight.
+  The frame counter adds a second submission (about 0.7 ms per frame) and is
+  off by default.
+- **Vulkan windows.** Zero-copy for Dozen and dxgvk alike (window buffers);
+  OpenGL, GTK, Qt and Chromium windows are zero-copy too.
