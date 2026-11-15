@@ -1,4 +1,4 @@
-From 599d716945999ee7a14df5dab544b4b9892ea4f1 Mon Sep 17 00:00:00 2001
+From 798afa1a8dc2875267eb7fe26c731519c06e424e Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Sat, 14 Nov 2026 20:23:39 -0500
 Subject: [PATCH] Give Ghostty OpenGL 4.3 where virgl offers only 4.2
@@ -13,7 +13,11 @@ Give Ghostty, and only Ghostty, those two variables when the renderer stops at
 4.2. ghostty-gl decides once per login: on CPU rendering it does nothing,
 otherwise a small surfaceless EGL probe finds the highest core profile the
 renderer creates, and only 4.2 gets the override. The result lives in
-$XDG_RUNTIME_DIR, so a new host GPU or render mode is probed again.
+$XDG_RUNTIME_DIR, so a new host GPU or render mode is probed again. A probe
+that fails or times out saves nothing, so the next start probes again;
+starts that race share one probe under a lock, and for ten seconds after a
+failure they start Ghostty without probing. The probe needs only the render
+node, not the compositor.
 
 Launchers start Ghostty by D-Bus activation of app-com.mitchellh.ghostty.service,
 which gets a drop-in reading that file after the probe unit. Everything else
@@ -28,11 +32,11 @@ Compatibility revision 74 delivers it to existing disks.
 ---
  .../hooks/try-omarchy-ghostty-gl.hook         |  11 +
  .../10-try-omarchy-gl.conf                    |   9 +
- .../user/try-omarchy-ghostty-gl.service       |   7 +
+ .../user/try-omarchy-ghostty-gl.service       |   9 +
  .../usr/local/lib/try-omarchy/catch-up        |  15 +-
  .../usr/local/lib/try-omarchy/ghostty         |  22 ++
- .../usr/local/lib/try-omarchy/ghostty-gl      |  83 ++++++
- .../local/lib/try-omarchy/ghostty-gl-probe    |  76 +++++
+ .../usr/local/lib/try-omarchy/ghostty-gl      | 102 ++++++
+ .../local/lib/try-omarchy/ghostty-gl-probe    |  76 ++++
  guest/scripts/finalize-rootfs.sh              |  10 +-
  .../app-com.mitchellh.ghostty.service         |  14 +
  .../com.mitchellh.ghostty.desktop             |  26 ++
@@ -42,7 +46,7 @@ Compatibility revision 74 delivers it to existing disks.
  guest/tests/test_clipboard_pull.py            |   2 +-
  guest/tests/test_compositor_health.py         |   2 +-
  guest/tests/test_desktop_drawn.py             |   2 +-
- guest/tests/test_ghostty_gl.py                | 282 ++++++++++++++++++
+ guest/tests/test_ghostty_gl.py                | 333 ++++++++++++++++++
  guest/tests/test_guest_qol.py                 |   2 +-
  guest/tests/test_kernel_headers_hold.py       |   2 +-
  guest/tests/test_live_update.py               |   2 +-
@@ -54,7 +58,7 @@ Compatibility revision 74 delivers it to existing disks.
  guest/tests/test_url_schemes.py               |   2 +-
  guest/tests/test_windows_volume_sync.py       |   2 +-
  guest/tests/verify.py                         |  10 +-
- 28 files changed, 586 insertions(+), 25 deletions(-)
+ 28 files changed, 658 insertions(+), 25 deletions(-)
  create mode 100644 guest/factory-overlay/etc/pacman.d/hooks/try-omarchy-ghostty-gl.hook
  create mode 100644 guest/factory-overlay/etc/systemd/user/app-com.mitchellh.ghostty.service.d/10-try-omarchy-gl.conf
  create mode 100644 guest/factory-overlay/usr/lib/systemd/user/try-omarchy-ghostty-gl.service
@@ -100,17 +104,19 @@ index 0000000..1362a96
 +EnvironmentFile=-%t/try-omarchy/ghostty-gl.env
 diff --git a/guest/factory-overlay/usr/lib/systemd/user/try-omarchy-ghostty-gl.service b/guest/factory-overlay/usr/lib/systemd/user/try-omarchy-ghostty-gl.service
 new file mode 100644
-index 0000000..380b432
+index 0000000..d74cc94
 --- /dev/null
 +++ b/guest/factory-overlay/usr/lib/systemd/user/try-omarchy-ghostty-gl.service
-@@ -0,0 +1,7 @@
+@@ -0,0 +1,9 @@
 +[Unit]
 +Description=Check whether Ghostty needs the OpenGL 4.3 override
 +
++# Runs before each start of Ghostty's service. The answer is saved for the
++# login, so later runs only read it; a failed probe saves nothing and the next
++# start tries again. Ghostty starts either way, without the override.
 +[Service]
 +Type=oneshot
-+RemainAfterExit=yes
-+ExecStart=/usr/local/lib/try-omarchy/ghostty-gl env
++ExecStart=-/usr/local/lib/try-omarchy/ghostty-gl env
 diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
 index e0fc27b..76314a9 100755
 --- a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
@@ -174,10 +180,10 @@ index 0000000..5a1e948
 +exec "$ghostty_bin" "$@"
 diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/ghostty-gl b/guest/factory-overlay/usr/local/lib/try-omarchy/ghostty-gl
 new file mode 100755
-index 0000000..2d1bf48
+index 0000000..754e021
 --- /dev/null
 +++ b/guest/factory-overlay/usr/local/lib/try-omarchy/ghostty-gl
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,102 @@
 +#!/bin/bash
 +# Ghostty needs an OpenGL 4.3 core context. On some hosts (Intel graphics,
 +# #383) virgl offers only 4.2 although Ghostty draws fine there once Mesa is
@@ -190,7 +196,11 @@ index 0000000..2d1bf48
 +#                     print its path. The file holds the two Mesa variables
 +#                     when they are needed and only comments otherwise. The
 +#                     runtime directory is cleared at logout and boot, so a
-+#                     new host GPU or render mode is probed again.
++#                     new host GPU or render mode is probed again. A probe
++#                     that fails or times out saves nothing and exits 1, so
++#                     the next Ghostty start probes again; starts that race
++#                     share one probe, and for a few seconds after a failure
++#                     they do not probe again.
 +#   ghostty-gl link   (root) link /usr/local/bin/ghostty to the wrapper that
 +#                     applies the file while Ghostty is installed, and remove
 +#                     that link when it is not. Anything else at that path is
@@ -202,6 +212,7 @@ index 0000000..2d1bf48
 +ghostty_bin=${TRY_OMARCHY_GHOSTTY_BIN:-/usr/bin/ghostty}
 +ghostty_link=${TRY_OMARCHY_GHOSTTY_LINK:-/usr/local/bin/ghostty}
 +wrapper=${TRY_OMARCHY_GHOSTTY_WRAPPER:-/usr/local/lib/try-omarchy/ghostty}
++retry_after=${TRY_OMARCHY_GHOSTTY_GL_RETRY:-10}
 +
 +decide() {
 +  if [[ " $(cat "$cmdline" 2>/dev/null) " == *" tryomarchy.render=cpu "* ]]; then
@@ -209,9 +220,8 @@ index 0000000..2d1bf48
 +    return 0
 +  fi
 +  local version
-+  if ! version=$(timeout 10 "$probe" 2>/dev/null) || [[ ! $version =~ ^[0-9]+\.[0-9]+$ ]]; then
-+    echo "# The OpenGL probe failed; no override"
-+    return 0
++  if ! version=$(timeout 5 "$probe" 2>/dev/null) || [[ ! $version =~ ^[0-9]+\.[0-9]+$ ]]; then
++    return 1
 +  fi
 +  if [[ $version == 4.2 ]]; then
 +    echo "# The renderer offers OpenGL $version core; Ghostty needs 4.3"
@@ -225,13 +235,28 @@ index 0000000..2d1bf48
 +env_file() {
 +  local runtime=${XDG_RUNTIME_DIR:-}
 +  [[ -n $runtime && -d $runtime && -O $runtime ]] || return 1
-+  local dir=$runtime/try-omarchy file tmp
++  local dir=$runtime/try-omarchy file failed tmp lock
 +  file=$dir/ghostty-gl.env
++  failed=$dir/ghostty-gl.failed
 +  if [[ ! -f $file ]]; then
 +    mkdir -p -m 0700 "$dir" || return 1
-+    tmp=$(mktemp "$file.XXXXXX") || return 1
-+    decide >"$tmp"
-+    mv -f -- "$tmp" "$file" || { rm -f -- "$tmp"; return 1; }
++    # One probe at a time; a start that waited finds the answer saved.
++    exec {lock}>"$dir/ghostty-gl.lock" || return 1
++    flock -w 15 "$lock" || return 1
++    if [[ ! -f $file ]]; then
++      if [[ -f $failed ]] && (( $(date +%s) - $(stat -c %Y "$failed") < retry_after )); then
++        return 1
++      fi
++      tmp=$(mktemp "$file.XXXXXX") || return 1
++      if ! decide >"$tmp"; then
++        rm -f -- "$tmp"
++        touch -- "$failed"
++        echo "ghostty-gl: the OpenGL probe failed; trying again at the next start" >&2
++        return 1
++      fi
++      mv -f -- "$tmp" "$file" || { rm -f -- "$tmp"; return 1; }
++      rm -f -- "$failed"
++    fi
 +  fi
 +  printf '%s\n' "$file"
 +}
@@ -497,10 +522,10 @@ index e18e76b..d28e3ef 100644
              self.assertIn('usr/local/lib/try-omarchy/' + name, paths)
 diff --git a/guest/tests/test_ghostty_gl.py b/guest/tests/test_ghostty_gl.py
 new file mode 100644
-index 0000000..b1709d6
+index 0000000..659d725
 --- /dev/null
 +++ b/guest/tests/test_ghostty_gl.py
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,333 @@
 +import configparser
 +import os
 +from pathlib import Path
@@ -593,14 +618,62 @@ index 0000000..b1709d6
 +            ('echo 4.3', {}, 'virgl on an AMD host'),
 +            ('echo 4.6', {}, 'a host that offers more'),
 +            ('echo 4.1', {}, 'too far below 4.3 to claim it'),
-+            ('exit 1', {}, 'the probe failed'),
-+            ('echo nonsense', {}, 'the probe printed something else'),
 +        ]
 +        for body, expected, why in cases:
 +            with self.subTest(why):
 +                (self.runtime / 'try-omarchy/ghostty-gl.env').unlink(missing_ok=True)
 +                self.fake_probe(body)
 +                self.assertEqual(self.decision(), expected)
++
++    def test_a_failed_probe_is_not_saved(self):
++        env_file = self.runtime / 'try-omarchy/ghostty-gl.env'
++        for body in ('exit 1', 'echo nonsense', 'sleep 30'):
++            with self.subTest(body):
++                self.fake_probe(body)
++                result = self.helper('env', TRY_OMARCHY_GHOSTTY_GL_RETRY='0')
++                self.assertNotEqual(result.returncode, 0)
++                self.assertEqual(result.stdout, '')
++                self.assertFalse(env_file.exists())
++
++    def test_failure_then_success_gives_the_override_on_the_next_start(self):
++        self.fake_ghostty()
++        self.fake_probe('exit 1')
++        self.assertEqual(self.wrapper(TRY_OMARCHY_GHOSTTY_GL_RETRY='0').stdout, 'GL=unset GLSL=unset ARGS=\n')
++        self.fake_probe('echo 4.2')
++        self.assertEqual(self.wrapper(TRY_OMARCHY_GHOSTTY_GL_RETRY='0').stdout, 'GL=4.3 GLSL=430 ARGS=\n')
++        self.assertEqual(self.probe_log.read_text(), 'run\nrun\n')
++        self.assertFalse((self.runtime / 'try-omarchy/ghostty-gl.failed').exists())
++
++    def test_starts_right_after_a_failure_do_not_probe_again(self):
++        self.fake_probe('exit 1')
++        self.assertNotEqual(self.helper('env').returncode, 0)
++        self.fake_probe('echo 4.2')
++        self.assertNotEqual(self.helper('env').returncode, 0)
++        self.assertEqual(self.probe_log.read_text(), 'run\n')
++        # Once the retry delay has passed, the next start probes again.
++        failed = self.runtime / 'try-omarchy/ghostty-gl.failed'
++        os.utime(failed, (failed.stat().st_mtime - 60,) * 2)
++        self.assertEqual(self.decision(), OVERRIDE)
++
++    def concurrent(self, count):
++        env = self.env()
++        processes = [subprocess.Popen(['bash', str(HELPER), 'env'], env=env, text=True,
++                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(count)]
++        return [(process.wait(timeout=30), process.stdout.read().strip()) for process in processes]
++
++    def test_concurrent_starts_share_one_probe(self):
++        self.fake_probe('sleep 1; echo 4.2')
++        results = self.concurrent(6)
++        env_file = str(self.runtime / 'try-omarchy/ghostty-gl.env')
++        self.assertEqual(results, [(0, env_file)] * 6)
++        self.assertEqual(self.probe_log.read_text(), 'run\n')
++        self.assertEqual(self.decision(), OVERRIDE)
++
++    def test_concurrent_starts_after_a_failure_share_one_probe(self):
++        self.fake_probe('sleep 1; exit 1')
++        results = self.concurrent(6)
++        self.assertEqual([code for code, _ in results], [1] * 6)
++        self.assertEqual(self.probe_log.read_text(), 'run\n')
 +
 +    def test_cpu_rendering_is_left_alone_without_probing(self):
 +        self.cmdline.write_text(CPU)
@@ -737,9 +810,12 @@ index 0000000..b1709d6
 +        self.assertEqual(drop_in['Unit']['Wants'], PROBE_UNIT.name)
 +        self.assertEqual(drop_in['Unit']['After'], PROBE_UNIT.name)
 +        probe_unit = unit(PROBE_UNIT.read_text())
++        # It runs before every start of the service, so a failed probe is
++        # retried, and its failure never keeps Ghostty from starting.
 +        self.assertEqual(probe_unit['Service']['Type'], 'oneshot')
-+        self.assertEqual(probe_unit['Service']['RemainAfterExit'], 'yes')
-+        self.assertEqual(probe_unit['Service']['ExecStart'], '/usr/local/lib/try-omarchy/ghostty-gl env')
++        self.assertNotIn('RemainAfterExit', probe_unit['Service'])
++        self.assertEqual(probe_unit['Service']['ExecStart'], '-/usr/local/lib/try-omarchy/ghostty-gl env')
++        self.assertNotIn('Requires', drop_in['Unit'])
 +
 +    def test_every_packaged_command_finds_the_wrapper_first(self):
 +        # systemd and every PATH in the session search /usr/local/bin before

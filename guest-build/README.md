@@ -178,7 +178,11 @@ no window; with `MESA_GL_VERSION_OVERRIDE=4.3 MESA_GLSL_VERSION_OVERRIDE=430`
 it draws correctly. `ghostty-gl` decides once per login: CPU rendering is left
 alone, otherwise a surfaceless EGL probe finds the highest core profile the
 renderer creates, and only 4.2 gets the override. The answer is kept in
-`$XDG_RUNTIME_DIR`, so a new host GPU or render mode is probed again. Launchers
+`$XDG_RUNTIME_DIR`, so a new host GPU or render mode is probed again. A probe
+that fails or times out (5 seconds) saves nothing and the next start probes
+again; starts that race share one probe, and for ten seconds after a failure
+they open Ghostty without probing. The probe needs only the render node, not
+the compositor. Launchers
 start Ghostty by D-Bus activation of `app-com.mitchellh.ghostty.service`, which
 gets a drop-in that reads the answer. Every other start (xdg-terminal-exec, the
 screensaver, a typed `ghostty`, the unit's own `ExecStart`) runs a bare
