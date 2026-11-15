@@ -507,12 +507,21 @@ func forgetCurtainWindow(hwnd uintptr) {
 	curtainMu.Unlock()
 }
 
+// curtainTabMu orders the curtain's taskbar button deletes with the lift
+// that adds the button back.
+var curtainTabMu sync.Mutex
+
 // curtainTaskbar takes the concealed window's button off the taskbar. It
 // runs on each title enforcer pass, after the first one gives the window its
 // taskbar identity, which would otherwise bring the button back. The taskbar
 // takes that identity up a moment later and can then show the button again,
 // so the button is taken off again for a while (curtainTabDeleteDue).
 func curtainTaskbar(hwnd uintptr) {
+	// The lift adds the button back under the same lock, so a delete cannot
+	// land after it: once the curtain is down the window is no longer in
+	// curtainWindows.
+	curtainTabMu.Lock()
+	defer curtainTabMu.Unlock()
 	now := time.Now()
 	curtainMu.Lock()
 	window := curtainWindows[hwnd]
@@ -729,7 +738,9 @@ func liftCurtain(reason string) {
 		showCurtainWindow(hwnd, window)
 		procRedrawWindow.Call(hwnd, 0, 0, rdwInvalidate|rdwAllChildren|rdwFrame)
 		if window.tabRemoved {
+			curtainTabMu.Lock()
 			taskbarTab(hwnd, true)
+			curtainTabMu.Unlock()
 		}
 		// Only now may the title enforcer put the window back where it
 		// belongs: its frame is part of the remembered placement.
