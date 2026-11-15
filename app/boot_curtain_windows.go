@@ -331,7 +331,9 @@ func keepOffMonitor() {
 	curtainMu.Lock()
 	for hwnd, window := range curtainWindows {
 		if window.ready && window.bordered {
-			checks = append(checks, check{hwnd, window, window.border, window.client, window.resized, window.offMonitor})
+			// Only a placed window's client area is where it will be shown;
+			// another's is the size QEMU first gave it.
+			checks = append(checks, check{hwnd, window, window.border, window.client, window.placed, window.offMonitor})
 		}
 	}
 	curtainMu.Unlock()

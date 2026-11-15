@@ -183,7 +183,7 @@ func (r screenRect) covers(bounds screenRect) bool {
 
 // hiddenWindowOffMonitor says where a hidden, frameless window that covers its
 // monitor goes instead: the client area it will have when shown (client, if
-// the curtain knows it), else that of a maximized window on the monitor's
+// the curtain placed it), else that of a maximized window on the monitor's
 // work area. ok is false when the window does not cover the monitor.
 func hiddenWindowOffMonitor(now screenRect, monitor hostMonitor, frame, client screenRect, knowClient bool) (screenRect, bool) {
 	if !now.covers(monitor.Bounds) {
