@@ -352,3 +352,22 @@ func TestHiddenWindowNeverCoversItsMonitor(t *testing.T) {
 		t.Fatalf("left monitor: move %v to %v", move, target)
 	}
 }
+
+func TestCurtainFrameBackSkipsAWindowThatWentFullScreen(t *testing.T) {
+	const (
+		normal     = 0x16CA0000 // QEMU's window as SDL creates it, held
+		fullscreen = 0x96000000 // after SDL made it a full screen popup
+		frame      = 0x00CA0000
+	)
+	if got := curtainFrameBack(frame, normal, normal&^frame); got != frame {
+		t.Fatalf("windowed window: frame back %#x, want %#x", got, frame)
+	}
+	if got := curtainFrameBack(frame, normal, fullscreen); got != 0 {
+		t.Fatalf("window that went full screen behind the curtain: frame back %#x, want 0", got)
+	}
+	// Full screen from the start, as with a runtime that does not hold
+	// its windows: whatever the curtain took off goes back.
+	if got := curtainFrameBack(0x00020000, fullscreen|0x00020000, fullscreen); got != 0x00020000 {
+		t.Fatalf("full screen window: frame back %#x, want 0x20000", got)
+	}
+}

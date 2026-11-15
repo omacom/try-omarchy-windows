@@ -195,6 +195,20 @@ func hiddenWindowOffMonitor(now screenRect, monitor hostMonitor, frame, client s
 	return client, client != now && !client.covers(monitor.Bounds)
 }
 
+// curtainFrameBack is the frame style the curtain gives back at the lift: the
+// bits it took off (frame) when the window had style hidden, now that it has
+// style now. A window QEMU holds is created with a frame even for a full
+// screen start, and SDL makes it a full screen popup only once it is shown,
+// behind the curtain. That window has no frame to give back: with one, its
+// client area and the guest's display shrink and the guest redraws (#415).
+func curtainFrameBack(frame, hidden, now uintptr) uintptr {
+	const popup = 0x80000000 // WS_POPUP
+	if now&popup != 0 && hidden&popup == 0 {
+		return 0
+	}
+	return frame
+}
+
 var (
 	bootCurtainMu    sync.Mutex
 	bootCurtainState bootCurtainTimes

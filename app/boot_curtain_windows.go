@@ -73,8 +73,9 @@ type curtainWindow struct {
 	// ready is set once the window is hidden. Until then the goroutine
 	// hiding it owns it, and undoes its work itself if the curtain lifts.
 	ready bool
-	// frame holds the frame style bits the curtain took off.
-	frame uintptr
+	// frame holds the frame style bits the curtain took off, and style the
+	// window's style when it did.
+	frame, style uintptr
 	// outer is the window's rectangle before its frame came off, when the
 	// curtain shrank it to its old client area; resized says it did.
 	outer, client screenRect
@@ -404,7 +405,7 @@ func hideCurtainWindow(hwnd uintptr, window *curtainWindow) bool {
 		return false
 	}
 	style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
-	window.frame = style & curtainFrameStyles
+	window.frame, window.style = style&curtainFrameStyles, style
 	if window.frame == 0 {
 		return true
 	}
@@ -452,7 +453,12 @@ func showCurtainWindow(hwnd uintptr, window *curtainWindow) {
 		return
 	}
 	style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
-	procSetWindowLongW.Call(hwnd, gwlStyle, style|window.frame)
+	frame := curtainFrameBack(window.frame, window.style, style)
+	if frame == 0 {
+		logf("startup: the window went full screen behind the curtain and keeps no frame")
+		return
+	}
+	procSetWindowLongW.Call(hwnd, gwlStyle, style|frame)
 	if window.resized {
 		var now screenRect
 		if ok, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&now))); ok != 0 && now == window.client {
