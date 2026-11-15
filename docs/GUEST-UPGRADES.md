@@ -174,6 +174,12 @@ instead of once, so a disk that an unpatched refresh rewrote again is put back
 on its next start. A healthy or otherwise configured disk is not written, and
 no package transaction runs during boot.
 
+Compatibility revision 74 lets Ghostty open on hosts whose renderer offers
+only OpenGL 4.2, one short of the 4.3 Ghostty needs. Ghostty gets a 4.3
+override there, whether it is installed already or later, and wherever it is
+started from; other apps and other hosts keep the real version. Nothing is
+written to the user's files or to files a package owns.
+
 If repository publication fails, inspect:
 
 ```sh
