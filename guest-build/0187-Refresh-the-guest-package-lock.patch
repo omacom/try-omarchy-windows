@@ -1,0 +1,305 @@
+From 8f12640e544ebbed6e76818948bcf560c6d20642 Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 11:52:57 -0600
+Subject: [PATCH] Refresh the guest package lock
+
+automake 1.19-1 -> 1.20-1
+btop 1.4.7-1 -> 1.4.8-1
+chromium 156.0.8078.79-1 -> 157.0.8103.78-1
+clang 23.1.4-1 -> 23.1.5-1
+clang-libs 23.1.4-1 -> 23.1.5-1
+cmake 4.4.5-1 -> 4.5.0-1
+compiler-rt 23.1.4-1 -> 23.1.5-1
+dbus 1.16.2-2 -> 1.16.4-1
+dkms 3.4.4-1 -> 3.4.5-1
+flex 2.6.4-6 -> 2.6.10-1
+fzf 0.74.5-1 -> 0.75.0-1
+git 2.56.0-2 -> 2.56.1-1
+gperftools 2.19.2-1 -> 2.19.3-1
+libblockdev 3.5.0-2 -> 3.6.0-1
+libblockdev-crypto 3.5.0-2 -> 3.6.0-1
+libblockdev-fs 3.5.0-2 -> 3.6.0-1
+libblockdev-loop 3.5.0-2 -> 3.6.0-1
+libblockdev-mdraid 3.5.0-2 -> 3.6.0-1
+libblockdev-nvme 3.5.0-2 -> 3.6.0-1
+libblockdev-part 3.5.0-2 -> 3.6.0-1
+libblockdev-smart 3.5.0-2 -> 3.6.0-1
+libblockdev-swap 3.5.0-2 -> 3.6.0-1
+libmodplug 0.8.9.0-7 -> 0.8.9.2-1
+libp11-kit 0.26.5-1 -> 0.26.6-1
+linux 7.2.15.arch1-1 -> 7.3.4.arch1-2
+linux-headers 7.2.15.arch1-1 -> 7.3.4.arch1-2
+llvm 23.1.4-1 -> 23.1.5-1
+llvm-libs 23.1.4-1 -> 23.1.5-1
+llvm-lit 23.1.4-1 -> 23.1.5-1
+luajit 2.1.1794214635+c4b1e2f-1 -> 2.1.1794386141+63c8f1a-1
+mesa 1:26.2.6-1 -> 1:26.2.7-1
+mobile-broadband-provider-info 20251101-1 -> 20261111-1
+openssh 10.6p1-3 -> 10.6p2-1
+p11-kit 0.26.5-1 -> 0.26.6-1
+qt6-base 6.12.0-4 -> 6.12.0-5
+sdl3 3.4.18-1 -> 3.4.20-1
+tomlplusplus 3.4.0-2 -> 3.4.0-3
+udisks2 2.11.2-1 -> 2.12.0-1
+vulkan-mesa-implicit-layers 1:26.2.6-1 -> 1:26.2.7-1
+vulkan-swrast 1:26.2.6-1 -> 1:26.2.7-1
+vulkan-virtio 1:26.2.6-1 -> 1:26.2.7-1
+zbar 0.23.95-1 -> 0.23.95-3
+---
+ guest/packages.lock.json | 84 ++++++++++++++++++++--------------------
+ 1 file changed, 42 insertions(+), 42 deletions(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index 658df93..c85c23d 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -18,7 +18,7 @@
+     "attr": "2.6.0-1",
+     "audit": "4.2.1-1",
+     "autoconf": "2.73-1",
+-    "automake": "1.19-1",
++    "automake": "1.20-1",
+     "avahi": "1:0.9rc5-2",
+     "base": "3-3",
+     "base-devel": "1-2",
+@@ -30,18 +30,18 @@
+     "bluez-libs": "5.88-1",
+     "boost-libs": "1.92.0-2",
+     "brotli": "1.2.1-1",
+-    "btop": "1.4.7-1",
++    "btop": "1.4.8-1",
+     "bubblewrap": "0.13.1-1",
+     "bzip2": "1.0.8-6",
+     "ca-certificates": "20240618-1",
+     "ca-certificates-mozilla": "3.133-1",
+     "ca-certificates-utils": "20240618-1",
+     "cairo": "1.18.6-1",
+-    "chromium": "156.0.8078.79-1",
+-    "clang": "23.1.4-1",
+-    "clang-libs": "23.1.4-1",
+-    "cmake": "4.4.5-1",
+-    "compiler-rt": "23.1.4-1",
++    "chromium": "157.0.8103.78-1",
++    "clang": "23.1.5-1",
++    "clang-libs": "23.1.5-1",
++    "cmake": "4.5.0-1",
++    "compiler-rt": "23.1.5-1",
+     "coreutils": "9.12-3",
+     "cpio": "2.15-3",
+     "cppdap": "1.58.0-3",
+@@ -50,7 +50,7 @@
+     "curl": "8.23.0-2",
+     "dav1d": "1.5.4-1",
+     "db5.3": "5.3.28-7",
+-    "dbus": "1.16.2-2",
++    "dbus": "1.16.4-1",
+     "dbus-broker": "37-3",
+     "dbus-broker-units": "37-3",
+     "dbus-units": "37-3",
+@@ -61,7 +61,7 @@
+     "device-mapper": "2.03.44-1",
+     "diffutils": "3.12-2",
+     "disktree-bin": "0.11.0-3",
+-    "dkms": "3.4.4-1",
++    "dkms": "3.4.5-1",
+     "double-conversion": "3.4.0-1",
+     "duktape": "2.7.0-7",
+     "e2fsprogs": "1.47.4-1",
+@@ -86,7 +86,7 @@
+     "filesystem": "2025.10.12-1",
+     "findutils": "4.11.0-1",
+     "flac": "1.5.0-1",
+-    "flex": "2.6.4-6",
++    "flex": "2.6.10-1",
+     "fontconfig": "2:2.18.3-2",
+     "foot": "1.28.0-2",
+     "freeglut": "3.8.0-1",
+@@ -94,7 +94,7 @@
+     "fribidi": "1.0.18-1",
+     "fuse-common": "3.18.3-1",
+     "fuse3": "3.18.3-1",
+-    "fzf": "0.74.5-1",
++    "fzf": "0.75.0-1",
+     "gawk": "5.4.1-1",
+     "gc": "8.2.12-1",
+     "gcc": "16.2.1+r23+gd564253eb6c8-1",
+@@ -111,7 +111,7 @@
+     "gexiv2-common": "0.16.2-2",
+     "ghostscript": "10.08.0-1",
+     "giflib": "6.1.3-2",
+-    "git": "2.56.0-2",
++    "git": "2.56.1-1",
+     "glib-networking": "1:2.90.1-1",
+     "glib2": "2.90.1-1",
+     "glibc": "2.44+r50+g1848099f063e-1",
+@@ -128,7 +128,7 @@
+     "gnupg": "2.4.9-4",
+     "gnutls": "3.8.13-3",
+     "gobject-introspection-runtime": "1.86.0-2",
+-    "gperftools": "2.19.2-1",
++    "gperftools": "2.19.3-1",
+     "gpgme": "2.2.0-1",
+     "gpgmepp": "2.2.0-1",
+     "gpm": "1.20.7.r38.ge82d1a6-7",
+@@ -223,15 +223,15 @@
+     "libavc1394": "0.5.4-7",
+     "libavif": "1.4.2-1",
+     "libb2": "0.98.1-3",
+-    "libblockdev": "3.5.0-2",
+-    "libblockdev-crypto": "3.5.0-2",
+-    "libblockdev-fs": "3.5.0-2",
+-    "libblockdev-loop": "3.5.0-2",
+-    "libblockdev-mdraid": "3.5.0-2",
+-    "libblockdev-nvme": "3.5.0-2",
+-    "libblockdev-part": "3.5.0-2",
+-    "libblockdev-smart": "3.5.0-2",
+-    "libblockdev-swap": "3.5.0-2",
++    "libblockdev": "3.6.0-1",
++    "libblockdev-crypto": "3.6.0-1",
++    "libblockdev-fs": "3.6.0-1",
++    "libblockdev-loop": "3.6.0-1",
++    "libblockdev-mdraid": "3.6.0-1",
++    "libblockdev-nvme": "3.6.0-1",
++    "libblockdev-part": "3.6.0-1",
++    "libblockdev-smart": "3.6.0-1",
++    "libblockdev-swap": "3.6.0-1",
+     "libbluray": "1.5.1-1",
+     "libbpf": "1.8.0-1",
+     "libbs2b": "3.1.0-11",
+@@ -310,7 +310,7 @@
+     "libmms": "0.6.4-6",
+     "libmng": "2.0.3-4",
+     "libmnl": "1.0.5-2",
+-    "libmodplug": "0.8.9.0-7",
++    "libmodplug": "0.8.9.2-1",
+     "libmpc": "1.4.1-1",
+     "libmysofa": "1.3.5-1",
+     "libnautilus-extension": "51.1-1",
+@@ -334,7 +334,7 @@
+     "libogg": "1.3.6-1",
+     "libopenmpt": "0.8.10-1",
+     "libosinfo": "1.12.0-3",
+-    "libp11-kit": "0.26.5-1",
++    "libp11-kit": "0.26.6-1",
+     "libpaper": "2.2.8-1",
+     "libpcap": "1.11.0-1",
+     "libpciaccess": "0.19-1",
+@@ -434,20 +434,20 @@
+     "libzip": "1.11.4-2",
+     "licenses": "20240728-1",
+     "lilv": "0.28.0-1",
+-    "linux": "7.2.15.arch1-1",
++    "linux": "7.3.4.arch1-2",
+     "linux-api-headers": "7.3-1",
+-    "linux-headers": "7.2.15.arch1-1",
++    "linux-headers": "7.3.4.arch1-2",
+     "llhttp": "9.3.1-1",
+-    "llvm": "23.1.4-1",
+-    "llvm-libs": "23.1.4-1",
+-    "llvm-lit": "23.1.4-1",
++    "llvm": "23.1.5-1",
++    "llvm-libs": "23.1.5-1",
++    "llvm-lit": "23.1.5-1",
+     "lm_sensors": "1:3.6.2-1",
+     "lmdb": "0.9.35-1",
+     "localsearch": "3.12.0-1",
+     "lua": "5.5.1-1",
+     "lua51-lpeg": "1.1.0-5",
+     "lua54": "5.4.9-1",
+-    "luajit": "2.1.1794214635+c4b1e2f-1",
++    "luajit": "2.1.1794386141+63c8f1a-1",
+     "lv2": "1.18.10-2",
+     "lz4": "1:1.11.1-1",
+     "lzo": "2.10-5",
+@@ -456,12 +456,12 @@
+     "man-db": "2.13.1-2",
+     "md4c": "0.6.0-2",
+     "mdadm": "4.6-2",
+-    "mesa": "1:26.2.6-1",
++    "mesa": "1:26.2.7-1",
+     "ministream": "0.99.1-1",
+     "minizip": "1:1.4-1",
+     "mkinitcpio": "42.2-1",
+     "mkinitcpio-busybox": "1.36.1-1",
+-    "mobile-broadband-provider-info": "20251101-1",
++    "mobile-broadband-provider-info": "20261111-1",
+     "mpdecimal": "4.0.1-3",
+     "mpfr": "4.2.2-1",
+     "mpg123": "1.33.7-1",
+@@ -496,13 +496,13 @@
+     "opencore-amr": "0.1.6-2",
+     "openh264": "2.7.0-1",
+     "openjpeg2": "2.5.4-1",
+-    "openssh": "10.6p1-3",
++    "openssh": "10.6p2-1",
+     "openssl": "4.1.0-1",
+     "openssl-3": "3.5.9-2",
+     "opus": "1.6.1-1",
+     "orc": "0.4.44-1",
+     "osinfo-db": "20260812-1",
+-    "p11-kit": "0.26.5-1",
++    "p11-kit": "0.26.6-1",
+     "pacman": "7.1.0.r9.g54d9411-4",
+     "pacman-contrib": "1.13.1-1",
+     "pacman-mirrorlist": "20260610-1",
+@@ -547,7 +547,7 @@
+     "python-yaml": "6.0.3-2",
+     "qoi": "r350.4461cc3-1",
+     "qrencode": "4.1.1-4",
+-    "qt6-base": "6.12.0-4",
++    "qt6-base": "6.12.0-5",
+     "qt6-declarative": "6.12.0-4",
+     "qt6-imageformats": "6.12.0-1",
+     "qt6-multimedia": "6.12.0-1",
+@@ -566,7 +566,7 @@
+     "sdbus-cpp": "2.3.1-1",
+     "sddm": "0.21.0-7",
+     "sdl2-compat": "2.32.74-1",
+-    "sdl3": "3.4.18-1",
++    "sdl3": "3.4.20-1",
+     "seatd": "0.9.3-1",
+     "sed": "4.10-2",
+     "serd": "0.32.10-1",
+@@ -605,7 +605,7 @@
+     "tinysparql": "3.12.0-1",
+     "tinyxml2": "11.0.0-2",
+     "tmux": "3.8-1",
+-    "tomlplusplus": "3.4.0-2",
++    "tomlplusplus": "3.4.0-3",
+     "totem-pl-parser": "3.26.7-1",
+     "tpm2-tss": "4.2.1-2",
+     "tree-sitter": "0.26.9-1",
+@@ -622,7 +622,7 @@
+     "tzdata": "2026f-1",
+     "uchardet": "0.0.8-4",
+     "udiskie": "2.7.0-2",
+-    "udisks2": "2.11.2-1",
++    "udisks2": "2.12.0-1",
+     "unibilium": "2.1.4-1",
+     "unzip": "6.0-23",
+     "upower": "1.91.5-1",
+@@ -637,9 +637,9 @@
+     "vmaf": "3.2.1-1",
+     "volume_key": "0.3.12-12",
+     "vulkan-icd-loader": "1.4.363.0-1",
+-    "vulkan-mesa-implicit-layers": "1:26.2.6-1",
+-    "vulkan-swrast": "1:26.2.6-1",
+-    "vulkan-virtio": "1:26.2.6-1",
++    "vulkan-mesa-implicit-layers": "1:26.2.7-1",
++    "vulkan-swrast": "1:26.2.7-1",
++    "vulkan-virtio": "1:26.2.7-1",
+     "wayland": "1.26.0-1",
+     "wayland-protocols": "1.50-1",
+     "webrtc-audio-processing-1": "1.3-6",
+@@ -685,7 +685,7 @@
+     "yay": "13.0.1-1",
+     "yoga": "3.2.2-1",
+     "yyjson": "0.13.0-1",
+-    "zbar": "0.23.95-1",
++    "zbar": "0.23.95-3",
+     "zeromq": "4.3.5-3",
+     "zimg": "3.0.6-2",
+     "zix": "0.8.2-1",
+-- 
+2.56.0
+
