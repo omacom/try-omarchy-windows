@@ -600,7 +600,7 @@ int main(void)
     w.io_event = WSACreateEvent();
 
     /* Transfers in both directions. */
-    char out[3] = "abc", in[3] = {0};
+    char out[3] = {'a', 'b', 'c'}, in[3] = {0};
     if (send((SOCKET)fds[1], out, 3, 0) != 3 || !server_worker_recv(&w, in, 3) || memcmp(in, out, 3))
         return fail("worker recv failed");
     if (!server_worker_send(&w, out, 3) || recv((SOCKET)fds[1], in, 3, MSG_WAITALL) != 3)
