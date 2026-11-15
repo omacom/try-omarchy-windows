@@ -291,3 +291,20 @@ missing defaults, other errors, COM and loader failures, and released objects.
 `test-sdl-audio.py` and `test-sdl-capture.py` cover the open preflight, the
 fallback and single reports. An endpoint removed after the check can still enter SDL's
 wait once; the backoff keeps it from repeating.
+
+`0026-hold-sdl-windows-for-the-launcher.patch` lets the launcher hide a
+display window before it is ever on screen (#413). While Omarchy boots, the
+launcher hides QEMU's window with an empty window region and no frame.
+Windows carries out those calls on QEMU's main thread, which goes on setting
+up the machine for a second or more after it creates the window and handles
+no window messages until then, so the window SDL had just shown stayed on
+screen, an empty frame, for that time. With `OMARCHY_SDL_HOLD_WINDOWS_MS`
+set, SDL creates a display window hidden and QEMU marks it with the
+`TryOmarchy.HeldWindow` window property; the launcher shows it once it has
+hidden it. A window still hidden that many milliseconds (at most 60 s) after
+QEMU first handled window messages shows itself, so a launcher that never
+shows it cannot leave it invisible. Consoles QEMU hides itself, and the
+hidden window it creates to check for dma-buf support, are left alone.
+`test-sdl-held-window.py` compiles the hold, the launcher's show, the
+fallback and a window that cannot be marked against mocked SDL and Win32
+calls, and checks where `sdl2.c` calls them.

@@ -28,7 +28,10 @@ const (
 	curtainSessionWait = 60 * time.Second
 	// From the start of the boot, whatever else happened.
 	curtainBootWait = 180 * time.Second
-	// When the setup window starts saying that this is taking a while.
+	// A boot whose desktop session has not started this long after the boot
+	// started is slower than usual, and the setup window says so. The session
+	// started about 25 to 37 seconds in on a Ryzen Embedded PC and in a
+	// nested VM with CPU rendering.
 	curtainSlowNotice = 60 * time.Second
 )
 
@@ -113,6 +116,23 @@ func (t bootCurtainTimes) liftReason(now time.Time) string {
 	return ""
 }
 
+// slowStart reports whether the setup window should say that Omarchy is
+// taking longer than usual. Once the session has started, the curtain lifts
+// on the drawn report or curtainDrawWait later, both normal for the guest
+// that is running, so only a session that started late keeps the notice up:
+// it has been showing since curtainSlowNotice, and turning it off then would
+// make the start look normal again. A session that never starts lifts the
+// curtain on curtainSessionWait or curtainBootWait, and those starts are slow.
+func (t bootCurtainTimes) slowStart(now time.Time) bool {
+	if t.boot.IsZero() {
+		return false
+	}
+	if t.session.IsZero() {
+		return now.Sub(t.boot) >= curtainSlowNotice
+	}
+	return t.session.Sub(t.boot) >= curtainSlowNotice
+}
+
 // blankDesktopDue reports whether a window that never showed the desktop has
 // been watched long enough to ask the user about it. blind is
 // hostCapture.blindTime(now): time the screen could not be seen (display
@@ -146,6 +166,47 @@ func shownWindowRects(now screenRect, maximized bool, work, frame screenRect) (o
 	}
 	client = screenRect{outer.Left + frame.Left, outer.Top + frame.Top, outer.Right - frame.Right, outer.Bottom - frame.Bottom}
 	return outer, client
+}
+
+// frameless takes a framed window rectangle to the client area it has, for a
+// window the curtain keeps without its frame.
+func frameless(outer, frame screenRect) screenRect {
+	return screenRect{outer.Left + frame.Left, outer.Top + frame.Top, outer.Right - frame.Right, outer.Bottom - frame.Bottom}
+}
+
+// covers reports whether r covers all of bounds. A window that covers its
+// monitor can count as a full-screen app to Windows, which then changes how
+// the display is driven: the hidden window must never do that (#413).
+func (r screenRect) covers(bounds screenRect) bool {
+	return r.Left <= bounds.Left && r.Top <= bounds.Top && r.Right >= bounds.Right && r.Bottom >= bounds.Bottom
+}
+
+// hiddenWindowOffMonitor says where a hidden, frameless window that covers its
+// monitor goes instead: the client area it will have when shown (client, if
+// the curtain placed it), else that of a maximized window on the monitor's
+// work area. ok is false when the window does not cover the monitor.
+func hiddenWindowOffMonitor(now screenRect, monitor hostMonitor, frame, client screenRect, knowClient bool) (screenRect, bool) {
+	if !now.covers(monitor.Bounds) {
+		return screenRect{}, false
+	}
+	if !knowClient {
+		_, client = shownWindowRects(now, true, monitor.Work, frame)
+	}
+	return client, client != now && !client.covers(monitor.Bounds)
+}
+
+// curtainFrameBack is the frame style the curtain gives back at the lift: the
+// bits it took off (frame) when the window had style hidden, now that it has
+// style now. A window QEMU holds is created with a frame even for a full
+// screen start, and SDL makes it a full screen popup only once it is shown,
+// behind the curtain. That window has no frame to give back: with one, its
+// client area and the guest's display shrink and the guest redraws (#415).
+func curtainFrameBack(frame, hidden, now uintptr) uintptr {
+	const popup = 0x80000000 // WS_POPUP
+	if now&popup != 0 && hidden&popup == 0 {
+		return 0
+	}
+	return frame
 }
 
 var (

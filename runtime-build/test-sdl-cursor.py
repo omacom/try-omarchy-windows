@@ -118,6 +118,7 @@ static void qemu_system_shutdown_request(int reason) {}
 static void SDL_HideWindow(SDL_Window *w) {}
 static void SDL_QuitSubSystem(int s) {}
 static void win_pinch_destroy(struct sdl2_console *s) {}
+static void win_hold_release(struct sdl2_console *s, bool show) {}
 static void SDL_GL_DeleteContext(void *ctx) {}
 static void SDL_DestroyRenderer(void *renderer) {}
 static void SDL_DestroyWindow(SDL_Window *w) {if (focus==w) focus=NULL;}

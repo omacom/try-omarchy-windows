@@ -278,6 +278,8 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		return 1
 	}
 	if visible, _, _ := procIsWindowVisible.Call(hwnd); visible == 0 {
+		// In case the window hooks missed it.
+		releaseHeldWindow(hwnd)
 		return 1
 	}
 	enumTitleSeen[hwnd] = true
@@ -303,10 +305,14 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		enumTitleWindows[hwnd] = state
 		if !enumTitleFullscreen {
 			placement := displayPlacement(enumTitleDir, index, enumTitleMonitorDetails)
-			if placement == nil || !applyPlacement(hwnd, placement) {
+			state.last, state.target = placement, placement
+			// A window the curtain hid before it was shown has no frame;
+			// the curtain places it and the placement follows the lift.
+			if target := placeConcealedWindow(hwnd, placement); target != nil {
+				state.target = target
+			} else if placement == nil || !applyPlacement(hwnd, placement) {
 				procShowWindow.Call(hwnd, swShowMaximized)
 			}
-			state.last, state.target = placement, placement
 		}
 		if enumTitleFullscreen {
 			monitors := enumTitleMonitorDetails
@@ -358,6 +364,12 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		}
 		if p := placementAfterCurtain(now, state.target); p != nil {
 			if p.Maximized && !now.Maximized {
+				// Maximize first, then give the window its restore
+				// rectangle. Setting both at once on a restored window
+				// shows it at that rectangle for a moment, and a window
+				// the curtain placed is already where a maximized one
+				// goes, so this way it does not move at all.
+				procShowWindow.Call(hwnd, swShowMaximized)
 				state.concealed = !applyPlacement(hwnd, p)
 			} else {
 				state.concealed = !correctPlacement(hwnd, p)

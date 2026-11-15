@@ -56,6 +56,65 @@ func TestBootCurtainWaitsForAMissingSessionAndASlowBoot(t *testing.T) {
 	}
 }
 
+func TestBootCurtainSlowNoticeWaitsOutANormalStart(t *testing.T) {
+	boot := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
+	// An older guest on the AMD PC: the session at 26 s, no drawn report, so
+	// the curtain lifts on the draw wait 66 s after the boot. Every look until
+	// then is part of a normal start.
+	old := bootCurtainTimes{boot: boot, ready: boot.Add(17 * time.Second), session: boot.Add(26 * time.Second)}
+	for at := time.Duration(0); at <= 26*time.Second+curtainDrawWait; at += 250 * time.Millisecond {
+		now := boot.Add(at)
+		if at < 26*time.Second {
+			old.session = time.Time{}
+		} else {
+			old.session = boot.Add(26 * time.Second)
+		}
+		if old.liftReason(now) != "" {
+			break
+		}
+		if old.slowStart(now) {
+			t.Fatalf("said the start is slow %v after the boot, before a normal lift", at)
+		}
+	}
+	if old.liftReason(boot.Add(26*time.Second+curtainDrawWait)) == "" {
+		t.Fatal("the old guest's start never lifted the curtain")
+	}
+	// The latest session a normal start has still lifts on the draw wait
+	// without the notice.
+	late := bootCurtainTimes{boot: boot, session: boot.Add(curtainSlowNotice - time.Second)}
+	if late.slowStart(late.session.Add(curtainDrawWait - time.Second)) {
+		t.Fatal("said a session that started in time is slow")
+	}
+}
+
+func TestBootCurtainSlowNoticeForSlowStarts(t *testing.T) {
+	boot := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
+	if (bootCurtainTimes{}).slowStart(boot.Add(time.Hour)) {
+		t.Fatal("said a boot that has not started is slow")
+	}
+	// No session: firmware, a disk check, a login screen or a broken config.
+	stuck := bootCurtainTimes{boot: boot}
+	if stuck.slowStart(boot.Add(curtainSlowNotice - time.Second)) {
+		t.Fatal("said the start is slow before the notice wait")
+	}
+	if !stuck.slowStart(boot.Add(curtainSlowNotice)) {
+		t.Fatal("kept quiet about a boot with no session after the notice wait")
+	}
+	ready := bootCurtainTimes{boot: boot, ready: boot.Add(30 * time.Second)}
+	at := boot.Add(curtainSlowNotice)
+	if ready.liftReason(at) != "" || !ready.slowStart(at) {
+		t.Fatal("kept quiet about a session that has not started while the curtain waits for it")
+	}
+	// A session that started late keeps the notice the setup window already
+	// shows until the lift, instead of taking it back.
+	late := bootCurtainTimes{boot: boot, ready: boot.Add(50 * time.Second), session: boot.Add(75 * time.Second)}
+	for _, now := range []time.Time{boot.Add(75 * time.Second), boot.Add(75*time.Second + curtainDrawWait - time.Second)} {
+		if late.liftReason(now) != "" || !late.slowStart(now) {
+			t.Fatalf("dropped the notice for a late session at %v", now.Sub(boot))
+		}
+	}
+}
+
 func TestShownWindowRects(t *testing.T) {
 	// A 1280x800 monitor with a 48 pixel taskbar, and Windows 11's frame at
 	// 100%: 8 pixel borders and a 23 pixel title bar.
@@ -247,5 +306,68 @@ func TestDesktopStreakIgnoresTimeWithoutLooks(t *testing.T) {
 	}
 	if !streak.look(restored.Add(desktopSteadyWait), true) {
 		t.Fatal("looks after the gap did not count")
+	}
+}
+
+func TestFramelessPlacementIsTheShownClientArea(t *testing.T) {
+	// The AMD PC's frame at 100%: 8 pixel borders and a 31 pixel title bar
+	// with the top border. A saved 200,100,1480,860 window shows a 1264x721
+	// client area; the hidden frameless window must get exactly that, not one
+	// frame less (1248x682, #413).
+	frame := screenRect{8, 31, 8, 8}
+	client := frameless(screenRect{200, 100, 1480, 860}, frame)
+	if client != (screenRect{208, 131, 1472, 852}) || client.width() != 1264 || client.height() != 721 {
+		t.Fatalf("client %v (%dx%d)", client, client.width(), client.height())
+	}
+	if _, shown := shownWindowRects(screenRect{200, 100, 1480, 860}, false, screenRect{}, frame); shown != client {
+		t.Fatalf("frameless %v and shownWindowRects %v disagree", client, shown)
+	}
+}
+
+func TestHiddenWindowNeverCoversItsMonitor(t *testing.T) {
+	monitor := hostMonitor{Bounds: screenRect{0, 0, 1920, 1080}, Work: screenRect{0, 0, 1920, 1032}, Primary: true}
+	frame := screenRect{8, 31, 8, 8}
+	// A frameless window Windows maximized, or QEMU sized to the guest's
+	// 1920x1080 display at 0,0: it goes to a maximized window's client area.
+	for _, now := range []screenRect{{0, 0, 1920, 1080}, {-8, -8, 1928, 1088}} {
+		target, move := hiddenWindowOffMonitor(now, monitor, frame, screenRect{}, false)
+		if !move || target != (screenRect{0, 23, 1920, 1032}) || target.covers(monitor.Bounds) {
+			t.Fatalf("%v: move %v to %v", now, move, target)
+		}
+	}
+	// One the curtain placed goes back to its own client area.
+	placed := screenRect{208, 131, 1472, 852}
+	if target, move := hiddenWindowOffMonitor(screenRect{0, 0, 1920, 1080}, monitor, frame, placed, true); !move || target != placed {
+		t.Fatalf("placed window: move %v to %v", move, target)
+	}
+	// The usual hidden rectangles are left alone.
+	for _, now := range []screenRect{{0, 23, 1920, 1032}, {0, 0, 1920, 1001}, {208, 131, 1472, 852}, {-8, -8, 1928, 1040}} {
+		if _, move := hiddenWindowOffMonitor(now, monitor, frame, screenRect{}, false); move {
+			t.Fatalf("moved %v", now)
+		}
+	}
+	// A second monitor to the left.
+	left := hostMonitor{Bounds: screenRect{-1920, 0, 0, 1080}, Work: screenRect{-1920, 0, 0, 1040}}
+	if target, move := hiddenWindowOffMonitor(left.Bounds, left, frame, screenRect{}, false); !move || target != (screenRect{-1920, 23, 0, 1040}) {
+		t.Fatalf("left monitor: move %v to %v", move, target)
+	}
+}
+
+func TestCurtainFrameBackSkipsAWindowThatWentFullScreen(t *testing.T) {
+	const (
+		normal     = 0x16CA0000 // QEMU's window as SDL creates it, held
+		fullscreen = 0x96000000 // after SDL made it a full screen popup
+		frame      = 0x00CA0000
+	)
+	if got := curtainFrameBack(frame, normal, normal&^frame); got != frame {
+		t.Fatalf("windowed window: frame back %#x, want %#x", got, frame)
+	}
+	if got := curtainFrameBack(frame, normal, fullscreen); got != 0 {
+		t.Fatalf("window that went full screen behind the curtain: frame back %#x, want 0", got)
+	}
+	// Full screen from the start, as with a runtime that does not hold
+	// its windows: whatever the curtain took off goes back.
+	if got := curtainFrameBack(0x00020000, fullscreen|0x00020000, fullscreen); got != 0x00020000 {
+		t.Fatalf("full screen window: frame back %#x, want 0x20000", got)
 	}
 }

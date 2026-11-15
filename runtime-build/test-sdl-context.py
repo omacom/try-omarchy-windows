@@ -61,6 +61,8 @@ static void SDL_GL_SetSwapInterval(int interval) {}
 static int SDL_CreateRenderer(int window, int index, int flags) { return 1; }
 static void sdl_update_caption(struct sdl2_console *s) {}
 static void win_pinch_create(struct sdl2_console *s) {}
+static int win_hold_flags(struct sdl2_console *s) { return 0; }
+static void win_hold_window(struct sdl2_console *s) {}
 ''' + create + r'''
 int main(void) {
     struct options opts = {0};
