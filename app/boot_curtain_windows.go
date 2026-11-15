@@ -80,7 +80,10 @@ type curtainWindow struct {
 	// curtain shrank it to its old client area; resized says it did.
 	outer, client screenRect
 	resized       bool
-	tabRemoved    bool
+	// tabRemoved says the curtain took the window's taskbar button off;
+	// tabFirst and tabLast are when it first and last did (curtainTaskbar).
+	tabRemoved        bool
+	tabFirst, tabLast time.Time
 	// border is the size of the frame on each side, and bordered says it
 	// was measured. fitted is set once the window has been given the client
 	// area it will have when shown (fitCurtainWindows).
@@ -505,14 +508,21 @@ func forgetCurtainWindow(hwnd uintptr) {
 }
 
 // curtainTaskbar takes the concealed window's button off the taskbar. It
-// runs after the title enforcer gives the window its taskbar identity, which
-// would otherwise bring the button back.
+// runs on each title enforcer pass, after the first one gives the window its
+// taskbar identity, which would otherwise bring the button back. The taskbar
+// takes that identity up a moment later and can then show the button again,
+// so the button is taken off again for a while (curtainTabDeleteDue).
 func curtainTaskbar(hwnd uintptr) {
+	now := time.Now()
 	curtainMu.Lock()
 	window := curtainWindows[hwnd]
-	remove := window != nil && !window.tabRemoved
+	remove := window != nil && curtainTabDeleteDue(window.tabFirst, window.tabLast, now)
 	if remove {
 		window.tabRemoved = true
+		if window.tabFirst.IsZero() {
+			window.tabFirst = now
+		}
+		window.tabLast = now
 	}
 	curtainMu.Unlock()
 	if remove {

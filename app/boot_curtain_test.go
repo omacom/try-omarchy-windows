@@ -371,3 +371,27 @@ func TestCurtainFrameBackSkipsAWindowThatWentFullScreen(t *testing.T) {
 		t.Fatalf("full screen window: frame back %#x, want 0x20000", got)
 	}
 }
+
+func TestCurtainTabDeleteRepeatsWhileTheTaskbarSettles(t *testing.T) {
+	start := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	if !curtainTabDeleteDue(time.Time{}, time.Time{}, start) {
+		t.Fatal("the first pass must take the button off")
+	}
+	at := func(d time.Duration) time.Time { return start.Add(d) }
+	cases := []struct {
+		last, now time.Duration
+		want      bool
+	}{
+		{0, 250 * time.Millisecond, false}, // the next pass, too soon
+		{0, time.Second, true},             // the taskbar may have put it back
+		{time.Second, 1500 * time.Millisecond, false},
+		{4 * time.Second, 5 * time.Second, true},
+		{5 * time.Second, 6 * time.Second, false}, // settled
+		{0, time.Minute, false},
+	}
+	for _, c := range cases {
+		if got := curtainTabDeleteDue(start, at(c.last), at(c.now)); got != c.want {
+			t.Errorf("last %v now %v: due %v, want %v", c.last, c.now, got, c.want)
+		}
+	}
+}

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The taskbar shows one Try Omarchy button while Omarchy starts. A second
+  button for the still hidden window could appear and stay until the window
+  was shown.
 - `omarchy refresh pacman`, switching the Omarchy channel and reinstalling
   Omarchy's packages finish again instead of failing on a dependency error.
   They had replaced the package setup with Omarchy's own, which left out Try
