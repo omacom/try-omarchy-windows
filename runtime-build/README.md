@@ -71,6 +71,32 @@ match an invariant output, because GLSL 4.30 rejects it on inputs.
 `test-ssbo-glsl430.py <patched-renderer-source>` covers the switch, the
 version choice and invariant inputs against fake shader configs.
 
+`0009-join-venus-workers-without-the-workers-lock.patch` keeps Omarchy from
+freezing when a Vulkan app closes and another one starts (#407). On Windows
+the render server runs inside QEMU, with a thread per Vulkan context. When an
+app closed, the server waited for that context's thread to finish while
+holding the lock on its list of contexts. Destroying the context waits for its
+queue threads, and a queue thread that was just signaling a fence needed that
+same lock. Nothing moved again, and the next Vulkan app froze the whole guest
+because QEMU waits for the server to create its context. The server now takes
+the context off the list, lets go of the lock, and then waits. A fence that
+signals after that is dropped: QEMU has stopped reading the context's fences
+by then. The context's socket used to be closed twice, by the server to wake
+the thread and by the thread itself, and a thread still busy with a command
+could then use a handle value Windows had already given to another socket.
+Now the server sets a stop event instead. The thread's socket reads and
+writes are overlapped and wait for either their completion or that event, so
+a thread blocked in a read wakes at once and a busy one stops before its next
+read. The server closes the socket once, after the thread has finished.
+(`shutdown()` does not wake a blocked read on Windows while QEMU's end is
+open.) `test-venus-worker-destroy.py <patched-renderer-source>` runs the
+actual worker thread and teardown code with real threads and fake sockets,
+under ThreadSanitizer on Linux: destroying, resetting or exiting while a
+fence is being retired, a worker busy in a command, repeated destroys and a
+worker whose peer already hung up, with each socket closed exactly once and
+never used after. Under MSYS2 it also runs the worker's socket transfers on
+the real loopback pair.
+
 `test-image-capabilities.py <patched-renderer-source>` compiles the actual image
 dispatch against mocked Vulkan entry points. It runs on Linux or MSYS2 without
 a GPU or desktop and covers capability rejection, usable fallback masks,
