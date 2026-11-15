@@ -364,6 +364,12 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		}
 		if p := placementAfterCurtain(now, state.target); p != nil {
 			if p.Maximized && !now.Maximized {
+				// Maximize first, then give the window its restore
+				// rectangle. Setting both at once on a restored window
+				// shows it at that rectangle for a moment, and a window
+				// the curtain placed is already where a maximized one
+				// goes, so this way it does not move at all.
+				procShowWindow.Call(hwnd, swShowMaximized)
 				state.concealed = !applyPlacement(hwnd, p)
 			} else {
 				state.concealed = !correctPlacement(hwnd, p)
