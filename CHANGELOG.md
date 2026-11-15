@@ -10,6 +10,10 @@
   downgrades nothing. Existing installs get the fixed refresh on their next
   start, before **Update > Omarchy**, and an install a failed refresh had left
   that way is put back on its next start (#408).
+- Ghostty opens on Intel graphics. There the graphics layer offers OpenGL 4.2,
+  one version short of what Ghostty asks for, so no window appeared. Ghostty
+  now starts with 4.3 on those PCs, however it is opened, and nothing changes
+  for other apps or other PCs (#383).
 
 ## v0.15.0 - 2026-11-10
 

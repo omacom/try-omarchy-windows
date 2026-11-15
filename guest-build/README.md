@@ -172,6 +172,26 @@ runtimes that step leaves alone, such as 4.0.4. A healthy disk is read and not
 written, in about 5 ms, and the leave-alone rules are unchanged. Compatibility
 revision 73 delivers it; the runtime package is unchanged.
 
+Patch 0186 opens Ghostty where virgl offers only an OpenGL 4.2 core profile,
+as on Intel UHD 770 (#383). Ghostty asks EGL for 4.3, gets BadMatch and shows
+no window; with `MESA_GL_VERSION_OVERRIDE=4.3 MESA_GLSL_VERSION_OVERRIDE=430`
+it draws correctly. `ghostty-gl` decides once per login: CPU rendering is left
+alone, otherwise a surfaceless EGL probe finds the highest core profile the
+renderer creates, and only 4.2 gets the override. The answer is kept in
+`$XDG_RUNTIME_DIR`, so a new host GPU or render mode is probed again. A probe
+that fails or times out (5 seconds) saves nothing and the next start probes
+again; starts that race share one probe, and for ten seconds after a failure
+they open Ghostty without probing. The probe needs only the render node, not
+the compositor. Launchers
+start Ghostty by D-Bus activation of `app-com.mitchellh.ghostty.service`, which
+gets a drop-in that reads the answer. Every other start (xdg-terminal-exec, the
+screensaver, a typed `ghostty`, the unit's own `ExecStart`) runs a bare
+`ghostty`, so `/usr/local/bin/ghostty` links to a wrapper that applies it. A
+pacman hook keeps that link only while Ghostty is installed, so Omarchy still
+offers to install it, and catch-up sets it at every boot. The override reaches
+Ghostty and the programs started in its windows, not the rest of the session.
+Compatibility revision 74 delivers it; the runtime package is unchanged.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME
