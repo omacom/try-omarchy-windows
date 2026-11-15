@@ -237,3 +237,26 @@ func TestPlacementBeforeFullscreenSkipsTheTransitionSave(t *testing.T) {
 		t.Fatalf("nothing earlier: got %v, want the latest placement", got)
 	}
 }
+
+// A window the curtain hides when the display mode shrinks is placed for the
+// new mode as the repair after the lift would place it, so the lift does not
+// resize it again.
+func TestHiddenWindowPlacementFollowsAModeChange(t *testing.T) {
+	small := []hostMonitor{{Bounds: screenRect{0, 0, 1024, 768}, Work: screenRect{0, 0, 1024, 720}, Primary: true}}
+	target := &windowPlacement{Schema: 1, Normal: screenRect{40, 40, 1240, 740}}
+	fitted := repairDisplayPlacement(target, 0, small)
+	if fitted == nil {
+		t.Fatal("restored window: no placement")
+	}
+	// Its invisible borders may overhang the work area, as a shown window's do.
+	if n := fitted.Normal; fitted.Maximized || n.Left < -8 || n.Top < 0 || n.Right > 1032 || n.Bottom > 728 {
+		t.Fatalf("restored window: fitted to %+v", fitted)
+	}
+	if again := repairDisplayPlacement(fitted, 0, small); again == nil || !again.sameAs(fitted) {
+		t.Fatalf("the repair after the lift moves it again: %+v to %+v", fitted, again)
+	}
+	maximized := &windowPlacement{Schema: 1, Normal: screenRect{24, 24, 1256, 728}, Maximized: true}
+	if fitted := repairDisplayPlacement(maximized, 0, small); fitted == nil || !fitted.Maximized {
+		t.Fatalf("maximized window: fitted to %+v", fitted)
+	}
+}

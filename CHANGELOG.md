@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A display mode or taskbar change while Omarchy starts no longer leaves the
+  window the wrong size when it appears. The hidden window now moves to where
+  it will be shown on the new layout, so Omarchy's desktop is drawn at that
+  size before the window appears instead of redrawing black right after.
 - The taskbar shows one Try Omarchy button while Omarchy starts. A second
   button for the still hidden window could appear and stay until the window
   was shown.

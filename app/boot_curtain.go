@@ -184,15 +184,19 @@ func (r screenRect) covers(bounds screenRect) bool {
 // hiddenWindowOffMonitor says where a hidden, frameless window that covers its
 // monitor goes instead: the client area it will have when shown (client, if
 // the curtain placed it), else that of a maximized window on the monitor's
-// work area. ok is false when the window does not cover the monitor.
-func hiddenWindowOffMonitor(now screenRect, monitor hostMonitor, frame, client screenRect, knowClient bool) (screenRect, bool) {
+// work area, with outer the framed rectangle around it then (left zero for a
+// placed window, whose own is kept). Windows maximizes a frameless window
+// over the whole monitor, also when the display mode or the work area
+// changes while the curtain is up. ok is false when the window does not
+// cover the monitor.
+func hiddenWindowOffMonitor(now screenRect, monitor hostMonitor, frame, client screenRect, knowClient bool) (outer, target screenRect, ok bool) {
 	if !now.covers(monitor.Bounds) {
-		return screenRect{}, false
+		return screenRect{}, screenRect{}, false
 	}
 	if !knowClient {
-		_, client = shownWindowRects(now, true, monitor.Work, frame)
+		outer, client = shownWindowRects(now, true, monitor.Work, frame)
 	}
-	return client, client != now && !client.covers(monitor.Bounds)
+	return outer, client, client != now && !client.covers(monitor.Bounds)
 }
 
 // curtainFrameBack is the frame style the curtain gives back at the lift: the
