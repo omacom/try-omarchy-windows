@@ -383,7 +383,7 @@ func TestCurtainFrameBackSkipsAWindowThatWentFullScreen(t *testing.T) {
 	}
 }
 
-func TestCurtainTabDeleteRepeatsWhileTheTaskbarSettles(t *testing.T) {
+func TestCurtainTabDeleteRepeatsUntilTheLift(t *testing.T) {
 	start := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
 	if !curtainTabDeleteDue(time.Time{}, time.Time{}, start) {
 		t.Fatal("the first pass must take the button off")
@@ -393,12 +393,13 @@ func TestCurtainTabDeleteRepeatsWhileTheTaskbarSettles(t *testing.T) {
 		last, now time.Duration
 		want      bool
 	}{
-		{0, 250 * time.Millisecond, false}, // the next pass, too soon
-		{0, time.Second, true},             // the taskbar may have put it back
-		{time.Second, 1500 * time.Millisecond, false},
-		{4 * time.Second, 5 * time.Second, true},
-		{5 * time.Second, 6 * time.Second, false}, // settled
-		{0, time.Minute, false},
+		{0, 100 * time.Millisecond, false},                // a burst of window events, too soon
+		{0, 250 * time.Millisecond, true},                 // the next enforcer pass
+		{4750 * time.Millisecond, 5 * time.Second, true},  // still settling
+		{5 * time.Second, 5500 * time.Millisecond, false}, // settled: at a low rate now
+		{5 * time.Second, 10 * time.Second, true},         // a taskbar that took it up late
+		{55 * time.Second, 58 * time.Second, false},
+		{55 * time.Second, time.Minute, true},
 	}
 	for _, c := range cases {
 		if got := curtainTabDeleteDue(start, at(c.last), at(c.now)); got != c.want {

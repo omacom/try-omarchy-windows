@@ -521,7 +521,7 @@ var curtainTabMu sync.Mutex
 // runs on each title enforcer pass, after the first one gives the window its
 // taskbar identity, which would otherwise bring the button back. The taskbar
 // takes that identity up a moment later and can then show the button again,
-// so the button is taken off again for a while (curtainTabDeleteDue).
+// so the button is taken off again until the lift (curtainTabDeleteDue).
 func curtainTaskbar(hwnd uintptr) {
 	// The lift adds the button back under the same lock, so a delete cannot
 	// land after it: once the curtain is down the window is no longer in

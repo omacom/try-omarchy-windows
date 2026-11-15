@@ -214,14 +214,18 @@ func curtainFrameBack(frame, hidden, now uintptr) uintptr {
 }
 
 // After a hidden window's taskbar button is first taken off, it is taken off
-// again every curtainTabInterval until curtainTabSettle has passed. The
-// taskbar applies the window's new identity asynchronously and puts the
-// button back when a delete came first: on a test VM, 24 of 30 windows kept
-// their button after an immediate delete, none when the delete came 500 ms
-// later or was repeated after 1.5 s.
+// again every curtainTabInterval until curtainTabSettle has passed, and then
+// every curtainTabLateInterval until the lift. The taskbar applies the
+// window's new identity asynchronously and puts the button back when a
+// delete came first: on a test VM, 24 of 30 windows kept their button after
+// an immediate delete, none when the delete came 500 ms later or was repeated
+// after 1.5 s. A button put back shows until the next delete, so the deletes
+// come at the title enforcer's pace while the taskbar settles; the late ones
+// cover a taskbar that takes the identity up later still.
 const (
-	curtainTabInterval = time.Second
-	curtainTabSettle   = 5 * time.Second
+	curtainTabInterval     = 250 * time.Millisecond
+	curtainTabSettle       = 5 * time.Second
+	curtainTabLateInterval = 5 * time.Second
 )
 
 // curtainTabDeleteDue reports whether the curtain should take a hidden
@@ -230,7 +234,10 @@ func curtainTabDeleteDue(first, last, now time.Time) bool {
 	if first.IsZero() {
 		return true
 	}
-	return now.Sub(first) <= curtainTabSettle && now.Sub(last) >= curtainTabInterval
+	if now.Sub(first) <= curtainTabSettle {
+		return now.Sub(last) >= curtainTabInterval
+	}
+	return now.Sub(last) >= curtainTabLateInterval
 }
 
 var (
