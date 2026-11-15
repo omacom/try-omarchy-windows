@@ -347,15 +347,21 @@ func keepOffMonitor() {
 		if !ok {
 			continue
 		}
-		target, move := hiddenWindowOffMonitor(now, monitor, c.frame, c.client, c.knowClient)
+		outer, target, move := hiddenWindowOffMonitor(now, monitor, c.frame, c.client, c.knowClient)
 		if !move {
 			continue
 		}
 		setWindowFrameRect(c.hwnd, target)
+		curtainMu.Lock()
+		c.window.offMonitor = true
+		if !c.knowClient {
+			// The lift puts the frame back around this area. Without this
+			// it keeps the area from before a display change and leaves the
+			// shown window a frame too small.
+			c.window.outer, c.window.client, c.window.resized = outer, target, true
+		}
+		curtainMu.Unlock()
 		if !c.logged {
-			curtainMu.Lock()
-			c.window.offMonitor = true
-			curtainMu.Unlock()
 			logf("startup: the hidden window covered its monitor; moved it to %dx%d", target.width(), target.height())
 		}
 	}

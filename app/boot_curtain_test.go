@@ -330,25 +330,36 @@ func TestHiddenWindowNeverCoversItsMonitor(t *testing.T) {
 	// A frameless window Windows maximized, or QEMU sized to the guest's
 	// 1920x1080 display at 0,0: it goes to a maximized window's client area.
 	for _, now := range []screenRect{{0, 0, 1920, 1080}, {-8, -8, 1928, 1088}} {
-		target, move := hiddenWindowOffMonitor(now, monitor, frame, screenRect{}, false)
+		outer, target, move := hiddenWindowOffMonitor(now, monitor, frame, screenRect{}, false)
 		if !move || target != (screenRect{0, 23, 1920, 1032}) || target.covers(monitor.Bounds) {
 			t.Fatalf("%v: move %v to %v", now, move, target)
+		}
+		// The lift frames it as a maximized window.
+		if outer != (screenRect{-8, -8, 1928, 1040}) || frameless(outer, frame) != target {
+			t.Fatalf("%v: framed at %v around %v", now, outer, target)
 		}
 	}
 	// One the curtain placed goes back to its own client area.
 	placed := screenRect{208, 131, 1472, 852}
-	if target, move := hiddenWindowOffMonitor(screenRect{0, 0, 1920, 1080}, monitor, frame, placed, true); !move || target != placed {
+	if _, target, move := hiddenWindowOffMonitor(screenRect{0, 0, 1920, 1080}, monitor, frame, placed, true); !move || target != placed {
 		t.Fatalf("placed window: move %v to %v", move, target)
 	}
 	// The usual hidden rectangles are left alone.
 	for _, now := range []screenRect{{0, 23, 1920, 1032}, {0, 0, 1920, 1001}, {208, 131, 1472, 852}, {-8, -8, 1928, 1040}} {
-		if _, move := hiddenWindowOffMonitor(now, monitor, frame, screenRect{}, false); move {
+		if _, _, move := hiddenWindowOffMonitor(now, monitor, frame, screenRect{}, false); move {
 			t.Fatalf("moved %v", now)
 		}
 	}
+	// After the display mode changed behind the curtain (1280x800 to
+	// 1024x768), Windows maximized the frameless window over the new mode.
+	small := hostMonitor{Bounds: screenRect{0, 0, 1024, 768}, Work: screenRect{0, 0, 1024, 720}, Primary: true}
+	if outer, target, move := hiddenWindowOffMonitor(small.Bounds, small, frame, screenRect{}, false); !move ||
+		target != (screenRect{0, 23, 1024, 720}) || outer != (screenRect{-8, -8, 1032, 728}) {
+		t.Fatalf("after a mode change: move %v to %v framed at %v", move, target, outer)
+	}
 	// A second monitor to the left.
 	left := hostMonitor{Bounds: screenRect{-1920, 0, 0, 1080}, Work: screenRect{-1920, 0, 0, 1040}}
-	if target, move := hiddenWindowOffMonitor(left.Bounds, left, frame, screenRect{}, false); !move || target != (screenRect{-1920, 23, 0, 1040}) {
+	if _, target, move := hiddenWindowOffMonitor(left.Bounds, left, frame, screenRect{}, false); !move || target != (screenRect{-1920, 23, 0, 1040}) {
 		t.Fatalf("left monitor: move %v to %v", move, target)
 	}
 }

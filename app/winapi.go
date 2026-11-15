@@ -353,6 +353,14 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	// is recorded above and repaired once the curtain lifts.
 	if curtainConcealed(hwnd) {
 		state.concealed = true
+		// After a display mode or work area change the hidden window goes
+		// where it will be shown on the new layout, so the guest draws its
+		// desktop at that size and does not redraw it at the lift.
+		if known && enumTitleTopologyChanged && !enumTitleFullscreen && state.target != nil {
+			if target := placeConcealedWindow(hwnd, state.target); target != nil {
+				state.target = target
+			}
+		}
 		return 1
 	}
 	// The window goes back where it belongs before anything is saved; a
