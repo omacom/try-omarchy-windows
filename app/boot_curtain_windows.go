@@ -85,6 +85,12 @@ type curtainWindow struct {
 	// area it will have when shown (fitCurtainWindows).
 	border           screenRect
 	bordered, fitted bool
+	// placed is set when the title enforcer gave the frameless window its
+	// placement (placeConcealedWindow): outer and client are then where it
+	// goes when shown, whatever QEMU resizes it to meanwhile.
+	placed bool
+	// offMonitor is set once the window was moved off the whole monitor.
+	offMonitor bool
 }
 
 // Windows draws a window's title bar and border even when its region is
@@ -247,6 +253,109 @@ func curtainConcealed(hwnd uintptr) bool {
 	defer curtainMu.Unlock()
 	_, ok := curtainWindows[hwnd]
 	return ok && curtainUp.Load() || curtainLifting[hwnd]
+}
+
+// placeConcealedWindow gives a window the curtain has already hidden, frame
+// and all, the placement the title enforcer would give a shown one, and
+// returns the placement to restore after the lift (nil if it did nothing).
+// Windows' own placement calls go wrong on a frameless window: a maximized
+// one covers the whole monitor, which can make Windows drive the display as
+// for a full-screen game, and the remembered rectangle becomes its client
+// area. So the window gets the client area it will have when shown, the
+// curtain remembers its framed rectangle for the lift, and a maximized
+// placement is applied after the lift (placementAfterCurtain). This is the
+// usual order with a runtime that holds its windows: the curtain hides them
+// before they are shown, and so before the enforcer ever sees them.
+func placeConcealedWindow(hwnd uintptr, p *windowPlacement) *windowPlacement {
+	curtainMu.Lock()
+	window := curtainWindows[hwnd]
+	ok := curtainUp.Load() && window != nil && window.ready && window.frame != 0 && window.bordered
+	var frame screenRect
+	if ok {
+		frame = window.border
+	}
+	curtainMu.Unlock()
+	if !ok {
+		return nil
+	}
+	target := p
+	if target == nil {
+		// As a new window is shown: maximized, restoring to where QEMU put it.
+		now := capturePlacement(hwnd)
+		if now == nil {
+			return nil
+		}
+		target = &windowPlacement{Schema: 1, Normal: now.Normal, Maximized: true}
+	}
+	// The remembered rectangle is in workspace coordinates; so is this one.
+	if !applyPlacement(hwnd, &windowPlacement{Normal: frameless(target.Normal, frame)}) {
+		return nil
+	}
+	var client screenRect
+	if ok, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&client))); ok == 0 {
+		return nil
+	}
+	outer := screenRect{client.Left - frame.Left, client.Top - frame.Top, client.Right + frame.Right, client.Bottom + frame.Bottom}
+	if target.Maximized {
+		monitor, ok := hostMonitorForWindow(hwnd)
+		if !ok {
+			return nil
+		}
+		outer, client = shownWindowRects(client, true, monitor.Work, frame)
+		setWindowFrameRect(hwnd, client)
+	}
+	curtainMu.Lock()
+	if curtainWindows[hwnd] == window {
+		window.outer, window.client, window.resized, window.placed = outer, client, true, true
+	}
+	curtainMu.Unlock()
+	logf("startup: placed the hidden window at its shown client area, %dx%d (maximized %v)", client.width(), client.height(), target.Maximized)
+	return target
+}
+
+// keepOffMonitor moves hidden windows that cover their whole monitor, which
+// QEMU can do when it sizes a frameless window to the guest's display, to
+// the client area they will have when shown. Fullscreen windows cover their
+// monitor by the user's choice and are left alone.
+func keepOffMonitor() {
+	if enumTitleFullscreen {
+		return
+	}
+	type check struct {
+		hwnd               uintptr
+		window             *curtainWindow
+		frame, client      screenRect
+		knowClient, logged bool
+	}
+	var checks []check
+	curtainMu.Lock()
+	for hwnd, window := range curtainWindows {
+		if window.ready && window.bordered {
+			checks = append(checks, check{hwnd, window, window.border, window.client, window.resized, window.offMonitor})
+		}
+	}
+	curtainMu.Unlock()
+	for _, c := range checks {
+		var now screenRect
+		if ok, _, _ := procGetWindowRect.Call(c.hwnd, uintptr(unsafe.Pointer(&now))); ok == 0 {
+			continue
+		}
+		monitor, ok := hostMonitorForWindow(c.hwnd)
+		if !ok {
+			continue
+		}
+		target, move := hiddenWindowOffMonitor(now, monitor, c.frame, c.client, c.knowClient)
+		if !move {
+			continue
+		}
+		setWindowFrameRect(c.hwnd, target)
+		if !c.logged {
+			curtainMu.Lock()
+			c.window.offMonitor = true
+			curtainMu.Unlock()
+			logf("startup: the hidden window covered its monitor; moved it to %dx%d", target.width(), target.height())
+		}
+	}
 }
 
 // windowHeld reports whether QEMU created hwnd hidden for the launcher to
@@ -423,6 +532,7 @@ func curtainTick(primary uintptr) {
 	if guestFollowsWindow.Load() && !enumTitleFullscreen {
 		fitCurtainWindows()
 	}
+	keepOffMonitor()
 	// Cancel puts its own status up.
 	if !setupCancelled() {
 		status := uiText("status.starting_omarchy")
@@ -476,7 +586,18 @@ func fitCurtainWindows() {
 		// The curtain shrank it to its old client area and nothing moved it
 		// since: the frame goes back around that area.
 		keep := f.window.resized && now == f.window.client
+		placed, placedClient := f.window.placed, f.window.client
 		curtainMu.Unlock()
+		// Placed by placeConcealedWindow: QEMU may have sized it to the
+		// guest's display since, and taking that for its framed rectangle
+		// would leave the guest a frame too small.
+		if placed {
+			if now != placedClient {
+				setWindowFrameRect(f.hwnd, placedClient)
+				logf("startup: sized the hidden window to its shown client area, %dx%d", placedClient.width(), placedClient.height())
+			}
+			continue
+		}
 		if keep && zoomed == 0 {
 			continue
 		}

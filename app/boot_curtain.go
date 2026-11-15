@@ -168,6 +168,33 @@ func shownWindowRects(now screenRect, maximized bool, work, frame screenRect) (o
 	return outer, client
 }
 
+// frameless takes a framed window rectangle to the client area it has, for a
+// window the curtain keeps without its frame.
+func frameless(outer, frame screenRect) screenRect {
+	return screenRect{outer.Left + frame.Left, outer.Top + frame.Top, outer.Right - frame.Right, outer.Bottom - frame.Bottom}
+}
+
+// covers reports whether r covers all of bounds. A window that covers its
+// monitor can count as a full-screen app to Windows, which then changes how
+// the display is driven: the hidden window must never do that (#413).
+func (r screenRect) covers(bounds screenRect) bool {
+	return r.Left <= bounds.Left && r.Top <= bounds.Top && r.Right >= bounds.Right && r.Bottom >= bounds.Bottom
+}
+
+// hiddenWindowOffMonitor says where a hidden, frameless window that covers its
+// monitor goes instead: the client area it will have when shown (client, if
+// the curtain knows it), else that of a maximized window on the monitor's
+// work area. ok is false when the window does not cover the monitor.
+func hiddenWindowOffMonitor(now screenRect, monitor hostMonitor, frame, client screenRect, knowClient bool) (screenRect, bool) {
+	if !now.covers(monitor.Bounds) {
+		return screenRect{}, false
+	}
+	if !knowClient {
+		_, client = shownWindowRects(now, true, monitor.Work, frame)
+	}
+	return client, client != now && !client.covers(monitor.Bounds)
+}
+
 var (
 	bootCurtainMu    sync.Mutex
 	bootCurtainState bootCurtainTimes

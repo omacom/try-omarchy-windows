@@ -305,10 +305,14 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		enumTitleWindows[hwnd] = state
 		if !enumTitleFullscreen {
 			placement := displayPlacement(enumTitleDir, index, enumTitleMonitorDetails)
-			if placement == nil || !applyPlacement(hwnd, placement) {
+			state.last, state.target = placement, placement
+			// A window the curtain hid before it was shown has no frame;
+			// the curtain places it and the placement follows the lift.
+			if target := placeConcealedWindow(hwnd, placement); target != nil {
+				state.target = target
+			} else if placement == nil || !applyPlacement(hwnd, placement) {
 				procShowWindow.Call(hwnd, swShowMaximized)
 			}
-			state.last, state.target = placement, placement
 		}
 		if enumTitleFullscreen {
 			monitors := enumTitleMonitorDetails
