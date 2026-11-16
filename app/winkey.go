@@ -407,7 +407,7 @@ func runTitleEnforcer(dir string, fullscreen bool, fullscreenDisplay string) {
 			qemuHwnd.Store(0)
 		}
 		wait := time.Second
-		if curtainPolling() {
+		if curtainPolling() || curtainHidesWindows() {
 			wait = 250 * time.Millisecond
 		}
 		select {

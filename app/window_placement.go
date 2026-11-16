@@ -273,6 +273,31 @@ func fullscreenPlacement(wasFullscreen, fullscreen bool, last *windowPlacement) 
 	return nil, false
 }
 
+// leftStartFullscreen reports that the window of a full screen start, which
+// had no frame on the last pass (wasFullscreen), has one again: the user
+// took it out of full screen.
+func leftStartFullscreen(wasFullscreen, framed bool) bool {
+	return wasFullscreen && framed
+}
+
+// windowIntoWorkArea is where a window of size now goes to be inside work:
+// centred when it fits, else at the work area's top or left edge so its
+// title bar stays on screen. move is false when it is already inside.
+func windowIntoWorkArea(now, work screenRect) (to screenRect, move bool) {
+	if work.width() <= 0 || work.height() <= 0 || now.width() <= 0 || now.height() <= 0 || work.covers(now) {
+		return now, false
+	}
+	place := func(size, lo, hi int32) int32 {
+		if size >= hi-lo {
+			return lo
+		}
+		return lo + (hi-lo-size)/2
+	}
+	left, top := place(now.width(), work.Left, work.Right), place(now.height(), work.Top, work.Bottom)
+	to = screenRect{left, top, left + now.width(), top + now.height()}
+	return to, to != now
+}
+
 // placementBeforeFullscreen picks the placement to put back after fullscreen.
 // SDL un-maximizes a maximized window on its way into fullscreen, and that
 // step can be saved like a user's change just before the window covers the

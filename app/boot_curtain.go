@@ -181,6 +181,87 @@ func (r screenRect) covers(bounds screenRect) bool {
 	return r.Left <= bounds.Left && r.Top <= bounds.Top && r.Right >= bounds.Right && r.Bottom >= bounds.Bottom
 }
 
+// fullscreenGrown is the rectangle a full screen window on monitor gets
+// instead of the monitor's own: one row or column larger, off the screen,
+// and edge names the side it went to. Graphics drivers present an OpenGL
+// window that exactly covers its monitor as an exclusive full screen one,
+// and anything drawn over it, the pointer included, makes the display leave
+// that mode and come back, which shows as a black flicker.
+//
+// The extra row goes above the monitor, else a column on the left or the
+// right, where no other monitor (others) would show it. It never goes on
+// the side the taskbar is docked on, the side where the work area falls
+// short of the monitor, or hiddenTaskbar, the side of an auto-hidden one
+// (taskbarEdge): Windows then no longer treats the window as full screen
+// and leaves the taskbar over it, as a row below does with a taskbar at the
+// bottom. When every other side has a neighbour, the first of them is used
+// and one line of the guest's edge shows on that monitor.
+func fullscreenGrown(monitor hostMonitor, others []screenRect, hiddenTaskbar string) (grown screenRect, edge string) {
+	b, w := monitor.Bounds, monitor.Work
+	edges := []struct {
+		name    string
+		strip   screenRect
+		taskbar bool
+	}{
+		{"top", screenRect{b.Left, b.Top - 1, b.Right, b.Top}, w.Top > b.Top || hiddenTaskbar == "top"},
+		{"left", screenRect{b.Left - 1, b.Top, b.Left, b.Bottom}, w.Left > b.Left || hiddenTaskbar == "left"},
+		{"right", screenRect{b.Right, b.Top, b.Right + 1, b.Bottom}, w.Right < b.Right || hiddenTaskbar == "right"},
+		{"bottom", screenRect{b.Left, b.Bottom, b.Right, b.Bottom + 1}, w.Bottom < b.Bottom || hiddenTaskbar == "bottom"},
+	}
+	pick := -1
+	for i, e := range edges {
+		if e.taskbar {
+			continue
+		}
+		if pick < 0 {
+			pick = i
+		}
+		free := true
+		for _, other := range others {
+			if overlaps(e.strip, other) {
+				free = false
+				break
+			}
+		}
+		if free {
+			pick = i
+			break
+		}
+	}
+	if pick < 0 {
+		pick = 0
+	}
+	e := edges[pick]
+	return screenRect{min(b.Left, e.strip.Left), min(b.Top, e.strip.Top), max(b.Right, e.strip.Right), max(b.Bottom, e.strip.Bottom)}, e.name
+}
+
+// taskbarEdge is the side of monitor a taskbar at bar is docked on.
+func taskbarEdge(bar, monitor screenRect) string {
+	switch {
+	case bar.width() <= 0 || bar.height() <= 0:
+		return ""
+	case bar.Left <= monitor.Left && bar.Right >= monitor.Right && bar.Top <= monitor.Top:
+		return "top"
+	case bar.Left <= monitor.Left && bar.Right >= monitor.Right:
+		return "bottom"
+	case bar.Left <= monitor.Left:
+		return "left"
+	}
+	return "right"
+}
+
+// grownFullscreen reports whether r is a monitor's rectangle grown by one
+// line, as fullscreenGrown makes it: still that monitor's full screen
+// window, not one to put back on the monitor.
+func grownFullscreen(r screenRect, monitors []hostMonitor) bool {
+	for _, m := range monitors {
+		if r.covers(m.Bounds) && r.width()-m.Bounds.width()+r.height()-m.Bounds.height() == 1 {
+			return true
+		}
+	}
+	return false
+}
+
 // hiddenWindowOffMonitor says where a hidden, frameless window that covers its
 // monitor goes instead: the client area it will have when shown (client, if
 // the curtain placed it), else that of a maximized window on the monitor's
@@ -213,31 +294,69 @@ func curtainFrameBack(frame, hidden, now uintptr) uintptr {
 	return frame
 }
 
-// After a hidden window's taskbar button is first taken off, it is taken off
-// again every curtainTabInterval until curtainTabSettle has passed, and then
-// every curtainTabLateInterval until the lift. The taskbar applies the
-// window's new identity asynchronously and puts the button back when a
-// delete came first: on a test VM, 24 of 30 windows kept their button after
-// an immediate delete, none when the delete came 500 ms later or was repeated
-// after 1.5 s. A button put back shows until the next delete, so the deletes
-// come at the title enforcer's pace while the taskbar settles; the late ones
-// cover a taskbar that takes the identity up later still.
-const (
-	curtainTabInterval     = 250 * time.Millisecond
-	curtainTabSettle       = 5 * time.Second
-	curtainTabLateInterval = 5 * time.Second
-)
+// A hidden window's taskbar button is taken off every curtainTabInterval
+// until the lift. The taskbar applies the window's new identity
+// asynchronously and puts the button back when a delete came first: on a
+// test VM, 24 of 30 windows kept their button after an immediate delete,
+// none when the delete came 500 ms later or was repeated after 1.5 s. A
+// button put back shows until the next delete, so the deletes keep a steady
+// short pace for the whole curtain.
+const curtainTabInterval = 250 * time.Millisecond
 
 // curtainTabDeleteDue reports whether the curtain should take a hidden
-// window's taskbar button off now, given when it first and last did.
-func curtainTabDeleteDue(first, last, now time.Time) bool {
-	if first.IsZero() {
-		return true
+// window's taskbar button off now, given when it last did.
+func curtainTabDeleteDue(last, now time.Time) bool {
+	return last.IsZero() || now.Sub(last) >= curtainTabInterval
+}
+
+// fullscreenMarks remembers which windows the launcher told the taskbar are
+// full screen (ITaskbarList2::MarkFullscreenWindow), so it tells it only on
+// a change and can take every mark back.
+type fullscreenMarks struct {
+	mu     sync.Mutex
+	marked map[uintptr]bool
+}
+
+// differs reports whether hwnd's mark must change for a window that is, or
+// is not, full screen now.
+func (m *fullscreenMarks) differs(hwnd uintptr, fullscreen bool) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.marked[hwnd] != fullscreen
+}
+
+// set records that the taskbar took hwnd's mark. Until then differs keeps
+// reporting the change, so a mark the taskbar refused is tried again.
+func (m *fullscreenMarks) set(hwnd uintptr, fullscreen bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !fullscreen {
+		delete(m.marked, hwnd)
+		return
 	}
-	if now.Sub(first) <= curtainTabSettle {
-		return now.Sub(last) >= curtainTabInterval
+	if m.marked == nil {
+		m.marked = map[uintptr]bool{}
 	}
-	return now.Sub(last) >= curtainTabLateInterval
+	m.marked[hwnd] = true
+}
+
+// forget drops a destroyed window, whose mark went with it.
+func (m *fullscreenMarks) forget(hwnd uintptr) {
+	m.mu.Lock()
+	delete(m.marked, hwnd)
+	m.mu.Unlock()
+}
+
+// clear returns every marked window, to be unmarked, and forgets them.
+func (m *fullscreenMarks) clear() []uintptr {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var all []uintptr
+	for hwnd := range m.marked {
+		all = append(all, hwnd)
+	}
+	m.marked = nil
+	return all
 }
 
 var (

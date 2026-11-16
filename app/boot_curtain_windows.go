@@ -81,9 +81,9 @@ type curtainWindow struct {
 	outer, client screenRect
 	resized       bool
 	// tabRemoved says the curtain took the window's taskbar button off;
-	// tabFirst and tabLast are when it first and last did (curtainTaskbar).
-	tabRemoved        bool
-	tabFirst, tabLast time.Time
+	// tabLast is when it last did (curtainTaskbar).
+	tabRemoved bool
+	tabLast    time.Time
 	// border is the size of the frame on each side, and bordered says it
 	// was measured. fitted is set once the window has been given the client
 	// area it will have when shown (fitCurtainWindows).
@@ -323,6 +323,7 @@ func placeConcealedWindow(hwnd uintptr, p *windowPlacement) *windowPlacement {
 // monitor by the user's choice and are left alone.
 func keepOffMonitor() {
 	if enumTitleFullscreen {
+		parkFullscreenWindows()
 		return
 	}
 	type check struct {
@@ -368,6 +369,62 @@ func keepOffMonitor() {
 			logf("startup: the hidden window covered its monitor; moved it to %dx%d", target.width(), target.height())
 		}
 	}
+}
+
+// parkFullscreenWindows gives a hidden full screen window the rectangle it
+// keeps once shown (growFullscreenWindow), so the guest draws at that size
+// behind the curtain and nothing moves at the lift.
+func parkFullscreenWindows() {
+	var hwnds []uintptr
+	curtainMu.Lock()
+	for hwnd, window := range curtainWindows {
+		if window.ready {
+			hwnds = append(hwnds, hwnd)
+		}
+	}
+	curtainMu.Unlock()
+	for _, hwnd := range hwnds {
+		growFullscreenWindow(hwnd)
+	}
+}
+
+// fullscreenGrowLogged is the last rectangle growFullscreenWindow logged, so
+// the log shows each new one once.
+var fullscreenGrowLogged atomic.Value
+
+// growFullscreenWindow gives a frameless window that exactly covers its
+// monitor the fullscreenGrown rectangle. It reports whether it moved it.
+func growFullscreenWindow(hwnd uintptr) bool {
+	var now screenRect
+	if ok, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&now))); ok == 0 {
+		return false
+	}
+	monitor, ok := hostMonitorForWindow(hwnd)
+	if !ok || now != monitor.Bounds {
+		return false
+	}
+	style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
+	if maximized, _, _ := procIsZoomed.Call(hwnd); maximized != 0 || style&wsCaption == wsCaption {
+		return false
+	}
+	var others []screenRect
+	for _, m := range hostMonitors() {
+		if m.Bounds != monitor.Bounds {
+			others = append(others, m.Bounds)
+		}
+	}
+	hidden := ""
+	if bar, ok := autoHideTaskbarRect(monitor.Bounds); ok {
+		hidden = taskbarEdge(bar, monitor.Bounds)
+	}
+	r, edge := fullscreenGrown(monitor, others, hidden)
+	if ok, _, _ := procSetWindowPos.Call(hwnd, 0, uintptr(r.Left), uintptr(r.Top), uintptr(r.width()), uintptr(r.height()), swpNoZorder|swpNoActivate|swpNoOwnerZOrder); ok == 0 {
+		return false
+	}
+	if line := fmt.Sprintf("%v %v", r, now); fullscreenGrowLogged.Swap(line) != line {
+		logf("full screen: kept the window one line larger than its %dx%d monitor, at the %s edge (%d,%d %dx%d)", now.width(), now.height(), edge, r.Left, r.Top, r.width(), r.height())
+	}
+	return true
 }
 
 // windowHeld reports whether QEMU created hwnd hidden for the launcher to
@@ -507,6 +564,7 @@ func refreshWindowFrame(hwnd uintptr) {
 // forgetCurtainWindow drops a destroyed window, so a new window that Windows
 // gives the same handle is concealed again.
 func forgetCurtainWindow(hwnd uintptr) {
+	taskbarFullscreen.forget(hwnd)
 	curtainMu.Lock()
 	delete(curtainWindows, hwnd)
 	delete(curtainLifting, hwnd)
@@ -521,7 +579,9 @@ var curtainTabMu sync.Mutex
 // runs on each title enforcer pass, after the first one gives the window its
 // taskbar identity, which would otherwise bring the button back. The taskbar
 // takes that identity up a moment later and can then show the button again,
-// so the button is taken off again until the lift (curtainTabDeleteDue).
+// so the button is taken off again until the lift (curtainTabDeleteDue). The
+// deletes leave Windows not taking a full screen window for the full screen
+// app once it is shown; syncFullscreenMark tells the taskbar instead.
 func curtainTaskbar(hwnd uintptr) {
 	// The lift adds the button back under the same lock, so a delete cannot
 	// land after it: once the curtain is down the window is no longer in
@@ -531,12 +591,9 @@ func curtainTaskbar(hwnd uintptr) {
 	now := time.Now()
 	curtainMu.Lock()
 	window := curtainWindows[hwnd]
-	remove := window != nil && curtainTabDeleteDue(window.tabFirst, window.tabLast, now)
+	remove := window != nil && curtainTabDeleteDue(window.tabLast, now)
 	if remove {
 		window.tabRemoved = true
-		if window.tabFirst.IsZero() {
-			window.tabFirst = now
-		}
 		window.tabLast = now
 	}
 	curtainMu.Unlock()
@@ -748,6 +805,7 @@ func liftCurtain(reason string) {
 			taskbarTab(hwnd, true)
 			curtainTabMu.Unlock()
 		}
+		syncFullscreenMark(hwnd)
 		// Only now may the title enforcer put the window back where it
 		// belongs: its frame is part of the remembered placement.
 		curtainMu.Lock()
@@ -808,35 +866,83 @@ func windowShowsDesktop(hwnd uintptr) bool {
 
 var (
 	clsidTaskbarList = comGUID{0x56FDF344, 0xFD6D, 0x11d0, [8]byte{0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90}}
-	iidITaskbarList  = comGUID{0x56FDF342, 0xFD6D, 0x11d0, [8]byte{0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90}}
+	iidITaskbarList2 = comGUID{0x602D4995, 0xB13A, 0x429b, [8]byte{0xA6, 0x6E, 0x19, 0x35, 0xE4, 0x4F, 0x43, 0x17}}
 )
 
 // taskbarTab adds or removes a window's taskbar button.
 func taskbarTab(hwnd uintptr, present bool) {
+	method := 5
+	if present {
+		method = 4
+	}
+	taskbarListCall(method, hwnd)
+}
+
+var taskbarFullscreen fullscreenMarks
+
+// syncFullscreenMark tells the taskbar whether a shown QEMU window is full
+// screen, when that changed. Windows decides by itself on a window it saw
+// enter full screen, but not on one whose button the curtain took off, and
+// then leaves the taskbar over it. The taskbar keeps the mark per window and
+// lets other windows over it as usual while the window is not active.
+func syncFullscreenMark(hwnd uintptr) {
+	fullscreen := displayWindowFullscreen(hwnd)
+	if taskbarFullscreen.differs(hwnd, fullscreen) && taskbarMarkFullscreen(hwnd, fullscreen) {
+		taskbarFullscreen.set(hwnd, fullscreen)
+		logf("full screen: told the taskbar the window is full screen: %v", fullscreen)
+	}
+}
+
+// clearFullscreenMarks takes back every mark, so the taskbar never stays
+// behind a window that outlives the launcher.
+func clearFullscreenMarks() {
+	for _, hwnd := range taskbarFullscreen.clear() {
+		taskbarMarkFullscreen(hwnd, false)
+	}
+}
+
+// curtainHidesWindows reports whether the curtain is hiding a window, so the
+// title enforcer keeps the pace of curtainTaskbar's deletes.
+func curtainHidesWindows() bool {
+	curtainMu.Lock()
+	defer curtainMu.Unlock()
+	return curtainUp.Load() && len(curtainWindows) > 0
+}
+
+// taskbarMarkFullscreen tells the taskbar that hwnd is, or no longer is, a
+// full screen window, so it goes behind the window while it is active.
+func taskbarMarkFullscreen(hwnd uintptr, on bool) bool {
+	flag := uintptr(0)
+	if on {
+		flag = 1
+	}
+	return taskbarListCall(8, hwnd, flag)
+}
+
+// taskbarListCall calls one ITaskbarList2 method and reports whether it
+// succeeded.
+func taskbarListCall(method int, args ...uintptr) bool {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	hr, _, _ := procCoInitializeEx.Call(0, 2)
 	if int32(hr) >= 0 {
 		defer procCoUninitialize.Call()
 	} else if uint32(hr) != 0x80010106 { // An existing MTA is also usable.
-		return
+		return false
 	}
 	var list uintptr
 	hr, _, _ = ole32.NewProc("CoCreateInstance").Call(uintptr(unsafe.Pointer(&clsidTaskbarList)), 0, 1,
-		uintptr(unsafe.Pointer(&iidITaskbarList)), uintptr(unsafe.Pointer(&list)))
+		uintptr(unsafe.Pointer(&iidITaskbarList2)), uintptr(unsafe.Pointer(&list)))
 	if hr != 0 || list == 0 {
 		logf("taskbar button: CoCreateInstance hr=%#x", hr)
-		return
+		return false
 	}
-	// ITaskbarList: 2 Release, 3 HrInit, 4 AddTab, 5 DeleteTab.
+	// ITaskbarList2: 2 Release, 3 HrInit, 4 AddTab, 5 DeleteTab,
+	// 8 MarkFullscreenWindow.
 	defer comCall(list, 2)
 	if hr := comCall(list, 3); hr != 0 {
 		logf("taskbar button: HrInit hr=%#x", hr)
-		return
+		return false
 	}
-	method := 5
-	if present {
-		method = 4
-	}
-	comCall(list, method, hwnd)
+	return comCall(list, method, args...) == 0
 }

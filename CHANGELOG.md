@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Full screen no longer flickers black when the pointer moves or while
+  Omarchy starts, and the Windows taskbar no longer shows over it, on graphics
+  drivers that take over a window covering the whole screen. Taking a full
+  screen start out of full screen with Ctrl+Alt+F keeps the window's title bar
+  on the screen instead of leaving the window hanging off its edges.
 - A display mode or taskbar change while Omarchy starts no longer leaves the
   window the wrong size when it appears. The hidden window now moves to where
   it will be shown on the new layout, so Omarchy's desktop is drawn at that
