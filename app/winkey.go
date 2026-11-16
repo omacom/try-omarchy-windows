@@ -397,6 +397,7 @@ func runWinKeyQmp() {
 // whenever it changes and restored, in place of the maximized default, on
 // the next windowed launch if that spot is still on a connected display.
 func runTitleEnforcer(dir string, fullscreen bool, fullscreenDisplay string) {
+	curtainFullscreen.Store(fullscreen)
 	hInst, _, _ := procGetModuleHandleW.Call(0)
 	appIcon, _, _ := procLoadIconW.Call(hInst, 1) // the embedded Omarchy .ico
 	for {

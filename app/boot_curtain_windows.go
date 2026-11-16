@@ -52,9 +52,11 @@ var (
 
 	// curtainUp is true from launch until the window is shown for the first
 	// time. Reboots after that show the guest's window as they always did.
-	curtainUp      atomic.Bool
-	curtainMu      sync.Mutex
-	curtainWindows = map[uintptr]*curtainWindow{}
+	curtainUp atomic.Bool
+	// curtainFullscreen is set when the user chose to open fullscreen.
+	curtainFullscreen atomic.Bool
+	curtainMu         sync.Mutex
+	curtainWindows    = map[uintptr]*curtainWindow{}
 	// Windows the lifting curtain has not given their frame back yet.
 	curtainLifting = map[uintptr]bool{}
 	// The disk this launch boots and its folder, for recording that it
@@ -588,7 +590,11 @@ func curtainTaskbar(hwnd uintptr) {
 	now := time.Now()
 	curtainMu.Lock()
 	window := curtainWindows[hwnd]
-	remove := window != nil && curtainTabDeleteDue(window.tabFirst, window.tabLast, now)
+	// A full screen start's window gets one delete. After repeated deletes
+	// Windows does not take it for the full screen app once it is shown, and
+	// the taskbar stays over it until it leaves and reenters full screen.
+	remove := window != nil && curtainTabDeleteDue(window.tabFirst, window.tabLast, now) &&
+		(window.tabFirst.IsZero() || !curtainFullscreen.Load())
 	if remove {
 		window.tabRemoved = true
 		if window.tabFirst.IsZero() {
