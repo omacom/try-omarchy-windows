@@ -28,6 +28,7 @@ These guides describe their own limits and validation status. They are not a pro
 - [Portable USB installations](PORTABLE_USB.md)
 - [Nested virtualization](NESTED-VIRTUALIZATION.md)
 - [GPU application profiles](GPU-APPLICATIONS.md)
+- [NVIDIA GPUs with virtio-dxg](VIRTIO-DXG.md): NVIDIA's own drivers in the guest over dxgkrnl ([results](VIRTIO-DXG-RESULTS.md))
 
 ## Development and testing
 

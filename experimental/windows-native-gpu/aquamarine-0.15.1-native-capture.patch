@@ -1,0 +1,30 @@
+--- a/src/backend/Headless.cpp
++++ b/src/backend/Headless.cpp
+@@ -6,6 +6,7 @@
+ #include <cstring>
+ #include <unistd.h>
+ #include <dlfcn.h>
++#include <gbm.h>
+ #include "Shared.hpp"
+ #include "NativeRender.hpp"
+ 
+@@ -36,6 +37,19 @@
+             const auto attrs = state->state().buffer->dmabuf();
+             if (attrs.success && attrs.planes == 1)
+                 observer(attrs.fds[0], attrs.size.x, attrs.size.y, attrs.format, attrs.strides[0], attrs.modifier);
++        }
++    }
++    if (NativeRender::requested() && std::getenv("AQ_EXPERIMENTAL_NATIVE_CAPTURE") &&
++        (state->state().committed & COutputState::AQ_OUTPUT_STATE_BUFFER) && state->state().buffer) {
++        using Prepare = int (*)(void);
++        using Capture = int (*)(const uint8_t*, uint32_t, size_t);
++        const auto prepare = reinterpret_cast<Prepare>(dlsym(RTLD_DEFAULT, "wddm_bridge_compositor_capture_begin"));
++        const auto capture = reinterpret_cast<Capture>(dlsym(RTLD_DEFAULT, "wddm_bridge_compositor_capture"));
++        if (prepare && capture && prepare() == 1) {
++            const auto [data, format, bytes] = state->state().buffer->beginDataPtr(GBM_BO_TRANSFER_READ);
++            capture(data, format, bytes);
++            if (data)
++                state->state().buffer->endDataPtr();
+         }
+     }
+     events.commit.emit();

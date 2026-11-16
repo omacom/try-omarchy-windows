@@ -1,0 +1,23 @@
+{
+  "mesaVersion": "26.0.8",
+  "archiveSha256": "caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc",
+  "patchSha256": "75e4e383eb55538278c564e4d3015b4679232303136dbd1e6000e6fb051bf9a1",
+  "files": {
+    "src/gallium/drivers/d3d12/d3d12_context_common.cpp": {
+      "originalSha256": "6bcd8acc30c4c7a49ae0040f1673ed08786030ad71910ba473b2a14e9a4730dd",
+      "patchedSha256": "ed0b8faa16c228b3b4ada6e5089be352ba5bfc3be8d37ca7d0e1f7173a7e6482"
+    },
+    "src/gallium/drivers/d3d12/d3d12_fence.cpp": {
+      "originalSha256": "f5db5010b6cc8d20731340c674f252e0d54dee26bd60b1c9f94b42a363c9e8d3",
+      "patchedSha256": "693b5f6764f8fa893c3183c03db9ffe9891bc2d933372e1cfd47b53bf0a451eb"
+    },
+    "src/gallium/drivers/d3d12/d3d12_screen.cpp": {
+      "originalSha256": "c5769e7f17318345d691208c8cb7a6d7dafdc17a5c65334297db64ea31e123bf",
+      "patchedSha256": "cc7fd1db9fb7ec052a7299ce47f47ed0701afbbd60211c54e3622bff8fba859b"
+    },
+    "src/mesa/main/externalobjects.c": {
+      "originalSha256": "f6271bde83ff9be6983b91d3610d26c1ff83cab39ab1ced7e226cd7bb471b480",
+      "patchedSha256": "fb18301b9db318abd9a7f3b16e79c09dcdc10a0752dcc4e39f6f5c092e0c2e67"
+    }
+  }
+}

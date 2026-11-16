@@ -1,0 +1,17 @@
+{
+  "mesaVersion": "26.0.8",
+  "archiveSha256": "caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc",
+  "patchSha256": "a312c7f335279fffe14aab324408dad97e81f31484dc33ec853eaea2a254e7f9",
+  "files": {
+    "src/microsoft/vulkan/dzn_device.c": {
+      "originalSha256": "6f5a13e464ff384c15785ed5a40f5afc08459430149e8030bd3b6555ebcdab0b",
+      "patchedSha256": "8246372fe4eb3539a6ea3e980d62e5495c0ee3eaf8c3d45b8df10d4c9c8b0fdd"
+    }
+  },
+  "contractFunctions": {
+    "originalSha256": "14cabee4670a9b19d57893e23ad09d1c69315e25332f0f1decb301b243708ec0",
+    "patchedSha256": "b36f20f3c2c0b1142e437cc4171e95db2e7ec4fe86e83673318833ec816b3c9f",
+    "duplicateHelperSha256": "9efc6c1ddae1b2eed2e5ab6c07ede30a7ac92e6e08c149368a2a44ee73321ebe"
+  },
+  "specification": "https://docs.vulkan.org/refpages/latest/refpages/source/vkGetMemoryFdKHR.html"
+}

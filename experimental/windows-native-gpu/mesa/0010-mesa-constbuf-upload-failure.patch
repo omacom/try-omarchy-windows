@@ -1,0 +1,23 @@
+--- a/src/mesa/state_tracker/st_atom_constbuf.c
++++ b/src/mesa/state_tracker/st_atom_constbuf.c
+@@ -35,6 +35,7 @@
+ #include "program/prog_parameter.h"
+ #include "program/prog_print.h"
+ #include "main/shaderapi.h"
++#include "main/errors.h"
+ #include "pipe/p_context.h"
+ #include "pipe/p_defines.h"
+ #include "util/u_inlines.h"
+@@ -135,6 +136,12 @@
+           */
+          u_upload_alloc(pipe->const_uploader, 0, paramBytes + 12,
+             alignment, &cb.buffer_offset, &cb.buffer, &releasebuf, (void**)&ptr);
++         if (unlikely(!ptr)) {
++            st_add_releasebuf(st, releasebuf);
++            st_unbind_unused_cb0(st, stage);
++            _mesa_error(st->ctx, GL_OUT_OF_MEMORY, "st_upload_constants");
++            return;
++         }
+ 
+          int uniform_bytes = params->UniformBytes;
+          if (uniform_bytes)

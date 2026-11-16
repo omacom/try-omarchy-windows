@@ -9,6 +9,7 @@
   "about.title": "About Try Omarchy",
   "about.body": "Try Omarchy {version}\n\nRun the Omarchy desktop on Windows. Your files persist between sessions.\n\nOriginally created by @martiano. Maintained under Omacom.\n\nWebsite: {website}\nSource, help and issue reporting: {source}\n\nOpen source under the MIT License. Built with Omarchy, Arch Linux and QEMU.\n\nLauncher updates and Linux updates are separate. For Linux packages and Omarchy, use Update > Omarchy inside the desktop.",
   "about.check_updates": "Check for launcher updates",
+  "about.fork_updates": "This fork receives updates through its source repository. Build the latest fork source to update the launcher.\n\n{source}",
   "about.open_website": "Open Try Omarchy website",
   "about.open_support": "Open source and support",
   "about.third_party": "Third-party notices",

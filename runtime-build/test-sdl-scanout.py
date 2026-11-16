@@ -7,7 +7,9 @@ import tempfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument('source', type=Path)
-source = parser.parse_args().source.read_text(encoding='utf-8')
+parser.add_argument('--native-relay', action='store_true', help='Also require the opt-in relay to discard queued boot redraws')
+args = parser.parse_args()
+source = args.source.read_text(encoding='utf-8')
 mode = source[source.index('static void sdl2_set_scanout_mode('):
               source.index('static void sdl2_gl_render_surface(')]
 switch = source[source.index('void sdl2_gl_switch('):
@@ -22,6 +24,7 @@ typedef struct { int con; } DisplayChangeListener;
 struct sdl2_console {
     bool scanout_mode, opengl;
     int guest_fb, real_window, winctx;
+    int updates;
     void *gls;
     DisplaySurface *surface;
     DisplayChangeListener dcl;
@@ -44,6 +47,16 @@ int main(void) {
     DisplaySurface active = {false, 1280, 720}, disabled = {true, 640, 480};
     struct sdl2_console s = {.opengl = true, .real_window = 1, .winctx = 1,
         .gls = (void *)1, .surface = &active, .dcl = {.con = 1}};
+#ifdef NATIVE_RELAY
+    s.updates = 7;
+    sdl2_set_scanout_mode(&s, true);
+    assert(s.scanout_mode && !s.updates);
+    s.updates = 2;
+    sdl2_set_scanout_mode(&s, true);
+    assert(s.updates == 2); /* An unchanged mode does not invent a transition. */
+    sdl2_set_scanout_mode(&s, false);
+    assert(!s.scanout_mode && !s.updates);
+#endif
     for (int repeat = 0; repeat < 3; repeat++) {
         s.scanout_mode = true;
         s.guest_fb = 7;
@@ -60,7 +73,9 @@ int main(void) {
 with tempfile.TemporaryDirectory(prefix='tryomarchy-scanout-') as temporary:
     root = Path(temporary)
     (root / 'test.c').write_text(harness, encoding='utf-8')
-    subprocess.run(['gcc', '-std=gnu11', '-O2', str(root / 'test.c'),
+    subprocess.run(['gcc', '-std=gnu11', '-O2', *(['-DNATIVE_RELAY=1'] if args.native_relay else []), str(root / 'test.c'),
                     '-o', str(root / 'test.exe')], check=True)
     subprocess.run([str(root / 'test.exe')], check=True)
 print('ok - secondary SDL scanout teardown, delayed disable and reactivation')
+if args.native_relay:
+    print('ok - native relay mode discards queued boot redraws')

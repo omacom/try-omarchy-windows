@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/hyprwm/aquamarine",
+  "tag": "v0.15.1",
+  "commit": "f31c47a1b9d300847d8fc3108ad959448103dfc1",
+  "patch": "aquamarine-0.15.1-logging-lifetime.patch",
+  "patchSha256": "d7e620eaaeed2b3586ecb8cabf81a2b108bcb6b37ffec93ce1178043a22c7d04",
+  "files": {
+    "src/backend/Session.cpp": {
+      "beforeSha256": "95a03dd3139940ff276e6f61e6869de8a3ad417a51cc002f559d053270daa892",
+      "afterSha256": "d8aff84b894b2c9434bed0365268cdc04dd9b2548c48878066f2768adb44d3fd"
+    }
+  },
+  "status": "logging callbacks borrow the backend; actual compositor shutdown validation required"
+}

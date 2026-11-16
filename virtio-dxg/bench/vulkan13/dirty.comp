@@ -1,0 +1,5 @@
+#version 450
+layout(local_size_x = 256) in;
+shared uint s[256];
+layout(set = 0, binding = 0) buffer Out { uint o[]; };
+void main() { uint i = gl_LocalInvocationIndex; s[i] = 0xdead0000u + i; barrier(); o[i] = s[255u - i]; }

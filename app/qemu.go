@@ -69,10 +69,13 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		)
 	} else {
 		args = append(args,
-			"-machine", machine, "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes",
+			"-machine", machine, "-cpu", cpuModel(cfg),
 			"-smp", smp, "-m", mem,
 			"-vga", "none", "-device", displayDevice(cfg, hostmem),
-			"-display", sdlDisplay(false, cfg.hostCursor),
+			// virtio-dxg: the window draws the guest's frames with OpenGL,
+			// straight from the GPU textures the desktop renders into
+			// (zero-copy scanout); CPU mode keeps SDL's 2D path.
+			"-display", sdlDisplay(cfg.dxg.enabled, cfg.hostCursor),
 			"-serial", "file:"+filepath.Join(vm, "serial.log"),
 		)
 	}
@@ -80,14 +83,22 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 	// animation frame is CPU time, so the image turns animations off unless
 	// the user's own config turns them back on.
 	render := "gpu"
-	if !cfg.useGpu {
+	if !cfg.useGpu && !cfg.dxg.enabled {
 		render = "cpu"
 	}
+	initrd := filepath.Join(cfg.guestDir, "initramfs-linux.img")
+	if cfg.dxg.enabled {
+		initrd = cfg.dxg.initramfs
+	}
+	drive := "file=" + qemuOptionValue(cfg.disk) + ",format=" + cfg.diskFormat + ",if=virtio"
+	if cfg.diskSnapshot {
+		drive += ",snapshot=on"
+	}
 	args = append(args,
-		"-drive", "file="+qemuOptionValue(cfg.disk)+",format="+cfg.diskFormat+",if=virtio",
+		"-drive", drive,
 		"-kernel", filepath.Join(cfg.guestDir, "vmlinuz-linux"),
-		"-initrd", filepath.Join(cfg.guestDir, "initramfs-linux.img"),
-		"-append", cmdline+" tryomarchy.render="+render,
+		"-initrd", initrd,
+		"-append", cmdline+" tryomarchy.render="+render+dxgCmdline(cfg.dxg),
 		"-device", "virtio-keyboard-pci", "-device", "virtio-tablet-pci",
 		// No option ROM: the guest boots its kernel directly, and iPXE would
 		// only print its banner on the display.
@@ -158,10 +169,20 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		// Stock QEMU for Windows ships no virtio-9p. main() selects the bundled
 		// runtime when possible and otherwise tells the user before continuing.
 	}
+	args = append(args, dxgQemuArgs(cfg.dxg)...)
 	if cfg.fullscreen {
 		args = append(args, "-full-screen")
 	}
 	return args
+}
+
+// cpuModel is the CPU for the non-virgl display path. NVIDIA's user-mode
+// drivers in a virtio-dxg guest want the host's instruction set.
+func cpuModel(cfg *config) string {
+	if cfg.dxg.enabled {
+		return "host"
+	}
+	return "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes"
 }
 
 // QEMU's structured option parser uses commas as separators and represents a

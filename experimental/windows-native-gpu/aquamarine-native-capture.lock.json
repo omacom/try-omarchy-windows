@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/hyprwm/aquamarine",
+  "tag": "v0.15.1",
+  "commit": "f31c47a1b9d300847d8fc3108ad959448103dfc1",
+  "patch": "aquamarine-0.15.1-native-capture.patch",
+  "patchSha256": "dbd4e98bf25b7e84f55d50e9d7cc43f83808ad3fb1c94dfa8b75ac044600751c",
+  "requiresPatchSha256": "c4f2a1e57c3f157836372e50cd4fda920a6461cef458fd7a408aa2cfad07d8ec",
+  "files": {
+    "src/backend/Headless.cpp": {
+      "beforeSha256": "cac6f66bca5333c2f66a2db2b11c9660e0800871bed3789ad0109120093996a4",
+      "afterSha256": "2e078a4923d9ffd076a52b50cce67f4bda2c2ff458d6ec55fc3d2ec85a373625"
+    }
+  },
+  "status": "Existing private CPU capture hook, strictly gated by AQ_EXPERIMENTAL_NATIVE_CAPTURE; not ordinary GPU presentation."
+}

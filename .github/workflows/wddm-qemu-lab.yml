@@ -1,0 +1,106 @@
+name: WDDM QEMU memory experiment
+on:
+  push:
+    branches: [windows-nvgpu-lab]
+    paths:
+      - experimental/qemu/**
+      - .github/workflows/wddm-qemu-lab.yml
+permissions:
+  contents: read
+jobs:
+  windows-qemu:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [sections, sdl-opengl]
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git bison flex diffutils
+            mingw-w64-ucrt-x86_64-SDL2
+            mingw-w64-ucrt-x86_64-dtc
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-ccache
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-libepoxy
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pixman
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-python-yaml
+            mingw-w64-ucrt-x86_64-zstd
+      - name: Install user networking for the SDL candidate
+        if: matrix.variant == 'sdl-opengl'
+        shell: msys2 {0}
+        run: pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-libslirp
+      - name: Identify the compiler package inventory
+        id: toolchain
+        shell: msys2 {0}
+        run: |
+          identity=$(pacman -Q | sha256sum | cut -d ' ' -f 1)
+          printf 'key=%s\n' "$identity" >> "$GITHUB_OUTPUT"
+      - name: Restore validated compiler results
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: .qemu-ccache/${{ matrix.variant }}
+          key: qemu-ccache-v1-${{ runner.os }}-${{ matrix.variant }}-${{ hashFiles('runtime-build/sources.lock.json') }}-${{ steps.toolchain.outputs.key }}-${{ github.sha }}
+          restore-keys: |
+            qemu-ccache-v1-${{ runner.os }}-${{ matrix.variant }}-${{ hashFiles('runtime-build/sources.lock.json') }}-${{ steps.toolchain.outputs.key }}-
+      - name: Build pinned QEMU with section backend
+        id: build
+        shell: msys2 {0}
+        env:
+          QEMU_COMPILER_CACHE: '1'
+          QEMU_CACHE_VARIANT: ${{ matrix.variant }}
+          QEMU_SDL_OPENGL_CANDIDATE: ${{ matrix.variant == 'sdl-opengl' && '1' || '0' }}
+          QEMU_USER_NETWORK_CANDIDATE: ${{ matrix.variant == 'sdl-opengl' && '1' || '0' }}
+        run: bash experimental/qemu/build_qemu.sh qemu-lab
+      - name: Save content-checked compiler results
+        if: ${{ always() && !cancelled() }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: .qemu-ccache/${{ matrix.variant }}
+          key: qemu-ccache-v1-${{ runner.os }}-${{ matrix.variant }}-${{ hashFiles('runtime-build/sources.lock.json') }}-${{ steps.toolchain.outputs.key }}-${{ github.sha }}
+      - name: Verify shared memory through real QEMU
+        shell: pwsh
+        run: python experimental/qemu/test_section.py --qemu qemu-lab/bin/qemu-system-x86_64.exe --firmware qemu-lab/share/qemu
+      - name: Verify SDL relay registration and bounded properties without a GPU
+        if: matrix.variant == 'sdl-opengl'
+        shell: pwsh
+        run: python experimental/qemu/test_sdl_relay_cli.py --qemu qemu-lab/bin/qemu-system-x86_64.exe --firmware qemu-lab/share/qemu
+      - name: Verify user networking and virtio NIC realization
+        if: matrix.variant == 'sdl-opengl'
+        shell: pwsh
+        run: python experimental/qemu/test_user_network_cli.py --qemu qemu-lab/bin/qemu-system-x86_64.exe --firmware qemu-lab/share/qemu --report qemu-lab/user-network-capability.json
+      - name: Verify boot console ownership and rejected GPU commands without a window
+        if: matrix.variant == 'sdl-opengl'
+        shell: pwsh
+        run: python experimental/qemu/test_sdl_boot_cli.py --qemu qemu-lab/bin/qemu-system-x86_64.exe --firmware qemu-lab/share/qemu --report qemu-lab/boot-console-capability.json
+      - name: Verify refused and repeated socket reconnects
+        shell: pwsh
+        run: python experimental/qemu/test_socket_reconnect.py --qemu qemu-lab/bin/qemu-system-x86_64.exe --firmware qemu-lab/share/qemu --report qemu-lab/socket-reconnect-capability.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        with:
+          name: ${{ matrix.variant == 'sdl-opengl' && 'qemu-sdl-opengl-candidate' || 'qemu-win32-section-lab' }}
+          path: |
+            qemu-lab/bin
+            qemu-lab/share
+            qemu-lab/qemu-corresponding-source.tar.gz
+            qemu-lab/build-packages.txt
+            qemu-lab/dll-sources.txt
+            qemu-lab/config-host.mak
+            qemu-lab/config-host.h
+            qemu-lab/sdl-candidate-provenance.json
+            qemu-lab/sdl-input-controls.log
+            qemu-lab/ccache-stats.txt
+            qemu-lab/user-network-capability.json
+            qemu-lab/boot-console-capability.json
+            qemu-lab/socket-reconnect-capability.json

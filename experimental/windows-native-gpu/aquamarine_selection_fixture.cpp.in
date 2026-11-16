@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: MIT
+// The complete production factory is inserted below. Only framework/device
+// constructors and symbol discovery are mocked; timer descriptors are real.
+#include <algorithm>
+#include <cerrno>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <dirent.h>
+#include <fcntl.h>
+#include <format>
+#include <memory>
+#include <string>
+#include <sys/timerfd.h>
+#include <unistd.h>
+#include <utility>
+#include <vector>
+
+static void require(bool value, const char* name) {
+    if (!value) { std::fprintf(stderr,"FACTORY_CONTROL_FAILURE %s\n",name); std::exit(1); }
+}
+namespace Hyprutils::Memory {
+template<class T> using CSharedPointer = std::shared_ptr<T>;
+template<class T,class... A> auto makeShared(A&&... args) { return std::make_shared<T>(std::forward<A>(args)...); }
+}
+static bool native_requested, mode_present, drm_available = true;
+static int mode_result, mode_calls, drm_attempts;
+static uint32_t mode_width, mode_height;
+static std::vector<int> constructed;
+static int session_mode(uint32_t* width,uint32_t* height) {
+    ++mode_calls; *width=mode_width; *height=mode_height; return mode_result;
+}
+#define RTLD_DEFAULT nullptr
+[[maybe_unused]] static void* dlsym(void*,const char* name) {
+    require(std::strcmp(name,"wddm_bridge_compositor_session_mode")==0,"unexpected symbol");
+    return mode_present ? reinterpret_cast<void*>(&session_mode) : nullptr;
+}
+namespace Aquamarine {
+enum eBackendType { AQ_BACKEND_HEADLESS, AQ_BACKEND_DRM, AQ_BACKEND_WAYLAND, AQ_BACKEND_NULL };
+enum eBackendRequestMode { AQ_BACKEND_REQUEST_MANDATORY, AQ_BACKEND_REQUEST_IF_AVAILABLE, AQ_BACKEND_REQUEST_FALLBACK };
+enum { AQ_LOG_DEBUG, AQ_LOG_ERROR, AQ_LOG_CRITICAL };
+struct SBackendImplementationOptions { eBackendType backendType; eBackendRequestMode backendRequestMode; };
+struct SBackendOptions { void* logConnection=nullptr; void* logFunction=nullptr; };
+struct CLogger {
+    void* m_loggerConnection=nullptr; void* m_logFn=nullptr;
+    void updateLevels() {}
+};
+struct IBackend {
+    int kind; std::weak_ptr<IBackend> self;
+    explicit IBackend(int type):kind(type) { constructed.push_back(type); }
+    virtual ~IBackend() = default;
+};
+struct CBackend {
+    SBackendOptions options;
+    std::shared_ptr<CLogger> logger;
+    std::vector<SBackendImplementationOptions> implementationOptions;
+    std::weak_ptr<CBackend> self;
+    std::vector<std::shared_ptr<IBackend>> implementations;
+    struct { int fd=-1; } idle;
+    void log(int,const std::string&) {}
+    ~CBackend() { if(idle.fd>=0) require(close(idle.fd)==0,"timer close"); }
+    static std::shared_ptr<CBackend> create(const std::vector<SBackendImplementationOptions>&,const SBackendOptions&);
+};
+struct CHeadlessBackend:IBackend { explicit CHeadlessBackend(std::shared_ptr<CBackend>):IBackend(AQ_BACKEND_HEADLESS) {} };
+struct CWaylandBackend:IBackend { explicit CWaylandBackend(std::shared_ptr<CBackend>):IBackend(AQ_BACKEND_WAYLAND) {} };
+struct CNullBackend:IBackend { explicit CNullBackend(std::shared_ptr<CBackend>):IBackend(AQ_BACKEND_NULL) {} };
+struct CDRMBackend:IBackend {
+    CDRMBackend():IBackend(AQ_BACKEND_DRM) {}
+    static std::vector<std::shared_ptr<CDRMBackend>> attempt(std::shared_ptr<CBackend>) {
+        ++drm_attempts;
+        if(!drm_available) return {};
+        return {std::make_shared<CDRMBackend>()};
+    }
+};
+namespace NativeRender { [[maybe_unused]] static bool requested() { return native_requested; } }
+}
+using namespace Aquamarine;
+using namespace Hyprutils::Memory;
+#define SP CSharedPointer
+
+/* @PRODUCTION_FACTORY@ */
+
+static unsigned descriptors() {
+    DIR* directory=opendir("/proc/self/fd");require(directory,"descriptor directory");
+    unsigned count=0;
+    while(auto* entry=readdir(directory)) if(entry->d_name[0]!='.') ++count;
+    require(closedir(directory)==0,"descriptor directory close");return count;
+}
+static unsigned checks;
+static void exercise(const char* label,const std::vector<SBackendImplementationOptions>& options,
+                     bool native,bool symbol,int result,uint32_t width,uint32_t height,
+                     bool accepted,const std::vector<int>& types,int calls,int attempts) {
+    native_requested=native;mode_present=symbol;mode_result=result;mode_width=width;mode_height=height;
+    mode_calls=drm_attempts=0;constructed.clear();const unsigned before=descriptors();
+#ifdef FACTORY_BASELINE
+    calls=0; // The original factory does not query the new session callback.
+#endif
+    auto backend=CBackend::create(options,{});
+    require(bool(backend)==accepted,label);
+    require(constructed==types,"native constructor isolation");
+    require(mode_calls==calls && drm_attempts==attempts,"symbol and DRM attempt counts");
+    int timer=-1;
+    if(backend) {
+        require(backend->implementations.size()==types.size(),"implementation count");
+        for(size_t i=0;i<types.size();++i) require(backend->implementations[i]->kind==types[i],"implementation order");
+        timer=backend->idle.fd;require(timer>=0 && (fcntl(timer,F_GETFD)&FD_CLOEXEC),"real close-on-exec timer");
+    }
+    backend.reset();
+    if(timer>=0) { errno=0;require(fcntl(timer,F_GETFD)==-1 && errno==EBADF,"timer ownership retired"); }
+    require(descriptors()==before,"bounded descriptors");++checks;
+}
+int main(int argc,char** argv) {
+    const bool defaults=argc==2 && std::strcmp(argv[1],"--default-only")==0;
+    const bool nativeOnly=argc==2 && std::strcmp(argv[1],"--native-only")==0;
+    require(argc==1 || defaults || nativeOnly,"fixture arguments");
+    const SBackendImplementationOptions h{AQ_BACKEND_HEADLESS,AQ_BACKEND_REQUEST_MANDATORY};
+    const SBackendImplementationOptions d{AQ_BACKEND_DRM,AQ_BACKEND_REQUEST_IF_AVAILABLE};
+    const SBackendImplementationOptions w{AQ_BACKEND_WAYLAND,AQ_BACKEND_REQUEST_FALLBACK};
+    const SBackendImplementationOptions n{AQ_BACKEND_NULL,AQ_BACKEND_REQUEST_IF_AVAILABLE};
+    const std::vector<SBackendImplementationOptions> normal{h,d,w};
+    if(!nativeOnly) {
+        exercise("unselected",normal,false,false,0,0,0,true,{AQ_BACKEND_HEADLESS,AQ_BACKEND_DRM,AQ_BACKEND_WAYLAND},0,1);
+        exercise("unselected symbol",normal,false,true,1,3840,2160,true,{AQ_BACKEND_HEADLESS,AQ_BACKEND_DRM,AQ_BACKEND_WAYLAND},0,1);
+        exercise("legacy missing symbol",normal,true,false,0,0,0,true,{AQ_BACKEND_HEADLESS,AQ_BACKEND_DRM,AQ_BACKEND_WAYLAND},0,1);
+        exercise("legacy inactive session",normal,true,true,0,0,0,true,{AQ_BACKEND_HEADLESS,AQ_BACKEND_DRM,AQ_BACKEND_WAYLAND},1,1);
+        drm_available=false;
+        exercise("legacy absent DRM",normal,false,false,0,0,0,true,{AQ_BACKEND_HEADLESS,AQ_BACKEND_WAYLAND},0,1);
+        drm_available=true;
+        exercise("empty original options",{},false,false,0,0,0,false,{},0,0);
+    }
+    if(!defaults) {
+        exercise("native 4K",{h,d,w,n},true,true,1,3840,2160,true,{AQ_BACKEND_HEADLESS},1,0);
+        if(!nativeOnly) {
+            exercise("native 1080p",normal,true,true,1,1920,1080,true,{AQ_BACKEND_HEADLESS},1,0);
+            exercise("native output only",{h},true,true,1,3840,2160,true,{AQ_BACKEND_HEADLESS},1,0);
+            exercise("failed session",normal,true,true,-1,3840,2160,false,{},1,0);
+            exercise("unknown session",normal,true,true,2,3840,2160,false,{},1,0);
+            exercise("mixed extent",normal,true,true,1,3840,1080,false,{},1,0);
+            exercise("missing extent",normal,true,true,1,0,0,false,{},1,0);
+            exercise("missing output",{d,w},true,true,1,3840,2160,false,{},1,0);
+            exercise("duplicate output",{h,h,d,w},true,true,1,3840,2160,false,{},1,0);
+            exercise("optional output",{{AQ_BACKEND_HEADLESS,AQ_BACKEND_REQUEST_IF_AVAILABLE},d,w},true,true,1,3840,2160,false,{},1,0);
+            exercise("fallback output",{{AQ_BACKEND_HEADLESS,AQ_BACKEND_REQUEST_FALLBACK},d,w},true,true,1,3840,2160,false,{},1,0);
+        }
+    }
+    std::printf("AQUAMARINE_FACTORY_PASS controls=%u deviceConstructorsMocked=true realTimers=true gpu=false\n",checks);
+}

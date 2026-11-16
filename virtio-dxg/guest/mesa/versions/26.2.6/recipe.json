@@ -1,0 +1,186 @@
+{
+  "schema": 1,
+  "mesaVersion": "26.2.6",
+  "sourceArchiveUrl": "https://archive.mesa3d.org/mesa-26.2.6.tar.xz",
+  "sourceArchiveSha256": "b9436b3e1a8be76fbd4823dc884f90596ab7c6ac5e1867a305e66ffccfb31a92",
+  "directXHeadersCommit": "adbd6f3ba40795c46a8d0f33af00bcb57ff0f0a4",
+  "profiles": {
+    "graphics": {
+      "patchFile": "graphics.patch",
+      "patchSha256": "bbdefbf84f196e54318b29fa5ef5648b3ffb24dd5f6849e59fb48b41a85df02d",
+      "files": {
+        "VERSION": {
+          "originalSha256": "982a353702e30cae7604c76ff1a99db8b959088c79b12dd1ea480141241f2e48",
+          "patchedSha256": "982a353702e30cae7604c76ff1a99db8b959088c79b12dd1ea480141241f2e48"
+        },
+        "src/gallium/auxiliary/util/u_upload_mgr.c": {
+          "originalSha256": "31e9544a8ba017d58449f12dc0a8e829ca03c672503874c3c52276c78423b582",
+          "patchedSha256": "3622c693947740363a6812d59fa2c00adea0dfb58ca4bc6a998610de95963f25"
+        },
+        "src/gallium/auxiliary/vl/vl_winsys_drm.c": {
+          "originalSha256": "1682b49feba42d5e13e98899aaa6613b67dfeb906f190719d70ec9c5f0366584",
+          "patchedSha256": "7e92c2208e37319fed60dc64b2d3cd5855c0fd21ad1424d9ad03d90704f073a4"
+        },
+        "src/gallium/drivers/d3d12/d3d12_batch.cpp": {
+          "originalSha256": "5b95f02b0e25a3def0f2ce89701d6028ca8b02cbeff61fe630014b25644a70ea",
+          "patchedSha256": "a83cfbd27d5a26147f265ba1a4626fb13d6fcb50c471b0bb1a9b976ad284d685"
+        },
+        "src/gallium/drivers/d3d12/d3d12_batch.h": {
+          "originalSha256": "1f503d3f3b7fe2499c3e502767e0ada5bf9062d8cfeec42724a1f57cbad3f89a",
+          "patchedSha256": "c388d145246472628bb6a204ee84143362f3b1d86ca481e3069b40e1e9c128b2"
+        },
+        "src/gallium/drivers/d3d12/d3d12_bufmgr.cpp": {
+          "originalSha256": "96ac1817e23440e8cfbb2aed6679347460d3c63db028b1ed61249ff4bfdbafcf",
+          "patchedSha256": "411f37ab716ea3296511f2b8220eb396728273a4d8b666563b9c4b6ef2907cee"
+        },
+        "src/gallium/drivers/d3d12/d3d12_context.h": {
+          "originalSha256": "01cd57920789e41ca0d2883c2c4b5dfde7967fe44b9911923dc0390ce4bdcb90",
+          "patchedSha256": "7eb8ea32c0a870ba932b8aa4a9f4c67a5c8b311423f7383ddde5288febd4106d"
+        },
+        "src/gallium/drivers/d3d12/d3d12_context_common.cpp": {
+          "originalSha256": "2c6bff1c04dc5a7bc4515814392a829182b92069be490fc9982371346913924b",
+          "patchedSha256": "a0387a59d49de6dc8bfb58aa6b5f322d38e32fec18364cb630c2501a607a61fd"
+        },
+        "src/gallium/drivers/d3d12/d3d12_fence.cpp": {
+          "originalSha256": "6e7f13fdab60012c5bdf262bbd1f60d36440dd155e95254eaa252703d30b6759",
+          "patchedSha256": "37aa6562ae87d306dc5df27b99c80fd455f049ec08f527b83eee271fb33c1ea1"
+        },
+        "src/gallium/drivers/d3d12/d3d12_fence.h": {
+          "originalSha256": "c0dfb38246345f1572f0e777d6caaeb6aea95222539cca790875dac69a2d184a",
+          "patchedSha256": "04b8736a2cefda83db4cfa3854bfcc299ceff983b8fc3a831d06f799b6b42823"
+        },
+        "src/gallium/drivers/d3d12/d3d12_format.c": {
+          "originalSha256": "c985b81fa2de5ae093ec13dd25d6c619fa7f848264cc8c06184f34d3926c0736",
+          "patchedSha256": "799421c21d99c83f543a8ff0d891e9b75f074eebeb0e0b92372d12cb82cb5e32"
+        },
+        "src/gallium/drivers/d3d12/d3d12_resource.cpp": {
+          "originalSha256": "b03b1d70e20342b13b615807534aaeed23688955477b014f21ecb5a09aec486b",
+          "patchedSha256": "7b5b1325379a377456ce6d730c8336c0109af0bd161a8f1cbbf5eea3dbc76b49"
+        },
+        "src/gallium/drivers/d3d12/d3d12_resource.h": {
+          "originalSha256": "ed9984a73896dfc781c534aa091b998c338bc3030e47e15f77bccce485cf0a56",
+          "patchedSha256": "ccbebfebb413fa78d3c861db6490c66f545873153a92b03a9933092125fd73a4"
+        },
+        "src/gallium/drivers/d3d12/d3d12_screen.cpp": {
+          "originalSha256": "b442477e3751012eba05e4b41c269501f0f682679c908850dac059e13dea9185",
+          "patchedSha256": "d51e8e017231e60874aa47e2d643a2a69cb95e826a5bee57266cd3a1b1515293"
+        },
+        "src/gallium/drivers/d3d12/d3d12_screen.h": {
+          "originalSha256": "e4ee1a6673d8b17cb27fe6fb12670d386dcec737c579f1427bfebe0bc238aa62",
+          "patchedSha256": "2750d08e1ad9aaebd21cb1a612ee030b0943c7e97dba4a66a19527622a1cadea"
+        },
+        "src/glx/dri_common.c": {
+          "originalSha256": "8fe9f8cf161fc2f66039812823427d4df9d8b780af4a561033a60fd26ee00f6d",
+          "patchedSha256": "ada37f592a3780315cf92e9992c07e47822897248b2e3859b8eae1c9b6bb7c00"
+        },
+        "src/mesa/state_tracker/st_atom_constbuf.c": {
+          "originalSha256": "a0140c9954053b256f969f4e2d2074c83a91cbe221e2dab6c47d96f67d130856",
+          "patchedSha256": "d40c57cf8141666ffc6465c18fd3a8ffccc023b2e878e9ab9383733a550f3d3a"
+        },
+        "src/microsoft/compiler/nir_to_dxil.c": {
+          "originalSha256": "9102fd40db4f5441c34576c64d9e65dc8c6948d01dc5ab6f29b0ac027db76777",
+          "patchedSha256": "eb7bc14f219e6ebdaf74b20382dfd40558a4fd5ab1c470360fcce8308697ffd6"
+        },
+        "src/microsoft/compiler/nir_to_dxil.h": {
+          "originalSha256": "444945c6d593b52b66c942c1a923c51ce2615dc52b6b70ae44f6240ac103a915",
+          "patchedSha256": "6025f044675bf8cbf1f9322d33a0165da96a79e1c13154014346b14ad7d9c7d8"
+        },
+        "src/microsoft/spirv_to_dxil/dxil_spirv_nir.c": {
+          "originalSha256": "7de0c6d801a4dfa0ad888ba29ec54b5a9d0bc43b2541ea715d2e52aa72cc8bfd",
+          "patchedSha256": "0c5375b1b1314665f06dc1b674bc8ac5f15ba8aa08036e0cf658ae820005e0d8"
+        },
+        "src/microsoft/vulkan/dzn_cmd_buffer.c": {
+          "originalSha256": "1daea02a1357f6b571eee959a8f7288f32c23b7a77906b013fbeeb653ad1fada",
+          "patchedSha256": "dc2d27445a0d75369783319a47b09de28be5f30877cdca4e689cd8460328e0cb"
+        },
+        "src/microsoft/vulkan/dzn_descriptor_set.c": {
+          "originalSha256": "63f9b65f84b2d8af3ab8b55c0e715bf567096621fe72531af73ceee8f3f1d87e",
+          "patchedSha256": "b4ced89bf236b32bb7056ce79570e170641a7d2008d6307e353683f918b97f64"
+        },
+        "src/microsoft/vulkan/dzn_device.c": {
+          "originalSha256": "837bbdd6851ee4bf9073628f6029329d5bf50a6e93f179d7429ea61f70fd400a",
+          "patchedSha256": "7f6a96495764ccd24ce7126a065db07eff16c2be652fe6872a801172f072b5d1"
+        },
+        "src/microsoft/vulkan/dzn_image.c": {
+          "originalSha256": "7a3b791b956996a411a543eac940dc646366f8391013d445e676084ad22af6ec",
+          "patchedSha256": "3c6cdbc5a5a9d628eaaa7c7d73f6d6b709fd01c9f346def269678104b2dc4eb6"
+        },
+        "src/microsoft/vulkan/dzn_imported_memory_fd.h": {
+          "originalSha256": null,
+          "patchedSha256": "03155a0ea2ba1f9f2b42a20342340060b7ed9a10461a2ab0551293ed50e2271c"
+        },
+        "src/microsoft/vulkan/dzn_pipeline.c": {
+          "originalSha256": "d1b80c48c053199d9be1802a7ca27145b90b81dd20ad51b76f7f8adea0dab24c",
+          "patchedSha256": "b0c5435b60614f3ae4db4de8f5e04d3a9f0486a26906ccb98837cfbeba3c5779"
+        },
+        "src/microsoft/vulkan/dzn_private.h": {
+          "originalSha256": "d787ec1f37d336142e3e023edf5f020e4e9d55bb12180c27f0ded8e399218d5c",
+          "patchedSha256": "44606708a3a8aad617dd7a66cbec6add90d8d9debf67ac9a0c279fa13b850b19"
+        },
+        "src/microsoft/vulkan/dzn_wsi.c": {
+          "originalSha256": "f31a98248744b0cb772e66b2c2d9f67c6dfc6c15905c416765b00a2e49a34366",
+          "patchedSha256": "b12849051b4d24cd2df548f21296566e137efec70a5dc18baeda9ebeb23a728d"
+        },
+        "src/util/hash_table.h": {
+          "originalSha256": "2c5d9cdbf9ae86a5b202c14719c5a32a0b19d5c47d1ebffcd45fd52c945aa29d",
+          "patchedSha256": "2c5d9cdbf9ae86a5b202c14719c5a32a0b19d5c47d1ebffcd45fd52c945aa29d"
+        },
+        "src/util/u_atomic.h": {
+          "originalSha256": "81bf636924f9c049606ed8d0be2e01cc7b9facc963955efc1faec2140b510960",
+          "patchedSha256": "81bf636924f9c049606ed8d0be2e01cc7b9facc963955efc1faec2140b510960"
+        },
+        "src/vulkan/wsi/wsi_common.h": {
+          "originalSha256": "63679b6ea74f03c374e996539cb43405dccbf0c31a3ab444923aa0169b8e2a0e",
+          "patchedSha256": "ba196b7bf15d3326f70de73ec44ea9a92e6a271f6ad6b400b4f10bcf419123a2"
+        },
+        "src/vulkan/wsi/wsi_common_drm.c": {
+          "originalSha256": "7cc381755a3aa52a307d3570b664f14f09082ccb7e99f1587862c82a6ce78779",
+          "patchedSha256": "d9b6164669ad912bb9bcbaf45975c67f55e9863a145a2d1ca1017131c0e80adf"
+        },
+        "src/vulkan/wsi/wsi_common_wayland.c": {
+          "originalSha256": "74a64c3e24e3ba2abc3e7423f070cf898abe98af9d1bb1325e41354f2b902396",
+          "patchedSha256": "72008b7ac81e1c9aa6b7ab54aad7d9fa6efb6b1e33d04a0c85c1499b8c5ddbc0"
+        },
+        "subprojects/DirectX-Headers.wrap": {
+          "originalSha256": "cd7710ccaa92dc9dabe4c6040b47c701c48b22c179d435debd5f7409142fcbe1",
+          "patchedSha256": "647775c4b94f0d5c0042f790aaca03667ab6ea8796d98416d2bb6c42e75f8070"
+        }
+      }
+    }
+  },
+  "profile": "virtio-dxg kernel ABI: KMS mirrors, zero-copy scanout, native Dozen FD lifetime, upload/constbuf/fence/reclaim guards, per-context mirror writes without per-frame heap allocation for <=16 mirrors",
+  "sourceVersionIsNotRewritten": true,
+  "runtimeRequiredPaths": [
+    "lib/dri/d3d12_dri.so",
+    "lib/dri/d3d12_drv_video.so",
+    "lib/dri/kms_swrast_dri.so",
+    "lib/dri/libdril_dri.so",
+    "lib/dri/swrast_dri.so",
+    "lib/gbm/dri_gbm.so",
+    "lib/libEGL_mesa.so",
+    "lib/libEGL_mesa.so.0",
+    "lib/libEGL_mesa.so.0.0.0",
+    "lib/libGLX_mesa.so",
+    "lib/libGLX_mesa.so.0",
+    "lib/libGLX_mesa.so.0.0.0",
+    "lib/libgallium-26.2.6.so",
+    "lib/libgbm.so",
+    "lib/libgbm.so.1",
+    "lib/libgbm.so.1.0.0",
+    "lib/libvulkan_dzn.so",
+    "share/glvnd/egl_vendor.d/50_mesa.json",
+    "share/vulkan/icd.d/dzn_icd.x86_64.json"
+  ],
+  "runtimeAliases": {
+    "lib/libEGL_mesa.so": "libEGL_mesa.so.0",
+    "lib/libEGL_mesa.so.0": "libEGL_mesa.so.0.0.0",
+    "lib/libGLX_mesa.so": "libGLX_mesa.so.0",
+    "lib/libGLX_mesa.so.0": "libGLX_mesa.so.0.0.0",
+    "lib/libgbm.so": "libgbm.so.1",
+    "lib/libgbm.so.1": "libgbm.so.1.0.0",
+    "lib/dri/d3d12_drv_video.so": "../libgallium-26.2.6.so",
+    "lib/dri/d3d12_dri.so": "libdril_dri.so",
+    "lib/dri/kms_swrast_dri.so": "libdril_dri.so",
+    "lib/dri/swrast_dri.so": "libdril_dri.so"
+  }
+}

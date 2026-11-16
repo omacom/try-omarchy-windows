@@ -1,0 +1,142 @@
+--- a/src/gallium/drivers/d3d12/d3d12_context_common.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_context_common.cpp
+@@ -214,6 +214,23 @@
+    ctx->has_commands = true;
+ }
+ 
++#ifndef _WIN32
++static void
++d3d12_create_fence_fd(struct pipe_context *pipe,
++                      struct pipe_fence_handle **pfence, int fd,
++                      enum pipe_fd_type type)
++{
++   /* A native D3D12 shared fence is a timeline, not a binary semaphore or
++    * Linux sync_file. The GL frontend retains ownership of fd until success.
++    */
++   *pfence = nullptr;
++   if (fd < 0 || type != PIPE_FD_TYPE_TIMELINE_SEMAPHORE_VK)
++      return;
++   *pfence = (struct pipe_fence_handle *)d3d12_open_fence(
++      d3d12_screen(pipe->screen), (HANDLE)(intptr_t)fd, nullptr, type);
++}
++#endif
++
+ static void
+ d3d12_signal(struct pipe_context *pipe,
+              struct pipe_fence_handle *pfence,
+@@ -534,6 +551,9 @@
+    ctx->base.destroy = d3d12_context_destroy;
+    ctx->base.flush = d3d12_flush;
+    ctx->base.flush_resource = d3d12_flush_resource;
++#ifndef _WIN32
++   ctx->base.create_fence_fd = d3d12_create_fence_fd;
++#endif
+    ctx->base.fence_server_signal = d3d12_signal;
+    ctx->base.fence_server_sync = d3d12_wait;
+    ctx->base.memory_barrier = d3d12_memory_barrier;
+--- a/src/gallium/drivers/d3d12/d3d12_fence.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_fence.cpp
+@@ -98,7 +98,12 @@
+    }
+ 
+    HANDLE handle_to_close = nullptr;
++#ifdef _WIN32
+    assert(!!handle ^ !!name);
++#else
++   /* POSIX descriptor zero is a valid D3D12 Linux shared handle. */
++   assert(!name);
++#endif
+    if (name) {
+       screen->dev->OpenSharedHandleByName((LPCWSTR)name, GENERIC_ALL, &handle_to_close);
+       handle = handle_to_close;
+--- a/src/gallium/drivers/d3d12/d3d12_screen.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_screen.cpp
+@@ -381,8 +381,18 @@
+    caps->device_reset_status_query = true;
+    caps->robust_buffer_access_behavior = true;
+    caps->memobj = true;
++#ifdef _WIN32
+    caps->fence_signal = true;
+    caps->timeline_semaphore_import = true;
++#else
++   /* The experimental Linux FD contract accepts native D3D12 timelines.
++    * Do not advertise binary Vulkan semaphore or sync_file compatibility.
++    * Keep this opt-in until interoperability and compositor tests pass.
++    */
++   caps->fence_signal = debug_get_bool_option("D3D12_EXPERIMENTAL_FENCE_FD", false);
++   caps->timeline_semaphore_import = caps->fence_signal;
++   caps->max_timeline_semaphore_difference = caps->fence_signal ? INT64_MAX : 0;
++#endif
+    caps->clip_halfz = true;
+    caps->vs_layer_viewport = true;
+    caps->copy_between_compressed_and_plain_formats = true;
+--- a/src/mesa/main/externalobjects.c
++++ b/src/mesa/main/externalobjects.c
+@@ -633,7 +633,18 @@
+ {
+    struct pipe_context *pipe = ctx->pipe;
+ 
+-   pipe->create_fence_fd(pipe, &semObj->fence, fd, semObj->type);
++   struct pipe_fence_handle *fence = NULL;
++   if (pipe->create_fence_fd)
++      pipe->create_fence_fd(pipe, &fence, fd, semObj->type);
++   if (!fence) {
++      _mesa_error(ctx, GL_INVALID_OPERATION, "glImportSemaphoreFdEXT(import failed)");
++      return;
++   }
++   /* Failed imports preserve the old object and caller's FD. Only success
++    * transfers ownership, as required by EXT_external_objects_fd.
++    */
++   pipe->screen->fence_reference(pipe->screen, &semObj->fence, NULL);
++   semObj->fence = fence;
+ 
+ #if !defined(_WIN32)
+    /* We own fd, but we no longer need it. So get rid of it */
+@@ -989,7 +1000,7 @@
+       return;
+ 
+    params[0] = semObj->type == PIPE_FD_TYPE_TIMELINE_SEMAPHORE_VK ?
+-               GL_TIMELINE_SEMAPHORE_VALUE_NV :
++               GL_SEMAPHORE_TYPE_TIMELINE_NV :
+                GL_SEMAPHORE_TYPE_BINARY_NV;
+ }
+ 
+@@ -1022,7 +1033,15 @@
+       return;
+ 
+    enum pipe_fd_type type = params[0] == GL_SEMAPHORE_TYPE_TIMELINE_NV ? PIPE_FD_TYPE_TIMELINE_SEMAPHORE_VK : PIPE_FD_TYPE_SYNCOBJ;
+-   create_real_semaphore(ctx, semaphore, semObj, type, func);
++   if (semObj != &DummySemaphoreObject) {
++      if (semObj->fence && semObj->type != type) {
++         _mesa_error(ctx, GL_INVALID_OPERATION, "%s(imported semaphore type)", func);
++         return;
++      }
++      semObj->type = type;
++   } else {
++      create_real_semaphore(ctx, semaphore, semObj, type, func);
++   }
+ }
+ 
+ void GLAPIENTRY
+@@ -1050,6 +1069,10 @@
+    semObj = _mesa_lookup_semaphore_object(ctx, semaphore);
+    if (!semObj)
+       return;
++   if (semObj == &DummySemaphoreObject || !semObj->fence) {
++      _mesa_error(ctx, GL_INVALID_OPERATION, "%s(no imported semaphore)", func);
++      return;
++   }
+ 
+    FLUSH_VERTICES(ctx, 0, 0);
+ 
+@@ -1110,6 +1133,10 @@
+    semObj = _mesa_lookup_semaphore_object(ctx, semaphore);
+    if (!semObj)
+       return;
++   if (semObj == &DummySemaphoreObject || !semObj->fence) {
++      _mesa_error(ctx, GL_INVALID_OPERATION, "%s(no imported semaphore)", func);
++      return;
++   }
+ 
+    FLUSH_VERTICES(ctx, 0, 0);
+ 

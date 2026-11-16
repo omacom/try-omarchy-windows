@@ -1,0 +1,119 @@
+name: Sync fork with upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == '7Wdev/try-omarchy-windows'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      changed: ${{ steps.merge.outputs.changed }}
+      sha: ${{ steps.merge.outputs.sha }}
+      branch: ${{ steps.merge.outputs.branch }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: master
+          fetch-depth: 0
+      - name: Merge upstream without discarding fork history
+        id: merge
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch https://github.com/omacom/try-omarchy-windows.git master:refs/remotes/upstream/master
+          python3 scripts/fork/prepare_sync.py >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor HEAD origin/master; then
+            exit 0
+          fi
+          branch="sync/upstream-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git push origin "HEAD:refs/heads/$branch"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+  validate-linux:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - name: Test candidate source
+        run: |
+          go -C app test -race ./...
+          go -C app vet ./...
+          python3 -m unittest discover -s scripts/fork -p 'test_*.py'
+          python3 -m unittest discover -s scripts/gpu -p 'test_*.py'
+          python3 -m unittest discover -s scripts/release -p 'test_*.py'
+          python3 runtime-build/validate-lock.py
+          c++ -std=c++17 -Wall -Wextra -Werror experimental/windows-native-gpu/wire_test.cpp -o /tmp/native-wire-test
+          /tmp/native-wire-test
+          c++ -std=c++17 -Wall -Wextra -Werror experimental/windows-native-gpu/driver_wire_test.cpp -o /tmp/driver-wire-test
+          /tmp/driver-wire-test
+          sh experimental/windows-native-gpu/build_guest.sh
+
+  validate-windows:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - name: Test and build Windows code
+        shell: pwsh
+        run: |
+          go -C app test ./...
+          if ($LASTEXITCODE) { throw 'Windows launcher tests failed' }
+          go -C app vet -unsafeptr=false ./...
+          if ($LASTEXITCODE) { throw 'Windows launcher vet failed' }
+          scripts/fork/build.ps1
+          experimental/windows-native-gpu/build.ps1
+          # Hosted runners lack the target NVIDIA hardware. Physical GPU
+          # acceptance remains a separate test, not a false CI success.
+
+  publish:
+    needs: [prepare, validate-linux, validate-windows]
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+      - name: Publish the tested merge
+        env:
+          SYNC_BRANCH: ${{ needs.prepare.outputs.branch }}
+        run: |
+          git fetch origin master
+          git merge-base --is-ancestor origin/master HEAD
+          # Fast-forward only. A concurrent fork edit fails safely; no force push.
+          git push origin HEAD:refs/heads/master
+          git push origin --delete "$SYNC_BRANCH"

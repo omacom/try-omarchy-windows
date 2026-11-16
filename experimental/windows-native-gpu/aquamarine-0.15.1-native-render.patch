@@ -1,0 +1,183 @@
+--- /dev/null
++++ b/src/NativeRender.cpp
+@@ -0,0 +1,35 @@
++// Private compositor-startup experiment. No KMS or Windows presentation claim.
++#include "NativeRender.hpp"
++#include <cstdint>
++#include <cstdlib>
++#include <cstring>
++#include <dlfcn.h>
++#include <sys/ioctl.h>
++#include <sys/stat.h>
++
++bool Aquamarine::NativeRender::requested() {
++    const auto value = std::getenv("AQ_EXPERIMENTAL_NATIVE_RENDER");
++    return value && std::strcmp(value, "1") == 0;
++}
++
++bool Aquamarine::NativeRender::supported(int fd) {
++    if (!requested())
++        return false;
++
++    struct SIdentity {
++        uint32_t version = 1, flags = 0;
++        uint64_t signature = 0;
++        uint32_t maxWidth = 0, maxHeight = 0, reserved[2] = {};
++    } identity;
++    static_assert(sizeof(SIdentity) == 32);
++    struct stat info = {};
++    if (fstat(fd, &info) != 0 || !S_ISCHR(info.st_mode) || ioctl(fd, _IOWR('d', 0x40, SIdentity), &identity) != 0 ||
++        identity.version != 1 || identity.flags != 1 || identity.signature != UINT64_C(0x3152444d444457) ||
++        identity.maxWidth != 4096 || identity.maxHeight != 4096 || identity.reserved[0] || identity.reserved[1])
++        return false;
++
++    const auto supported = reinterpret_cast<int (*)(void)>(dlsym(RTLD_DEFAULT, "wddm_bridge_native_buffer_supported"));
++    return supported && supported() == 1 && dlsym(RTLD_DEFAULT, "wddm_bridge_export_native_buffer") &&
++        dlsym(RTLD_DEFAULT, "wddm_bridge_native_buffer_info") && dlsym(RTLD_DEFAULT, "wddm_bridge_prepare_native_resource") &&
++        dlsym(RTLD_DEFAULT, "wddm_bridge_cancel_native_resource");
++}
+--- /dev/null
++++ b/src/include/NativeRender.hpp
+@@ -0,0 +1,6 @@
++#pragma once
++
++namespace Aquamarine::NativeRender {
++    bool requested();
++    bool supported(int fd);
++}
+--- a/src/backend/Backend.cpp
++++ b/src/backend/Backend.cpp
+@@ -6,6 +6,7 @@
+ #include <aquamarine/allocator/GBM.hpp>
+ #include <hyprutils/os/FileDescriptor.hpp>
+ #include <ranges>
++#include <algorithm>
+ #include <sys/timerfd.h>
+ #include <ctime>
+ #include <cstring>
+@@ -14,6 +15,7 @@
+ #include <unistd.h>
+ 
+ #include "Logger.hpp"
++#include "NativeRender.hpp"
+ 
+ using namespace Hyprutils::Memory;
+ using namespace Hyprutils::OS;
+@@ -159,6 +161,24 @@
+         return failed;
+     });
+ 
++    if (NativeRender::requested()) {
++        if (implementations.empty() || std::ranges::any_of(implementations, [](const auto& impl) { return impl->type() != AQ_BACKEND_HEADLESS; })) {
++            log(AQ_LOG_CRITICAL, "Private native-render startup requires the isolated headless implementation");
++            return false;
++        }
++        const auto path = std::getenv("WDDM_BRIDGE_RENDER_NODE");
++        CFileDescriptor fd(path ? open(path, O_RDWR | O_CLOEXEC) : -1);
++        if (!fd.isValid() || !NativeRender::supported(fd.get())) {
++            log(AQ_LOG_CRITICAL, "Private native-render identity/buffer route rejected");
++            return false;
++        }
++        primaryAllocator = CGBMAllocator::create(fd.get(), self);
++        if (!primaryAllocator)
++            return false;
++        fd.take(); // The GBM allocator owns this descriptor until destruction.
++        log(AQ_LOG_DEBUG, "Private native-render allocator connected; KMS=false WindowsPresentation=false");
++    }
++
+     // TODO: obviously change this when (if) we add different allocators.
+     for (auto const& b : implementations) {
+         if (b->drmFD() >= 0) {
+@@ -225,6 +245,8 @@
+ 
+         return fd;
+     }
++    if (primaryAllocator && NativeRender::supported(primaryAllocator->drmFD()))
++        return primaryAllocator->drmFD();
+     return -1;
+ }
+ 
+@@ -236,6 +258,8 @@
+ 
+         return fd;
+     }
++    if (primaryAllocator && NativeRender::supported(primaryAllocator->drmFD()))
++        return primaryAllocator->drmFD();
+     return -1;
+ }
+ 
+--- a/src/backend/Headless.cpp
++++ b/src/backend/Headless.cpp
+@@ -5,7 +5,9 @@
+ #include <sys/timerfd.h>
+ #include <cstring>
+ #include <unistd.h>
++#include <dlfcn.h>
+ #include "Shared.hpp"
++#include "NativeRender.hpp"
+ 
+ using namespace Aquamarine;
+ using namespace Hyprutils::Memory;
+@@ -26,6 +28,16 @@
+ 
+ bool Aquamarine::CHeadlessOutput::commit() {
+     const auto snapshot = state->snapshot();
++    // Private diagnostic observer only. This does not add Windows presentation.
++    if (NativeRender::requested() && (state->state().committed & COutputState::AQ_OUTPUT_STATE_BUFFER) && state->state().buffer) {
++        using Observer = int (*)(int, uint32_t, uint32_t, uint32_t, uint32_t, uint64_t);
++        const auto observer = reinterpret_cast<Observer>(dlsym(RTLD_DEFAULT, "wddm_bridge_compositor_commit"));
++        if (observer && backend->backend->primaryAllocator && NativeRender::supported(backend->backend->primaryAllocator->drmFD())) {
++            const auto attrs = state->state().buffer->dmabuf();
++            if (attrs.success && attrs.planes == 1)
++                observer(attrs.fds[0], attrs.size.x, attrs.size.y, attrs.format, attrs.strides[0], attrs.modifier);
++        }
++    }
+     events.commit.emit();
+     state->consume(snapshot);
+     needsFrame = false;
+@@ -155,6 +167,11 @@
+ }
+ 
+ std::vector<SDRMFormat> Aquamarine::CHeadlessBackend::getRenderFormats() {
++    if (backend->primaryAllocator && NativeRender::supported(backend->primaryAllocator->drmFD()))
++        return {SDRMFormat{.drmFormat = DRM_FORMAT_ARGB8888, .modifiers = {DRM_FORMAT_MOD_INVALID}},
++                SDRMFormat{.drmFormat = DRM_FORMAT_ABGR8888, .modifiers = {DRM_FORMAT_MOD_INVALID}},
++                SDRMFormat{.drmFormat = DRM_FORMAT_XRGB8888, .modifiers = {DRM_FORMAT_MOD_INVALID}},
++                SDRMFormat{.drmFormat = DRM_FORMAT_XBGR8888, .modifiers = {DRM_FORMAT_MOD_INVALID}}};
+     for (const auto& impl : backend->getImplementations()) {
+         if (impl->type() != AQ_BACKEND_DRM || impl->getRenderableFormats().empty())
+             continue;
+--- a/src/allocator/GBM.cpp
++++ b/src/allocator/GBM.cpp
+@@ -5,6 +5,7 @@
+ #include <aquamarine/allocator/Swapchain.hpp>
+ #include "FormatUtils.hpp"
+ #include "Shared.hpp"
++#include "NativeRender.hpp"
+ #include <xf86drm.h>
+ #include <gbm.h>
+ #include <unistd.h>
+@@ -162,8 +163,13 @@
+         explicitModifiers = {DRM_FORMAT_MOD_LINEAR};
+     }
+ 
++    const bool NATIVE_RENDER = NativeRender::supported(allocator->fd);
++    if (NATIVE_RENDER && (CURSOR || MULTIGPU || swapchain->backendImpl->type() != AQ_BACKEND_HEADLESS)) {
++        allocator->backend->log(AQ_LOG_ERROR, "Private native buffers have no KMS/cursor/multi-GPU route");
++        return;
++    }
+     uint32_t flags = GBM_BO_USE_RENDERING;
+-    if (params.scanout && !MULTIGPU)
++    if (params.scanout && !MULTIGPU && !NATIVE_RENDER)
+         flags |= GBM_BO_USE_SCANOUT;
+ 
+     uint64_t modifier = DRM_FORMAT_MOD_INVALID;
+@@ -330,7 +336,7 @@
+ 
+ SP<CGBMAllocator> Aquamarine::CGBMAllocator::create(int drmfd_, Hyprutils::Memory::CWeakPointer<CBackend> backend_) {
+     uint64_t capabilities = 0;
+-    if (drmGetCap(drmfd_, DRM_CAP_PRIME, &capabilities) || !(capabilities & DRM_PRIME_CAP_EXPORT)) {
++    if (!NativeRender::supported(drmfd_) && (drmGetCap(drmfd_, DRM_CAP_PRIME, &capabilities) || !(capabilities & DRM_PRIME_CAP_EXPORT))) {
+         backend_->log(AQ_LOG_ERROR, "Cannot create a GBM Allocator: PRIME export is not supported by the gpu.");
+         return nullptr;
+     }

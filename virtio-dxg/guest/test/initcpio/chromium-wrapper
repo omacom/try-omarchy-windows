@@ -1,0 +1,17 @@
+#!/bin/sh
+# Keep Chromium's normal launcher, profile, flags file and sandbox.
+# The present virtio-dxg client path supports ANGLE GL through Xwayland;
+# native Wayland GBM and Dozen-backed ANGLE are not accepted paths yet.
+if [ "${VIRTIO_DXG_CHROMIUM:-}" = passthrough ]; then
+    exec /usr/bin/chromium "$@"
+fi
+for arg in "$@"; do
+    case $arg in --disable-gpu) exec /usr/bin/chromium "$@" ;; esac
+done
+if [ -n "${DISPLAY:-}" ]; then
+    exec /usr/bin/chromium "$@" --ozone-platform=x11 --use-gl=angle \
+        --use-angle=gl --ignore-gpu-blocklist --enable-gpu-rasterization \
+        --disable-accelerated-video-encode
+fi
+# Never guess an X display or leave an invisible browser waiting on one.
+exec /usr/bin/chromium "$@"

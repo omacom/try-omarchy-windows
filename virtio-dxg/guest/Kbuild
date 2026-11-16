@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0
+# dxgkrnl with the virtio-dxg transport, built out of tree.
+obj-m := dxgkrnl_virtio.o
+dxgkrnl_virtio-y := dxgkrnl/dxgmodule.o dxgkrnl/hmgr.o dxgkrnl/misc.o \
+		    dxgkrnl/dxgadapter.o dxgkrnl/ioctl.o dxgkrnl/dxgvmbus.o \
+		    dxgkrnl/dxgprocess.o dxgkrnl/dxgsyncfile.o \
+		    dxgkrnl/dxgvirtio.o
+ccflags-y := -DDXG_VIRTIO -I$(src)/include -I$(src)/../protocol

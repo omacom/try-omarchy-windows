@@ -1,0 +1,184 @@
+{
+  "schema": 1,
+  "mesaVersion": "26.2.6",
+  "sourceArchiveUrl": "https://archive.mesa3d.org/mesa-26.2.6.tar.xz",
+  "sourceArchiveSha256": "b9436b3e1a8be76fbd4823dc884f90596ab7c6ac5e1867a305e66ffccfb31a92",
+  "directXHeadersCommit": "adbd6f3ba40795c46a8d0f33af00bcb57ff0f0a4",
+  "directXHeadersVersion": "1.619.5",
+  "profiles": {
+    "graphics": {
+      "patchFile": "graphics.patch",
+      "patchSha256": "10ea3de6779d6874f8f8e785f561b0f8db4af4241b21f4750f1886b33e02e10c",
+      "files": {
+        "src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c": {
+          "originalSha256": "6ad6f13a7881c64b877e16496f243073ed42fb10a10dc9a98aaba2331b94edbf",
+          "patchedSha256": "b79095be6230f70248fe384a140d7faea213ff103cb9a2cc34b32dc08102361c"
+        },
+        "src/gallium/auxiliary/target-helpers/drm_helper.h": {
+          "originalSha256": "37fda14864cb7e2be79422e3a34d3615ab254ac238383f347c3f73364f9ab382",
+          "patchedSha256": "69ae67ab97c859ee96eff933f6f383c164c29e601fa968ec07da00c13b4dd8da"
+        },
+        "src/gallium/auxiliary/target-helpers/drm_helper_public.h": {
+          "originalSha256": "cafc0b73f56071eeb427e30c057ebea9116098bc3d7cce197f897a21df86cb81",
+          "patchedSha256": "0395e5b80a940a045e55bf7a4136ba74e0b781fb75d03768b501d30b66125d30"
+        },
+        "src/gallium/auxiliary/util/u_upload_mgr.c": {
+          "originalSha256": "31e9544a8ba017d58449f12dc0a8e829ca03c672503874c3c52276c78423b582",
+          "patchedSha256": "3622c693947740363a6812d59fa2c00adea0dfb58ca4bc6a998610de95963f25"
+        },
+        "src/gallium/drivers/d3d12/d3d12_context_common.cpp": {
+          "originalSha256": "2c6bff1c04dc5a7bc4515814392a829182b92069be490fc9982371346913924b",
+          "patchedSha256": "ebf341b896652d3bdbdb3bf0e8dabdd336d2d1c781b3e33a8f28bd4e439b327a"
+        },
+        "src/gallium/drivers/d3d12/d3d12_dxcore_screen.cpp": {
+          "originalSha256": "ea992da3825ac60ca1a82508ba8299ced0695abf0fce3bdb35c0c117edc0d40c",
+          "patchedSha256": "f19e61f751e9d70621faf6e0daabf77747f1c9b8a7f57b1c26f2e49d5e3125a1"
+        },
+        "src/gallium/drivers/d3d12/d3d12_fence.cpp": {
+          "originalSha256": "6e7f13fdab60012c5bdf262bbd1f60d36440dd155e95254eaa252703d30b6759",
+          "patchedSha256": "071f516e428dee81222993fc9cf009de93dca414653f298b410b742d8477cfd6"
+        },
+        "src/gallium/drivers/d3d12/d3d12_fence.h": {
+          "originalSha256": "c0dfb38246345f1572f0e777d6caaeb6aea95222539cca790875dac69a2d184a",
+          "patchedSha256": "bb08eea13a37f6aa44ff5d5163e9021b6c6ace847eb53415cf5eb74319cb8765"
+        },
+        "src/gallium/drivers/d3d12/d3d12_native_buffer.h": {
+          "originalSha256": null,
+          "patchedSha256": "c0edf8471f8eb08ace132d2e91f1d88a545147ffc4fe10eb9465366096d913ee"
+        },
+        "src/gallium/drivers/d3d12/d3d12_native_render.h": {
+          "originalSha256": null,
+          "patchedSha256": "9f9b603f0218d15c518a5c00674064a22dd701fb8aa50761a8096ab0fecc11ec"
+        },
+        "src/gallium/drivers/d3d12/d3d12_public.h": {
+          "originalSha256": "564944946394688380ecf9541e60998422debbf12e4e4c87341639fc936ee072",
+          "patchedSha256": "b888fa3aadce98540bef97cf5cd9771f2eb3f466277df1435456afcdd47cb8e5"
+        },
+        "src/gallium/drivers/d3d12/d3d12_resource.cpp": {
+          "originalSha256": "b03b1d70e20342b13b615807534aaeed23688955477b014f21ecb5a09aec486b",
+          "patchedSha256": "72aa99ec4bee916ecd11372c80079ebeb7d7adcf74d63de05e5c7a744f564696"
+        },
+        "src/gallium/drivers/d3d12/d3d12_resource.h": {
+          "originalSha256": "ed9984a73896dfc781c534aa091b998c338bc3030e47e15f77bccce485cf0a56",
+          "patchedSha256": "61a9bb38807905fd5eec1b02a9fc7636bbe30139c77bc453ad33f77dfdda39c2"
+        },
+        "src/gallium/drivers/d3d12/d3d12_screen.cpp": {
+          "originalSha256": "b442477e3751012eba05e4b41c269501f0f682679c908850dac059e13dea9185",
+          "patchedSha256": "b2bfe73b4a6b073e313e490a8e2395262797e545ff1c2f366447eb4c4d476dd0"
+        },
+        "src/gallium/drivers/d3d12/d3d12_screen.h": {
+          "originalSha256": "e4ee1a6673d8b17cb27fe6fb12670d386dcec737c579f1427bfebe0bc238aa62",
+          "patchedSha256": "2108ad1eae3cc52676de3d947b4f07db9c10f655c0dad862da4e170153908271"
+        },
+        "src/gallium/frontends/dri/dri2.c": {
+          "originalSha256": "1946a9dde91351be717032125d494c7f5e45c2a49d6be6f6a83300c72c6c1abb",
+          "patchedSha256": "e5693086a8a3c22850d50cc8656b88a6c0305d89bf533c8765f846f2d5550d22"
+        },
+        "src/gallium/frontends/dri/dri_helpers.c": {
+          "originalSha256": "926fc50799392eb43703870b9a26d01b2807727053923e6311643bdce36e38b8",
+          "patchedSha256": "84ff1c8fe6a629b9ef4701446e07c420297d260cf62197a34bdd2dc897e07afe"
+        },
+        "src/gallium/include/pipe/p_screen.h": {
+          "originalSha256": "1b87db30af0f522a7345cf09795306eb2f1986ee8ccf4a516ade083d2b1d52d0",
+          "patchedSha256": "b2521d252a75dfb42c56e1d4c07f6a9678f9eee1abaa129a995b446d5d533673"
+        },
+        "src/mesa/main/externalobjects.c": {
+          "originalSha256": "a276145bdce05b5be10b09dd65faf0ab44cdfd90cb386edf5c9451816fe9e069",
+          "patchedSha256": "7220506f95d2cdde42446a5b110d0e45b269c3725052c48d8295132de1b95a56"
+        },
+        "src/mesa/state_tracker/st_atom_constbuf.c": {
+          "originalSha256": "a0140c9954053b256f969f4e2d2074c83a91cbe221e2dab6c47d96f67d130856",
+          "patchedSha256": "d40c57cf8141666ffc6465c18fd3a8ffccc023b2e878e9ab9383733a550f3d3a"
+        }
+      },
+      "portedStages": [
+        {
+          "stage": "0001",
+          "manuallyAdapted": false
+        },
+        {
+          "stage": "0002",
+          "manuallyAdapted": true
+        },
+        {
+          "stage": "0003",
+          "manuallyAdapted": true
+        },
+        {
+          "stage": "0004",
+          "manuallyAdapted": true
+        },
+        {
+          "stage": "0011",
+          "manuallyAdapted": false
+        },
+        {
+          "stage": "0009",
+          "manuallyAdapted": false
+        },
+        {
+          "stage": "0010",
+          "manuallyAdapted": false
+        }
+      ]
+    },
+    "dozen": {
+      "patchFile": "dozen.patch",
+      "patchSha256": "43f24070459e3eab4f2a204619337a89b3b61a54408b6ac477ccf3a5a04f5f48",
+      "files": {
+        "src/microsoft/vulkan/dzn_device.c": {
+          "originalSha256": "837bbdd6851ee4bf9073628f6029329d5bf50a6e93f179d7429ea61f70fd400a",
+          "patchedSha256": "e59f111e969c5c87ec70c91804292f570e3ed7e8061d90f7f1839bf704007566"
+        },
+        "src/microsoft/vulkan/dzn_imported_memory_fd.h": {
+          "originalSha256": null,
+          "patchedSha256": "03155a0ea2ba1f9f2b42a20342340060b7ed9a10461a2ab0551293ed50e2271c"
+        },
+        "src/microsoft/vulkan/dzn_wddm_native_gpu_buffer.h": {
+          "originalSha256": null,
+          "patchedSha256": "eaccd5e42e6dec7394852c81d98e3eb3cb86a6928001107c4ccc977156fd8b4d"
+        },
+        "src/microsoft/vulkan/dzn_wddm_native_gpu_buffer_admission.h": {
+          "originalSha256": null,
+          "patchedSha256": "e343bf4ac26aede95eab783c155996033b5ab17998d9087405fa0be4cbb077d6"
+        },
+        "src/microsoft/vulkan/meson.build": {
+          "originalSha256": "e954106c1b7516eaa9e12bdb8f676f3b6ef3ac88acc0228d1f638e41403cc8eb",
+          "patchedSha256": "e954106c1b7516eaa9e12bdb8f676f3b6ef3ac88acc0228d1f638e41403cc8eb"
+        },
+        "include/vulkan/vulkan_core.h": {
+          "originalSha256": "55c06a17793bb1a9d752aa0906116fff9d1fb74f5dd3896777b92f124c9637aa",
+          "patchedSha256": "55c06a17793bb1a9d752aa0906116fff9d1fb74f5dd3896777b92f124c9637aa"
+        },
+        "src/microsoft/vulkan/dzn_wsi.c": {
+          "originalSha256": "f31a98248744b0cb772e66b2c2d9f67c6dfc6c15905c416765b00a2e49a34366",
+          "patchedSha256": "f31a98248744b0cb772e66b2c2d9f67c6dfc6c15905c416765b00a2e49a34366"
+        }
+      },
+      "portedStages": [
+        {
+          "stage": "0005",
+          "manuallyAdapted": true
+        },
+        {
+          "stage": "0006",
+          "manuallyAdapted": false
+        },
+        {
+          "stage": "0007",
+          "manuallyAdapted": false
+        },
+        {
+          "stage": "0008",
+          "manuallyAdapted": false
+        }
+      ]
+    }
+  },
+  "sourcePortOnly": true,
+  "compiled": false,
+  "hardwareTested": false,
+  "guestImageAssembled": false,
+  "dailyUseAccepted": false,
+  "lineEndingPolicy": "Preserve official LF source files; normalize Windows port-staging CRLF without semantic changes."
+}

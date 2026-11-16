@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "qmpJson": {
+    "repository": "https://github.com/nlohmann/json",
+    "commit": "55f93686c01528224f448c19128836e7df245f72",
+    "version": "3.12.0",
+    "license": "MIT",
+    "use": "Vendored single header for bounded host QMP parsing; license and exact source hashes retained in third_party/nlohmann-json"
+  },
+  "virtioNvgpu": {
+    "repository": "https://github.com/nestrilabs/virtio-nvgpu",
+    "commit": "21a4f075d5c01c0865c809a8592e40b860435768",
+    "files": ["protocol/src/messages.rs", "device/src/virtio.rs", "device/src/nvidia/host.rs", "driver/virtio_gpu_nv.c"],
+    "use": "Architecture and framing reference; no upstream implementation vendored"
+  },
+  "tryOmarchyBase": "2bc11bbdf074f8ae58bff8cfb23fb290ead9f86b",
+  "wslDxgkrnl": {
+    "repository": "https://github.com/microsoft/WSL2-Linux-Kernel",
+    "commit": "d504d40ab83839cb61942a812a99d183c42227b9",
+    "files": ["drivers/hv/dxgkrnl/ioctl.c", "drivers/hv/dxgkrnl/dxgvmbus.c", "drivers/hv/dxgkrnl/dxgvmbus.h"],
+    "use": "Memory/event/driver architecture reference; no GPL source vendored"
+  },
+  "libdxg": {
+    "repository": "https://github.com/microsoft/libdxg",
+    "commit": "5c28ebb4ead460c23ec5e87decb7d1af7285bb59",
+    "use": "MIT WDDM headers and /dev/dxg thunk reference; not a QEMU transport"
+  },
+  "libdxgtest": {
+    "repository": "https://github.com/microsoft/libdxgtest",
+    "commit": "fb7a095c85d88e706d6fedaca2ab295b0c9aadc2",
+    "use": "Documented lifecycle reference; no sample implementation vendored"
+  },
+  "directxHeaders": {
+    "repository": "https://github.com/microsoft/DirectX-Headers",
+    "commit": "adbd6f3ba40795c46a8d0f33af00bcb57ff0f0a4",
+    "use": "MIT DirectX/WSL headers and dxguids source for the optional local Linux UMD probe; not vendored"
+  },
+  "historicalPvgpu": {
+    "repository": "https://github.com/templarsco/limiar",
+    "commit": "5fbf6b9fe05c9a88e8a45f47f2a7c2a96540a73b",
+    "use": "Assessed retained D3D11/QEMU source; no code vendored"
+  }
+}

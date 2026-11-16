@@ -1,0 +1,66 @@
+{
+  "schema": 2,
+  "mesaVersion": "26.0.8",
+  "installPrefix": "/usr",
+  "libdir": "lib",
+  "referenceEvidence": "docs/evidence/mesa-linux-cross-compile-2026-11-04.json",
+  "libraries": {
+    "usr/lib/libgallium-26.0.8.so": {
+      "soname": [
+        "libgallium-26.0.8.so"
+      ],
+      "apiExportCount": 83,
+      "apiExportAbiSha256": "3cb4468cd714eb6b209191107ca9f4c5280dbffb6b6d6f0962f049c8bfaacded"
+    },
+    "usr/lib/libGLESv2.so.2.0.0": {
+      "soname": [
+        "libGLESv2.so.2"
+      ],
+      "apiExportCount": 358,
+      "apiExportAbiSha256": "2f007ae84bf3d08eac088910b6640b12a065c2967e4b5ab4b787ec0298183118"
+    },
+    "usr/lib/libgbm.so.1.0.0": {
+      "soname": [
+        "libgbm.so.1"
+      ],
+      "apiExportCount": 38,
+      "apiExportAbiSha256": "3fc06c3c8e64bb7901fb8f908a4131d8cea1882303762882e19d8cad1b8972ac"
+    },
+    "usr/lib/libEGL.so.1.0.0": {
+      "soname": [
+        "libEGL.so.1"
+      ],
+      "apiExportCount": 47,
+      "apiExportAbiSha256": "9b45d35dd03fb585109a0d80fa47226012f23005b8408d7a465a26231229b3e0"
+    },
+    "usr/lib/gbm/dri_gbm.so": {
+      "soname": [
+        "dri_gbm.so"
+      ],
+      "apiExportCount": 1,
+      "apiExportAbiSha256": "9b6a30c28ee7edabf3178fefa346ae849d65748712ac65e15991642fda7fa634"
+    }
+  },
+  "requiredFiles": [
+    "usr/include/EGL/egl.h",
+    "usr/include/GLES2/gl2.h",
+    "usr/include/gbm.h",
+    "usr/lib/pkgconfig/egl.pc",
+    "usr/lib/pkgconfig/gbm.pc",
+    "usr/lib/pkgconfig/glesv2.pc"
+  ],
+  "generatedWaylandFiles": {
+    "src/loader/linux-dmabuf-unstable-v1-protocol.c": "b5f3c72cb60e095ec472efb14c2a486d9652976ebf3a260c214d328a4a4d3ead",
+    "src/loader/linux-dmabuf-unstable-v1-client-protocol.h": "4221ad39c4520e8dd194dab07e50996b9c2aecca3ec385bd3e1ede4a42265d15",
+    "src/loader/presentation-time-protocol.c": "fd29539eb8a1382c1d981f59f1c7e587f578553f5b851d89fe16ff0d366ca257",
+    "src/loader/presentation-time-client-protocol.h": "e40161a50563dd3a8909b8d9cdd83aa19b02cf36abbd5a797d47a85b4b29f154"
+  },
+  "libraryAliases": {
+    "usr/lib/libEGL.so": "usr/lib/libEGL.so.1.0.0",
+    "usr/lib/libEGL.so.1": "usr/lib/libEGL.so.1.0.0",
+    "usr/lib/libgbm.so": "usr/lib/libgbm.so.1.0.0",
+    "usr/lib/libgbm.so.1": "usr/lib/libgbm.so.1.0.0",
+    "usr/lib/libGLESv2.so": "usr/lib/libGLESv2.so.2.0.0",
+    "usr/lib/libGLESv2.so.2": "usr/lib/libGLESv2.so.2.0.0"
+  }
+}
