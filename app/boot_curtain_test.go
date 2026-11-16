@@ -498,9 +498,18 @@ func TestFullscreenMarksFollowTheWindow(t *testing.T) {
 		{"the other window entered full screen", a, true, true},
 	}
 	for _, s := range steps {
-		if got := marks.update(s.hwnd, s.fullscreen); got != s.change {
+		if got := marks.differs(s.hwnd, s.fullscreen); got != s.change {
 			t.Fatalf("%s: change %v, want %v", s.name, got, s.change)
 		}
+		if s.change {
+			marks.set(s.hwnd, s.fullscreen)
+		}
+	}
+	// A mark the taskbar refused (Explorer restarting) is not recorded, so
+	// the next pass tries again.
+	const c = uintptr(0x300)
+	if !marks.differs(c, true) || !marks.differs(c, true) {
+		t.Fatal("a refused mark was not tried again")
 	}
 	// A destroyed window's mark is gone with it; the rest are taken back
 	// when the launcher exits.
@@ -511,7 +520,7 @@ func TestFullscreenMarksFollowTheWindow(t *testing.T) {
 	if all := marks.clear(); len(all) != 0 {
 		t.Fatalf("cleared twice: %v", all)
 	}
-	if !marks.update(b, true) {
+	if !marks.differs(b, true) {
 		t.Fatal("a window marked after a clear was not marked")
 	}
 }

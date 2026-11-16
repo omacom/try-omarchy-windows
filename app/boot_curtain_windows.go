@@ -887,8 +887,8 @@ var taskbarFullscreen fullscreenMarks
 // lets other windows over it as usual while the window is not active.
 func syncFullscreenMark(hwnd uintptr) {
 	fullscreen := displayWindowFullscreen(hwnd)
-	if taskbarFullscreen.update(hwnd, fullscreen) {
-		taskbarMarkFullscreen(hwnd, fullscreen)
+	if taskbarFullscreen.differs(hwnd, fullscreen) && taskbarMarkFullscreen(hwnd, fullscreen) {
+		taskbarFullscreen.set(hwnd, fullscreen)
 		logf("full screen: told the taskbar the window is full screen: %v", fullscreen)
 	}
 }
@@ -911,37 +911,38 @@ func curtainHidesWindows() bool {
 
 // taskbarMarkFullscreen tells the taskbar that hwnd is, or no longer is, a
 // full screen window, so it goes behind the window while it is active.
-func taskbarMarkFullscreen(hwnd uintptr, on bool) {
+func taskbarMarkFullscreen(hwnd uintptr, on bool) bool {
 	flag := uintptr(0)
 	if on {
 		flag = 1
 	}
-	taskbarListCall(8, hwnd, flag)
+	return taskbarListCall(8, hwnd, flag)
 }
 
-// taskbarListCall calls one ITaskbarList2 method.
-func taskbarListCall(method int, args ...uintptr) {
+// taskbarListCall calls one ITaskbarList2 method and reports whether it
+// succeeded.
+func taskbarListCall(method int, args ...uintptr) bool {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	hr, _, _ := procCoInitializeEx.Call(0, 2)
 	if int32(hr) >= 0 {
 		defer procCoUninitialize.Call()
 	} else if uint32(hr) != 0x80010106 { // An existing MTA is also usable.
-		return
+		return false
 	}
 	var list uintptr
 	hr, _, _ = ole32.NewProc("CoCreateInstance").Call(uintptr(unsafe.Pointer(&clsidTaskbarList)), 0, 1,
 		uintptr(unsafe.Pointer(&iidITaskbarList2)), uintptr(unsafe.Pointer(&list)))
 	if hr != 0 || list == 0 {
 		logf("taskbar button: CoCreateInstance hr=%#x", hr)
-		return
+		return false
 	}
 	// ITaskbarList2: 2 Release, 3 HrInit, 4 AddTab, 5 DeleteTab,
 	// 8 MarkFullscreenWindow.
 	defer comCall(list, 2)
 	if hr := comCall(list, 3); hr != 0 {
 		logf("taskbar button: HrInit hr=%#x", hr)
-		return
+		return false
 	}
-	comCall(list, method, args...)
+	return comCall(list, method, args...) == 0
 }

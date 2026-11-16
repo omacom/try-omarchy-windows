@@ -317,23 +317,27 @@ type fullscreenMarks struct {
 	marked map[uintptr]bool
 }
 
-// update reports whether hwnd's mark must change for a window that is, or
-// is not, full screen now, and records the change.
-func (m *fullscreenMarks) update(hwnd uintptr, fullscreen bool) (change bool) {
+// differs reports whether hwnd's mark must change for a window that is, or
+// is not, full screen now.
+func (m *fullscreenMarks) differs(hwnd uintptr, fullscreen bool) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.marked[hwnd] == fullscreen {
-		return false
+	return m.marked[hwnd] != fullscreen
+}
+
+// set records that the taskbar took hwnd's mark. Until then differs keeps
+// reporting the change, so a mark the taskbar refused is tried again.
+func (m *fullscreenMarks) set(hwnd uintptr, fullscreen bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !fullscreen {
+		delete(m.marked, hwnd)
+		return
 	}
 	if m.marked == nil {
 		m.marked = map[uintptr]bool{}
 	}
-	if fullscreen {
-		m.marked[hwnd] = true
-	} else {
-		delete(m.marked, hwnd)
-	}
-	return true
+	m.marked[hwnd] = true
 }
 
 // forget drops a destroyed window, whose mark went with it.
