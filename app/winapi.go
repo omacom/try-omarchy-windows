@@ -429,7 +429,7 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	if state.topologyRepair && enumTitleFullscreen && len(enumTitleMonitors) > 0 && capturePlacement(hwnd) != nil {
 		var bounds screenRect
 		if result, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&bounds))); result != 0 {
-			if current := (&windowPlacement{Normal: bounds}); !current.usable(enumTitleMonitors) {
+			if current := (&windowPlacement{Normal: bounds}); !current.usable(enumTitleMonitors) && !grownFullscreen(bounds, enumTitleMonitorDetails) {
 				first, _ := selectedHostMonitor(enumTitleFullscreenDisplay, enumTitleMonitorDetails)
 				m := enumTitleMonitorDetails[(first+state.index)%len(enumTitleMonitorDetails)].Bounds
 				if ok, _, _ := procSetWindowPos.Call(hwnd, 0, uintptr(m.Left), uintptr(m.Top), uintptr(m.width()), uintptr(m.height()), 0x0004|0x0010); ok == 0 {

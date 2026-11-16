@@ -413,7 +413,11 @@ func growFullscreenWindow(hwnd uintptr) bool {
 			others = append(others, m.Bounds)
 		}
 	}
-	r, edge := fullscreenGrown(monitor, others)
+	hidden := ""
+	if bar, ok := autoHideTaskbarRect(monitor.Bounds); ok {
+		hidden = taskbarEdge(bar, monitor.Bounds)
+	}
+	r, edge := fullscreenGrown(monitor, others, hidden)
 	if ok, _, _ := procSetWindowPos.Call(hwnd, 0, uintptr(r.Left), uintptr(r.Top), uintptr(r.width()), uintptr(r.height()), swpNoZorder|swpNoActivate|swpNoOwnerZOrder); ok == 0 {
 		return false
 	}

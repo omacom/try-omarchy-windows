@@ -364,7 +364,7 @@ func TestHiddenWindowNeverCoversItsMonitor(t *testing.T) {
 	}
 	// A full screen window is meant to fill its monitor, so it stays there,
 	// one row larger: exactly covering it is what makes the display flicker.
-	fullscreen, _ := fullscreenGrown(monitor, nil)
+	fullscreen, _ := fullscreenGrown(monitor, nil, "")
 	if fullscreen == monitor.Bounds || !fullscreen.covers(monitor.Bounds) {
 		t.Fatalf("full screen window kept at %v on %v", fullscreen, monitor.Bounds)
 	}
@@ -381,31 +381,35 @@ func TestFullscreenGrownPicksAnEdgeWithoutANeighbourOrTheTaskbar(t *testing.T) {
 		name    string
 		monitor hostMonitor
 		others  []screenRect
+		hidden  string
 		want    screenRect
 		edge    string
 	}{
-		{"single monitor", bottomBar, nil, screenRect{0, -1, 1920, 1080}, "top"},
-		{"auto-hidden taskbar", hostMonitor{Bounds: bounds, Work: bounds}, nil, screenRect{0, -1, 1920, 1080}, "top"},
-		{"monitor to the right", bottomBar, []screenRect{right}, screenRect{0, -1, 1920, 1080}, "top"},
-		{"monitor below", bottomBar, []screenRect{below}, screenRect{0, -1, 1920, 1080}, "top"},
-		{"monitor above", bottomBar, []screenRect{above}, screenRect{-1, 0, 1920, 1080}, "left"},
-		{"monitors above and to the left", bottomBar, []screenRect{above, {-2560, 0, 0, 1440}}, screenRect{0, 0, 1921, 1080}, "right"},
+		{"single monitor", bottomBar, nil, "", screenRect{0, -1, 1920, 1080}, "top"},
+		{"auto-hidden taskbar", hostMonitor{Bounds: bounds, Work: bounds}, nil, "", screenRect{0, -1, 1920, 1080}, "top"},
+		{"monitor to the right", bottomBar, []screenRect{right}, "", screenRect{0, -1, 1920, 1080}, "top"},
+		{"monitor below", bottomBar, []screenRect{below}, "", screenRect{0, -1, 1920, 1080}, "top"},
+		{"monitor above", bottomBar, []screenRect{above}, "", screenRect{-1, 0, 1920, 1080}, "left"},
+		{"monitors above and to the left", bottomBar, []screenRect{above, {-2560, 0, 0, 1440}}, "", screenRect{0, 0, 1921, 1080}, "right"},
 		// The bottom edge is free but holds the taskbar; a line on the
 		// monitor above is the lesser harm.
-		{"monitors above and to both sides", bottomBar, []screenRect{above, left, right}, screenRect{0, -1, 1920, 1080}, "top"},
-		{"monitors on every side", bottomBar, []screenRect{above, left, right, below}, screenRect{0, -1, 1920, 1080}, "top"},
+		{"monitors above and to both sides", bottomBar, []screenRect{above, left, right}, "", screenRect{0, -1, 1920, 1080}, "top"},
+		{"monitors on every side", bottomBar, []screenRect{above, left, right, below}, "", screenRect{0, -1, 1920, 1080}, "top"},
 		// Without a taskbar there, the free bottom edge is used.
-		{"monitors above and to both sides, taskbar elsewhere", hostMonitor{Bounds: bounds, Work: bounds}, []screenRect{above, left, right}, screenRect{0, 0, 1920, 1081}, "bottom"},
-		{"taskbar at the top", hostMonitor{Bounds: bounds, Work: screenRect{0, 48, 1920, 1080}}, nil, screenRect{-1, 0, 1920, 1080}, "left"},
-		{"taskbar on the left", hostMonitor{Bounds: bounds, Work: screenRect{62, 0, 1920, 1080}}, []screenRect{above}, screenRect{0, 0, 1921, 1080}, "right"},
+		{"monitors above and to both sides, taskbar elsewhere", hostMonitor{Bounds: bounds, Work: bounds}, []screenRect{above, left, right}, "", screenRect{0, 0, 1920, 1081}, "bottom"},
+		{"taskbar at the top", hostMonitor{Bounds: bounds, Work: screenRect{0, 48, 1920, 1080}}, nil, "", screenRect{-1, 0, 1920, 1080}, "left"},
+		{"taskbar on the left", hostMonitor{Bounds: bounds, Work: screenRect{62, 0, 1920, 1080}}, []screenRect{above}, "", screenRect{0, 0, 1921, 1080}, "right"},
+		// An auto-hidden taskbar reserves no work area but still counts.
+		{"auto-hidden taskbar at the top", hostMonitor{Bounds: bounds, Work: bounds}, nil, "top", screenRect{-1, 0, 1920, 1080}, "left"},
+		{"auto-hidden taskbar at the bottom, monitors above and to both sides", hostMonitor{Bounds: bounds, Work: bounds}, []screenRect{above, left, right}, "bottom", screenRect{0, -1, 1920, 1080}, "top"},
 		// A smaller monitor above that does not reach over this one's top
 		// edge leaves the edge free.
-		{"smaller monitor above to the side", hostMonitor{Bounds: screenRect{1920, 0, 4480, 1440}, Work: screenRect{1920, 0, 4480, 1392}}, []screenRect{above}, screenRect{1920, -1, 4480, 1440}, "top"},
-		{"larger scaled monitor above, one to the left", hostMonitor{Bounds: screenRect{0, 1440, 1920, 2520}, Work: screenRect{0, 1440, 1920, 2472}}, []screenRect{{0, 0, 2560, 1440}, {-3840, 1440, 0, 3600}}, screenRect{0, 1440, 1921, 2520}, "right"},
+		{"smaller monitor above to the side", hostMonitor{Bounds: screenRect{1920, 0, 4480, 1440}, Work: screenRect{1920, 0, 4480, 1392}}, []screenRect{above}, "", screenRect{1920, -1, 4480, 1440}, "top"},
+		{"larger scaled monitor above, one to the left", hostMonitor{Bounds: screenRect{0, 1440, 1920, 2520}, Work: screenRect{0, 1440, 1920, 2472}}, []screenRect{{0, 0, 2560, 1440}, {-3840, 1440, 0, 3600}}, "", screenRect{0, 1440, 1921, 2520}, "right"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, edge := fullscreenGrown(tt.monitor, tt.others)
+			got, edge := fullscreenGrown(tt.monitor, tt.others, tt.hidden)
 			if got != tt.want || edge != tt.edge {
 				t.Fatalf("got %v at the %s edge, want %v at the %s edge", got, edge, tt.want, tt.edge)
 			}
@@ -472,6 +476,36 @@ func TestCurtainTabDeleteRepeatsUntilTheLift(t *testing.T) {
 	for _, c := range cases {
 		if got := curtainTabDeleteDue(start, at(c.last), at(c.now)); got != c.want {
 			t.Errorf("last %v now %v: due %v, want %v", c.last, c.now, got, c.want)
+		}
+	}
+}
+
+func TestTaskbarEdge(t *testing.T) {
+	monitor := screenRect{0, 0, 1920, 1080}
+	for bar, want := range map[screenRect]string{
+		{0, 1078, 1920, 1126}: "bottom", // auto-hidden, two pixels showing
+		{0, 1032, 1920, 1080}: "bottom",
+		{0, -46, 1920, 2}:     "top",
+		{-62, 0, 2, 1080}:     "left",
+		{1918, 0, 1980, 1080}: "right",
+		{}:                    "",
+	} {
+		if got := taskbarEdge(bar, monitor); got != want {
+			t.Errorf("taskbar at %v: %q, want %q", bar, got, want)
+		}
+	}
+}
+
+func TestGrownFullscreenIsNotRepairedBackOntoTheMonitor(t *testing.T) {
+	monitors := []hostMonitor{{Bounds: screenRect{0, 0, 1920, 1080}, Work: screenRect{0, 0, 1920, 1032}, Primary: true}, {Bounds: screenRect{1920, 0, 4480, 1440}}}
+	for _, r := range []screenRect{{0, -1, 1920, 1080}, {-1, 0, 1920, 1080}, {1920, -1, 4480, 1440}, {1920, 0, 4481, 1440}} {
+		if !grownFullscreen(r, monitors) {
+			t.Errorf("%v was not taken for a grown full screen window", r)
+		}
+	}
+	for _, r := range []screenRect{{0, 0, 1920, 1080}, {0, -2, 1920, 1080}, {-1, -1, 1920, 1080}, {100, 100, 900, 700}, {0, -1, 1024, 768}} {
+		if grownFullscreen(r, monitors) {
+			t.Errorf("%v was taken for a grown full screen window", r)
 		}
 	}
 }

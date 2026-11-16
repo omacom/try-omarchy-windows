@@ -191,21 +191,22 @@ func (r screenRect) covers(bounds screenRect) bool {
 // The extra row goes above the monitor, else a column on the left or the
 // right, where no other monitor (others) would show it. It never goes on
 // the side the taskbar is docked on, the side where the work area falls
-// short of the monitor: Windows then no longer treats the window as full
-// screen and leaves the taskbar over it, as a row below does with a taskbar
-// at the bottom. When every other side has a neighbour, the first of them
-// is used and one line of the guest's edge shows on that monitor.
-func fullscreenGrown(monitor hostMonitor, others []screenRect) (grown screenRect, edge string) {
+// short of the monitor, or hiddenTaskbar, the side of an auto-hidden one
+// (taskbarEdge): Windows then no longer treats the window as full screen
+// and leaves the taskbar over it, as a row below does with a taskbar at the
+// bottom. When every other side has a neighbour, the first of them is used
+// and one line of the guest's edge shows on that monitor.
+func fullscreenGrown(monitor hostMonitor, others []screenRect, hiddenTaskbar string) (grown screenRect, edge string) {
 	b, w := monitor.Bounds, monitor.Work
 	edges := []struct {
 		name    string
 		strip   screenRect
 		taskbar bool
 	}{
-		{"top", screenRect{b.Left, b.Top - 1, b.Right, b.Top}, w.Top > b.Top},
-		{"left", screenRect{b.Left - 1, b.Top, b.Left, b.Bottom}, w.Left > b.Left},
-		{"right", screenRect{b.Right, b.Top, b.Right + 1, b.Bottom}, w.Right < b.Right},
-		{"bottom", screenRect{b.Left, b.Bottom, b.Right, b.Bottom + 1}, w.Bottom < b.Bottom},
+		{"top", screenRect{b.Left, b.Top - 1, b.Right, b.Top}, w.Top > b.Top || hiddenTaskbar == "top"},
+		{"left", screenRect{b.Left - 1, b.Top, b.Left, b.Bottom}, w.Left > b.Left || hiddenTaskbar == "left"},
+		{"right", screenRect{b.Right, b.Top, b.Right + 1, b.Bottom}, w.Right < b.Right || hiddenTaskbar == "right"},
+		{"bottom", screenRect{b.Left, b.Bottom, b.Right, b.Bottom + 1}, w.Bottom < b.Bottom || hiddenTaskbar == "bottom"},
 	}
 	pick := -1
 	for i, e := range edges {
@@ -232,6 +233,33 @@ func fullscreenGrown(monitor hostMonitor, others []screenRect) (grown screenRect
 	}
 	e := edges[pick]
 	return screenRect{min(b.Left, e.strip.Left), min(b.Top, e.strip.Top), max(b.Right, e.strip.Right), max(b.Bottom, e.strip.Bottom)}, e.name
+}
+
+// taskbarEdge is the side of monitor a taskbar at bar is docked on.
+func taskbarEdge(bar, monitor screenRect) string {
+	switch {
+	case bar.width() <= 0 || bar.height() <= 0:
+		return ""
+	case bar.Left <= monitor.Left && bar.Right >= monitor.Right && bar.Top <= monitor.Top:
+		return "top"
+	case bar.Left <= monitor.Left && bar.Right >= monitor.Right:
+		return "bottom"
+	case bar.Left <= monitor.Left:
+		return "left"
+	}
+	return "right"
+}
+
+// grownFullscreen reports whether r is a monitor's rectangle grown by one
+// line, as fullscreenGrown makes it: still that monitor's full screen
+// window, not one to put back on the monitor.
+func grownFullscreen(r screenRect, monitors []hostMonitor) bool {
+	for _, m := range monitors {
+		if r.covers(m.Bounds) && r.width()-m.Bounds.width()+r.height()-m.Bounds.height() == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // hiddenWindowOffMonitor says where a hidden, frameless window that covers its
