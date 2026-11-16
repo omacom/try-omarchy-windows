@@ -457,7 +457,7 @@ func TestCurtainFrameBackSkipsAWindowThatWentFullScreen(t *testing.T) {
 
 func TestCurtainTabDeleteRepeatsUntilTheLift(t *testing.T) {
 	start := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
-	if !curtainTabDeleteDue(time.Time{}, time.Time{}, start) {
+	if !curtainTabDeleteDue(time.Time{}, start) {
 		t.Fatal("the first pass must take the button off")
 	}
 	at := func(d time.Duration) time.Time { return start.Add(d) }
@@ -465,18 +465,54 @@ func TestCurtainTabDeleteRepeatsUntilTheLift(t *testing.T) {
 		last, now time.Duration
 		want      bool
 	}{
-		{0, 100 * time.Millisecond, false},                // a burst of window events, too soon
-		{0, 250 * time.Millisecond, true},                 // the next enforcer pass
-		{4750 * time.Millisecond, 5 * time.Second, true},  // still settling
-		{5 * time.Second, 5500 * time.Millisecond, false}, // settled: at a low rate now
-		{5 * time.Second, 10 * time.Second, true},         // a taskbar that took it up late
-		{55 * time.Second, 58 * time.Second, false},
-		{55 * time.Second, time.Minute, true},
+		{0, 100 * time.Millisecond, false}, // a burst of window events, too soon
+		{0, 250 * time.Millisecond, true},  // the next enforcer pass
+		{4750 * time.Millisecond, 5 * time.Second, true},
+		// The same short pace late in a long curtain, so a button the
+		// taskbar put back shows for a moment at most.
+		{55 * time.Second, 55100 * time.Millisecond, false},
+		{55 * time.Second, 55250 * time.Millisecond, true},
 	}
 	for _, c := range cases {
-		if got := curtainTabDeleteDue(start, at(c.last), at(c.now)); got != c.want {
+		if got := curtainTabDeleteDue(at(c.last), at(c.now)); got != c.want {
 			t.Errorf("last %v now %v: due %v, want %v", c.last, c.now, got, c.want)
 		}
+	}
+}
+
+func TestFullscreenMarksFollowTheWindow(t *testing.T) {
+	var marks fullscreenMarks
+	const a, b = uintptr(0x100), uintptr(0x200)
+	steps := []struct {
+		name       string
+		hwnd       uintptr
+		fullscreen bool
+		change     bool
+	}{
+		{"windowed start, shown windowed", a, false, false},
+		{"full screen at the lift", b, true, true},
+		{"next pass, still full screen", b, true, false},
+		{"left full screen", b, false, true},
+		{"still windowed", b, false, false},
+		{"entered full screen again", b, true, true},
+		{"the other window entered full screen", a, true, true},
+	}
+	for _, s := range steps {
+		if got := marks.update(s.hwnd, s.fullscreen); got != s.change {
+			t.Fatalf("%s: change %v, want %v", s.name, got, s.change)
+		}
+	}
+	// A destroyed window's mark is gone with it; the rest are taken back
+	// when the launcher exits.
+	marks.forget(a)
+	if all := marks.clear(); len(all) != 1 || all[0] != b {
+		t.Fatalf("marks to take back at exit: %v, want [%#x]", all, b)
+	}
+	if all := marks.clear(); len(all) != 0 {
+		t.Fatalf("cleared twice: %v", all)
+	}
+	if !marks.update(b, true) {
+		t.Fatal("a window marked after a clear was not marked")
 	}
 }
 

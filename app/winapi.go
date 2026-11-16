@@ -389,6 +389,7 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		}
 	}
 	state.concealed = false
+	syncFullscreenMark(hwnd)
 	// SDL puts a full screen window back on its monitor's rectangle when it
 	// enters full screen or the display changes.
 	if growFullscreenWindow(hwnd) {

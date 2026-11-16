@@ -294,31 +294,65 @@ func curtainFrameBack(frame, hidden, now uintptr) uintptr {
 	return frame
 }
 
-// After a hidden window's taskbar button is first taken off, it is taken off
-// again every curtainTabInterval until curtainTabSettle has passed, and then
-// every curtainTabLateInterval until the lift. The taskbar applies the
-// window's new identity asynchronously and puts the button back when a
-// delete came first: on a test VM, 24 of 30 windows kept their button after
-// an immediate delete, none when the delete came 500 ms later or was repeated
-// after 1.5 s. A button put back shows until the next delete, so the deletes
-// come at the title enforcer's pace while the taskbar settles; the late ones
-// cover a taskbar that takes the identity up later still.
-const (
-	curtainTabInterval     = 250 * time.Millisecond
-	curtainTabSettle       = 5 * time.Second
-	curtainTabLateInterval = 5 * time.Second
-)
+// A hidden window's taskbar button is taken off every curtainTabInterval
+// until the lift. The taskbar applies the window's new identity
+// asynchronously and puts the button back when a delete came first: on a
+// test VM, 24 of 30 windows kept their button after an immediate delete,
+// none when the delete came 500 ms later or was repeated after 1.5 s. A
+// button put back shows until the next delete, so the deletes keep a steady
+// short pace for the whole curtain.
+const curtainTabInterval = 250 * time.Millisecond
 
 // curtainTabDeleteDue reports whether the curtain should take a hidden
-// window's taskbar button off now, given when it first and last did.
-func curtainTabDeleteDue(first, last, now time.Time) bool {
-	if first.IsZero() {
-		return true
+// window's taskbar button off now, given when it last did.
+func curtainTabDeleteDue(last, now time.Time) bool {
+	return last.IsZero() || now.Sub(last) >= curtainTabInterval
+}
+
+// fullscreenMarks remembers which windows the launcher told the taskbar are
+// full screen (ITaskbarList2::MarkFullscreenWindow), so it tells it only on
+// a change and can take every mark back.
+type fullscreenMarks struct {
+	mu     sync.Mutex
+	marked map[uintptr]bool
+}
+
+// update reports whether hwnd's mark must change for a window that is, or
+// is not, full screen now, and records the change.
+func (m *fullscreenMarks) update(hwnd uintptr, fullscreen bool) (change bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.marked[hwnd] == fullscreen {
+		return false
 	}
-	if now.Sub(first) <= curtainTabSettle {
-		return now.Sub(last) >= curtainTabInterval
+	if m.marked == nil {
+		m.marked = map[uintptr]bool{}
 	}
-	return now.Sub(last) >= curtainTabLateInterval
+	if fullscreen {
+		m.marked[hwnd] = true
+	} else {
+		delete(m.marked, hwnd)
+	}
+	return true
+}
+
+// forget drops a destroyed window, whose mark went with it.
+func (m *fullscreenMarks) forget(hwnd uintptr) {
+	m.mu.Lock()
+	delete(m.marked, hwnd)
+	m.mu.Unlock()
+}
+
+// clear returns every marked window, to be unmarked, and forgets them.
+func (m *fullscreenMarks) clear() []uintptr {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var all []uintptr
+	for hwnd := range m.marked {
+		all = append(all, hwnd)
+	}
+	m.marked = nil
+	return all
 }
 
 var (

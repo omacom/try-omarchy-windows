@@ -1023,6 +1023,7 @@ func main() {
 			}
 		}
 	}
+	clearFullscreenMarks()
 	logf("---- exiting ----")
 }
 
