@@ -34,7 +34,7 @@
 - Leaving full screen with Ctrl+Alt+F after starting in full screen gives a
   window that fits the screen and can be resized and maximized. It used to
   come back larger than the screen, under the taskbar and onto a second
-  monitor, and could not be resized.
+  monitor, and could not be resized (#423).
 
 ## v0.15.0 - 2026-11-10
 
