@@ -1,0 +1,86 @@
+ok
+--- a/include/ui/sdl2.h
++++ b/include/ui/sdl2.h
+@@ -57,6 +57,8 @@ struct sdl2_console {
+     bool has_dmabuf;
+     /* Windows: shown by the launcher (sdl2-held-win32.h) */
+     int64_t hold_ms, held_until;
++    /* Created full screen and not yet left it: no windowed size of its own */
++    bool fullscreen_start;
+ #ifdef CONFIG_OPENGL
+     QemuGLShader *gls;
+     egl_fb guest_fb;
+--- a/ui/sdl2.c
++++ b/ui/sdl2.c
+@@ -98,10 +98,13 @@ void sdl2_window_create(struct sdl2_console *scon)
+     }
+     assert(!scon->real_window);
+ 
++    /* A window that starts full screen can be left with Ctrl+Alt+F, and then
++     * has to be resizable like a window that started out as one.
++     */
++    flags |= SDL_WINDOW_RESIZABLE;
++    scon->fullscreen_start = gui_fullscreen;
+     if (gui_fullscreen) {
+         flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+-    } else {
+-        flags |= SDL_WINDOW_RESIZABLE;
+     }
+     if (scon->hidden) {
+         flags |= SDL_WINDOW_HIDDEN;
+@@ -183,6 +186,13 @@ void sdl2_window_resize(struct sdl2_console *scon)
+     if (!scon->real_window) {
+         return;
+     }
++    /* A full screen window keeps covering its monitor. SDL would only take
++     * the guest's display size as the size the window gets back when it
++     * leaves full screen, which with the frame no longer fits the monitor.
++     */
++    if (SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_FULLSCREEN) {
++        return;
++    }
+ 
+     SDL_SetWindowSize(scon->real_window,
+                       surface_width(scon->surface),
+@@ -492,6 +502,33 @@ static void sdl_send_mouse_event(struct sdl2_console *scon, int dx, int dy,
+     qemu_input_event_sync();
+ }
+ 
++/*
++ * Before a window that started full screen first leaves it, give it a
++ * windowed size: three quarters of the usable area of its display (without
++ * the taskbar), centered there. SDL would otherwise restore the size the
++ * window was created with, taken from the guest's display at the time.
++ */
++static void sdl2_window_size_after_full_screen(struct sdl2_console *scon)
++{
++    SDL_Rect usable;
++    int display, w, h;
++
++    if (!scon->fullscreen_start) {
++        return;
++    }
++    scon->fullscreen_start = false;
++    display = SDL_GetWindowDisplayIndex(scon->real_window);
++    if (display < 0 || SDL_GetDisplayUsableBounds(display, &usable) ||
++        usable.w <= 0 || usable.h <= 0) {
++        return;
++    }
++    w = usable.w * 3 / 4;
++    h = usable.h * 3 / 4;
++    SDL_SetWindowSize(scon->real_window, w, h);
++    SDL_SetWindowPosition(scon->real_window, usable.x + (usable.w - w) / 2,
++                          usable.y + (usable.h - h) / 2);
++}
++
+ static void toggle_full_screen(struct sdl2_console *scon)
+ {
+     gui_fullscreen = !gui_fullscreen;
+@@ -504,6 +541,7 @@ static void toggle_full_screen(struct sdl2_console *scon)
+         if (!gui_saved_grab) {
+             sdl_grab_end(scon);
+         }
++        sdl2_window_size_after_full_screen(scon);
+         SDL_SetWindowFullscreen(scon->real_window, 0);
+     }
+     sdl2_redraw(scon);

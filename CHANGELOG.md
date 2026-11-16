@@ -31,6 +31,11 @@
   SSH and the launcher all stopped responding. The Windows graphics runtime
   could deadlock while it tore down the closed app's context (#407).
 
+- Leaving full screen with Ctrl+Alt+F after starting in full screen gives a
+  window that fits the screen and can be resized and maximized. It used to
+  come back larger than the screen, under the taskbar and onto a second
+  monitor, and could not be resized (#423).
+
 ## v0.15.0 - 2026-11-10
 
 - Omarchy 4.5.0 (Quattro RS). New installs start on it, and existing installs
