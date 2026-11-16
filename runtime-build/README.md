@@ -308,3 +308,19 @@ hidden window it creates to check for dma-buf support, are left alone.
 `test-sdl-held-window.py` compiles the hold, the launcher's show, the
 fallback and a window that cannot be marked against mocked SDL and Win32
 calls, and checks where `sdl2.c` calls them.
+
+`0027-make-full-screen-sdl-starts-resizable.patch` lets a window that starts
+full screen leave it for a window that fits the screen. QEMU created such a
+window without `SDL_WINDOW_RESIZABLE`, so after Ctrl+Alt+F neither the user
+nor Windows could resize or maximize it. And while a window is full screen,
+SDL takes the size QEMU gives it when the guest's display changes as the
+size to restore later, so leaving full screen brought back the guest's
+display size plus a frame, larger than the monitor's work area. A display
+window is now always resizable. While it is full screen QEMU no longer sizes
+it to the guest, so a window that started out as one gets back its own
+size. One that started full screen gets three quarters of the usable area
+of its display, centered, the first time it leaves full screen.
+`test-sdl-fullscreen-window.py` runs the window flags, the guest's resize
+and Ctrl+Alt+F against SDL's windowed size rules: windowed and full screen
+starts, the launcher growing a full screen window, a second monitor and
+missing usable bounds.

@@ -113,6 +113,10 @@
       {
         "file": "patches/qemu/0026-hold-sdl-windows-for-the-launcher.patch",
         "sha256": "3b642a54044889744f1304e40831817e5caedba2b46f034a20e7460009bc8c6a"
+      },
+      {
+        "file": "patches/qemu/0027-make-full-screen-sdl-starts-resizable.patch",
+        "sha256": "2cd9dc9f3a8346a8882a0129261e200a08c178916308a4f1fc1c39e88553ab49"
       }
     ]
   },

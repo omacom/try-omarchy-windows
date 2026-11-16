@@ -26,7 +26,7 @@ harness = r'''
 struct options { int gl; };
 struct sdl2_console {
     void *surface;
-    bool hidden, opengl;
+    bool hidden, opengl, fullscreen_start;
     int real_window, winctx, real_renderer;
     struct options *opts;
 };
