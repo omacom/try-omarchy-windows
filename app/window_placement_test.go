@@ -260,3 +260,37 @@ func TestHiddenWindowPlacementFollowsAModeChange(t *testing.T) {
 		t.Fatalf("maximized window: fitted to %+v", fitted)
 	}
 }
+
+func TestLeavingAFullscreenStartPlacesTheWindow(t *testing.T) {
+	if !leftStartFullscreen(true, true) {
+		t.Fatal("a full screen start's window that has its frame back was not placed")
+	}
+	// Still frameless: still full screen, also while a display mode change
+	// leaves it short of its monitor for a moment.
+	if leftStartFullscreen(true, false) {
+		t.Fatal("a frameless window was placed as a window")
+	}
+	// Before it was ever full screen, as while QEMU sets it up.
+	if leftStartFullscreen(false, true) {
+		t.Fatal("a window that was not full screen was placed")
+	}
+}
+
+func TestWindowIntoWorkArea(t *testing.T) {
+	work := screenRect{0, 0, 1920, 1032}
+	// A full screen start's window taken out of full screen: the guest's
+	// 1920x1081 plus a frame, centred by SDL and spilling off the screen.
+	if to, move := windowIntoWorkArea(screenRect{637, 274, 2563, 1384}, work); !move || to != (screenRect{0, 0, 1926, 1110}) {
+		t.Fatalf("too large: %v, %v", to, move)
+	}
+	if to, move := windowIntoWorkArea(screenRect{1500, 900, 2500, 1600}, work); !move || to != (screenRect{460, 166, 1460, 866}) {
+		t.Fatalf("fits but off screen: %v, %v", to, move)
+	}
+	if _, move := windowIntoWorkArea(screenRect{100, 80, 1100, 700}, work); move {
+		t.Fatal("moved a window already inside")
+	}
+	// A work area that does not start at 0,0 (taskbar on the left, second monitor).
+	if to, _ := windowIntoWorkArea(screenRect{1900, 274, 3826, 1384}, screenRect{1982, 0, 3840, 1080}); to.Left != 1982 || to.Top != 0 {
+		t.Fatalf("offset work area: %v", to)
+	}
+}

@@ -389,6 +389,33 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		}
 	}
 	state.concealed = false
+	// SDL puts a full screen window back on its monitor's rectangle when it
+	// enters full screen or the display changes.
+	if growFullscreenWindow(hwnd) {
+		return 1
+	}
+	if enumTitleFullscreen {
+		// QEMU makes a full screen start's window one that cannot be resized,
+		// and taken out of full screen SDL gives it the guest's display size
+		// plus a frame, centred on the monitor: larger than the work area, so
+		// it spills off the screen. It goes to the work area's corner, or the
+		// middle when it fits, keeping its size. The caption tells, since the
+		// window can stop covering its monitor while the display mode changes.
+		style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
+		framed := style&wsCaption == wsCaption
+		if leftStartFullscreen(state.fullscreen, framed) {
+			var now screenRect
+			if monitor, ok := hostMonitorForWindow(hwnd); ok {
+				if result, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&now))); result != 0 {
+					if to, move := windowIntoWorkArea(now, monitor.Work); move {
+						procSetWindowPos.Call(hwnd, 0, uintptr(to.Left), uintptr(to.Top), 0, 0, swpNoSize|swpNoZorder|swpNoOwnerZOrder)
+						logf("full screen: the window left full screen at %dx%d; moved it to %d,%d", now.width(), now.height(), to.Left, to.Top)
+					}
+				}
+			}
+		}
+		state.fullscreen = !framed
+	}
 	if !enumTitleFullscreen && !state.fullscreen {
 		if restored := state.repairTopology(capturePlacement(hwnd), beingDragged(hwnd), enumTitleMonitorDetails, func(p *windowPlacement) bool {
 			return correctPlacement(hwnd, p)

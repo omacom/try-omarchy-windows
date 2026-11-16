@@ -181,6 +181,59 @@ func (r screenRect) covers(bounds screenRect) bool {
 	return r.Left <= bounds.Left && r.Top <= bounds.Top && r.Right >= bounds.Right && r.Bottom >= bounds.Bottom
 }
 
+// fullscreenGrown is the rectangle a full screen window on monitor gets
+// instead of the monitor's own: one row or column larger, off the screen,
+// and edge names the side it went to. Graphics drivers present an OpenGL
+// window that exactly covers its monitor as an exclusive full screen one,
+// and anything drawn over it, the pointer included, makes the display leave
+// that mode and come back, which shows as a black flicker.
+//
+// The extra row goes above the monitor, else a column on the left or the
+// right, where no other monitor (others) would show it. It never goes on
+// the side the taskbar is docked on, the side where the work area falls
+// short of the monitor: Windows then no longer treats the window as full
+// screen and leaves the taskbar over it, as a row below does with a taskbar
+// at the bottom. When every other side has a neighbour, the first of them
+// is used and one line of the guest's edge shows on that monitor.
+func fullscreenGrown(monitor hostMonitor, others []screenRect) (grown screenRect, edge string) {
+	b, w := monitor.Bounds, monitor.Work
+	edges := []struct {
+		name    string
+		strip   screenRect
+		taskbar bool
+	}{
+		{"top", screenRect{b.Left, b.Top - 1, b.Right, b.Top}, w.Top > b.Top},
+		{"left", screenRect{b.Left - 1, b.Top, b.Left, b.Bottom}, w.Left > b.Left},
+		{"right", screenRect{b.Right, b.Top, b.Right + 1, b.Bottom}, w.Right < b.Right},
+		{"bottom", screenRect{b.Left, b.Bottom, b.Right, b.Bottom + 1}, w.Bottom < b.Bottom},
+	}
+	pick := -1
+	for i, e := range edges {
+		if e.taskbar {
+			continue
+		}
+		if pick < 0 {
+			pick = i
+		}
+		free := true
+		for _, other := range others {
+			if overlaps(e.strip, other) {
+				free = false
+				break
+			}
+		}
+		if free {
+			pick = i
+			break
+		}
+	}
+	if pick < 0 {
+		pick = 0
+	}
+	e := edges[pick]
+	return screenRect{min(b.Left, e.strip.Left), min(b.Top, e.strip.Top), max(b.Right, e.strip.Right), max(b.Bottom, e.strip.Bottom)}, e.name
+}
+
 // hiddenWindowOffMonitor says where a hidden, frameless window that covers its
 // monitor goes instead: the client area it will have when shown (client, if
 // the curtain placed it), else that of a maximized window on the monitor's

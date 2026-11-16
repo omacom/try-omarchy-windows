@@ -323,6 +323,7 @@ func placeConcealedWindow(hwnd uintptr, p *windowPlacement) *windowPlacement {
 // monitor by the user's choice and are left alone.
 func keepOffMonitor() {
 	if enumTitleFullscreen {
+		parkFullscreenWindows()
 		return
 	}
 	type check struct {
@@ -368,6 +369,58 @@ func keepOffMonitor() {
 			logf("startup: the hidden window covered its monitor; moved it to %dx%d", target.width(), target.height())
 		}
 	}
+}
+
+// parkFullscreenWindows gives a hidden full screen window the rectangle it
+// keeps once shown (growFullscreenWindow), so the guest draws at that size
+// behind the curtain and nothing moves at the lift.
+func parkFullscreenWindows() {
+	var hwnds []uintptr
+	curtainMu.Lock()
+	for hwnd, window := range curtainWindows {
+		if window.ready {
+			hwnds = append(hwnds, hwnd)
+		}
+	}
+	curtainMu.Unlock()
+	for _, hwnd := range hwnds {
+		growFullscreenWindow(hwnd)
+	}
+}
+
+// fullscreenGrowLogged is the last rectangle growFullscreenWindow logged, so
+// the log shows each new one once.
+var fullscreenGrowLogged atomic.Value
+
+// growFullscreenWindow gives a frameless window that exactly covers its
+// monitor the fullscreenGrown rectangle. It reports whether it moved it.
+func growFullscreenWindow(hwnd uintptr) bool {
+	var now screenRect
+	if ok, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&now))); ok == 0 {
+		return false
+	}
+	monitor, ok := hostMonitorForWindow(hwnd)
+	if !ok || now != monitor.Bounds {
+		return false
+	}
+	style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
+	if maximized, _, _ := procIsZoomed.Call(hwnd); maximized != 0 || style&wsCaption == wsCaption {
+		return false
+	}
+	var others []screenRect
+	for _, m := range hostMonitors() {
+		if m.Bounds != monitor.Bounds {
+			others = append(others, m.Bounds)
+		}
+	}
+	r, edge := fullscreenGrown(monitor, others)
+	if ok, _, _ := procSetWindowPos.Call(hwnd, 0, uintptr(r.Left), uintptr(r.Top), uintptr(r.width()), uintptr(r.height()), swpNoZorder|swpNoActivate|swpNoOwnerZOrder); ok == 0 {
+		return false
+	}
+	if line := fmt.Sprintf("%v %v", r, now); fullscreenGrowLogged.Swap(line) != line {
+		logf("full screen: kept the window one line larger than its %dx%d monitor, at the %s edge (%d,%d %dx%d)", now.width(), now.height(), edge, r.Left, r.Top, r.width(), r.height())
+	}
+	return true
 }
 
 // windowHeld reports whether QEMU created hwnd hidden for the launcher to
