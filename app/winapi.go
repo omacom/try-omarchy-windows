@@ -404,18 +404,22 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		// window can stop covering its monitor while the display mode changes.
 		style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
 		framed := style&wsCaption == wsCaption
-		if leftStartFullscreen(state.fullscreen, framed) {
-			var now screenRect
+		var now screenRect
+		got, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&now)))
+		// SDL gives the window its frame back a moment before its windowed
+		// size; until then it still has the full screen rectangle.
+		midway := got != 0 && framed && fullscreenRect(now, enumTitleMonitorDetails)
+		if leftStartFullscreen(state.fullscreen, framed, midway) && got != 0 {
 			if monitor, ok := hostMonitorForWindow(hwnd); ok {
-				if result, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&now))); result != 0 {
-					if to, move := windowIntoWorkArea(now, monitor.Work); move {
-						procSetWindowPos.Call(hwnd, 0, uintptr(to.Left), uintptr(to.Top), 0, 0, swpNoSize|swpNoZorder|swpNoOwnerZOrder)
-						logf("full screen: the window left full screen at %dx%d; moved it to %d,%d", now.width(), now.height(), to.Left, to.Top)
-					}
+				if to, move := windowIntoWorkArea(now, monitor.Work); move {
+					procSetWindowPos.Call(hwnd, 0, uintptr(to.Left), uintptr(to.Top), 0, 0, swpNoSize|swpNoZorder|swpNoOwnerZOrder)
+					logf("full screen: the window left full screen at %dx%d; moved it to %d,%d", now.width(), now.height(), to.Left, to.Top)
 				}
 			}
 		}
-		state.fullscreen = !framed
+		if !midway {
+			state.fullscreen = !framed
+		}
 	}
 	if !enumTitleFullscreen && !state.fullscreen {
 		if restored := state.repairTopology(capturePlacement(hwnd), beingDragged(hwnd), enumTitleMonitorDetails, func(p *windowPlacement) bool {

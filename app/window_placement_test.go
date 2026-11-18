@@ -262,17 +262,41 @@ func TestHiddenWindowPlacementFollowsAModeChange(t *testing.T) {
 }
 
 func TestLeavingAFullscreenStartPlacesTheWindow(t *testing.T) {
-	if !leftStartFullscreen(true, true) {
+	if !leftStartFullscreen(true, true, false) {
 		t.Fatal("a full screen start's window that has its frame back was not placed")
 	}
 	// Still frameless: still full screen, also while a display mode change
 	// leaves it short of its monitor for a moment.
-	if leftStartFullscreen(true, false) {
+	if leftStartFullscreen(true, false, false) {
 		t.Fatal("a frameless window was placed as a window")
 	}
 	// Before it was ever full screen, as while QEMU sets it up.
-	if leftStartFullscreen(false, true) {
+	if leftStartFullscreen(false, true, false) {
 		t.Fatal("a window that was not full screen was placed")
+	}
+	// The frame is back but SDL has not given it its windowed size yet: it
+	// would be moved to the work area's corner and stay there (acceptance
+	// 2026-11-18, the window left full screen at 1280x801).
+	if leftStartFullscreen(true, true, true) {
+		t.Fatal("a window halfway out of full screen was placed")
+	}
+}
+
+func TestFullscreenRect(t *testing.T) {
+	monitors := []hostMonitor{
+		{Bounds: screenRect{0, 0, 1280, 800}, Work: screenRect{0, 0, 1280, 752}},
+		{Bounds: screenRect{1280, 0, 3200, 1080}, Work: screenRect{1280, 0, 3200, 1032}},
+	}
+	for _, r := range []screenRect{{0, 0, 1280, 800}, {0, -1, 1280, 800}, {1280, 0, 3200, 1080}, {1279, 0, 3200, 1080}} {
+		if !fullscreenRect(r, monitors) {
+			t.Fatalf("%v is a full screen rectangle", r)
+		}
+	}
+	// A window, and SDL's guest-sized window spilling off the screen.
+	for _, r := range []screenRect{{152, 63, 1128, 666}, {-8, -20, 1288, 820}, {0, 0, 1280, 802}} {
+		if fullscreenRect(r, monitors) {
+			t.Fatalf("%v is not a full screen rectangle", r)
+		}
 	}
 }
 

@@ -275,9 +275,22 @@ func fullscreenPlacement(wasFullscreen, fullscreen bool, last *windowPlacement) 
 
 // leftStartFullscreen reports that the window of a full screen start, which
 // had no frame on the last pass (wasFullscreen), has one again: the user
-// took it out of full screen.
-func leftStartFullscreen(wasFullscreen, framed bool) bool {
-	return wasFullscreen && framed
+// took it out of full screen. midway is a window that has its frame but
+// still the full screen rectangle (fullscreenRect): SDL sets the frame first
+// and the windowed size right after, so it is not placed until then.
+func leftStartFullscreen(wasFullscreen, framed, midway bool) bool {
+	return wasFullscreen && framed && !midway
+}
+
+// fullscreenRect reports whether r is a monitor's full screen rectangle:
+// the monitor's own, or one line larger (fullscreenGrown).
+func fullscreenRect(r screenRect, monitors []hostMonitor) bool {
+	for _, m := range monitors {
+		if r == m.Bounds {
+			return true
+		}
+	}
+	return grownFullscreen(r, monitors)
 }
 
 // windowIntoWorkArea is where a window of size now goes to be inside work:

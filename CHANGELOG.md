@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Taking a full screen start out of full screen with Ctrl+Alt+F brings the
+  window back where it belongs. It could land in the top left corner of the
+  screen when the window got its title bar back a moment before its size.
 - With more than one display, the pointer stays visible across every window.
   Each window moved the pointer across the whole Omarchy desktop, so it left
   the first screen halfway across its window and only showed on the right
