@@ -201,7 +201,8 @@ with one tablet the pointer was only on screen over half of each window.
 Hyprland binds tablets and touch screens to an output but not this kind of
 pointer, so `head-tablets` gives each tablet a libinput calibration matrix that
 maps it onto its own output, found by name, with its position, mode, scale and
-rotation. The udev rule imports the matrix from `/run/try-omarchy/head-tablets`,
+rotation, as the Hyprland of the active seat0 session lays them out; a nested
+Hyprland or another account's is ignored. The udev rule imports the matrix from `/run/try-omarchy/head-tablets`,
 and the helper announces a tablet again when its matrix changes, since libinput
 reads it only when a device is added. It looks again on Hyprland's monitor and
 reload events, after a GPU hotplug (a window resize) and every five seconds.

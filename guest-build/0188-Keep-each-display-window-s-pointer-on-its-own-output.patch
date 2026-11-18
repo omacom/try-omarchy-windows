@@ -1,4 +1,4 @@
-From 9a70a7356baccd6c1ea376ad032873d781582a1a Mon Sep 17 00:00:00 2001
+From d01cc4fe8b911efffa221f139a41a2c880e73308 Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Wed, 18 Nov 2026 10:18:36 -0500
 Subject: [PATCH] Keep each display window's pointer on its own output
@@ -14,7 +14,8 @@ over half of each window (#424).
 Hyprland binds tablets and touch screens to an output, but not a pointer
 device like this one, so each tablet gets a libinput calibration matrix
 that maps it onto its own output within that box. head-tablets computes the
-matrices from hyprctl monitors, by output name, with the output's position,
+matrices from the monitors of the active seat0 session's Hyprland (not a
+nested one or another account's), by output name, with the output's position,
 mode, scale and rotation, and a mirror's tablet goes to its source. It
 writes them to /run/try-omarchy/head-tablets, where the new udev rule
 imports them, and announces a tablet again when its matrix changes, which is
@@ -29,7 +30,7 @@ revision 75 delivers it to existing disks.
 ---
  .../system/try-omarchy-head-tablets.service   |   9 +
  .../rules.d/70-try-omarchy-head-tablets.rules |   6 +
- .../usr/local/lib/try-omarchy/head-tablets    | 318 ++++++++++++++++++
+ .../usr/local/lib/try-omarchy/head-tablets    | 373 ++++++++++++++++++
  guest/scripts/finalize-rootfs.sh              |   7 +-
  guest/tests/test_aquamarine_contract.py       |   2 +-
  guest/tests/test_battery_details.py           |   2 +-
@@ -38,7 +39,7 @@ revision 75 delivers it to existing disks.
  guest/tests/test_desktop_drawn.py             |   2 +-
  guest/tests/test_ghostty_gl.py                |   2 +-
  guest/tests/test_guest_qol.py                 |   2 +-
- guest/tests/test_head_tablets.py              | 269 +++++++++++++++
+ guest/tests/test_head_tablets.py              | 346 ++++++++++++++++
  guest/tests/test_kernel_headers_hold.py       |   2 +-
  guest/tests/test_live_update.py               |   2 +-
  guest/tests/test_native_nightlight.py         |   2 +-
@@ -49,7 +50,7 @@ revision 75 delivers it to existing disks.
  guest/tests/test_url_schemes.py               |   2 +-
  guest/tests/test_windows_volume_sync.py       |   2 +-
  guest/tests/verify.py                         |  12 +-
- 22 files changed, 635 insertions(+), 18 deletions(-)
+ 22 files changed, 767 insertions(+), 18 deletions(-)
  create mode 100644 guest/factory-overlay/etc/systemd/system/try-omarchy-head-tablets.service
  create mode 100644 guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-head-tablets.rules
  create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/head-tablets
@@ -84,10 +85,10 @@ index 0000000..07d5e67
 +ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="QEMU Virtio Tablet", ATTRS{uniq}=="try-omarchy-head-[0-9]|try-omarchy-head-1[0-5]", TEST=="/run/try-omarchy/head-tablets/$attr{uniq}", IMPORT{file}="/run/try-omarchy/head-tablets/$attr{uniq}"
 diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/head-tablets b/guest/factory-overlay/usr/local/lib/try-omarchy/head-tablets
 new file mode 100755
-index 0000000..bfbd2f0
+index 0000000..f450d34
 --- /dev/null
 +++ b/guest/factory-overlay/usr/local/lib/try-omarchy/head-tablets
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,373 @@
 +#!/usr/bin/env python3
 +"""Keep the pointer of each Try Omarchy display window on its own output.
 +
@@ -100,7 +101,8 @@ index 0000000..bfbd2f0
 +that box. Moving across a window then moves across its output only.
 +
 +The matrix follows Hyprland's layout: positions, modes (which follow the
-+window size), scale and rotation. This watches Hyprland's monitor events, the
++window size), scale and rotation, as the Hyprland of the active seat0 session
++lays them out. This watches that Hyprland's monitor events, the
 +GPU's hotplug events and, as a safety net, polls the layout every few seconds.
 +When an output's box changes, the matrix is written where the udev rule
 +imports it and the tablet is announced again, which is the only way libinput
@@ -276,7 +278,9 @@ index 0000000..bfbd2f0
 +
 +def apply(matrices, tablets, state_dir="/run/try-omarchy/head-tablets",
 +          udev_data="/run/udev/data", announce=announce_again):
-+    """Write each head's matrix and re-announce the tablets that changed."""
++    """Write each head's matrix and re-announce only the tablets whose own
++    matrix differs from the one udev last gave them. Announcing a tablet again
++    lets go of a button held on it, so an unchanged tablet is left alone."""
 +    changed = []
 +    for head, event_dir in sorted(tablets.items()):
 +        matrix = matrices.get(head)
@@ -301,6 +305,56 @@ index 0000000..bfbd2f0
 +            continue
 +        found.append((info.st_mtime, str(sock.parent)))
 +    return [pathlib.Path(path) for _, path in sorted(found)]
++
++
++def seat_user(run=subprocess.run):
++    """The user of the active local session on seat0, from logind, or None."""
++    try:
++        result = run(["/usr/bin/loginctl", "show-seat", "seat0", "--property=ActiveSession", "--value"],
++                     capture_output=True, text=True, timeout=3)
++        session = result.stdout.strip()
++        if result.returncode or not session or not session.isalnum():
++            return None
++        result = run(["/usr/bin/loginctl", "show-session", session, "--property=Remote",
++                      "--property=User"], capture_output=True, text=True, timeout=3)
++    except (OSError, subprocess.SubprocessError):
++        return None
++    fields = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
++    if result.returncode or fields.get("Remote") != "no" or not fields.get("User", "").isdigit():
++        return None
++    return int(fields["User"])
++
++
++def drives_display(instance, proc="/proc"):
++    """Whether this Hyprland has the GPU's display device open. A nested
++    Hyprland, started inside the desktop, draws through its parent instead."""
++    try:
++        pid = (instance / "hyprland.lock").read_text().split()[0]
++        if not pid.isdigit():
++            return False
++        fds = pathlib.Path(proc, pid, "fd")
++        for fd in fds.iterdir():
++            try:
++                if os.readlink(fd).startswith("/dev/dri/card"):
++                    return True
++            except OSError:
++                continue
++    except (OSError, IndexError):
++        return False
++    return False
++
++
++def seat_instance(runtime_root="/run/user", proc="/proc", run=subprocess.run):
++    """The Hyprland that shows the active seat0 session, or None. Its layout is
++    what the display windows show; another account's or a nested Hyprland's
++    is not."""
++    uid = seat_user(run)
++    if uid is None:
++        return None
++    for instance in reversed(instances(runtime_root)):
++        if instance.parents[1].name == str(uid) and drives_display(instance, proc):
++            return instance
++    return None
 +
 +
 +def request(instance, command, timeout=IPC_TIMEOUT):
@@ -337,13 +391,15 @@ index 0000000..bfbd2f0
 +        return None
 +
 +
-+def check(sys_root, runtime_root, state_dir, udev_data, announce=announce_again):
++def check(sys_root, runtime_root, state_dir, udev_data, announce=announce_again,
++          proc="/proc", run=subprocess.run):
 +    """One pass. Returns the tablets and the Hyprland instance it used."""
 +    tablets = head_tablets(sys_root)
-+    current = instances(runtime_root)
-+    if not tablets or not current:
++    if not tablets:
 +        return tablets, None
-+    instance = current[-1]
++    instance = seat_instance(runtime_root, proc, run)
++    if instance is None:
++        return tablets, None
 +    try:
 +        monitors = request(instance, "j/monitors all")
 +    except (OSError, ValueError):
@@ -521,10 +577,10 @@ index 39989ea..7650898 100644
          self.assertNotIn("etc/fonts/conf.d/30-try-omarchy.conf", paths)
 diff --git a/guest/tests/test_head_tablets.py b/guest/tests/test_head_tablets.py
 new file mode 100644
-index 0000000..0e95ea9
+index 0000000..3393b59
 --- /dev/null
 +++ b/guest/tests/test_head_tablets.py
-@@ -0,0 +1,269 @@
+@@ -0,0 +1,346 @@
 +import contextlib
 +import fnmatch
 +import io
@@ -634,6 +690,31 @@ index 0000000..0e95ea9
 +            monitors = [monitor('Virtual-1', 0, 0, 640, 480), monitor('Virtual-2', 640, 0, 488, 381, transform=transform)]
 +            self.assertCovers(heads.calibrations(monitors, [1])[1], monitors, monitors[1])
 +
++    def test_window_corners_for_every_transform(self):
++        # Worked out by hand from wl_output's transforms: the window shows the
++        # buffer, which is the logical output rotated counter-clockwise, and
++        # the flipped ones mirror it left to right first. Where the window's
++        # top-left and top-right corners land on the output, as left/right
++        # and top/bottom.
++        corners = {
++            0: (('left', 'top'), ('right', 'top')),
++            1: (('right', 'top'), ('right', 'bottom')),
++            2: (('right', 'bottom'), ('left', 'bottom')),
++            3: (('left', 'bottom'), ('left', 'top')),
++            4: (('right', 'top'), ('left', 'top')),
++            5: (('left', 'top'), ('left', 'bottom')),
++            6: (('left', 'bottom'), ('right', 'bottom')),
++            7: (('right', 'bottom'), ('right', 'top')),
++        }
++        for transform, expected in corners.items():
++            monitors = [monitor('Virtual-1', 0, 0, 640, 480), monitor('Virtual-2', 640, 0, 488, 381, transform=transform)]
++            x, y, w, h = heads.logical_box(monitors[1])
++            edges = {'left': x, 'right': x + w - 1, 'top': y, 'bottom': y + h - 1}
++            matrix = heads.calibrations(monitors, [1])[1]
++            for (u, v), (across, down) in zip([(0, 0), (1, 0)], expected):
++                got = tuple(math.floor(n) for n in pointer(matrix, monitors, u, v))
++                self.assertEqual(got, (edges[across], edges[down]), (transform, (u, v)))
++
 +    def test_outputs_that_are_not_shown(self):
 +        monitors = [monitor('Virtual-1', 0, 0, 800, 600), monitor('Virtual-2', 800, 0, 800, 600, disabled=True)]
 +        self.assertEqual(set(heads.calibrations(monitors, [0, 1, 2])), {0})
@@ -653,6 +734,36 @@ index 0000000..0e95ea9
 +    (device.parent / 'dev').write_text(dev + '\n')
 +    (device.parent / 'uevent').write_text('')
 +    return device.parent
++
++
++def logind(uid, session='2', remote='no'):
++    """A fake run for loginctl: seat0's active session belongs to uid."""
++    def run(args, **kwargs):
++        class Result:
++            returncode = 0
++            stdout = ''
++        result = Result()
++        if args[1:3] == ['show-seat', 'seat0']:
++            result.stdout = f'{session}\n'
++        elif args[1:3] == ['show-session', session]:
++            result.stdout = f'Remote={remote}\nUser={uid}\n'
++        else:
++            result.returncode = 1
++        return result
++    return run
++
++
++def hyprland(runtime, proc, uid, signature, pid, card):
++    """An instance directory, and a /proc entry with the GPU open or not."""
++    instance = runtime / str(uid) / 'hypr' / signature
++    instance.mkdir(parents=True)
++    (instance / 'hyprland.lock').write_text(f'{pid}\nwayland-1\n')
++    fds = proc / str(pid) / 'fd'
++    fds.mkdir(parents=True)
++    os.symlink('/dev/dri/renderD128', fds / '10')
++    if card:
++        os.symlink('/dev/dri/card1', fds / '11')
++    return instance
 +
 +
 +class DeviceTests(unittest.TestCase):
@@ -727,8 +838,8 @@ index 0000000..0e95ea9
 +        make_tablet(self.sys, 'event3', 'QEMU Virtio Tablet', 'try-omarchy-head-0', '13:67')
 +        make_tablet(self.sys, 'event4', 'QEMU Virtio Tablet', 'try-omarchy-head-1', '13:68')
 +        runtime = self.root / 'run/user'
-+        instance = runtime / str(os.getuid()) / 'hypr/abc'
-+        instance.mkdir(parents=True)
++        proc = self.root / 'proc'
++        instance = hyprland(runtime, proc, os.getuid(), 'abc', 700, card=True)
 +        monitors = [monitor('Virtual-1', 0, 0, 1920, 1080), monitor('Virtual-2', 1920, 0, 1920, 1080)]
 +        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 +        server.bind(str(instance / '.socket.sock'))
@@ -748,7 +859,8 @@ index 0000000..0e95ea9
 +        output = io.StringIO()
 +        try:
 +            with contextlib.redirect_stdout(output):
-+                tablets, used = heads.check(str(self.sys), str(runtime), state, self.root / 'udev', announced.append)
++                tablets, used = heads.check(str(self.sys), str(runtime), state, self.root / 'udev', announced.append,
++                                            proc, logind(os.getuid()))
 +        finally:
 +            thread.join(5)
 +            server.close()
@@ -765,10 +877,31 @@ index 0000000..0e95ea9
 +        make_tablet(self.sys, 'event3', 'QEMU Virtio Tablet', 'try-omarchy-head-0', '13:67')
 +        announced = []
 +        tablets, used = heads.check(str(self.sys), str(self.root / 'run/user'), self.root / 'state',
-+                                    self.root / 'udev', announced.append)
++                                    self.root / 'udev', announced.append, self.root / 'proc', logind(os.getuid()))
 +        self.assertEqual(list(tablets), [0])
 +        self.assertIsNone(used)
 +        self.assertEqual(announced, [])
++
++
++    def test_uses_the_hyprland_of_the_active_seat_session(self):
++        runtime, proc = self.root / 'run/user', self.root / 'proc'
++        uid = os.getuid()
++        desktop = hyprland(runtime, proc, uid, 'desktop', 700, card=True)
++        # Started later, so newest: a nested Hyprland inside the desktop and
++        # another account's session on a second seat or in the background.
++        nested = hyprland(runtime, proc, uid, 'nested', 900, card=False)
++        other = hyprland(runtime, proc, uid + 1, 'other', 950, card=True)
++        self.assertNotEqual(other.parents[1].name, str(uid))
++        for path, age in ((desktop, 100), (nested, 200), (other, 300)):
++            (path / '.socket.sock').touch()
++            os.utime(path / '.socket.sock', (age, age))
++        self.assertEqual(heads.instances(str(runtime))[-1], nested)
++        self.assertEqual(heads.seat_instance(str(runtime), proc, logind(uid)), desktop)
++        self.assertIsNone(heads.seat_instance(str(runtime), proc, logind(uid, remote='yes')))
++        self.assertIsNone(heads.seat_instance(str(runtime), proc, logind(uid + 2)))
++        # Only the seat's own account counts, whatever runs elsewhere.
++        os.unlink(desktop / '.socket.sock')
++        self.assertIsNone(heads.seat_instance(str(runtime), proc, logind(uid)))
 +
 +
 +class RuleTests(unittest.TestCase):
