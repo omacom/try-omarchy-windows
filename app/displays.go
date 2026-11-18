@@ -9,6 +9,10 @@ import (
 
 const maximumGuestDisplays = 16
 
+// guestDisplayDeviceID names the GPU of a guest with several displays. Each
+// display's tablet binds to one of its heads.
+const guestDisplayDeviceID = "gpu0"
+
 func guestDisplayCount(count int) int {
 	if count == 0 {
 		return 1
@@ -40,7 +44,7 @@ func displayDevice(cfg *config, hostmem uint64) string {
 	for i := range outputs {
 		outputs[i] = map[string]any{"name": fmt.Sprintf("Omarchy %d", i+1), "xres": width, "yres": height}
 	}
-	device := map[string]any{"driver": "virtio-gpu-pci", "id": "gpu0", "max_outputs": len(outputs), "outputs": outputs}
+	device := map[string]any{"driver": "virtio-gpu-pci", "id": guestDisplayDeviceID, "max_outputs": len(outputs), "outputs": outputs}
 	if cfg.useGpu {
 		device["driver"] = "virtio-vga-gl"
 		device["blob"] = true
@@ -51,6 +55,33 @@ func displayDevice(cfg *config, hostmem uint64) string {
 	}
 	data, _ := json.Marshal(device)
 	return string(data)
+}
+
+// tabletDevices gives the guest its pointer. QEMU reports a window's pointer
+// as 0 to 100% of that window, and a single tablet spreads that over the
+// whole guest layout, so with several displays each display gets a tablet
+// bound to its head. The serial tells the guest which output the tablet
+// belongs to: head N is the guest's Virtual-(N+1).
+//
+// A tablet binds to its head when it is created, and quietly stays unbound
+// when the GPU does not exist yet. QEMU creates every -device given as JSON
+// after all the others, and the GPU is JSON, so the tablets are JSON too and
+// follow it.
+func tabletDevices(cfg *config) []string {
+	count := guestDisplayCount(cfg.displays)
+	if count == 1 {
+		return []string{"-device", "virtio-tablet-pci"}
+	}
+	args := make([]string, 0, 2*count)
+	for head := range count {
+		data, _ := json.Marshal(map[string]any{"driver": "virtio-tablet-pci", "display": guestDisplayDeviceID, "head": head, "serial": headTabletSerial(head)})
+		args = append(args, "-device", string(data))
+	}
+	return args
+}
+
+func headTabletSerial(head int) string {
+	return fmt.Sprintf("try-omarchy-head-%d", head)
 }
 
 // displayWindowTitle is the title of the window showing guest display index.

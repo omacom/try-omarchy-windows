@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- With more than one display, the pointer stays visible across every window.
+  Each window moved the pointer across the whole Omarchy desktop, so it left
+  the first screen halfway across its window and only showed on the right
+  half of the second. Each window now has its own pointer device mapped to
+  its own screen, wherever the screens are arranged and whatever their size,
+  scale or rotation (#424).
 - Full screen no longer flickers black when the pointer moves or while
   Omarchy starts, and the Windows taskbar no longer shows over it, on graphics
   drivers that take over a window covering the whole screen. Taking a full

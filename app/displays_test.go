@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -157,6 +160,111 @@ func TestRunningInstanceWindowsAreRecognised(t *testing.T) {
 	} {
 		if got := isRunningInstanceWindow(c.class, c.title); got != c.want {
 			t.Errorf("%q %q: %v", c.class, c.title, got)
+		}
+	}
+}
+
+func tabletArgs(args []string) []string {
+	var tablets []string
+	for i, arg := range args {
+		if i > 0 && args[i-1] == "-device" && (strings.HasPrefix(arg, "virtio-tablet-pci") || strings.Contains(arg, `"driver":"virtio-tablet-pci"`)) {
+			tablets = append(tablets, arg)
+		}
+	}
+	return tablets
+}
+
+// One display keeps the single unbound tablet it always had.
+func TestOneDisplayKeepsItsSingleTablet(t *testing.T) {
+	for _, displays := range []int{0, 1} {
+		for _, gpu := range []bool{false, true} {
+			cfg := &config{vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw", diskFormat: "raw",
+				memMiB: 4096, audio: "none", displays: displays, useGpu: gpu}
+			args := buildQemuArgs(cfg, "root=/dev/vda")
+			if tablets := tabletArgs(args); !slices.Equal(tablets, []string{"virtio-tablet-pci"}) {
+				t.Fatalf("displays=%d gpu=%v: tablets %q", displays, gpu, tablets)
+			}
+			want := "-device virtio-keyboard-pci -device virtio-tablet-pci -device virtio-net-pci,netdev=n0,romfile= "
+			if joined := strings.Join(args, " "); !strings.Contains(joined, want) {
+				t.Fatalf("displays=%d gpu=%v: input devices changed: %s", displays, gpu, joined)
+			}
+		}
+	}
+}
+
+// QEMU reports a window's pointer as 0 to 100% of that window. Each display
+// needs its own tablet, bound to its head and named for the guest.
+func TestEachDisplayGetsATabletOnItsHead(t *testing.T) {
+	for _, displays := range []int{2, 3, maximumGuestDisplays} {
+		for _, gpu := range []bool{false, true} {
+			cfg := &config{vmDir: "/vm", guestDir: "/guest", disk: "/vm/disk.raw", diskFormat: "raw",
+				memMiB: 4096, audio: "none", displays: displays, useGpu: gpu}
+			args := buildQemuArgs(cfg, "root=/dev/vda")
+			tablets := tabletArgs(args)
+			if len(tablets) != displays {
+				t.Fatalf("displays=%d gpu=%v: %d tablets", displays, gpu, len(tablets))
+			}
+			serials := map[string]bool{}
+			for head, tablet := range tablets {
+				var device struct {
+					Driver  string `json:"driver"`
+					Display string `json:"display"`
+					Head    *int   `json:"head"`
+					Serial  string `json:"serial"`
+				}
+				if err := json.Unmarshal([]byte(tablet), &device); err != nil {
+					t.Fatalf("displays=%d gpu=%v: tablet %d is not JSON: %q", displays, gpu, head, tablet)
+				}
+				if device.Driver != "virtio-tablet-pci" || device.Display != "gpu0" || device.Head == nil || *device.Head != head ||
+					device.Serial != fmt.Sprintf("try-omarchy-head-%d", head) {
+					t.Fatalf("displays=%d gpu=%v: tablet %d is %q", displays, gpu, head, tablet)
+				}
+				serials[device.Serial] = true
+			}
+			if len(serials) != displays {
+				t.Fatalf("displays=%d: serials repeat", displays)
+			}
+			// A tablet binds to its head when it is created. QEMU creates
+			// JSON devices after all others, in order, so the GPU has to be
+			// JSON and come first.
+			gpuAt, tabletAt := slices.Index(args, displayDevice(cfg, gpuHostMem(cfg.memMiB, cfg.hostTotalMiB))), slices.Index(args, tablets[0])
+			if gpuAt < 0 || tabletAt < gpuAt || !strings.HasPrefix(args[gpuAt], "{") {
+				t.Fatalf("displays=%d gpu=%v: display device at %d, first tablet at %d", displays, gpu, gpuAt, tabletAt)
+			}
+			var device struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal([]byte(args[gpuAt]), &device); err != nil || device.ID != guestDisplayDeviceID {
+				t.Fatalf("displays=%d gpu=%v: display device id %q (%v)", displays, gpu, device.ID, err)
+			}
+		}
+	}
+}
+
+func TestDragEventsNameTheFirstHeadOnlyWithSeveralTablets(t *testing.T) {
+	step := pointerStep{x: 100, y: 32767, button: 1}
+	single := `{"execute":"input-send-event","arguments":{"events":[{"type":"abs","data":{"axis":"x","value":100}},{"type":"abs","data":{"axis":"y","value":32767}},{"type":"btn","data":{"down":true,"button":"left"}}]}}`
+	if got := pointerStepCommand(step, false); got != single {
+		t.Fatalf("one display: %s", got)
+	}
+	if got := pointerReleaseCommand(false); got != `{"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":false,"button":"left"}}]}}` {
+		t.Fatalf("one display release: %s", got)
+	}
+	for _, command := range []string{pointerStepCommand(step, true), pointerReleaseCommand(true)} {
+		var parsed struct {
+			Execute   string `json:"execute"`
+			Arguments struct {
+				Device string            `json:"device"`
+				Head   *int              `json:"head"`
+				Events []json.RawMessage `json:"events"`
+			} `json:"arguments"`
+		}
+		if err := json.Unmarshal([]byte(command), &parsed); err != nil {
+			t.Fatal(err)
+		}
+		if parsed.Execute != "input-send-event" || parsed.Arguments.Device != guestDisplayDeviceID ||
+			parsed.Arguments.Head == nil || *parsed.Arguments.Head != 0 || len(parsed.Arguments.Events) == 0 {
+			t.Fatalf("several displays: %s", command)
 		}
 	}
 }

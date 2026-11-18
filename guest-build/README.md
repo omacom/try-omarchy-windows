@@ -192,6 +192,22 @@ offers to install it, and catch-up sets it at every boot. The override reaches
 Ghostty and the programs started in its windows, not the rest of the session.
 Compatibility revision 74 delivers it; the runtime package is unchanged.
 
+Patch 0188 keeps each display window's pointer on its own output (#424). With
+more than one display the launcher gives every window its own virtio tablet,
+bound to its head, with the serial `try-omarchy-head-N` for the window showing
+`Virtual-(N+1)`. QEMU reports a window's pointer as 0 to 100% of that window
+and Hyprland spreads an absolute pointer over the box around all outputs, so
+with one tablet the pointer was only on screen over half of each window.
+Hyprland binds tablets and touch screens to an output but not this kind of
+pointer, so `head-tablets` gives each tablet a libinput calibration matrix that
+maps it onto its own output, found by name, with its position, mode, scale and
+rotation. The udev rule imports the matrix from `/run/try-omarchy/head-tablets`,
+and the helper announces a tablet again when its matrix changes, since libinput
+reads it only when a device is added. It looks again on Hyprland's monitor and
+reload events, after a GPU hotplug (a window resize) and every five seconds.
+udev starts it for the first such tablet, so one display never runs it.
+Compatibility revision 75 delivers it; the runtime package is unchanged.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME

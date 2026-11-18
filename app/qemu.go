@@ -88,7 +88,10 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		"-kernel", filepath.Join(cfg.guestDir, "vmlinuz-linux"),
 		"-initrd", filepath.Join(cfg.guestDir, "initramfs-linux.img"),
 		"-append", cmdline+" tryomarchy.render="+render,
-		"-device", "virtio-keyboard-pci", "-device", "virtio-tablet-pci",
+		"-device", "virtio-keyboard-pci",
+	)
+	args = append(args, tabletDevices(cfg)...)
+	args = append(args,
 		// No option ROM: the guest boots its kernel directly, and iPXE would
 		// only print its banner on the display.
 		"-device", "virtio-net-pci,netdev=n0,romfile=", "-netdev", netdevArg(cfg.forwards),

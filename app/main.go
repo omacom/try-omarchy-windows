@@ -1101,6 +1101,7 @@ func supervise(cfg *config, cmdline string) bool {
 			logf("SDL audio sample rates: output=%d Hz input=%d Hz", cfg.audioRates.Output, cfg.audioRates.Input)
 		}
 		proc = exec.Command(cfg.qemu, buildQemuArgs(cfg, cmdline)...)
+		pointerHeadBound.Store(guestDisplayCount(cfg.displays) > 1)
 		if !audioSelection && (cfg.audioDevices.Output != "" || (!cfg.desktop.MicrophoneDisabled && cfg.audioDevices.Input != "")) {
 			logf("Selected audio devices require the updated SDL runtime; this attempt uses Windows defaults")
 		}
