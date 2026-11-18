@@ -400,14 +400,14 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		// it spills off the screen. It goes to the work area's corner, or the
 		// middle when it fits, keeping its size. The caption tells, since the
 		// window can stop covering its monitor while the display mode changes.
-		style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
-		framed := style&wsCaption == wsCaption
 		var now screenRect
-		got, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&now)))
-		// SDL gives the window its frame back a moment before its windowed
-		// size; until then it still has the full screen rectangle.
-		midway := got != 0 && framed && fullscreenRect(now, enumTitleMonitorDetails)
-		if leftStartFullscreen(state.fullscreen, framed, midway) && got != 0 {
+		rect := &now
+		if got, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&now))); got == 0 {
+			rect = nil
+		}
+		place, fullscreen := fullscreenStartPass(state.fullscreen, windowFramed(hwnd), rect, enumTitleMonitorDetails)
+		state.fullscreen = fullscreen
+		if place {
 			if monitor, ok := hostMonitorForWindow(hwnd); ok {
 				if to, move := windowIntoWorkArea(now, monitor.Work); move {
 					procSetWindowPos.Call(hwnd, 0, uintptr(to.Left), uintptr(to.Top), 0, 0, swpNoSize|swpNoZorder|swpNoOwnerZOrder)
@@ -415,12 +415,9 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 				}
 			}
 		}
-		if !midway {
-			state.fullscreen = !framed
-		}
 	}
 	if !enumTitleFullscreen && !state.fullscreen {
-		if restored := state.repairTopology(capturePlacement(hwnd), beingDragged(hwnd), enumTitleMonitorDetails, func(p *windowPlacement) bool {
+		if restored := state.repairTopology(userPlacement(hwnd), beingDragged(hwnd), enumTitleMonitorDetails, func(p *windowPlacement) bool {
 			return correctPlacement(hwnd, p)
 		}); restored != nil {
 			restored.SavedAt = time.Now()
@@ -455,10 +452,8 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 			}
 			return 1
 		}
-		now := capturePlacement(hwnd)
-		style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
-		framed := style&wsCaption == wsCaption
-		switch nextPlacementStep(now, state.last, state.target, takeUserMoved(hwnd), beingDragged(hwnd), !guestFollowsWindow.Load(), framed) {
+		now := userPlacement(hwnd)
+		switch nextPlacementStep(now, state.last, state.target, takeUserMoved(hwnd), beingDragged(hwnd), !guestFollowsWindow.Load()) {
 		case placementSave:
 			now.SavedAt = time.Now()
 			if saveDisplayPlacement(enumTitleDir, state.index, *now) == nil {

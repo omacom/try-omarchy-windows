@@ -273,13 +273,30 @@ func fullscreenPlacement(wasFullscreen, fullscreen bool, last *windowPlacement) 
 	return nil, false
 }
 
-// leftStartFullscreen reports that the window of a full screen start, which
-// had no frame on the last pass (wasFullscreen), has one again: the user
-// took it out of full screen. midway is a window that has its frame but
-// still the full screen rectangle (fullscreenRect): SDL sets the frame first
-// and the windowed size right after, so it is not placed until then.
-func leftStartFullscreen(wasFullscreen, framed, midway bool) bool {
-	return wasFullscreen && framed && !midway
+// fullscreenStartPass is one title enforcer pass over a full screen start's
+// window: whether to place it in the work area (it left full screen) and
+// whether it counts as full screen from now on. A window without a frame is
+// full screen, also while a display mode change leaves it short of its
+// monitor for a moment. SDL gives the window its frame back a moment before
+// its windowed size, so a framed window that still has the full screen
+// rectangle (fullscreenRect), or whose rectangle could not be read (rect is
+// nil), is left as it was until a later pass.
+func fullscreenStartPass(wasFullscreen, framed bool, rect *screenRect, monitors []hostMonitor) (place, fullscreen bool) {
+	if framed && (rect == nil || fullscreenRect(*rect, monitors)) {
+		return false, wasFullscreen
+	}
+	return wasFullscreen && framed, !framed
+}
+
+// savablePlacement is the placement to remember for a window, or nil while
+// it has no frame. QEMU's windows have one outside full screen; SDL takes it
+// off, along with the maximized state, before the window covers its monitor,
+// and that step is not the user's.
+func savablePlacement(now *windowPlacement, framed bool) *windowPlacement {
+	if !framed {
+		return nil
+	}
+	return now
 }
 
 // fullscreenRect reports whether r is a monitor's full screen rectangle:
@@ -336,13 +353,10 @@ func placementAfterCurtain(now, target *windowPlacement) *windowPlacement {
 // where it belongs. While the guest boots or shuts down (held), QEMU resizes
 // the window to whatever the guest's display is; those changes are undone,
 // not remembered. Once the guest's desktop follows the window, any change is
-// the user's: a drag, Snap, or a tool that arranges windows. A window without
-// its frame (framed false) is SDL switching it into or out of full screen:
-// SDL takes the frame and the maximized state off before it covers the
-// monitor, so that step is not the user's either.
-func nextPlacementStep(now, last, target *windowPlacement, userMoved, dragging, held, framed bool) placementStep {
+// the user's: a drag, Snap, or a tool that arranges windows.
+func nextPlacementStep(now, last, target *windowPlacement, userMoved, dragging, held bool) placementStep {
 	switch {
-	case now == nil || dragging || !framed:
+	case now == nil || dragging:
 		return placementKeep
 	case userMoved || last == nil || now.Maximized != last.Maximized:
 		return placementSave

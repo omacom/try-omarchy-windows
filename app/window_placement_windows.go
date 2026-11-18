@@ -128,6 +128,18 @@ func capturePlacement(hwnd uintptr) *windowPlacement {
 	return &windowPlacement{Normal: wp.normalPosition, Maximized: wp.showCmd == swShowMaximized}
 }
 
+// windowFramed reports whether the window has its title bar.
+func windowFramed(hwnd uintptr) bool {
+	style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
+	return style&wsCaption == wsCaption
+}
+
+// userPlacement is where the VM window is now, as far as it can be the
+// user's (savablePlacement).
+func userPlacement(hwnd uintptr) *windowPlacement {
+	return savablePlacement(capturePlacement(hwnd), windowFramed(hwnd))
+}
+
 // applyPlacement moves the VM window to the remembered rectangle and state.
 func applyPlacement(hwnd uintptr, p *windowPlacement) bool {
 	var wp windowPlacementStruct

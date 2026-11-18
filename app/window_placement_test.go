@@ -74,7 +74,7 @@ func TestOnlyTheUsersMovesAreRemembered(t *testing.T) {
 		{"nothing remembered yet", placed, nil, nil, false, false, true, placementSave},
 	}
 	for _, c := range cases {
-		if got := nextPlacementStep(c.now, c.last, c.target, c.userMoved, c.dragging, c.held, true); got != c.want {
+		if got := nextPlacementStep(c.now, c.last, c.target, c.userMoved, c.dragging, c.held); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}
@@ -102,7 +102,7 @@ func TestTheCurtainDoesNotChangeTheRememberedPlacement(t *testing.T) {
 	}
 	// Once put back, the guest following the window does not save the
 	// boot size over it.
-	if got := nextPlacementStep(placed, placed, placed, false, false, false, true); got != placementKeep {
+	if got := nextPlacementStep(placed, placed, placed, false, false, false); got != placementKeep {
 		t.Errorf("after the curtain: %v, want keep", got)
 	}
 }
@@ -227,15 +227,15 @@ func TestFullscreenPlacementRestoresTheWindowedPlacement(t *testing.T) {
 func TestTheWayIntoFullscreenIsNotSaved(t *testing.T) {
 	maximized := &windowPlacement{Normal: screenRect{Left: 24, Top: 24, Right: 1256, Bottom: 728}, Maximized: true}
 	// SDL has taken the frame and the maximized state off and not yet
-	// covered the monitor (acceptance 2026-11-18, saved as the window's
-	// size and put back un-maximized on every later leave).
+	// covered the monitor. Saved, it came back un-maximized on every later
+	// leave.
 	midway := &windowPlacement{Normal: screenRect{Left: -8, Top: -8, Right: 1288, Bottom: 760}}
 	for _, held := range []bool{false, true} {
-		if got := nextPlacementStep(midway, maximized, maximized, false, false, held, false); got != placementKeep {
+		if got := nextPlacementStep(savablePlacement(midway, false), maximized, maximized, false, false, held); got != placementKeep {
 			t.Fatalf("held=%v: %v, want keep", held, got)
 		}
 	}
-	if got := nextPlacementStep(midway, maximized, maximized, false, false, false, true); got != placementSave {
+	if got := nextPlacementStep(savablePlacement(midway, true), maximized, maximized, false, false, false); got != placementSave {
 		t.Fatalf("the user restoring a framed window: %v, want save", got)
 	}
 }
@@ -264,24 +264,41 @@ func TestHiddenWindowPlacementFollowsAModeChange(t *testing.T) {
 }
 
 func TestLeavingAFullscreenStartPlacesTheWindow(t *testing.T) {
-	if !leftStartFullscreen(true, true, false) {
-		t.Fatal("a full screen start's window that has its frame back was not placed")
+	monitors := []hostMonitor{{Bounds: screenRect{0, 0, 1280, 800}, Work: screenRect{0, 0, 1280, 752}}}
+	rect := func(r screenRect) *screenRect { return &r }
+	grown := rect(screenRect{0, -1, 1280, 800})
+	window := rect(screenRect{152, 63, 1128, 666})
+	type pass struct {
+		name           string
+		framed         bool
+		rect           *screenRect
+		place, fullscr bool
 	}
-	// Still frameless: still full screen, also while a display mode change
-	// leaves it short of its monitor for a moment.
-	if leftStartFullscreen(true, false, false) {
-		t.Fatal("a frameless window was placed as a window")
+	run := func(name string, passes []pass) {
+		fullscreen := false
+		for _, p := range passes {
+			place, now := fullscreenStartPass(fullscreen, p.framed, p.rect, monitors)
+			if place != p.place || now != p.fullscr {
+				t.Fatalf("%s, %s: place=%v fullscreen=%v, want %v %v", name, p.name, place, now, p.place, p.fullscr)
+			}
+			fullscreen = now
+		}
 	}
-	// Before it was ever full screen, as while QEMU sets it up.
-	if leftStartFullscreen(false, true, false) {
-		t.Fatal("a window that was not full screen was placed")
-	}
-	// The frame is back but SDL has not given it its windowed size yet: it
-	// would be moved to the work area's corner and stay there (acceptance
-	// 2026-11-18, the window left full screen at 1280x801).
-	if leftStartFullscreen(true, true, true) {
-		t.Fatal("a window halfway out of full screen was placed")
-	}
+	run("Ctrl+Alt+F out of a full screen start", []pass{
+		{"QEMU sets the window up", true, window, false, false},
+		{"full screen", false, grown, false, true},
+		// A display mode change leaves it short of its monitor.
+		{"mode change", false, window, false, true},
+		// The frame is back before the windowed size: placing it now would
+		// put the full screen rectangle in the work area's corner.
+		{"frame back, still full screen size", true, grown, false, true},
+		{"frame back, monitor size", true, rect(screenRect{0, 0, 1280, 800}), false, true},
+		{"rectangle unreadable", true, nil, false, true},
+		{"windowed size", true, window, true, false},
+		{"next pass", true, window, false, false},
+		{"full screen again", false, grown, false, true},
+		{"and out again", true, window, true, false},
+	})
 }
 
 func TestFullscreenRect(t *testing.T) {

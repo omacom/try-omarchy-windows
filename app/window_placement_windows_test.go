@@ -26,7 +26,12 @@ func TestMinimizedTopologyRepairWaitsForRestore(t *testing.T) {
 	if state.repairTopology(now, false, monitors, func(*windowPlacement) bool { return false }) != nil || !state.topologyRepair {
 		t.Fatal("consumed a failed repair")
 	}
-	restored := state.repairTopology(now, false, monitors, apply)
+	// A monitor change on the pass where SDL has taken the frame off on its
+	// way into full screen: nothing to repair or save yet.
+	if state.repairTopology(savablePlacement(now, false), false, monitors, apply) != nil || !state.topologyRepair || calls != 0 {
+		t.Fatal("repaired and saved a frameless window")
+	}
+	restored := state.repairTopology(savablePlacement(now, true), false, monitors, apply)
 	if restored == nil || state.topologyRepair || calls != 1 || !usablePlacement(restored, monitors) || !state.target.sameAs(restored) {
 		t.Fatal("lost deferred repair after restore")
 	}
