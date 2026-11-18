@@ -1,0 +1,1129 @@
+From d01cc4fe8b911efffa221f139a41a2c880e73308 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Wed, 18 Nov 2026 10:18:36 -0500
+Subject: [PATCH] Keep each display window's pointer on its own output
+
+With more than one display, the launcher now gives every display window its
+own virtio tablet, bound to that window's head, with the serial
+try-omarchy-head-N for the window that shows Virtual-(N+1). QEMU reports a
+window's pointer as 0 to 100% of that window, and Hyprland spreads an
+absolute pointer over the box around all outputs. With one tablet, moving
+across window 1 crossed the whole layout, so the pointer was only on screen
+over half of each window (#424).
+
+Hyprland binds tablets and touch screens to an output, but not a pointer
+device like this one, so each tablet gets a libinput calibration matrix
+that maps it onto its own output within that box. head-tablets computes the
+matrices from the monitors of the active seat0 session's Hyprland (not a
+nested one or another account's), by output name, with the output's position,
+mode, scale and rotation, and a mirror's tablet goes to its source. It
+writes them to /run/try-omarchy/head-tablets, where the new udev rule
+imports them, and announces a tablet again when its matrix changes, which is
+how libinput reads a new one. It looks again on Hyprland's monitor and
+config reload events, a few times after a GPU hotplug (a window resize
+changes the mode), and every five seconds. Edges land on the centre of the
+output's edge pixels, so the pointer never slips onto the next output.
+
+udev starts the helper for the first per-display tablet, so a guest with one
+display, or a launcher that gives one tablet, never runs it. Compatibility
+revision 75 delivers it to existing disks.
+---
+ .../system/try-omarchy-head-tablets.service   |   9 +
+ .../rules.d/70-try-omarchy-head-tablets.rules |   6 +
+ .../usr/local/lib/try-omarchy/head-tablets    | 386 ++++++++++++++++++
+ guest/scripts/finalize-rootfs.sh              |   7 +-
+ guest/tests/test_aquamarine_contract.py       |   2 +-
+ guest/tests/test_battery_details.py           |   2 +-
+ guest/tests/test_clipboard_pull.py            |   2 +-
+ guest/tests/test_compositor_health.py         |   2 +-
+ guest/tests/test_desktop_drawn.py             |   2 +-
+ guest/tests/test_ghostty_gl.py                |   2 +-
+ guest/tests/test_guest_qol.py                 |   2 +-
+ guest/tests/test_head_tablets.py              | 388 ++++++++++++++++
+ guest/tests/test_kernel_headers_hold.py       |   2 +-
+ guest/tests/test_live_update.py               |   2 +-
+ guest/tests/test_native_nightlight.py         |   2 +-
+ guest/tests/test_notification_privacy.py      |   2 +-
+ guest/tests/test_qt612_palette.py             |   2 +-
+ guest/tests/test_refresh_pacman.py            |   2 +-
+ guest/tests/test_snapper_guest.py             |   2 +-
+ guest/tests/test_url_schemes.py               |   2 +-
+ guest/tests/test_windows_volume_sync.py       |   2 +-
+ guest/tests/verify.py                         |  12 +-
+ 22 files changed, 822 insertions(+), 18 deletions(-)
+ create mode 100644 guest/factory-overlay/etc/systemd/system/try-omarchy-head-tablets.service
+ create mode 100644 guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-head-tablets.rules
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/head-tablets
+ create mode 100644 guest/tests/test_head_tablets.py
+
+diff --git a/guest/factory-overlay/etc/systemd/system/try-omarchy-head-tablets.service b/guest/factory-overlay/etc/systemd/system/try-omarchy-head-tablets.service
+new file mode 100644
+index 0000000..c6eeeba
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/system/try-omarchy-head-tablets.service
+@@ -0,0 +1,9 @@
++[Unit]
++Description=Keep each Try Omarchy display window's pointer on its own output
++# Started by the udev rule for the per-display tablets; a guest with one
++# display never runs it.
++
++[Service]
++ExecStart=/usr/local/lib/try-omarchy/head-tablets
++Restart=on-failure
++RestartSec=2
+diff --git a/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-head-tablets.rules b/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-head-tablets.rules
+new file mode 100644
+index 0000000..07d5e67
+--- /dev/null
++++ b/guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-head-tablets.rules
+@@ -0,0 +1,6 @@
++# With more than one display, Try Omarchy gives each display window its own
++# virtual tablet, try-omarchy-head-N for the window showing Virtual-(N+1).
++# try-omarchy-head-tablets writes the calibration that keeps each tablet on its
++# own output and announces the tablet again whenever the layout changes.
++ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="QEMU Virtio Tablet", ATTRS{uniq}=="try-omarchy-head-[0-9]|try-omarchy-head-1[0-5]", TAG+="systemd", ENV{SYSTEMD_WANTS}+="try-omarchy-head-tablets.service"
++ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="QEMU Virtio Tablet", ATTRS{uniq}=="try-omarchy-head-[0-9]|try-omarchy-head-1[0-5]", TEST=="/run/try-omarchy/head-tablets/$attr{uniq}", IMPORT{file}="/run/try-omarchy/head-tablets/$attr{uniq}"
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/head-tablets b/guest/factory-overlay/usr/local/lib/try-omarchy/head-tablets
+new file mode 100755
+index 0000000..f450d34
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/head-tablets
+@@ -0,0 +1,386 @@
++#!/usr/bin/env python3
++"""Keep the pointer of each Try Omarchy display window on its own output.
++
++With more than one display, the launcher gives every display window its own
++virtual tablet. Its serial is try-omarchy-head-N for the window that shows
++Virtual-(N+1), and QEMU reports the pointer as 0 to 100% of that window.
++Hyprland spreads an absolute pointer over the box around all outputs and has
++no setting that binds a pointer device to one output, so each tablet gets a
++libinput calibration matrix that maps its range onto its own output within
++that box. Moving across a window then moves across its output only.
++
++The matrix follows Hyprland's layout: positions, modes (which follow the
++window size), scale and rotation, as the Hyprland of the active seat0 session
++lays them out. This watches that Hyprland's monitor events, the
++GPU's hotplug events and, as a safety net, polls the layout every few seconds.
++When an output's box changes, the matrix is written where the udev rule
++imports it and the tablet is announced again, which is the only way libinput
++reads a new one. Hyprland drops and adds the device; the pointer stays put.
++
++udev starts this as root when the first such tablet appears. It exits when
++there are none, so a guest with one display never runs it.
++"""
++import glob
++import json
++import math
++import os
++import pathlib
++import select
++import socket
++import subprocess
++import sys
++import time
++
++TABLET_NAME = "QEMU Virtio Tablet"
++SERIAL_PREFIX = "try-omarchy-head-"
++MAXIMUM_HEADS = 16
++PROPERTY = "LIBINPUT_CALIBRATION_MATRIX"
++IPC_TIMEOUT = 2
++# Sixteen monitors describe themselves in well under this.
++REPLY_LIMIT = 1 << 20
++# Layout changes that Hyprland does not announce are found this often.
++POLL = 5.0
++# Display sync applies a window's new mode shortly after the GPU's hotplug
++# event, so look again a few times after one.
++FOLLOW_UP = (0.3, 1.0, 2.5, 5.0)
++LAYOUT_EVENTS = (b"monitoradded>>", b"monitorremoved>>", b"monitoraddedv2>>",
++                 b"monitorremovedv2>>", b"configreloaded>>")
++
++# For each wl_output transform, the output's logical position (p, q) from the
++# window position (u, v), both 0 to 1: rows of (u, v, 1) coefficients. The
++# window shows the output's buffer, which the compositor draws rotated or
++# flipped by the transform.
++TRANSFORMS = {
++    0: ((1, 0, 0), (0, 1, 0)),
++    1: ((0, -1, 1), (1, 0, 0)),
++    2: ((-1, 0, 1), (0, -1, 1)),
++    3: ((0, 1, 0), (-1, 0, 1)),
++    4: ((-1, 0, 1), (0, 1, 0)),
++    5: ((0, 1, 0), (1, 0, 0)),
++    6: ((1, 0, 0), (0, -1, 1)),
++    7: ((0, -1, 1), (-1, 0, 1)),
++}
++
++
++def head_of(serial):
++    if not serial.startswith(SERIAL_PREFIX):
++        return None
++    number = serial[len(SERIAL_PREFIX):]
++    if not (number.isascii() and number.isdigit()) or number != str(int(number)) or int(number) >= MAXIMUM_HEADS:
++        return None
++    return int(number)
++
++
++def head_tablets(sys_root="/sys"):
++    """The per-display tablets, as {head: event device directory}."""
++    found = {}
++    for event in sorted(glob.glob(f"{sys_root}/class/input/event*")):
++        device = pathlib.Path(event) / "device"
++        try:
++            if (device / "name").read_text().strip() != TABLET_NAME:
++                continue
++            head = head_of((device / "uniq").read_text().strip())
++        except OSError:
++            continue
++        if head is not None and head not in found:
++            found[head] = pathlib.Path(event)
++    return found
++
++
++def logical_box(monitor):
++    """The output's box in the layout, as Hyprland computes it."""
++    width, height = monitor["width"], monitor["height"]
++    if monitor.get("transform", 0) % 2:
++        width, height = height, width
++    scale = monitor.get("scale") or 1
++    return (monitor["x"], monitor["y"],
++            math.floor(width / scale + 0.5), math.floor(height / scale + 0.5))
++
++
++def calibrations(monitors, heads):
++    """The calibration matrix for each head whose output is shown, by head.
++
++    monitors is hyprctl's monitors all. The layout box is the one Hyprland
++    maps an unbound absolute pointer onto: the enabled outputs that are not
++    mirrors. A mirror's window shows its source (mirrorOf is the source's
++    id), so its tablet goes there.
++    """
++    if not isinstance(monitors, list):
++        return {}
++    by_name = {m.get("name"): m for m in monitors if isinstance(m, dict)}
++    by_id = {str(m.get("id")): m for m in by_name.values()}
++    try:
++        active = [m for m in by_name.values()
++                  if not m.get("disabled") and m.get("mirrorOf", "none") == "none"]
++        boxes = [logical_box(m) for m in active]
++    except (KeyError, TypeError, ValueError, ZeroDivisionError):
++        return {}
++    if not boxes:
++        return {}
++    left = min(b[0] for b in boxes)
++    top = min(b[1] for b in boxes)
++    width = max(b[0] + b[2] for b in boxes) - left
++    height = max(b[1] + b[3] for b in boxes) - top
++    if width <= 0 or height <= 0:
++        return {}
++    matrices = {}
++    for head in heads:
++        monitor = by_name.get(f"Virtual-{head + 1}")
++        if not monitor or monitor.get("disabled"):
++            continue
++        shown = monitor
++        if monitor.get("mirrorOf", "none") != "none":
++            shown = by_id.get(str(monitor["mirrorOf"]))
++            if not shown or shown.get("disabled"):
++                continue
++        try:
++            x, y, w, h = logical_box(shown)
++            rows = TRANSFORMS[monitor.get("transform", 0)]
++        except (KeyError, TypeError, ValueError, ZeroDivisionError):
++            continue
++        if w <= 0 or h <= 0:
++            continue
++        # The window's edges land on the centres of the output's edge pixels,
++        # so rounding never puts the pointer on the output next to it.
++        a, b, c = ((w - 1) / width * k for k in rows[0])
++        d, e, f = ((h - 1) / height * k for k in rows[1])
++        c += (x - left + 0.5) / width
++        f += (y - top + 0.5) / height
++        matrices[head] = " ".join(format_number(n) for n in (a, b, c, d, e, f))
++    return matrices
++
++
++def format_number(value):
++    text = f"{value:.9f}".rstrip("0").rstrip(".")
++    return "0" if text in ("", "-0") else text
++
++
++def device_property(event_dir, udev_data="/run/udev/data"):
++    """The calibration the device was last announced with, or None."""
++    try:
++        major, minor = (event_dir / "dev").read_text().strip().split(":")
++        lines = pathlib.Path(udev_data, f"c{major}:{minor}").read_text().splitlines()
++    except (OSError, ValueError):
++        return None
++    for line in lines:
++        if line.startswith(f"E:{PROPERTY}="):
++            return line.split("=", 1)[1]
++    return None
++
++
++def write_matrix(state_dir, head, matrix):
++    path = pathlib.Path(state_dir) / f"{SERIAL_PREFIX}{head}"
++    if matrix is None:
++        path.unlink(missing_ok=True)
++        return
++    path.parent.mkdir(parents=True, exist_ok=True)
++    temporary = path.with_name(path.name + ".new")
++    temporary.write_text(f"{PROPERTY}={matrix}\n")
++    os.replace(temporary, path)
++
++
++def announce_again(event_dir):
++    """Have udev import the new matrix and libinput open the device again."""
++    for action in ("remove", "add"):
++        (event_dir / "uevent").write_text(action)
++    subprocess.run(["udevadm", "settle", "--timeout=5"], check=False,
++                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
++
++
++def apply(matrices, tablets, state_dir="/run/try-omarchy/head-tablets",
++          udev_data="/run/udev/data", announce=announce_again):
++    """Write each head's matrix and re-announce only the tablets whose own
++    matrix differs from the one udev last gave them. Announcing a tablet again
++    lets go of a button held on it, so an unchanged tablet is left alone."""
++    changed = []
++    for head, event_dir in sorted(tablets.items()):
++        matrix = matrices.get(head)
++        write_matrix(state_dir, head, matrix)
++        if device_property(event_dir, udev_data) != matrix:
++            announce(event_dir)
++            changed.append(head)
++    return changed
++
++
++def instances(runtime_root="/run/user"):
++    """Hyprland instance directories owned by their session user, newest last."""
++    found = []
++    for path in glob.glob(f"{runtime_root}/*/hypr/*/.socket.sock"):
++        sock = pathlib.Path(path)
++        try:
++            uid = int(sock.parents[2].name)
++            info = sock.stat()
++            if info.st_uid != uid:
++                continue
++        except (OSError, ValueError):
++            continue
++        found.append((info.st_mtime, str(sock.parent)))
++    return [pathlib.Path(path) for _, path in sorted(found)]
++
++
++def seat_user(run=subprocess.run):
++    """The user of the active local session on seat0, from logind, or None."""
++    try:
++        result = run(["/usr/bin/loginctl", "show-seat", "seat0", "--property=ActiveSession", "--value"],
++                     capture_output=True, text=True, timeout=3)
++        session = result.stdout.strip()
++        if result.returncode or not session or not session.isalnum():
++            return None
++        result = run(["/usr/bin/loginctl", "show-session", session, "--property=Remote",
++                      "--property=User"], capture_output=True, text=True, timeout=3)
++    except (OSError, subprocess.SubprocessError):
++        return None
++    fields = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
++    if result.returncode or fields.get("Remote") != "no" or not fields.get("User", "").isdigit():
++        return None
++    return int(fields["User"])
++
++
++def drives_display(instance, proc="/proc"):
++    """Whether this Hyprland has the GPU's display device open. A nested
++    Hyprland, started inside the desktop, draws through its parent instead."""
++    try:
++        pid = (instance / "hyprland.lock").read_text().split()[0]
++        if not pid.isdigit():
++            return False
++        fds = pathlib.Path(proc, pid, "fd")
++        for fd in fds.iterdir():
++            try:
++                if os.readlink(fd).startswith("/dev/dri/card"):
++                    return True
++            except OSError:
++                continue
++    except (OSError, IndexError):
++        return False
++    return False
++
++
++def seat_instance(runtime_root="/run/user", proc="/proc", run=subprocess.run):
++    """The Hyprland that shows the active seat0 session, or None. Its layout is
++    what the display windows show; another account's or a nested Hyprland's
++    is not."""
++    uid = seat_user(run)
++    if uid is None:
++        return None
++    for instance in reversed(instances(runtime_root)):
++        if instance.parents[1].name == str(uid) and drives_display(instance, proc):
++            return instance
++    return None
++
++
++def request(instance, command, timeout=IPC_TIMEOUT):
++    """One Hyprland request. The whole reply has a size and a time limit."""
++    deadline = time.monotonic() + timeout
++    reply = bytearray()
++    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
++        conn.settimeout(timeout)
++        conn.connect(str(instance / ".socket.sock"))
++        conn.sendall(command.encode())
++        while True:
++            left = deadline - time.monotonic()
++            if left <= 0:
++                raise TimeoutError("Hyprland took too long to reply")
++            conn.settimeout(left)
++            chunk = conn.recv(65536)
++            if not chunk:
++                break
++            reply += chunk
++            if len(reply) > REPLY_LIMIT:
++                raise ValueError("Hyprland's reply is too large")
++    return json.loads(reply)
++
++
++def open_events(instance):
++    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++    try:
++        conn.settimeout(IPC_TIMEOUT)
++        conn.connect(str(instance / ".socket2.sock"))
++        conn.setblocking(False)
++        return conn
++    except OSError:
++        conn.close()
++        return None
++
++
++def open_hotplug():
++    """Kernel uevents, for the GPU's hotplug when a window changes size."""
++    try:
++        conn = socket.socket(socket.AF_NETLINK, socket.SOCK_DGRAM, socket.NETLINK_KOBJECT_UEVENT)
++        conn.bind((0, 1))
++        conn.setblocking(False)
++        return conn
++    except (OSError, AttributeError):
++        return None
++
++
++def check(sys_root, runtime_root, state_dir, udev_data, announce=announce_again,
++          proc="/proc", run=subprocess.run):
++    """One pass. Returns the tablets and the Hyprland instance it used."""
++    tablets = head_tablets(sys_root)
++    if not tablets:
++        return tablets, None
++    instance = seat_instance(runtime_root, proc, run)
++    if instance is None:
++        return tablets, None
++    try:
++        monitors = request(instance, "j/monitors all")
++    except (OSError, ValueError):
++        return tablets, None
++    changed = apply(calibrations(monitors, tablets), tablets, state_dir, udev_data, announce)
++    if changed:
++        print(f"head-tablets: mapped {', '.join(f'Virtual-{h + 1}' for h in changed)}", flush=True)
++    return tablets, instance
++
++
++def watch(sys_root="/sys", runtime_root="/run/user", state_dir="/run/try-omarchy/head-tablets",
++          udev_data="/run/udev/data", clock=time.monotonic):
++    hotplug = open_hotplug()
++    events, events_for = None, None
++    checks = [clock()]
++    while True:
++        now = clock()
++        if min(checks) <= now:
++            checks = [t for t in checks if t > now]
++            tablets, instance = check(sys_root, runtime_root, state_dir, udev_data)
++            if not tablets:
++                return 0
++            if instance != events_for:
++                if events is not None:
++                    events.close()
++                events = open_events(instance) if instance else None
++                events_for = instance if events is not None else None
++            # Until Hyprland runs, look for it sooner.
++            if not checks:
++                checks = [now + (POLL if instance else 1.0)]
++        sockets = [s for s in (events, hotplug) if s is not None]
++        timeout = max(0.0, min(checks) - now)
++        if not sockets:
++            time.sleep(timeout)
++            continue
++        for conn in select.select(sockets, [], [], timeout)[0]:
++            try:
++                data = conn.recv(65536)
++            except BlockingIOError:
++                continue
++            except OSError:
++                data = b""
++            now = clock()
++            if conn is events and not data:
++                events.close()
++                events, events_for = None, None
++                checks.append(now + 1.0)
++            elif conn is events and any(line.startswith(LAYOUT_EVENTS) for line in data.split(b"\n")):
++                checks += [now] + [now + delay for delay in FOLLOW_UP]
++            elif conn is hotplug and b"SUBSYSTEM=drm" in data and b"HOTPLUG=1" in data:
++                checks += [now + delay for delay in FOLLOW_UP]
++
++
++def main():
++    try:
++        return watch(os.environ.get("TRY_OMARCHY_SYSFS", "/sys"))
++    except KeyboardInterrupt:
++        return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 923f5df..c70936d 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -194,6 +194,9 @@ compat_paths=(
+   usr/local/lib/try-omarchy/ghostty
+   usr/local/lib/try-omarchy/ghostty-gl
+   usr/local/lib/try-omarchy/ghostty-gl-probe
++  usr/local/lib/try-omarchy/head-tablets
++  etc/systemd/system/try-omarchy-head-tablets.service
++  etc/udev/rules.d/70-try-omarchy-head-tablets.rules
+   usr/lib/systemd/user/try-omarchy-ghostty-gl.service
+   etc/systemd/user/app-com.mitchellh.ghostty.service.d/10-try-omarchy-gl.conf
+   etc/pacman.d/hooks/try-omarchy-ghostty-gl.hook
+@@ -293,7 +296,9 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # comment on the dmabuf quirk.
+ # Revision 74 gives Ghostty the OpenGL 4.3 override on hosts whose renderer
+ # offers only 4.2, through a wrapper link, its D-Bus service and a pacman hook.
+-compat_revision=74
++# Revision 75 keeps the pointer of each display window on its own output when
++# the launcher shows more than one display.
++compat_revision=75
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_aquamarine_contract.py b/guest/tests/test_aquamarine_contract.py
+index 2e15176..14909ff 100644
+--- a/guest/tests/test_aquamarine_contract.py
++++ b/guest/tests/test_aquamarine_contract.py
+@@ -76,7 +76,7 @@ class AquamarineContractTests(unittest.TestCase):
+         runtime = (GUEST / 'scripts/register-omarchy-runtime.sh').read_text()
+         self.assertIn('depend = aquamarine>={version}', runtime)
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=74', finalizer)
++        self.assertIn('compat_revision=75', finalizer)
+         self.assertIn('cp /usr/share/try-omarchy/repo/*.pkg.tar.zst', finalizer)
+         self.assertIn('usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua', finalizer)
+         repo = (GUEST / 'scripts/register-local-repository.sh').read_text()
+diff --git a/guest/tests/test_battery_details.py b/guest/tests/test_battery_details.py
+index fa35337..cd1a627 100644
+--- a/guest/tests/test_battery_details.py
++++ b/guest/tests/test_battery_details.py
+@@ -204,7 +204,7 @@ class BatteryDetailsFlowTests(unittest.TestCase):
+     def test_compatibility_delivery_and_dkms_version(self):
+         overlay = GUEST / "factory-overlay"
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=74", finalize)
++        self.assertIn("compat_revision=75", finalize)
+         self.assertIn("usr/src/try-omarchy-battery-1.1.0", finalize)
+         self.assertIn("usr/local/lib/try-omarchy/update-battery-dkms", finalize)
+         self.assertIn('PACKAGE_VERSION="1.1.0"', (MODULE_SOURCE.parent / "dkms.conf").read_text())
+diff --git a/guest/tests/test_clipboard_pull.py b/guest/tests/test_clipboard_pull.py
+index f40d296..c7a532c 100644
+--- a/guest/tests/test_clipboard_pull.py
++++ b/guest/tests/test_clipboard_pull.py
+@@ -71,4 +71,4 @@ class ClipboardPullTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn('usr/local/bin/clipboard-bridge', paths)
+-        self.assertIn('compat_revision=74', finalizer)
++        self.assertIn('compat_revision=75', finalizer)
+diff --git a/guest/tests/test_compositor_health.py b/guest/tests/test_compositor_health.py
+index 126fbb1..94e9395 100644
+--- a/guest/tests/test_compositor_health.py
++++ b/guest/tests/test_compositor_health.py
+@@ -55,7 +55,7 @@ class CompositorHealthTests(unittest.TestCase):
+ 
+     def test_existing_disks_receive_health_files(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=74', finalizer)
++        self.assertIn('compat_revision=75', finalizer)
+         for name in ['agent', 'compositor-health']:
+             self.assertIn('  usr/local/lib/try-omarchy/' + name, finalizer)
+         self.assertTrue(HELPER.stat().st_mode & 0o111)
+diff --git a/guest/tests/test_desktop_drawn.py b/guest/tests/test_desktop_drawn.py
+index d28e3ef..86769f0 100644
+--- a/guest/tests/test_desktop_drawn.py
++++ b/guest/tests/test_desktop_drawn.py
+@@ -296,7 +296,7 @@ class AgentTests(unittest.TestCase):
+ 
+     def test_existing_disks_receive_the_probe(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=74', finalizer)
++        self.assertIn('compat_revision=75', finalizer)
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
+         for name in ['agent', 'desktop-drawn']:
+             self.assertIn('usr/local/lib/try-omarchy/' + name, paths)
+diff --git a/guest/tests/test_ghostty_gl.py b/guest/tests/test_ghostty_gl.py
+index 659d725..5d9d785 100644
+--- a/guest/tests/test_ghostty_gl.py
++++ b/guest/tests/test_ghostty_gl.py
+@@ -316,7 +316,7 @@ class GhosttyWiringTests(unittest.TestCase):
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
+         for path in (HELPER, WRAPPER, PROBE, PROBE_UNIT, DROP_IN, HOOK):
+             self.assertIn(str(path.relative_to(OVERLAY)), paths)
+-        self.assertIn('compat_revision=74', finalizer)
++        self.assertIn('compat_revision=75', finalizer)
+         for path in (HELPER, WRAPPER, PROBE):
+             self.assertTrue(os.access(path, os.X_OK), path)
+ 
+diff --git a/guest/tests/test_guest_qol.py b/guest/tests/test_guest_qol.py
+index 39989ea..7650898 100644
+--- a/guest/tests/test_guest_qol.py
++++ b/guest/tests/test_guest_qol.py
+@@ -225,7 +225,7 @@ class GuestQolTests(unittest.TestCase):
+     def test_compatibility_delivers_guarded_payload_once_per_revision(self):
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalize.split("compat_paths=(", 1)[1].split(")", 1)[0]
+-        self.assertIn("compat_revision=74", finalize)
++        self.assertIn("compat_revision=75", finalize)
+         for path in ("usr/local/bin/omarchy-native-screensaver-text", "usr/local/lib/try-omarchy/install-guest-qol", "usr/share/try-omarchy/guest-qol", "usr/local/bin/omarchy-windows-audio-bridge"):
+             self.assertIn(path, paths)
+         self.assertNotIn("etc/fonts/conf.d/30-try-omarchy.conf", paths)
+diff --git a/guest/tests/test_head_tablets.py b/guest/tests/test_head_tablets.py
+new file mode 100644
+index 0000000..3393b59
+--- /dev/null
++++ b/guest/tests/test_head_tablets.py
+@@ -0,0 +1,388 @@
++import contextlib
++import fnmatch
++import io
++import importlib.machinery
++import math
++import json
++import os
++from pathlib import Path
++import socket
++import tempfile
++import threading
++import time
++import unittest
++
++GUEST = Path(__file__).resolve().parents[1]
++HELPER = GUEST / 'factory-overlay/usr/local/lib/try-omarchy/head-tablets'
++RULES = GUEST / 'factory-overlay/etc/udev/rules.d/70-try-omarchy-head-tablets.rules'
++UNIT = GUEST / 'factory-overlay/etc/systemd/system/try-omarchy-head-tablets.service'
++heads = importlib.machinery.SourceFileLoader('head_tablets', str(HELPER)).load_module()
++
++
++def monitor(name, x, y, width, height, scale=1, transform=0, mirror='none', disabled=False):
++    """One output as hyprctl -j monitors all reports it."""
++    return {'id': int(name.split('-')[1]) - 1, 'name': name, 'x': x, 'y': y, 'width': width,
++            'height': height, 'scale': scale, 'transform': transform, 'mirrorOf': mirror,
++            'disabled': disabled}
++
++
++def window(pixel, size):
++    """A window pixel as QEMU reports it and libinput normalizes it."""
++    return pixel * 32767 // size / 32768
++
++
++def layout_box(monitors):
++    boxes = [heads.logical_box(m) for m in monitors if not m['disabled'] and m['mirrorOf'] == 'none']
++    left, top = min(b[0] for b in boxes), min(b[1] for b in boxes)
++    return left, top, max(b[0] + b[2] for b in boxes) - left, max(b[1] + b[3] for b in boxes) - top
++
++
++def pointer(matrix, monitors, u, v):
++    """Where Hyprland puts the pointer for a window position (u, v), each 0 to 1."""
++    a, b, c, d, e, f = (float(n) for n in matrix.split())
++    left, top, width, height = layout_box(monitors)
++    return left + width * (a * u + b * v + c), top + height * (d * u + e * v + f)
++
++
++def inside(point, monitor):
++    x, y, w, h = heads.logical_box(monitor)
++    return x <= point[0] < x + w and y <= point[1] < y + h
++
++
++class MatrixTests(unittest.TestCase):
++    def assertCovers(self, matrix, monitors, target):
++        """The window's corners and centre land on the target output only."""
++        x, y, w, h = heads.logical_box(target)
++        for u, v in [(0, 0), (1, 0), (0, 1), (1, 1), (0.5, 0.5), (32767 / 32768, 32767 / 32768)]:
++            point = pointer(matrix, monitors, u, v)
++            self.assertTrue(inside(point, target), (u, v, point, target['name']))
++            for other in monitors:
++                if other is not target and not other['disabled'] and other['mirrorOf'] == 'none':
++                    self.assertFalse(inside(point, other), (u, v, point, other['name']))
++        corners = {tuple(math.floor(n) for n in pointer(matrix, monitors, u, v)) for u in (0, 1) for v in (0, 1)}
++        self.assertEqual({(px, py) for px in (x, x + w - 1) for py in (y, y + h - 1)}, corners)
++
++    def test_side_by_side_like_the_report(self):
++        # Issue 424: Virtual-1 at 0x0 and Virtual-2 at 1920x0, both 1920x1080.
++        monitors = [monitor('Virtual-1', 0, 0, 1920, 1080), monitor('Virtual-2', 1920, 0, 1920, 1080)]
++        matrices = heads.calibrations(monitors, [0, 1])
++        self.assertCovers(matrices[0], monitors, monitors[0])
++        self.assertCovers(matrices[1], monitors, monitors[1])
++        # The middle of window 1 is the middle of Virtual-1, to the pixel.
++        for got, want in zip(pointer(matrices[0], monitors, 0.5, 0.5), (960, 540)):
++            self.assertLessEqual(abs(got - want), 1)
++
++    def test_heads_follow_output_names_not_positions(self):
++        # Virtual-2 sits to the left of and below Virtual-1, listed first.
++        monitors = [monitor('Virtual-2', -300, 381, 488, 381), monitor('Virtual-1', 188, 0, 640, 480),
++                    monitor('Virtual-3', 828, 50, 800, 600)]
++        matrices = heads.calibrations(monitors, [0, 1, 2])
++        by_name = {m['name']: m for m in monitors}
++        for head in range(3):
++            self.assertCovers(matrices[head], monitors, by_name[f'Virtual-{head + 1}'])
++
++    def test_scale_uses_the_logical_size(self):
++        monitors = [monitor('Virtual-1', 0, 0, 640, 480, scale=2), monitor('Virtual-2', 320, 100, 488, 381)]
++        self.assertEqual(heads.logical_box(monitors[0]), (0, 0, 320, 240))
++        matrices = heads.calibrations(monitors, [0, 1])
++        self.assertCovers(matrices[0], monitors, monitors[0])
++        self.assertCovers(matrices[1], monitors, monitors[1])
++        # Measured in the Windows VM: a click on pixel 121,190 of the 488x381
++        # window 2 landed at 441,289.
++        x, y = pointer(matrices[1], monitors, window(121, 488), window(190, 381))
++        self.assertEqual((math.floor(x), math.floor(y)), (441, 289))
++
++    def test_rotation_matches_what_the_window_shows(self):
++        # Measured in the Windows VM with Virtual-2 488x381 at 640x0 beside a
++        # 640x480 Virtual-1: the host pointer at (0.1, 0.1) or (0.1, 0.2) of
++        # window 2, and the guest pointer Hyprland reported.
++        seen = {1: ((0.1, 0.1), (982, 48)), 3: ((0.1, 0.2), (716, 439)),
++                5: ((0.1, 0.2), (716, 48)), 2: ((0.1, 0.2), (1079, 304))}
++        for transform, ((u, v), want) in seen.items():
++            monitors = [monitor('Virtual-1', 0, 0, 640, 480), monitor('Virtual-2', 640, 0, 488, 381, transform=transform)]
++            matrix = heads.calibrations(monitors, [1])[1]
++            got = pointer(matrix, monitors, u, v)
++            self.assertLessEqual(abs(got[0] - want[0]), 1.5, (transform, got, want))
++            self.assertLessEqual(abs(got[1] - want[1]), 1.5, (transform, got, want))
++        for transform in range(8):
++            monitors = [monitor('Virtual-1', 0, 0, 640, 480), monitor('Virtual-2', 640, 0, 488, 381, transform=transform)]
++            self.assertCovers(heads.calibrations(monitors, [1])[1], monitors, monitors[1])
++
++    def test_window_corners_for_every_transform(self):
++        # Worked out by hand from wl_output's transforms: the window shows the
++        # buffer, which is the logical output rotated counter-clockwise, and
++        # the flipped ones mirror it left to right first. Where the window's
++        # top-left and top-right corners land on the output, as left/right
++        # and top/bottom.
++        corners = {
++            0: (('left', 'top'), ('right', 'top')),
++            1: (('right', 'top'), ('right', 'bottom')),
++            2: (('right', 'bottom'), ('left', 'bottom')),
++            3: (('left', 'bottom'), ('left', 'top')),
++            4: (('right', 'top'), ('left', 'top')),
++            5: (('left', 'top'), ('left', 'bottom')),
++            6: (('left', 'bottom'), ('right', 'bottom')),
++            7: (('right', 'bottom'), ('right', 'top')),
++        }
++        for transform, expected in corners.items():
++            monitors = [monitor('Virtual-1', 0, 0, 640, 480), monitor('Virtual-2', 640, 0, 488, 381, transform=transform)]
++            x, y, w, h = heads.logical_box(monitors[1])
++            edges = {'left': x, 'right': x + w - 1, 'top': y, 'bottom': y + h - 1}
++            matrix = heads.calibrations(monitors, [1])[1]
++            for (u, v), (across, down) in zip([(0, 0), (1, 0)], expected):
++                got = tuple(math.floor(n) for n in pointer(matrix, monitors, u, v))
++                self.assertEqual(got, (edges[across], edges[down]), (transform, (u, v)))
++
++    def test_outputs_that_are_not_shown(self):
++        monitors = [monitor('Virtual-1', 0, 0, 800, 600), monitor('Virtual-2', 800, 0, 800, 600, disabled=True)]
++        self.assertEqual(set(heads.calibrations(monitors, [0, 1, 2])), {0})
++        # A mirror's window shows its source.
++        monitors = [monitor('Virtual-1', 0, 0, 800, 600), monitor('Virtual-2', 0, 0, 800, 600, mirror='0')]
++        matrices = heads.calibrations(monitors, [0, 1])
++        self.assertEqual(matrices[0], matrices[1])
++        for reply in [None, {}, [], [{'name': 'Virtual-1'}], [monitor('Virtual-1', 0, 0, 0, 0)]]:
++            self.assertEqual(heads.calibrations(reply, [0]), {})
++
++
++def make_tablet(root, event, name, serial, dev):
++    device = root / 'class/input' / event / 'device'
++    device.mkdir(parents=True)
++    (device / 'name').write_text(name + '\n')
++    (device / 'uniq').write_text(serial + '\n')
++    (device.parent / 'dev').write_text(dev + '\n')
++    (device.parent / 'uevent').write_text('')
++    return device.parent
++
++
++def logind(uid, session='2', remote='no'):
++    """A fake run for loginctl: seat0's active session belongs to uid."""
++    def run(args, **kwargs):
++        class Result:
++            returncode = 0
++            stdout = ''
++        result = Result()
++        if args[1:3] == ['show-seat', 'seat0']:
++            result.stdout = f'{session}\n'
++        elif args[1:3] == ['show-session', session]:
++            result.stdout = f'Remote={remote}\nUser={uid}\n'
++        else:
++            result.returncode = 1
++        return result
++    return run
++
++
++def hyprland(runtime, proc, uid, signature, pid, card):
++    """An instance directory, and a /proc entry with the GPU open or not."""
++    instance = runtime / str(uid) / 'hypr' / signature
++    instance.mkdir(parents=True)
++    (instance / 'hyprland.lock').write_text(f'{pid}\nwayland-1\n')
++    fds = proc / str(pid) / 'fd'
++    fds.mkdir(parents=True)
++    os.symlink('/dev/dri/renderD128', fds / '10')
++    if card:
++        os.symlink('/dev/dri/card1', fds / '11')
++    return instance
++
++
++class DeviceTests(unittest.TestCase):
++    def setUp(self):
++        self.temporary = tempfile.TemporaryDirectory()
++        self.root = Path(self.temporary.name)
++        self.sys = self.root / 'sys'
++
++    def tearDown(self):
++        self.temporary.cleanup()
++
++    def test_serials(self):
++        self.assertEqual([heads.head_of(f'try-omarchy-head-{n}') for n in (0, 1, 15)], [0, 1, 15])
++        for serial in ['', 'try-omarchy-head-', 'try-omarchy-head-16', 'try-omarchy-head-01',
++                       'try-omarchy-head--1', 'try-omarchy-head-1/../2', 'try-omarchy-head-\u00b2', 'other-0']:
++            self.assertIsNone(heads.head_of(serial), serial)
++
++    def test_finds_only_the_per_display_tablets(self):
++        make_tablet(self.sys, 'event3', 'QEMU Virtio Tablet', 'try-omarchy-head-0', '13:67')
++        make_tablet(self.sys, 'event4', 'QEMU Virtio Tablet', 'try-omarchy-head-1', '13:68')
++        make_tablet(self.sys, 'event5', 'QEMU Virtio Tablet', '', '13:69')
++        make_tablet(self.sys, 'event6', 'QEMU Virtio Keyboard', 'try-omarchy-head-2', '13:70')
++        found = heads.head_tablets(str(self.sys))
++        self.assertEqual({h: p.name for h, p in found.items()}, {0: 'event3', 1: 'event4'})
++        # One display: a single tablet with no serial, so the helper has nothing to do.
++        self.assertEqual(heads.head_tablets(str(self.root / 'empty')), {})
++        self.assertEqual(heads.watch(str(self.root / 'empty'), str(self.root / 'run')), 0)
++
++    def test_announces_only_tablets_whose_matrix_changed(self):
++        first = make_tablet(self.sys, 'event3', 'QEMU Virtio Tablet', 'try-omarchy-head-0', '13:67')
++        second = make_tablet(self.sys, 'event4', 'QEMU Virtio Tablet', 'try-omarchy-head-1', '13:68')
++        third = make_tablet(self.sys, 'event5', 'QEMU Virtio Tablet', 'try-omarchy-head-2', '13:69')
++        udev = self.root / 'udev'
++        udev.mkdir()
++        (udev / 'c13:67').write_text('E:ID_INPUT_MOUSE=1\nE:LIBINPUT_CALIBRATION_MATRIX=1 0 0 0 1 0\n')
++        (udev / 'c13:68').write_text('E:LIBINPUT_CALIBRATION_MATRIX=0.5 0 0.5 0 1 0\n')
++        (udev / 'c13:69').write_text('E:LIBINPUT_CALIBRATION_MATRIX=0.5 0 0 0 1 0\n')
++        state = self.root / 'state'
++        (state).mkdir()
++        (state / 'try-omarchy-head-2').write_text('LIBINPUT_CALIBRATION_MATRIX=0.5 0 0 0 1 0\n')
++        announced = []
++        changed = heads.apply({0: '0.5 0 0 0 1 0', 1: '0.5 0 0.5 0 1 0'},
++                              {0: first, 1: second, 2: third}, state, udev, announced.append)
++        self.assertEqual(changed, [0, 2])
++        self.assertEqual(announced, [first, third])
++        self.assertEqual((state / 'try-omarchy-head-0').read_text(), 'LIBINPUT_CALIBRATION_MATRIX=0.5 0 0 0 1 0\n')
++        self.assertEqual((state / 'try-omarchy-head-1').read_text(), 'LIBINPUT_CALIBRATION_MATRIX=0.5 0 0.5 0 1 0\n')
++        # A head whose output is gone goes back to the plain tablet.
++        self.assertFalse((state / 'try-omarchy-head-2').exists())
++
++    def test_announcing_again_removes_and_adds_the_device(self):
++        event = make_tablet(self.sys, 'event3', 'QEMU Virtio Tablet', 'try-omarchy-head-0', '13:67')
++        written = []
++        real_write = Path.write_text
++
++        def record(path, text, *args, **kwargs):
++            if path.name == 'uevent':
++                written.append(text)
++            return real_write(path, text, *args, **kwargs)
++
++        Path.write_text = record
++        original = heads.subprocess.run
++        try:
++            heads.subprocess.run = lambda *args, **kwargs: None
++            heads.announce_again(event)
++        finally:
++            Path.write_text = real_write
++            heads.subprocess.run = original
++        self.assertEqual(written, ['remove', 'add'])
++
++    def test_one_pass_against_hyprland(self):
++        make_tablet(self.sys, 'event3', 'QEMU Virtio Tablet', 'try-omarchy-head-0', '13:67')
++        make_tablet(self.sys, 'event4', 'QEMU Virtio Tablet', 'try-omarchy-head-1', '13:68')
++        runtime = self.root / 'run/user'
++        proc = self.root / 'proc'
++        instance = hyprland(runtime, proc, os.getuid(), 'abc', 700, card=True)
++        monitors = [monitor('Virtual-1', 0, 0, 1920, 1080), monitor('Virtual-2', 1920, 0, 1920, 1080)]
++        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++        server.bind(str(instance / '.socket.sock'))
++        server.listen()
++        requests = []
++
++        def serve():
++            conn, _ = server.accept()
++            with conn:
++                requests.append(conn.recv(1024))
++                conn.sendall(json.dumps(monitors).encode())
++
++        thread = threading.Thread(target=serve)
++        thread.start()
++        announced = []
++        state = self.root / 'state'
++        output = io.StringIO()
++        try:
++            with contextlib.redirect_stdout(output):
++                tablets, used = heads.check(str(self.sys), str(runtime), state, self.root / 'udev', announced.append,
++                                            proc, logind(os.getuid()))
++        finally:
++            thread.join(5)
++            server.close()
++        self.assertEqual(requests, [b'j/monitors all'])
++        self.assertEqual(output.getvalue(), 'head-tablets: mapped Virtual-1, Virtual-2\n')
++        self.assertEqual(used, instance)
++        self.assertEqual([p.name for p in announced], ['event3', 'event4'])
++        expected = heads.calibrations(monitors, [0, 1])
++        for head in (0, 1):
++            self.assertEqual((state / f'try-omarchy-head-{head}').read_text(),
++                             f'LIBINPUT_CALIBRATION_MATRIX={expected[head]}\n')
++
++    def reply_with(self, send):
++        instance = self.root / 'hypr'
++        instance.mkdir()
++        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++        server.bind(str(instance / '.socket.sock'))
++        server.listen()
++
++        def serve():
++            conn, _ = server.accept()
++            with conn:
++                conn.recv(1024)
++                try:
++                    send(conn)
++                except OSError:
++                    pass
++
++        thread = threading.Thread(target=serve)
++        thread.start()
++        self.addCleanup(server.close)
++        self.addCleanup(thread.join, 5)
++        return instance
++
++    def test_a_reply_without_end_is_refused(self):
++        def flood(conn):
++            while True:
++                conn.sendall(b' ' * 65536)
++
++        with self.assertRaises(ValueError):
++            heads.request(self.reply_with(flood), 'j/monitors all')
++
++    def test_a_reply_that_trickles_is_refused(self):
++        def trickle(conn):
++            while True:
++                conn.sendall(b' ')
++                time.sleep(0.02)
++
++        started = time.monotonic()
++        with self.assertRaises(TimeoutError):
++            heads.request(self.reply_with(trickle), 'j/monitors all', timeout=0.3)
++        self.assertLess(time.monotonic() - started, 2)
++
++    def test_no_hyprland_yet(self):
++        make_tablet(self.sys, 'event3', 'QEMU Virtio Tablet', 'try-omarchy-head-0', '13:67')
++        announced = []
++        tablets, used = heads.check(str(self.sys), str(self.root / 'run/user'), self.root / 'state',
++                                    self.root / 'udev', announced.append, self.root / 'proc', logind(os.getuid()))
++        self.assertEqual(list(tablets), [0])
++        self.assertIsNone(used)
++        self.assertEqual(announced, [])
++
++
++    def test_uses_the_hyprland_of_the_active_seat_session(self):
++        runtime, proc = self.root / 'run/user', self.root / 'proc'
++        uid = os.getuid()
++        desktop = hyprland(runtime, proc, uid, 'desktop', 700, card=True)
++        # Started later, so newest: a nested Hyprland inside the desktop and
++        # another account's session on a second seat or in the background.
++        nested = hyprland(runtime, proc, uid, 'nested', 900, card=False)
++        other = hyprland(runtime, proc, uid + 1, 'other', 950, card=True)
++        self.assertNotEqual(other.parents[1].name, str(uid))
++        for path, age in ((desktop, 100), (nested, 200), (other, 300)):
++            (path / '.socket.sock').touch()
++            os.utime(path / '.socket.sock', (age, age))
++        self.assertEqual(heads.instances(str(runtime))[-1], nested)
++        self.assertEqual(heads.seat_instance(str(runtime), proc, logind(uid)), desktop)
++        self.assertIsNone(heads.seat_instance(str(runtime), proc, logind(uid, remote='yes')))
++        self.assertIsNone(heads.seat_instance(str(runtime), proc, logind(uid + 2)))
++        # Only the seat's own account counts, whatever runs elsewhere.
++        os.unlink(desktop / '.socket.sock')
++        self.assertIsNone(heads.seat_instance(str(runtime), proc, logind(uid)))
++
++
++class RuleTests(unittest.TestCase):
++    def test_rule_matches_the_serials_the_launcher_gives(self):
++        rules = [line for line in RULES.read_text().splitlines() if line and not line.startswith('#')]
++        self.assertEqual(len(rules), 2)
++        for rule in rules:
++            self.assertIn('ATTRS{name}=="QEMU Virtio Tablet"', rule)
++            pattern = rule.split('ATTRS{uniq}=="')[1].split('"')[0]
++            alternatives = pattern.split('|')
++            for head in range(16):
++                self.assertTrue(any(fnmatch.fnmatchcase(f'try-omarchy-head-{head}', p) for p in alternatives), head)
++            for serial in ['try-omarchy-head-16', 'try-omarchy-head-', '', 'try-omarchy-head-1x']:
++                self.assertFalse(any(fnmatch.fnmatchcase(serial, p) for p in alternatives), serial)
++        # The matrix is imported only when the helper wrote one; the service
++        # is started for any per-display tablet.
++        self.assertIn('TEST=="/run/try-omarchy/head-tablets/$attr{uniq}"', rules[1])
++        self.assertIn('IMPORT{file}="/run/try-omarchy/head-tablets/$attr{uniq}"', rules[1])
++        self.assertIn('ENV{SYSTEMD_WANTS}+="try-omarchy-head-tablets.service"', rules[0])
++        self.assertIn('ExecStart=/usr/local/lib/try-omarchy/head-tablets\n', UNIT.read_text())
++        self.assertTrue(os.access(HELPER, os.X_OK))
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/guest/tests/test_kernel_headers_hold.py b/guest/tests/test_kernel_headers_hold.py
+index bc3e97d..e94a21d 100644
+--- a/guest/tests/test_kernel_headers_hold.py
++++ b/guest/tests/test_kernel_headers_hold.py
+@@ -133,7 +133,7 @@ class HoldTests(unittest.TestCase):
+         finalize = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalize.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
+         self.assertIn('usr/local/lib/try-omarchy/hold-kernel-headers', paths)
+-        self.assertIn('compat_revision=74', finalize)
++        self.assertIn('compat_revision=75', finalize)
+         self.assertTrue(os.access(HOLD, os.X_OK))
+ 
+ 
+diff --git a/guest/tests/test_live_update.py b/guest/tests/test_live_update.py
+index 1c62a49..12de409 100644
+--- a/guest/tests/test_live_update.py
++++ b/guest/tests/test_live_update.py
+@@ -176,7 +176,7 @@ class LiveUpdateTests(unittest.TestCase):
+ 
+     def test_delivery_and_best_effort_hook(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=74', finalizer)
++        self.assertIn('compat_revision=75', finalizer)
+         for path in ['usr/local/lib/try-omarchy/live-update', 'etc/pacman.d/hooks/00-try-omarchy-live-update.hook', 'etc/pacman.d/hooks/zz-try-omarchy-live-update.hook']:
+             self.assertIn(path, finalizer)
+         pre = (GUEST / 'factory-overlay/etc/pacman.d/hooks/00-try-omarchy-live-update.hook').read_text()
+diff --git a/guest/tests/test_native_nightlight.py b/guest/tests/test_native_nightlight.py
+index b74fda7..ea1eee9 100644
+--- a/guest/tests/test_native_nightlight.py
++++ b/guest/tests/test_native_nightlight.py
+@@ -214,5 +214,5 @@ class PersistentNightlightTests(unittest.TestCase):
+         catch_up = (self.overlay / 'usr/local/lib/try-omarchy/catch-up').read_text()
+         for path in ['usr/local/bin/omarchy-native-nightlight', 'usr/local/share/try-omarchy/nightlight.frag', 'usr/local/lib/try-omarchy/install-nightlight', 'usr/share/try-omarchy/nightlight']:
+             self.assertIn(path, finalizer)
+-        self.assertIn('compat_revision=74', finalizer)
++        self.assertIn('compat_revision=75', finalizer)
+         self.assertIn('previous_revision < 55', catch_up)
+diff --git a/guest/tests/test_notification_privacy.py b/guest/tests/test_notification_privacy.py
+index 71bb92e..2092766 100644
+--- a/guest/tests/test_notification_privacy.py
++++ b/guest/tests/test_notification_privacy.py
+@@ -116,7 +116,7 @@ for (const state of [null, {screensaverStateKnown:false}, {screensaverStateKnown
+     def test_compatibility_overlay_and_catch_up_revision(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         catch_up = (GUEST / 'factory-overlay/usr/local/lib/try-omarchy/catch-up').read_text()
+-        self.assertIn('compat_revision=74', finalizer)
++        self.assertIn('compat_revision=75', finalizer)
+         self.assertIn('usr/share/try-omarchy/notifications', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-notifications', finalizer)
+         self.assertIn('previous_revision < 52', catch_up)
+diff --git a/guest/tests/test_qt612_palette.py b/guest/tests/test_qt612_palette.py
+index 7cc9ea0..e739b15 100644
+--- a/guest/tests/test_qt612_palette.py
++++ b/guest/tests/test_qt612_palette.py
+@@ -170,7 +170,7 @@ class Qt612PaletteTests(unittest.TestCase):
+     def test_compatibility_delivery_runs_after_older_repairs_and_before_login(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+-        self.assertIn('compat_revision=74', finalizer)
++        self.assertIn('compat_revision=75', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-qt612-palette', paths)
+         self.assertIn('usr/share/try-omarchy/qt612-palette', paths)
+         self.assertEqual(self.build_spec['upstream']['packageRelease'], 16)
+diff --git a/guest/tests/test_refresh_pacman.py b/guest/tests/test_refresh_pacman.py
+index 5600629..5a843f5 100644
+--- a/guest/tests/test_refresh_pacman.py
++++ b/guest/tests/test_refresh_pacman.py
+@@ -157,7 +157,7 @@ class BackportTests(unittest.TestCase):
+         copies = finalize.index('install -D -m 0644 "/usr/bin/$command" "/usr/share/try-omarchy/refresh-pacman/$command"')
+         self.assertLess(copies, finalize.index('tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar'))
+         self.assertIn('for command in omarchy-refresh-pacman omarchy-reinstall-pkgs; do', finalize)
+-        self.assertIn('compat_revision=74', finalize)
++        self.assertIn('compat_revision=75', finalize)
+         self.assertTrue(os.access(LAYER, os.X_OK))
+         configure = (GUEST / 'scripts/configure-rootfs.sh').read_text()
+         self.assertIn('install -D -m 0644 /etc/pacman.d/mirrorlist "$root/usr/share/try-omarchy/arch-mirrorlist"',
+diff --git a/guest/tests/test_snapper_guest.py b/guest/tests/test_snapper_guest.py
+index 6e8a748..95ca90d 100644
+--- a/guest/tests/test_snapper_guest.py
++++ b/guest/tests/test_snapper_guest.py
+@@ -44,5 +44,5 @@ class GuestSnapperTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn(TARGET, paths)
+-        self.assertIn('compat_revision=74', finalizer)
++        self.assertIn('compat_revision=75', finalizer)
+         self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 16)
+diff --git a/guest/tests/test_url_schemes.py b/guest/tests/test_url_schemes.py
+index 883b7ca..9f91b01 100644
+--- a/guest/tests/test_url_schemes.py
++++ b/guest/tests/test_url_schemes.py
+@@ -398,7 +398,7 @@ class DeliveryTests(unittest.TestCase):
+     def test_revision_62_delivers_the_link_helper(self) -> None:
+         finalizer = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalizer.split("compat_paths=(", 1)[1].split(")", 1)[0].split()
+-        self.assertIn("compat_revision=74", finalizer)
++        self.assertIn("compat_revision=75", finalizer)
+         self.assertIn("# Revision 62 opens links from Windows for approved URL schemes.", finalizer)
+         for path in ("usr/local/lib/try-omarchy/url-schemes", "usr/local/lib/try-omarchy/agent"):
+             self.assertIn(path, paths)
+diff --git a/guest/tests/test_windows_volume_sync.py b/guest/tests/test_windows_volume_sync.py
+index dfa3013..2dff410 100644
+--- a/guest/tests/test_windows_volume_sync.py
++++ b/guest/tests/test_windows_volume_sync.py
+@@ -285,7 +285,7 @@ class VolumeSyncTests(unittest.TestCase):
+ 
+     def test_revision_delivers_bridge_to_existing_disks(self):
+         finalize = (Path(__file__).resolve().parents[1] / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=74", finalize)
++        self.assertIn("compat_revision=75", finalize)
+         self.assertIn("usr/local/bin/omarchy-windows-audio-bridge", finalize)
+ 
+ 
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index c1b7f8a..2a2cc9c 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -360,13 +360,23 @@ def main() -> None:
+         and '"$ghostty_gl" link || true' in catch_up,
+         "Ghostty gets the OpenGL 4.3 override where virgl offers only 4.2, on new and existing disks",
+     )
++    # With several displays each window's tablet is mapped to its own output.
++    head_rules = read(GUEST / "factory-overlay/etc/udev/rules.d/70-try-omarchy-head-tablets.rules")
++    check(
++        "usr/local/lib/try-omarchy/head-tablets" in compat_paths
++        and "etc/systemd/system/try-omarchy-head-tablets.service" in compat_paths
++        and "etc/udev/rules.d/70-try-omarchy-head-tablets.rules" in compat_paths
++        and 'ENV{SYSTEMD_WANTS}+="try-omarchy-head-tablets.service"' in head_rules
++        and 'IMPORT{file}="/run/try-omarchy/head-tablets/$attr{uniq}"' in head_rules,
++        "each display window's pointer stays on its own output, on new and existing disks",
++    )
+     watchdog_dropin = read(GUEST / "factory-overlay/etc/systemd/system/service.d/10-try-omarchy-watchdog.conf")
+     check(
+         "[Service]\nWatchdogSec=0\n" in watchdog_dropin,
+         "system services run without watchdogs, which fire after Windows sleeps",
+     )
+     check(
+-        "compat_revision=74" in finalize_rootfs
++        "compat_revision=75" in finalize_rootfs
+         and "usr/local/bin/mpv" in compat_paths
+         and "usr/share/dkms/modules_to_force_install/try-omarchy" in compat_paths
+         and "usr/local/lib/try-omarchy/try-omarchy-import.pyz" in compat_paths
+-- 
+2.56.1
+
