@@ -38,7 +38,7 @@ typedef enum {
     SDL_SCANCODE_LCTRL = 224, SDL_SCANCODE_LALT = 226
 } SDL_Scancode;
 enum { SDL_WINDOWEVENT = 0x200, SDL_KEYDOWN = 0x300, SDL_KEYUP };
-enum { SDL_WINDOWEVENT_ENTER = 10, SDL_WINDOWEVENT_FOCUS_GAINED = 12 };
+enum { SDL_WINDOWEVENT_ENTER = 10, SDL_WINDOWEVENT_FOCUS_GAINED = 12, SDL_WINDOWEVENT_FOCUS_LOST = 13 };
 typedef struct { SDL_Scancode scancode; uint16_t mod; } SDL_Keysym;
 typedef struct { uint32_t type, windowID; uint8_t state, repeat; SDL_Keysym keysym; } SDL_KeyboardEvent;
 typedef struct { uint32_t type, windowID; uint8_t event; } SDL_WindowEvent;
@@ -169,6 +169,20 @@ int main(void)
      * last one went up. */
     reset();
     pointer_or_focus(SDL_WINDOWEVENT_FOCUS_GAINED); chord_down(); chord_up(); poll();
+    assert(toggles == 1 && guest_f == 0);
+
+    /* Focus goes to another app with Ctrl and Alt held. SDL lets go of its
+     * keys then and learns nothing of keys pressed or let go elsewhere, so
+     * QEMU's view comes back empty, not stale: a fresh chord on return is
+     * the hotkey. */
+    reset();
+    key(SDL_SCANCODE_LCTRL, true); key(SDL_SCANCODE_LALT, true); poll();
+    pointer_or_focus(SDL_WINDOWEVENT_FOCUS_LOST);
+    key(SDL_SCANCODE_LALT, false); key(SDL_SCANCODE_LCTRL, false); poll();
+    held = KMOD_LCTRL;
+    pointer_or_focus(SDL_WINDOWEVENT_FOCUS_GAINED); poll();
+    held = 0;
+    chord_down(); poll(); chord_up(); poll();
     assert(toggles == 1 && guest_f == 0);
 
     puts("ok - Ctrl+Alt hotkeys follow the modifiers of the queued key events");
