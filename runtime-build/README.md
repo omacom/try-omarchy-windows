@@ -337,3 +337,14 @@ events the modifiers as of the last key event handled. Ctrl and Alt held as a
 window gets focus still hold hotkeys back until a key goes up.
 `test-sdl-hotkey-modifiers.py` replays those queues through QEMU's key and
 window event handlers against mocked SDL.
+
+`0029-keep-the-window-size-after-full-screen.patch` keeps a window's size
+when the guest catches up late after full screen. The guest takes the size
+the window gives it a second or more later, so after a quick Ctrl+Alt+F
+round trip it could still switch to the full screen size once the window had
+left full screen, and QEMU sized the window to it: the monitor's size plus a
+frame. SDL also kept that as the windowed size for later rounds. The sizes a
+window has while full screen are now remembered from SDL's resize events,
+and after leaving full screen the window does not follow the guest to one of
+them until the guest has shown another size. `test-sdl-fullscreen-window.py`
+runs a guest that switches late, for windowed and full screen starts.

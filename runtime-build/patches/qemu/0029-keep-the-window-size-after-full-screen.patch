@@ -1,0 +1,111 @@
+sdl2: keep the window's size when the guest catches up after full screen
+
+Applies on top of 0028.
+
+The guest takes the size the window gives it a second or more later. When
+the window left full screen before the guest had switched to the full
+screen size, the guest switched to it afterwards, and sdl2_window_resize
+sized the window to it: the guest's full screen size plus a frame, larger
+than the work area. That size also became SDL's windowed size, so later
+rounds of full screen came back to it.
+
+The sizes a window has while full screen are now remembered from SDL's
+resize events. After the window leaves full screen it does not follow the
+guest to one of them until the guest has shown another size.
+
+--- a/include/ui/sdl2.h
++++ b/include/ui/sdl2.h
+@@ -54,6 +54,11 @@
+     bool guest_cursor;
+     int guest_x, guest_y;
+     int cursor_width, cursor_height;
++    /* Sizes the window had while full screen, and whether it left full
++     * screen since and the guest has not shown another size yet. */
++    int full_screen_size[4][2];
++    int full_screen_sizes;
++    bool after_full_screen;
+     bool has_dmabuf;
+     /* Windows: shown by the launcher (sdl2-held-win32.h) */
+     int64_t hold_ms, held_until;
+--- a/ui/sdl2.c
++++ b/ui/sdl2.c
+@@ -181,6 +181,38 @@
+     scon->real_window = NULL;
+ }
+ 
++/*
++ * The guest takes the size the window gives it a second or more later, so
++ * it can still switch to a size the window had while full screen after the
++ * window has left full screen. Those sizes are remembered (record), and the
++ * window does not follow the guest to one of them until the guest has shown
++ * another size.
++ */
++static bool sdl2_full_screen_size(struct sdl2_console *scon, int w, int h,
++                                  bool record)
++{
++    int n = ARRAY_SIZE(scon->full_screen_size);
++    int i;
++
++    for (i = 0; i < scon->full_screen_sizes; i++) {
++        if (scon->full_screen_size[i][0] == w &&
++            scon->full_screen_size[i][1] == h) {
++            return true;
++        }
++    }
++    if (record) {
++        if (scon->full_screen_sizes == n) {
++            memmove(scon->full_screen_size[0], scon->full_screen_size[1],
++                    sizeof(scon->full_screen_size[0]) * (n - 1));
++            scon->full_screen_sizes--;
++        }
++        scon->full_screen_size[scon->full_screen_sizes][0] = w;
++        scon->full_screen_size[scon->full_screen_sizes][1] = h;
++        scon->full_screen_sizes++;
++    }
++    return false;
++}
++
+ void sdl2_window_resize(struct sdl2_console *scon)
+ {
+     if (!scon->real_window) {
+@@ -193,6 +225,13 @@
+     if (SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_FULLSCREEN) {
+         return;
+     }
++    if (scon->after_full_screen) {
++        if (sdl2_full_screen_size(scon, surface_width(scon->surface),
++                                  surface_height(scon->surface), false)) {
++            return;
++        }
++        scon->after_full_screen = false;
++    }
+ 
+     SDL_SetWindowSize(scon->real_window,
+                       surface_width(scon->surface),
+@@ -533,6 +572,8 @@
+ {
+     gui_fullscreen = !gui_fullscreen;
+     if (gui_fullscreen) {
++        scon->full_screen_sizes = 0;
++        scon->after_full_screen = false;
+         SDL_SetWindowFullscreen(scon->real_window,
+                                 SDL_WINDOW_FULLSCREEN_DESKTOP);
+         gui_saved_grab = gui_grab;
+@@ -542,6 +583,7 @@
+             sdl_grab_end(scon);
+         }
+         sdl2_window_size_after_full_screen(scon);
++        scon->after_full_screen = true;
+         SDL_SetWindowFullscreen(scon->real_window, 0);
+     }
+     sdl2_redraw(scon);
+@@ -839,6 +881,9 @@
+             memset(&info, 0, sizeof(info));
+             info.width = ev->window.data1;
+             info.height = ev->window.data2;
++            if (SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_FULLSCREEN) {
++                sdl2_full_screen_size(scon, info.width, info.height, true);
++            }
+             dpy_set_ui_info(scon->dcl.con, &info, true);
+         }
+         sdl2_redraw(scon);

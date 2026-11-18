@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Leaving full screen keeps the window's size even when Omarchy is slow to
+  follow. When Omarchy had not yet switched to the full screen size, it
+  switched afterwards and the window grew to the size of the screen plus its
+  frame, moved to the corner of the screen, and could keep that size for
+  later rounds of full screen and the next start.
 - Ctrl+Alt+F switches full screen on the first press right after the pointer
   comes back into the window. Pressed within a moment of the pointer entering
   the window, or let go quickly while Omarchy was busy, it reached Omarchy as
