@@ -117,6 +117,10 @@
       {
         "file": "patches/qemu/0027-make-full-screen-sdl-starts-resizable.patch",
         "sha256": "2cd9dc9f3a8346a8882a0129261e200a08c178916308a4f1fc1c39e88553ab49"
+      },
+      {
+        "file": "patches/qemu/0028-judge-sdl-hotkeys-by-their-key-events.patch",
+        "sha256": "81231bd448cb757b5eef020e9c49ae3a32131547370c945c8f689c0d676b11b4"
       }
     ]
   },

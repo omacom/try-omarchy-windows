@@ -109,7 +109,8 @@ static SDL_Window *SDL_GetWindowFromID(uint32_t id) {
   return consoles[i].real_window;
  return NULL;
 }
-static int get_mod_state(void) {return 0;}
+static int sdl_handled_mod;
+static int get_mod_state(int mod) {return mod;}
 static void dpy_set_ui_info(QemuConsole *c,QemuUIInfo *i,bool b) {}
 static void SDL_StopTextInput(void) {}
 static void SDL_StartTextInput(void) {}

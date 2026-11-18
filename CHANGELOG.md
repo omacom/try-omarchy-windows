@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Ctrl+Alt+F switches full screen on the first press right after the pointer
+  comes back into the window. Pressed within a moment of the pointer entering
+  the window, or let go quickly while Omarchy was busy, it reached Omarchy as
+  keys instead and the window stayed as it was until the next press.
 - With more than one display, the pointer stays visible across every window.
   Each window moved the pointer across the whole Omarchy desktop, so it left
   the first screen halfway across its window and only showed on the right
