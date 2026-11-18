@@ -143,8 +143,8 @@ int main(void)
     chord_down(); poll(); chord_up(); poll();
     assert(toggles == 1 && guest_f == 0);
 
-    /* The pointer enters the window just before Ctrl+Alt+F, within one poll
-     * (acceptance 2026-11-18): still the hotkey, not keys for the guest. */
+    /* The pointer enters the window just before Ctrl+Alt+F, within one
+     * poll: still the hotkey, not keys for the guest. */
     reset();
     pointer_or_focus(SDL_WINDOWEVENT_ENTER); chord_down(); poll(); chord_up(); poll();
     assert(toggles == 1 && guest_f == 0);
