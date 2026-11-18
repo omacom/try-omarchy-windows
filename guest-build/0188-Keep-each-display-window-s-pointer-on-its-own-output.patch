@@ -30,7 +30,7 @@ revision 75 delivers it to existing disks.
 ---
  .../system/try-omarchy-head-tablets.service   |   9 +
  .../rules.d/70-try-omarchy-head-tablets.rules |   6 +
- .../usr/local/lib/try-omarchy/head-tablets    | 373 ++++++++++++++++++
+ .../usr/local/lib/try-omarchy/head-tablets    | 386 ++++++++++++++++++
  guest/scripts/finalize-rootfs.sh              |   7 +-
  guest/tests/test_aquamarine_contract.py       |   2 +-
  guest/tests/test_battery_details.py           |   2 +-
@@ -39,7 +39,7 @@ revision 75 delivers it to existing disks.
  guest/tests/test_desktop_drawn.py             |   2 +-
  guest/tests/test_ghostty_gl.py                |   2 +-
  guest/tests/test_guest_qol.py                 |   2 +-
- guest/tests/test_head_tablets.py              | 346 ++++++++++++++++
+ guest/tests/test_head_tablets.py              | 388 ++++++++++++++++
  guest/tests/test_kernel_headers_hold.py       |   2 +-
  guest/tests/test_live_update.py               |   2 +-
  guest/tests/test_native_nightlight.py         |   2 +-
@@ -50,7 +50,7 @@ revision 75 delivers it to existing disks.
  guest/tests/test_url_schemes.py               |   2 +-
  guest/tests/test_windows_volume_sync.py       |   2 +-
  guest/tests/verify.py                         |  12 +-
- 22 files changed, 767 insertions(+), 18 deletions(-)
+ 22 files changed, 822 insertions(+), 18 deletions(-)
  create mode 100644 guest/factory-overlay/etc/systemd/system/try-omarchy-head-tablets.service
  create mode 100644 guest/factory-overlay/etc/udev/rules.d/70-try-omarchy-head-tablets.rules
  create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/head-tablets
@@ -88,7 +88,7 @@ new file mode 100755
 index 0000000..f450d34
 --- /dev/null
 +++ b/guest/factory-overlay/usr/local/lib/try-omarchy/head-tablets
-@@ -0,0 +1,373 @@
+@@ -0,0 +1,386 @@
 +#!/usr/bin/env python3
 +"""Keep the pointer of each Try Omarchy display window on its own output.
 +
@@ -127,6 +127,8 @@ index 0000000..f450d34
 +MAXIMUM_HEADS = 16
 +PROPERTY = "LIBINPUT_CALIBRATION_MATRIX"
 +IPC_TIMEOUT = 2
++# Sixteen monitors describe themselves in well under this.
++REPLY_LIMIT = 1 << 20
 +# Layout changes that Hyprland does not announce are found this often.
 +POLL = 5.0
 +# Display sync applies a window's new mode shortly after the GPU's hotplug
@@ -358,14 +360,25 @@ index 0000000..f450d34
 +
 +
 +def request(instance, command, timeout=IPC_TIMEOUT):
++    """One Hyprland request. The whole reply has a size and a time limit."""
++    deadline = time.monotonic() + timeout
++    reply = bytearray()
 +    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
 +        conn.settimeout(timeout)
 +        conn.connect(str(instance / ".socket.sock"))
 +        conn.sendall(command.encode())
-+        chunks = []
-+        while chunk := conn.recv(65536):
-+            chunks.append(chunk)
-+    return json.loads(b"".join(chunks))
++        while True:
++            left = deadline - time.monotonic()
++            if left <= 0:
++                raise TimeoutError("Hyprland took too long to reply")
++            conn.settimeout(left)
++            chunk = conn.recv(65536)
++            if not chunk:
++                break
++            reply += chunk
++            if len(reply) > REPLY_LIMIT:
++                raise ValueError("Hyprland's reply is too large")
++    return json.loads(reply)
 +
 +
 +def open_events(instance):
@@ -580,7 +593,7 @@ new file mode 100644
 index 0000000..3393b59
 --- /dev/null
 +++ b/guest/tests/test_head_tablets.py
-@@ -0,0 +1,346 @@
+@@ -0,0 +1,388 @@
 +import contextlib
 +import fnmatch
 +import io
@@ -592,6 +605,7 @@ index 0000000..3393b59
 +import socket
 +import tempfile
 +import threading
++import time
 +import unittest
 +
 +GUEST = Path(__file__).resolve().parents[1]
@@ -872,6 +886,47 @@ index 0000000..3393b59
 +        for head in (0, 1):
 +            self.assertEqual((state / f'try-omarchy-head-{head}').read_text(),
 +                             f'LIBINPUT_CALIBRATION_MATRIX={expected[head]}\n')
++
++    def reply_with(self, send):
++        instance = self.root / 'hypr'
++        instance.mkdir()
++        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++        server.bind(str(instance / '.socket.sock'))
++        server.listen()
++
++        def serve():
++            conn, _ = server.accept()
++            with conn:
++                conn.recv(1024)
++                try:
++                    send(conn)
++                except OSError:
++                    pass
++
++        thread = threading.Thread(target=serve)
++        thread.start()
++        self.addCleanup(server.close)
++        self.addCleanup(thread.join, 5)
++        return instance
++
++    def test_a_reply_without_end_is_refused(self):
++        def flood(conn):
++            while True:
++                conn.sendall(b' ' * 65536)
++
++        with self.assertRaises(ValueError):
++            heads.request(self.reply_with(flood), 'j/monitors all')
++
++    def test_a_reply_that_trickles_is_refused(self):
++        def trickle(conn):
++            while True:
++                conn.sendall(b' ')
++                time.sleep(0.02)
++
++        started = time.monotonic()
++        with self.assertRaises(TimeoutError):
++            heads.request(self.reply_with(trickle), 'j/monitors all', timeout=0.3)
++        self.assertLess(time.monotonic() - started, 2)
 +
 +    def test_no_hyprland_yet(self):
 +        make_tablet(self.sys, 'event3', 'QEMU Virtio Tablet', 'try-omarchy-head-0', '13:67')
