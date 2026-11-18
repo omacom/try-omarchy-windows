@@ -311,18 +311,6 @@ func windowIntoWorkArea(now, work screenRect) (to screenRect, move bool) {
 	return to, to != now
 }
 
-// placementBeforeFullscreen picks the placement to put back after fullscreen.
-// SDL un-maximizes a maximized window on its way into fullscreen, and that
-// step can be saved like a user's change just before the window covers the
-// screen. A save that recent belongs to the transition, so the placement it
-// replaced is the one to restore.
-func placementBeforeFullscreen(last, previous *windowPlacement, sinceSave time.Duration) *windowPlacement {
-	if previous != nil && sinceSave >= 0 && sinceSave < 2*time.Second {
-		return previous
-	}
-	return last
-}
-
 type placementStep int
 
 const (
@@ -348,10 +336,13 @@ func placementAfterCurtain(now, target *windowPlacement) *windowPlacement {
 // where it belongs. While the guest boots or shuts down (held), QEMU resizes
 // the window to whatever the guest's display is; those changes are undone,
 // not remembered. Once the guest's desktop follows the window, any change is
-// the user's: a drag, Snap, or a tool that arranges windows.
-func nextPlacementStep(now, last, target *windowPlacement, userMoved, dragging, held bool) placementStep {
+// the user's: a drag, Snap, or a tool that arranges windows. A window without
+// its frame (framed false) is SDL switching it into or out of full screen:
+// SDL takes the frame and the maximized state off before it covers the
+// monitor, so that step is not the user's either.
+func nextPlacementStep(now, last, target *windowPlacement, userMoved, dragging, held, framed bool) placementStep {
 	switch {
-	case now == nil || dragging:
+	case now == nil || dragging || !framed:
 		return placementKeep
 	case userMoved || last == nil || now.Maximized != last.Maximized:
 		return placementSave

@@ -5,6 +5,9 @@
 - Taking a full screen start out of full screen with Ctrl+Alt+F brings the
   window back where it belongs. It could land in the top left corner of the
   screen when the window got its title bar back a moment before its size.
+- A maximized window comes back maximized after full screen every time.
+  Going into full screen could be saved as the window's size, so it came back
+  un-maximized at the size of the screen, then and on later starts.
 - With more than one display, the pointer stays visible across every window.
   Each window moved the pointer across the whole Omarchy desktop, so it left
   the first screen halfway across its window and only showed on the right

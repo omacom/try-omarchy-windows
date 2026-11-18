@@ -74,7 +74,7 @@ func TestOnlyTheUsersMovesAreRemembered(t *testing.T) {
 		{"nothing remembered yet", placed, nil, nil, false, false, true, placementSave},
 	}
 	for _, c := range cases {
-		if got := nextPlacementStep(c.now, c.last, c.target, c.userMoved, c.dragging, c.held); got != c.want {
+		if got := nextPlacementStep(c.now, c.last, c.target, c.userMoved, c.dragging, c.held, true); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}
@@ -102,7 +102,7 @@ func TestTheCurtainDoesNotChangeTheRememberedPlacement(t *testing.T) {
 	}
 	// Once put back, the guest following the window does not save the
 	// boot size over it.
-	if got := nextPlacementStep(placed, placed, placed, false, false, false); got != placementKeep {
+	if got := nextPlacementStep(placed, placed, placed, false, false, false, true); got != placementKeep {
 		t.Errorf("after the curtain: %v, want keep", got)
 	}
 }
@@ -224,17 +224,19 @@ func TestFullscreenPlacementRestoresTheWindowedPlacement(t *testing.T) {
 	}
 }
 
-func TestPlacementBeforeFullscreenSkipsTheTransitionSave(t *testing.T) {
-	maximized := &windowPlacement{Normal: screenRect{Left: 100, Top: 80, Right: 1100, Bottom: 700}, Maximized: true}
-	restored := &windowPlacement{Normal: screenRect{Left: 100, Top: 80, Right: 1100, Bottom: 700}}
-	if got := placementBeforeFullscreen(restored, maximized, 300*time.Millisecond); got != maximized {
-		t.Fatalf("save during the transition: got %v, want the maximized placement", got)
+func TestTheWayIntoFullscreenIsNotSaved(t *testing.T) {
+	maximized := &windowPlacement{Normal: screenRect{Left: 24, Top: 24, Right: 1256, Bottom: 728}, Maximized: true}
+	// SDL has taken the frame and the maximized state off and not yet
+	// covered the monitor (acceptance 2026-11-18, saved as the window's
+	// size and put back un-maximized on every later leave).
+	midway := &windowPlacement{Normal: screenRect{Left: -8, Top: -8, Right: 1288, Bottom: 760}}
+	for _, held := range []bool{false, true} {
+		if got := nextPlacementStep(midway, maximized, maximized, false, false, held, false); got != placementKeep {
+			t.Fatalf("held=%v: %v, want keep", held, got)
+		}
 	}
-	if got := placementBeforeFullscreen(restored, maximized, 10*time.Second); got != restored {
-		t.Fatalf("older save: got %v, want the latest placement", got)
-	}
-	if got := placementBeforeFullscreen(restored, nil, 0); got != restored {
-		t.Fatalf("nothing earlier: got %v, want the latest placement", got)
+	if got := nextPlacementStep(midway, maximized, maximized, false, false, false, true); got != placementSave {
+		t.Fatalf("the user restoring a framed window: %v, want save", got)
 	}
 }
 
