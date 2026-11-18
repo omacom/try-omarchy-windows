@@ -51,7 +51,7 @@ struct sdl2_console {
     DisplayChangeListener dcl;
     SDL_Window *real_window;
     DisplaySurface *surface;
-    bool opengl, hidden, gui_keysym;
+    bool opengl, hidden, gui_keysym, after_full_screen;
     int ignore_hotkeys;
 };
 static QemuConsole console;

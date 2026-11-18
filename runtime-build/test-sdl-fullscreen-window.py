@@ -19,7 +19,6 @@ def section(text, start, end):
 
 assert 'bool fullscreen_start;' in section(header, 'struct sdl2_console {', '};')
 create = section(source, 'void sdl2_window_create(', 'void sdl2_window_destroy(')
-flags = section(create, '    /* A window that starts full screen', '    if (scon->hidden) {')
 # The flags are settled before SDL creates the window.
 assert create.index('scon->fullscreen_start = gui_fullscreen;') < create.index('SDL_CreateWindow(')
 # A guest size the window had while full screen is remembered as SDL
@@ -32,6 +31,8 @@ toggle = section(source, 'static void sdl2_window_size_after_full_screen(', 'sta
 # Ctrl+Alt+F still goes through toggle_full_screen.
 keys = section(source, 'case SDL_SCANCODE_F:', 'break;')
 assert 'toggle_full_screen(scon);' in keys
+# Ctrl+Alt+0, the user asking for the guest's size.
+zoom = section(source, '        case SDL_SCANCODE_0:\n', '            break;\n').split('\n', 1)[1]
 
 harness = r'''
 #include <assert.h>
@@ -50,10 +51,19 @@ typedef struct {
     SDL_Rect now, windowed;
     int display;
 } SDL_Window;
+#define SDL_WINDOW_HIDDEN 0x8
+#define SDL_WINDOWPOS_UNDEFINED 0x1FFF0000
 typedef struct { int w, h; } DisplaySurface;
+typedef struct { int unused; } DisplayChangeListener;
+enum { DISPLAY_GL_MODE_ES = 2 };
+typedef struct { int gl; } DisplayOptions;
 struct sdl2_console {
+    DisplayChangeListener dcl;
+    DisplayOptions *opts;
     SDL_Window *real_window;
+    void *real_renderer, *winctx;
     DisplaySurface *surface;
+    bool hidden, opengl, gui_keysym;
     bool fullscreen_start;
     int full_screen_size[4][2];
     int full_screen_sizes;
@@ -102,14 +112,44 @@ static void sdl_grab_start(struct sdl2_console *scon) { (void)scon; gui_grab = 1
 static void sdl_grab_end(struct sdl2_console *scon) { (void)scon; gui_grab = 0; }
 static void sdl2_redraw(struct sdl2_console *scon) { (void)scon; }
 static void sdl_show_cursor(struct sdl2_console *scon) { (void)scon; }
-
-static int create_flags(struct sdl2_console *scon)
+static int texture_switches;
+static void sdl2_2d_switch(DisplayChangeListener *dcl, DisplaySurface *s) { (void)dcl; (void)s; texture_switches++; }
+/* SDL_CreateWindow with SDL_WINDOWPOS_UNDEFINED: centered on the display
+ * the harness picks (next_display), full screen there if asked. */
+static SDL_Window *next_window;
+static int next_display;
+static SDL_Window *SDL_CreateWindow(const char *title, int x, int y, int width, int height, int flags)
 {
-    int flags = 0;
-''' + flags + r'''
-    return flags;
+    SDL_Window *w = next_window;
+    (void)title; (void)x; (void)y;
+    memset(w, 0, sizeof(*w));
+    w->display = next_display;
+    w->windowed = (SDL_Rect){
+        monitors[w->display].x + (monitors[w->display].w - width) / 2,
+        monitors[w->display].y + (monitors[w->display].h - height) / 2,
+        width, height };
+    w->flags = flags & ~SDL_WINDOW_FULLSCREEN_DESKTOP;
+    w->now = w->windowed;
+    if (flags & SDL_WINDOW_FULLSCREEN)
+        SDL_SetWindowFullscreen(w, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    return w;
 }
-''' + resize + toggle + r'''
+/* Only 2D windows here; the OpenGL calls are never reached. */
+static struct sdl2_console sdl2_console[1];
+#define SDL_HINT_RENDER_DRIVER ""
+#define SDL_HINT_RENDER_BATCHING ""
+#define SDL_GL_SHARE_WITH_CURRENT_CONTEXT 0
+static void SDL_SetHint(const char *h, const char *v) { (void)h; (void)v; assert(0); }
+static void SDL_GL_MakeCurrent(SDL_Window *w, void *c) { (void)w; (void)c; assert(0); }
+static void SDL_GL_SetAttribute(int a, int v) { (void)a; (void)v; assert(0); }
+static void *SDL_GL_CreateContext(SDL_Window *w) { (void)w; assert(0); return 0; }
+static void SDL_GL_SetSwapInterval(int i) { (void)i; assert(0); }
+static int win_hold_flags(struct sdl2_console *scon) { (void)scon; return 0; }
+static void win_hold_window(struct sdl2_console *scon) { (void)scon; }
+static void win_pinch_create(struct sdl2_console *scon) { (void)scon; }
+static void sdl_update_caption(struct sdl2_console *scon) { (void)scon; }
+static void *SDL_CreateRenderer(SDL_Window *w, int index, int flags) { (void)index; (void)flags; return w; }
+''' + create + resize + toggle + r'''
 /* The RESIZED handler, with the size SDL reports. */
 static void resized(struct sdl2_console *scon, int width, int height)
 {
@@ -128,23 +168,19 @@ static void launcher_grows(struct sdl2_console *scon)
     scon->real_window->now.h += 1;
     reported(scon);
 }
-/* SDL_CreateWindow with SDL_WINDOWPOS_UNDEFINED: centered on the display. */
+/* QEMU's own sdl2_window_create, after the last window was destroyed. */
 static void create(struct sdl2_console *scon, SDL_Window *w, int display)
 {
-    int flags = create_flags(scon);
-    memset(w, 0, sizeof(*w));
-    scon->full_screen_sizes = 0;
-    scon->after_full_screen = false;
-    w->display = display;
-    w->windowed = (SDL_Rect){
-        monitors[display].x + (monitors[display].w - scon->surface->w) / 2,
-        monitors[display].y + (monitors[display].h - scon->surface->h) / 2,
-        scon->surface->w, scon->surface->h };
-    w->flags = flags & ~SDL_WINDOW_FULLSCREEN_DESKTOP;
-    w->now = w->windowed;
-    if (flags & SDL_WINDOW_FULLSCREEN)
-        SDL_SetWindowFullscreen(w, SDL_WINDOW_FULLSCREEN_DESKTOP);
-    scon->real_window = w;
+    scon->real_window = NULL;
+    next_window = w;
+    next_display = display;
+    sdl2_window_create(scon);
+    assert(scon->real_window == w);
+}
+/* Ctrl+Alt+0. */
+static void zoom_reset(struct sdl2_console *scon)
+{
+''' + zoom + r'''
 }
 static void guest_resizes(struct sdl2_console *scon, int w, int h)
 {
@@ -282,6 +318,82 @@ int main(void)
     assert(same(win.now, before) && fits(&win));
     guest_resizes(&scon, 1440, 780);
     assert(same(win.now, before));
+
+    /* Ctrl+Alt+0 asks for the guest's size and gets it, also while a late
+     * full screen size is held back. */
+    gui_fullscreen = 0;
+    surface = (DisplaySurface){1280, 800};
+    create(&scon, &win, 0);
+    reported(&scon);
+    before = win.now;
+    toggle_full_screen(&scon);
+    reported(&scon);
+    launcher_grows(&scon);
+    toggle_full_screen(&scon);
+    reported(&scon);
+    guest_resizes(&scon, 1920, 1081);
+    assert(same(win.now, before));
+    zoom_reset(&scon);
+    assert(win.now.w == 1920 && win.now.h == 1081 && !scon.after_full_screen);
+
+    /* A round of full screen in which the guest never changed size: the
+     * window still holds back, and lets go at the guest's next size. */
+    gui_fullscreen = 0;
+    surface = (DisplaySurface){1280, 800};
+    create(&scon, &win, 0);
+    reported(&scon);
+    toggle_full_screen(&scon);
+    reported(&scon);
+    toggle_full_screen(&scon);
+    reported(&scon);
+    assert(scon.after_full_screen);
+    user_resizes(&win, 1024, 768);
+    guest_resizes(&scon, 1024, 768);
+    assert(!scon.after_full_screen);
+    guest_resizes(&scon, 1920, 1080);
+    assert(win.now.w == 1920 && win.now.h == 1080);
+
+    /* A window destroyed with a size held back and created again starts
+     * clean. */
+    gui_fullscreen = 0;
+    surface = (DisplaySurface){1280, 800};
+    create(&scon, &win, 0);
+    reported(&scon);
+    toggle_full_screen(&scon);
+    reported(&scon);
+    toggle_full_screen(&scon);
+    assert(scon.after_full_screen && scon.full_screen_sizes > 0);
+    create(&scon, &win, 0);
+    assert(!scon.after_full_screen && scon.full_screen_sizes == 0);
+    guest_resizes(&scon, 1920, 1080);
+    assert(win.now.w == 1920 && win.now.h == 1080);
+
+    /* gui_fullscreen is shared by every window. Ctrl+Alt+F in a second
+     * window that is not full screen, while the first one is, does not
+     * hold back the sizes of its own earlier round of full screen. */
+    {
+        SDL_Window win2;
+        DisplaySurface surface2 = {1024, 768};
+        struct sdl2_console scon2 = { .surface = &surface2 };
+        gui_fullscreen = 0;
+        surface = (DisplaySurface){1280, 800};
+        create(&scon, &win, 0);
+        create(&scon2, &win2, 1);
+        reported(&scon2);
+        toggle_full_screen(&scon2);
+        reported(&scon2);
+        launcher_grows(&scon2);
+        toggle_full_screen(&scon2);
+        reported(&scon2);
+        guest_resizes(&scon2, 1280, 720);
+        assert(win2.now.w == 1280 && win2.now.h == 720);
+        toggle_full_screen(&scon);
+        reported(&scon);
+        toggle_full_screen(&scon2);
+        assert(!gui_fullscreen && !scon2.after_full_screen);
+        guest_resizes(&scon2, 2560, 1441);
+        assert(win2.now.w == 2560 && win2.now.h == 1441);
+    }
 
     puts("ok - full screen starts are resizable and leave full screen inside the usable area; windowed starts keep their size, also when the guest is late");
     return 0;

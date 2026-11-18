@@ -346,5 +346,8 @@ left full screen, and QEMU sized the window to it: the monitor's size plus a
 frame. SDL also kept that as the windowed size for later rounds. The sizes a
 window has while full screen are now remembered from SDL's resize events,
 and after leaving full screen the window does not follow the guest to one of
-them until the guest has shown another size. `test-sdl-fullscreen-window.py`
-runs a guest that switches late, for windowed and full screen starts.
+them until the guest has shown another size, the user asks for the guest's
+size with Ctrl+Alt+0, or the window goes full screen again. Only a window
+that was full screen holds back, and a window created again starts clean.
+`test-sdl-fullscreen-window.py` runs a guest that switches late, for
+windowed and full screen starts, through QEMU's own `sdl2_window_create`.
