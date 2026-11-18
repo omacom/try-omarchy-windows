@@ -1,0 +1,250 @@
+From 27c49c63d6584f65a13c99cdbdae844846e198ed Mon Sep 17 00:00:00 2001
+From: Try Omarchy Release <actions@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 10:01:18 -0600
+Subject: [PATCH] Refresh the guest package lock
+
+alsa-card-profiles 1:1.6.11-1 -> 1:1.6.11-2
+ffmpeg 2:9.0.2-3 -> 2:9.0.2-5
+flex 2.6.10-1 -> 2.6.15-1
+gdb 18.1-1 -> 18.1-2
+gdb-common 18.1-1 -> 18.1-2
+glibc 2.44+r50+g1848099f063e-1 -> 2.44+r78+gfcfb867c58ab-1
+gst-plugins-bad-libs 1.28.9-1 -> 1.28.9-3
+gst-plugins-base-libs 1.28.9-1 -> 1.28.9-3
+gstreamer 1.28.9-1 -> 1.28.9-3
+hyprutils 0.14.3-1 -> 0.14.4-1
+inotify-tools 4.26.275-1 -> 4.26.282-1
+layer-shell-qt 6.8.2-1 -> 6.8.3-1
+libcue 2.3.0-2 -> 2.4.0-1
+libffi 3.8.0-1 -> 3.8.1-1
+libfontenc 1.1.9-1 -> 1.1.10-1
+libpipewire 1:1.6.11-1 -> 1:1.6.11-2
+libplacebo 7.360.1-7 -> 7.387.0-1
+libxfont2 2.0.9-1 -> 2.0.10-1
+mpv 1:0.41.0-7 -> 1:0.42.0-2
+pcsclite 2.5.3-1 -> 2.5.4-1
+pipewire 1:1.6.11-1 -> 1:1.6.11-2
+pipewire-alsa 1:1.6.11-1 -> 1:1.6.11-2
+pipewire-audio 1:1.6.11-1 -> 1:1.6.11-2
+pipewire-pulse 1:1.6.11-1 -> 1:1.6.11-2
+pkgconf 3.0.10-1 -> 3.0.11-1
+poppler 26.10.0-2 -> 26.11.0-1
+poppler-glib 26.10.0-2 -> 26.11.0-1
+spandsp 0.0.6-7 -> 3.1.1-1
+svt-av1 4.2.0-1 -> 4.3.0-1
+tpm2-tss 4.2.1-2 -> 4.2.2s-1
+udiskie 2.7.0-2 -> 2.8.1-1
+---
+ guest/packages.lock.json | 62 ++++++++++++++++++++--------------------
+ 1 file changed, 31 insertions(+), 31 deletions(-)
+
+diff --git a/guest/packages.lock.json b/guest/packages.lock.json
+index c85c23d..1c78e4e 100644
+--- a/guest/packages.lock.json
++++ b/guest/packages.lock.json
+@@ -7,7 +7,7 @@
+     "adwaita-fonts": "51.0-2",
+     "adwaita-icon-theme": "51.0-1",
+     "adwaita-icon-theme-legacy": "46.2-3",
+-    "alsa-card-profiles": "1:1.6.11-1",
++    "alsa-card-profiles": "1:1.6.11-2",
+     "alsa-lib": "1.2.16.1-1",
+     "alsa-topology-conf": "1.2.5.1-4",
+     "alsa-ucm-conf": "1.2.16.1-1",
+@@ -80,13 +80,13 @@
+     "fcitx5-hangul": "5.1.11-1",
+     "fcitx5-qt": "5.1.16-2",
+     "fd": "10.5.0-3",
+-    "ffmpeg": "2:9.0.2-3",
++    "ffmpeg": "2:9.0.2-5",
+     "fftw": "3.3.11-1",
+     "file": "5.48-1",
+     "filesystem": "2025.10.12-1",
+     "findutils": "4.11.0-1",
+     "flac": "1.5.0-1",
+-    "flex": "2.6.10-1",
++    "flex": "2.6.15-1",
+     "fontconfig": "2:2.18.3-2",
+     "foot": "1.28.0-2",
+     "freeglut": "3.8.0-1",
+@@ -102,8 +102,8 @@
+     "gcr": "3.41.2-2",
+     "gcr-4": "4.4.1-1",
+     "gd": "2.3.3-9",
+-    "gdb": "18.1-1",
+-    "gdb-common": "18.1-1",
++    "gdb": "18.1-2",
++    "gdb-common": "18.1-2",
+     "gdbm": "1.26-2",
+     "gdk-pixbuf2": "2.44.8-1",
+     "gettext": "1.0-2",
+@@ -114,7 +114,7 @@
+     "git": "2.56.1-1",
+     "glib-networking": "1:2.90.1-1",
+     "glib2": "2.90.1-1",
+-    "glibc": "2.44+r50+g1848099f063e-1",
++    "glibc": "2.44+r78+gfcfb867c58ab-1",
+     "glslang": "1:1.4.363.0-1",
+     "glu": "9.0.3-3",
+     "glycin": "2.2.6-1",
+@@ -145,9 +145,9 @@
+     "gsfonts": "20200910-6",
+     "gsm": "1.0.24-1",
+     "gssdp": "1.6.6-1",
+-    "gst-plugins-bad-libs": "1.28.9-1",
+-    "gst-plugins-base-libs": "1.28.9-1",
+-    "gstreamer": "1.28.9-1",
++    "gst-plugins-bad-libs": "1.28.9-3",
++    "gst-plugins-base-libs": "1.28.9-3",
++    "gstreamer": "1.28.9-3",
+     "gtest": "1.18.0-1",
+     "gtk-update-icon-cache": "1:4.24.1-1",
+     "gtk3": "1:3.24.52-2",
+@@ -177,7 +177,7 @@
+     "hyprpicker": "0.4.8-1",
+     "hyprsunset": "0.4.0-3",
+     "hyprtoolkit": "0.6.0-3",
+-    "hyprutils": "0.14.3-1",
++    "hyprutils": "0.14.4-1",
+     "hyprwayland-scanner": "0.4.6-1",
+     "hyprwire": "0.3.1-3",
+     "iana-etc": "20260617-1",
+@@ -186,7 +186,7 @@
+     "imagemagick": "7.1.2.35-1",
+     "imv": "5.0.1-2",
+     "iniparser": "4.3.2-1",
+-    "inotify-tools": "4.26.275-1",
++    "inotify-tools": "4.26.282-1",
+     "iproute2": "7.3.0-1",
+     "iptables": "1:1.8.13-1",
+     "iputils": "20250605-1",
+@@ -207,7 +207,7 @@
+     "krb5": "1.22.2-2",
+     "l-smash": "2.14.5-4",
+     "lame": "4.0-1",
+-    "layer-shell-qt": "6.8.2-1",
++    "layer-shell-qt": "6.8.3-1",
+     "lcms2": "2.20-1",
+     "leancrypto": "1.9.1-1",
+     "leptonica": "1.87.0-2",
+@@ -245,7 +245,7 @@
+     "libchewing": "0.13.1-1",
+     "libcloudproviders": "0.4.2-1",
+     "libcolord": "1.4.8-2",
+-    "libcue": "2.3.0-2",
++    "libcue": "2.4.0-1",
+     "libcups": "2:2.4.20-1",
+     "libdaemon": "0.14-6",
+     "libdatrie": "0.2.14-1",
+@@ -267,8 +267,8 @@
+     "libevent": "2.1.13-3",
+     "libexif": "0.6.26-1",
+     "libfdk-aac": "3.0.0-1",
+-    "libffi": "3.8.0-1",
+-    "libfontenc": "1.1.9-1",
++    "libffi": "3.8.1-1",
++    "libfontenc": "1.1.10-1",
+     "libfreeaptx": "0.2.2-1",
+     "libgcc": "16.2.1+r23+gd564253eb6c8-1",
+     "libgcrypt": "1.12.4-1",
+@@ -340,8 +340,8 @@
+     "libpciaccess": "0.19-1",
+     "libpgm": "5.3.128-4",
+     "libpipeline": "1.5.8-1",
+-    "libpipewire": "1:1.6.11-1",
+-    "libplacebo": "7.360.1-7",
++    "libpipewire": "1:1.6.11-2",
++    "libplacebo": "7.387.0-1",
+     "libplist": "2.7.0-3",
+     "libpng": "1.6.59-1",
+     "libportal": "0.11.0-1",
+@@ -408,7 +408,7 @@
+     "libxdmcp": "1.1.5-2",
+     "libxext": "1.3.7-1",
+     "libxfixes": "6.0.2-1",
+-    "libxfont2": "2.0.9-1",
++    "libxfont2": "2.0.10-1",
+     "libxft": "2.3.9-1",
+     "libxi": "1.8.4-1",
+     "libxinerama": "1.1.6-1",
+@@ -465,7 +465,7 @@
+     "mpdecimal": "4.0.1-3",
+     "mpfr": "4.2.2-1",
+     "mpg123": "1.33.7-1",
+-    "mpv": "1:0.41.0-7",
++    "mpv": "1:0.42.0-2",
+     "msgpack-c": "7.0.2-1",
+     "mtdev": "1.1.7-1",
+     "mujs": "1.3.11-1",
+@@ -516,24 +516,24 @@
+     "pciutils": "3.15.0-1",
+     "pcre": "8.45-5",
+     "pcre2": "10.49-1",
+-    "pcsclite": "2.5.3-1",
++    "pcsclite": "2.5.4-1",
+     "perl": "5.44.0-1",
+     "perl-error": "0.17031-1",
+     "perl-mailtools": "2.22-3",
+     "perl-timedate": "2.35-1",
+     "pinentry": "1.3.3-1",
+-    "pipewire": "1:1.6.11-1",
+-    "pipewire-alsa": "1:1.6.11-1",
+-    "pipewire-audio": "1:1.6.11-1",
+-    "pipewire-pulse": "1:1.6.11-1",
++    "pipewire": "1:1.6.11-2",
++    "pipewire-alsa": "1:1.6.11-2",
++    "pipewire-audio": "1:1.6.11-2",
++    "pipewire-pulse": "1:1.6.11-2",
+     "pixman": "0.46.4-1",
+-    "pkgconf": "3.0.10-1",
++    "pkgconf": "3.0.11-1",
+     "playerctl": "2.4.1-5",
+     "plocate": "1.1.25-1",
+     "polkit": "128-1",
+-    "poppler": "26.10.0-2",
++    "poppler": "26.11.0-1",
+     "poppler-data": "0.4.12-2",
+-    "poppler-glib": "26.10.0-2",
++    "poppler-glib": "26.11.0-1",
+     "popt": "1.19-2",
+     "portaudio": "1:19.7.0-4",
+     "procps-ng": "4.0.7-1",
+@@ -582,7 +582,7 @@
+     "sord": "0.16.22-1",
+     "sound-theme-freedesktop": "0.8-6",
+     "source-highlight": "3.1.9-19",
+-    "spandsp": "0.0.6-7",
++    "spandsp": "3.1.1-1",
+     "speex": "1.2.1-3",
+     "speexdsp": "1.2.1-3",
+     "spirv-tools": "1:1.4.363.0-1",
+@@ -591,7 +591,7 @@
+     "srt": "1.5.7-3",
+     "starship": "1.27.0-1",
+     "sudo": "1.9.17.p2-7",
+-    "svt-av1": "4.2.0-1",
++    "svt-av1": "4.3.0-1",
+     "systemd": "262.2-1",
+     "systemd-libs": "262.2-1",
+     "systemd-resolvconf": "262.2-1",
+@@ -607,7 +607,7 @@
+     "tmux": "3.8-1",
+     "tomlplusplus": "3.4.0-3",
+     "totem-pl-parser": "3.26.7-1",
+-    "tpm2-tss": "4.2.1-2",
++    "tpm2-tss": "4.2.2s-1",
+     "tree-sitter": "0.26.9-1",
+     "tree-sitter-c": "0.24.1-2",
+     "tree-sitter-lua": "0.5.0-3",
+@@ -621,7 +621,7 @@
+     "ttfx": "0.5.0-3",
+     "tzdata": "2026f-1",
+     "uchardet": "0.0.8-4",
+-    "udiskie": "2.7.0-2",
++    "udiskie": "2.8.1-1",
+     "udisks2": "2.12.0-1",
+     "unibilium": "2.1.4-1",
+     "unzip": "6.0-23",
+-- 
+2.56.0
+
