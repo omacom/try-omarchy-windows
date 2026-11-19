@@ -121,6 +121,10 @@
       {
         "file": "patches/qemu/0028-judge-sdl-hotkeys-by-their-key-events.patch",
         "sha256": "81231bd448cb757b5eef020e9c49ae3a32131547370c945c8f689c0d676b11b4"
+      },
+      {
+        "file": "patches/qemu/0029-keep-the-window-size-after-full-screen.patch",
+        "sha256": "60ca6c1fdcae52f2279ae4e1a98a437c9e52fb67cc510a3974e62fd409d3cbe2"
       }
     ]
   },

@@ -1,0 +1,176 @@
+sdl2: keep the window's size when the guest catches up after full screen
+
+Applies on top of 0028.
+
+The guest takes the size the window gives it a second or more later. When
+the window left full screen before the guest had switched to the full
+screen size, the guest switched to it afterwards, and sdl2_window_resize
+sized the window to it: the guest's full screen size plus a frame, larger
+than the work area. That size also became SDL's windowed size, so later
+rounds of full screen came back to it. A busy guest can also be a round
+behind: after the window left full screen it showed the windowed size of
+the round before, then this round's full screen size.
+
+The sizes a window has while full screen are now remembered from SDL's
+resize events. After the window leaves full screen it does not follow the
+guest to one of them unless it is the size the window asks the guest for
+now, until the user asks for the guest's size with Ctrl+Alt+0 or the window
+goes full screen again.
+
+Ctrl+Alt+F switches only the window it is pressed in, while gui_fullscreen
+is shared by every window, so it now goes by that window's own state;
+with two displays started full screen the second window's first press
+did nothing. A window remembers its own full screen size when it enters and
+leaves full screen, a window created again starts clean, and a display
+without ui-info, which is never asked for a size, does not hold back.
+
+--- a/include/ui/sdl2.h
++++ b/include/ui/sdl2.h
+@@ -54,6 +54,11 @@
+     bool guest_cursor;
+     int guest_x, guest_y;
+     int cursor_width, cursor_height;
++    /* Sizes the window had while full screen, and whether it left full
++     * screen since. */
++    int full_screen_size[4][2];
++    int full_screen_sizes;
++    bool after_full_screen;
+     bool has_dmabuf;
+     /* Windows: shown by the launcher (sdl2-held-win32.h) */
+     int64_t hold_ms, held_until;
+--- a/ui/sdl2.c
++++ b/ui/sdl2.c
+@@ -103,6 +103,8 @@
+      */
+     flags |= SDL_WINDOW_RESIZABLE;
+     scon->fullscreen_start = gui_fullscreen;
++    scon->full_screen_sizes = 0;
++    scon->after_full_screen = false;
+     if (gui_fullscreen) {
+         flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+     }
+@@ -181,6 +183,43 @@
+     scon->real_window = NULL;
+ }
+ 
++/*
++ * The guest takes the size the window gives it a second or more later, and
++ * a busy guest can show sizes a round of full screen or more out of date,
++ * in the order it was given them: after the window left full screen it can
++ * show the windowed size of the round before, then this round's full screen
++ * size, then the windowed size again. The sizes the window had while full
++ * screen are remembered (record). Once it has left full screen the window
++ * does not follow the guest to one of them unless it is the size the window
++ * asks the guest for now, until the user asks for the guest's size with
++ * Ctrl+Alt+0 or the window goes full screen again. Which sizes the guest has
++ * shown says nothing about what is still on its way, so they do not end it.
++ */
++static bool sdl2_full_screen_size(struct sdl2_console *scon, int w, int h,
++                                  bool record)
++{
++    int n = ARRAY_SIZE(scon->full_screen_size);
++    int i;
++
++    for (i = 0; i < scon->full_screen_sizes; i++) {
++        if (scon->full_screen_size[i][0] == w &&
++            scon->full_screen_size[i][1] == h) {
++            return true;
++        }
++    }
++    if (record) {
++        if (scon->full_screen_sizes == n) {
++            memmove(scon->full_screen_size[0], scon->full_screen_size[1],
++                    sizeof(scon->full_screen_size[0]) * (n - 1));
++            scon->full_screen_sizes--;
++        }
++        scon->full_screen_size[scon->full_screen_sizes][0] = w;
++        scon->full_screen_size[scon->full_screen_sizes][1] = h;
++        scon->full_screen_sizes++;
++    }
++    return false;
++}
++
+ void sdl2_window_resize(struct sdl2_console *scon)
+ {
+     if (!scon->real_window) {
+@@ -193,6 +232,18 @@
+     if (SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_FULLSCREEN) {
+         return;
+     }
++    /* A display without ui-info never asks the guest for a size, so there
++     * is nothing to hold back: the window follows the guest. */
++    if (scon->after_full_screen && dpy_ui_info_supported(scon->dcl.con)) {
++        const QemuUIInfo *asked = dpy_get_ui_info(scon->dcl.con);
++        int w = surface_width(scon->surface);
++        int h = surface_height(scon->surface);
++
++        if (sdl2_full_screen_size(scon, w, h, false) &&
++            ((int)asked->width != w || (int)asked->height != h)) {
++            return;
++        }
++    }
+ 
+     SDL_SetWindowSize(scon->real_window,
+                       surface_width(scon->surface),
+@@ -529,19 +580,41 @@
+                           usable.y + (usable.h - h) / 2);
+ }
+ 
++/* Remember the size a full screen window has now (sdl2_full_screen_size). */
++static void sdl2_record_full_screen_size(struct sdl2_console *scon)
++{
++    int w, h;
++
++    SDL_GetWindowSize(scon->real_window, &w, &h);
++    sdl2_full_screen_size(scon, w, h, true);
++}
++
+ static void toggle_full_screen(struct sdl2_console *scon)
+ {
+-    gui_fullscreen = !gui_fullscreen;
++    /* Ctrl+Alt+F switches only the window it is pressed in, and
++     * gui_fullscreen is shared by every window, so go by this window's own
++     * state: with two displays started full screen, the second window's
++     * first press otherwise asked a full screen window to go full screen
++     * and did nothing. */
++    gui_fullscreen = !(SDL_GetWindowFlags(scon->real_window) &
++                       SDL_WINDOW_FULLSCREEN);
+     if (gui_fullscreen) {
++        scon->full_screen_sizes = 0;
++        scon->after_full_screen = false;
+         SDL_SetWindowFullscreen(scon->real_window,
+                                 SDL_WINDOW_FULLSCREEN_DESKTOP);
++        sdl2_record_full_screen_size(scon);
+         gui_saved_grab = gui_grab;
+         sdl_grab_start(scon);
+     } else {
+         if (!gui_saved_grab) {
+             sdl_grab_end(scon);
+         }
++        /* SDL may not have reported the size of a window that started
++         * full screen. */
++        sdl2_record_full_screen_size(scon);
+         sdl2_window_size_after_full_screen(scon);
++        scon->after_full_screen = true;
+         SDL_SetWindowFullscreen(scon->real_window, 0);
+     }
+     sdl2_redraw(scon);
+@@ -622,6 +695,8 @@
+             }
+             break;
+         case SDL_SCANCODE_0:
++            /* The user asks for the guest's size: nothing is held back. */
++            scon->after_full_screen = false;
+             sdl2_window_resize(scon);
+             if (!scon->opengl) {
+                 /* re-create scon->texture */
+@@ -839,6 +914,9 @@
+             memset(&info, 0, sizeof(info));
+             info.width = ev->window.data1;
+             info.height = ev->window.data2;
++            if (SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_FULLSCREEN) {
++                sdl2_full_screen_size(scon, info.width, info.height, true);
++            }
+             dpy_set_ui_info(scon->dcl.con, &info, true);
+         }
+         sdl2_redraw(scon);
