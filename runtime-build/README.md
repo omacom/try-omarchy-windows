@@ -349,7 +349,11 @@ and after leaving full screen the window does not follow the guest to one of
 them unless it is the size the window asks for now, until the user asks for
 the guest's size with Ctrl+Alt+0 or the window goes full screen again. A busy
 guest can be a round behind and show the last round's windowed size before
-this round's full screen size, so the sizes the guest shows do not end it. Only a window
-that was full screen holds back, and a window created again starts clean.
-`test-sdl-fullscreen-window.py` runs a guest that switches late, for
-windowed and full screen starts, through QEMU's own `sdl2_window_create`.
+this round's full screen size, so the sizes the guest shows do not end it.
+Ctrl+Alt+F switches only the window it is pressed in while `gui_fullscreen`
+is shared by every window, so it goes by that window's own SDL flag, and each
+window remembers its own full screen size when it enters and leaves full
+screen. A window created again starts clean, and a display without ui-info is
+never asked for a size, so it follows the guest. `test-sdl-fullscreen-window.py`
+runs a guest that switches late, for windowed and full screen starts and for
+two windows, through QEMU's own `sdl2_window_create`.

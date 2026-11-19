@@ -124,7 +124,7 @@
       },
       {
         "file": "patches/qemu/0029-keep-the-window-size-after-full-screen.patch",
-        "sha256": "be3528a546ae03e56662227b015ae634e44fa4668c274cd66915f8d4fd519d99"
+        "sha256": "60ca6c1fdcae52f2279ae4e1a98a437c9e52fb67cc510a3974e62fd409d3cbe2"
       }
     ]
   },

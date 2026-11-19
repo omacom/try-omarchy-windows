@@ -60,6 +60,9 @@ typedef struct { unsigned width, height; } QemuUIInfo;
 /* The size the window last asked the guest for (dpy_set_ui_info). */
 static QemuUIInfo asked;
 __attribute__((unused)) static const QemuUIInfo *dpy_get_ui_info(QemuConsole *con) { (void)con; return &asked; }
+/* Whether the display device takes sizes from the window (ui-info). */
+static bool ui_info = true;
+__attribute__((unused)) static bool dpy_ui_info_supported(QemuConsole *con) { (void)con; return ui_info; }
 enum { DISPLAY_GL_MODE_ES = 2 };
 typedef struct { int gl; } DisplayOptions;
 struct sdl2_console {
@@ -97,6 +100,11 @@ static void SDL_SetWindowSize(SDL_Window *w, int width, int height)
         w->now.w = width;
         w->now.h = height;
     }
+}
+__attribute__((unused)) static void SDL_GetWindowSize(SDL_Window *w, int *width, int *height)
+{
+    *width = w->now.w;
+    *height = w->now.h;
 }
 static void SDL_SetWindowPosition(SDL_Window *w, int x, int y)
 {
@@ -281,8 +289,8 @@ int main(void)
 
     /* The guest takes a size a second or more after the window asks for it,
      * so it can still switch to the full screen sizes after the window left
-     * full screen. The window keeps its size, and follows the guest again
-     * once the guest shows another size. */
+     * full screen. The window keeps its size, and follows any size that
+     * was not one of its full screen sizes. */
     gui_fullscreen = 0;
     surface = (DisplaySurface){1280, 800};
     create(&scon, &win, 0);
@@ -301,15 +309,36 @@ int main(void)
     guest_resizes(&scon, 1280, 800);
     guest_resizes(&scon, 1024, 768);
     assert(win.now.w == 1024 && win.now.h == 768);
-    /* The next round of full screen remembers its own sizes only. */
+    /* The next round of full screen remembers its own sizes only: on the
+     * second monitor, the first monitor's full screen size is a size like
+     * any other afterwards. */
+    win.display = 1;
     before = win.now;
     toggle_full_screen(&scon);
     reported(&scon);
     launcher_grows(&scon);
     toggle_full_screen(&scon);
     reported(&scon);
-    guest_resizes(&scon, 1920, 1081);
+    guest_resizes(&scon, 2560, 1441);
     assert(same(win.now, before));
+    guest_resizes(&scon, 1920, 1081);
+    assert(win.now.w == 1920 && win.now.h == 1081);
+    win.display = 0;
+
+    /* A display device without ui-info is never asked for a size: the
+     * window follows the guest after full screen as before. */
+    ui_info = false;
+    gui_fullscreen = 0;
+    surface = (DisplaySurface){1280, 800};
+    create(&scon, &win, 0);
+    reported(&scon);
+    toggle_full_screen(&scon);
+    reported(&scon);
+    toggle_full_screen(&scon);
+    reported(&scon);
+    guest_resizes(&scon, 1920, 1080);
+    assert(win.now.w == 1920 && win.now.h == 1080);
+    ui_info = true;
 
     /* A full screen start keeps its first windowed size the same way. */
     gui_fullscreen = 1;
@@ -417,31 +446,61 @@ int main(void)
     guest_resizes(&scon, 1920, 1080);
     assert(win.now.w == 1920 && win.now.h == 1080);
 
-    /* gui_fullscreen is shared by every window. Ctrl+Alt+F in a second
-     * window that is not full screen, while the first one is, does not
-     * hold back the sizes of its own earlier round of full screen. */
+    /* Two windows. gui_fullscreen is shared by every window, and Ctrl+Alt+F
+     * switches the window it is pressed in, going by that window's state. */
     {
         SDL_Window win2;
-        DisplaySurface surface2 = {1024, 768};
+        DisplaySurface surface2 = {1280, 800};
         struct sdl2_console scon2 = { .surface = &surface2 };
-        gui_fullscreen = 0;
+
+        /* Both start full screen. Leaving in the first window, then in the
+         * second, takes each out of full screen; the second, whose size SDL
+         * never reported, still holds back its full screen size. */
+        gui_fullscreen = 1;
         surface = (DisplaySurface){1280, 800};
         create(&scon, &win, 0);
         create(&scon2, &win2, 1);
-        reported(&scon2);
+        reported(&scon);
+        toggle_full_screen(&scon);
+        assert(!(win.flags & SDL_WINDOW_FULLSCREEN) && (win2.flags & SDL_WINDOW_FULLSCREEN));
         toggle_full_screen(&scon2);
+        assert(!(win2.flags & SDL_WINDOW_FULLSCREEN) && scon2.after_full_screen);
+        before = win2.now;
         reported(&scon2);
-        launcher_grows(&scon2);
+        guest_resizes(&scon2, 2560, 1440);
+        assert(same(win2.now, before) && fits(&win2));
+        /* And back in, each on its own press. */
         toggle_full_screen(&scon2);
+        assert((win2.flags & SDL_WINDOW_FULLSCREEN) && !(win.flags & SDL_WINDOW_FULLSCREEN));
+        toggle_full_screen(&scon);
+        assert(win.flags & SDL_WINDOW_FULLSCREEN);
+
+        /* Windowed start: the second window goes full screen while the first
+         * one is, and the first leaves on its next press. A window whose
+         * press only saw the shared flag would have its remembered sizes
+         * wiped while it stayed full screen. */
+        gui_fullscreen = 0;
+        surface = (DisplaySurface){1280, 800};
+        surface2 = (DisplaySurface){1024, 768};
+        create(&scon, &win, 0);
+        create(&scon2, &win2, 1);
+        reported(&scon);
         reported(&scon2);
-        guest_resizes(&scon2, 1280, 720);
-        assert(win2.now.w == 1280 && win2.now.h == 720);
         toggle_full_screen(&scon);
         reported(&scon);
+        launcher_grows(&scon);
         toggle_full_screen(&scon2);
-        assert(!gui_fullscreen && !scon2.after_full_screen);
-        guest_resizes(&scon2, 2560, 1441);
-        assert(win2.now.w == 2560 && win2.now.h == 1441);
+        reported(&scon2);
+        assert((win.flags & SDL_WINDOW_FULLSCREEN) && (win2.flags & SDL_WINDOW_FULLSCREEN));
+        before = win.windowed;
+        toggle_full_screen(&scon);
+        reported(&scon);
+        assert(!(win.flags & SDL_WINDOW_FULLSCREEN) && (win2.flags & SDL_WINDOW_FULLSCREEN));
+        guest_resizes(&scon, 1920, 1081);
+        assert(same(win.now, before));
+        toggle_full_screen(&scon2);
+        reported(&scon2);
+        assert(!(win2.flags & SDL_WINDOW_FULLSCREEN) && win2.now.w == 1024 && win2.now.h == 768);
     }
 
     puts("ok - full screen starts are resizable and leave full screen inside the usable area; windowed starts keep their size, also when the guest is late");

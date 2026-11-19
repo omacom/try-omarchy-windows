@@ -15,9 +15,14 @@ The sizes a window has while full screen are now remembered from SDL's
 resize events. After the window leaves full screen it does not follow the
 guest to one of them unless it is the size the window asks the guest for
 now, until the user asks for the guest's size with Ctrl+Alt+0 or the window
-goes full screen again. Only a window that was full screen holds back
-(gui_fullscreen is shared by every window), and a window created again
-starts clean.
+goes full screen again.
+
+Ctrl+Alt+F switches only the window it is pressed in, while gui_fullscreen
+is shared by every window, so it now goes by that window's own state;
+with two displays started full screen the second window's first press
+did nothing. A window remembers its own full screen size when it enters and
+leaves full screen, a window created again starts clean, and a display
+without ui-info, which is never asked for a size, does not hold back.
 
 --- a/include/ui/sdl2.h
 +++ b/include/ui/sdl2.h
@@ -88,11 +93,13 @@ starts clean.
  void sdl2_window_resize(struct sdl2_console *scon)
  {
      if (!scon->real_window) {
-@@ -193,6 +232,16 @@
+@@ -193,6 +232,18 @@
      if (SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_FULLSCREEN) {
          return;
      }
-+    if (scon->after_full_screen) {
++    /* A display without ui-info never asks the guest for a size, so there
++     * is nothing to hold back: the window follows the guest. */
++    if (scon->after_full_screen && dpy_ui_info_supported(scon->dcl.con)) {
 +        const QemuUIInfo *asked = dpy_get_ui_info(scon->dcl.con);
 +        int w = surface_width(scon->surface);
 +        int h = surface_height(scon->surface);
@@ -105,27 +112,50 @@ starts clean.
  
      SDL_SetWindowSize(scon->real_window,
                        surface_width(scon->surface),
-@@ -533,6 +582,8 @@
+@@ -529,19 +580,41 @@
+                           usable.y + (usable.h - h) / 2);
+ }
+ 
++/* Remember the size a full screen window has now (sdl2_full_screen_size). */
++static void sdl2_record_full_screen_size(struct sdl2_console *scon)
++{
++    int w, h;
++
++    SDL_GetWindowSize(scon->real_window, &w, &h);
++    sdl2_full_screen_size(scon, w, h, true);
++}
++
+ static void toggle_full_screen(struct sdl2_console *scon)
  {
-     gui_fullscreen = !gui_fullscreen;
+-    gui_fullscreen = !gui_fullscreen;
++    /* Ctrl+Alt+F switches only the window it is pressed in, and
++     * gui_fullscreen is shared by every window, so go by this window's own
++     * state: with two displays started full screen, the second window's
++     * first press otherwise asked a full screen window to go full screen
++     * and did nothing. */
++    gui_fullscreen = !(SDL_GetWindowFlags(scon->real_window) &
++                       SDL_WINDOW_FULLSCREEN);
      if (gui_fullscreen) {
 +        scon->full_screen_sizes = 0;
 +        scon->after_full_screen = false;
          SDL_SetWindowFullscreen(scon->real_window,
                                  SDL_WINDOW_FULLSCREEN_DESKTOP);
++        sdl2_record_full_screen_size(scon);
          gui_saved_grab = gui_grab;
-@@ -542,6 +593,10 @@
+         sdl_grab_start(scon);
+     } else {
+         if (!gui_saved_grab) {
              sdl_grab_end(scon);
          }
++        /* SDL may not have reported the size of a window that started
++         * full screen. */
++        sdl2_record_full_screen_size(scon);
          sdl2_window_size_after_full_screen(scon);
-+        /* gui_fullscreen is shared by every window; this one may not have
-+         * been full screen. */
-+        scon->after_full_screen = SDL_GetWindowFlags(scon->real_window) &
-+                                  SDL_WINDOW_FULLSCREEN;
++        scon->after_full_screen = true;
          SDL_SetWindowFullscreen(scon->real_window, 0);
      }
      sdl2_redraw(scon);
-@@ -622,6 +677,8 @@
+@@ -622,6 +695,8 @@
              }
              break;
          case SDL_SCANCODE_0:
@@ -134,7 +164,7 @@ starts clean.
              sdl2_window_resize(scon);
              if (!scon->opengl) {
                  /* re-create scon->texture */
-@@ -839,6 +896,9 @@
+@@ -839,6 +914,9 @@
              memset(&info, 0, sizeof(info));
              info.width = ev->window.data1;
              info.height = ev->window.data2;

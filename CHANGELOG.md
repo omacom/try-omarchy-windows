@@ -22,6 +22,9 @@
   switched afterwards and the window grew to the size of the screen plus its
   frame, moved to the corner of the screen, and could keep that size for
   later rounds of full screen and the next start.
+- With two displays, Ctrl+Alt+F switches the window it is pressed in each
+  time. After one window had left full screen, the other window's first press
+  did nothing.
 - A display mode or taskbar change while Omarchy starts no longer leaves the
   window the wrong size when it appears. The hidden window now moves to where
   it will be shown on the new layout, so Omarchy's desktop is drawn at that
