@@ -133,6 +133,41 @@ func curtainRevealDone(cloaked []bool, lifted, now time.Time) (done, late bool) 
 	return !slices.Contains(cloaked, true), false
 }
 
+// lateReveals holds the windows a lift handed over from while QEMU still had
+// them cloaked, after curtainFrameWait. The shell leaves a cloaked window
+// alone, so their taskbar buttons, full screen marks and the focus go again
+// once QEMU shows them. tab says the curtain had taken the button off.
+type lateReveals struct {
+	mu      sync.Mutex
+	windows map[uintptr]bool
+}
+
+func (l *lateReveals) add(hwnd uintptr, tab bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.windows == nil {
+		l.windows = map[uintptr]bool{}
+	}
+	l.windows[hwnd] = tab
+}
+
+// take reports, once, whether hwnd waits for its shell steps, and whether
+// its taskbar button goes back.
+func (l *lateReveals) take(hwnd uintptr) (waiting, tab bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	tab, waiting = l.windows[hwnd]
+	delete(l.windows, hwnd)
+	return waiting, tab
+}
+
+// focusAfterLateReveal reports whether a window QEMU showed after the hand
+// over takes the focus: only if the user has not gone to another app since,
+// so the foreground is nothing, the launcher or QEMU.
+func focusAfterLateReveal(foreground uintptr, ours func(uintptr) bool) bool {
+	return foreground == 0 || ours(foreground)
+}
+
 // slowStart reports whether the setup window should say that Omarchy is
 // taking longer than usual. Once the session has started, the curtain lifts
 // on the drawn report or curtainDrawWait later, both normal for the guest

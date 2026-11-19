@@ -85,12 +85,9 @@ func pruneWindowEventState(pid uint32, live func(uintptr, uint32) bool) {
 }
 
 func qemuWindowEvent(_, event, hwnd, idObject, idChild, _, _ uintptr) uintptr {
-	// idChild is a LONG: the cloak events arrive with the upper half of
-	// the register set.
-	if event == eventObjectUncloaked || event == eventObjectCloaked {
-		idChild = uintptr(uint32(idChild))
-	}
-	if hwnd == 0 || int32(idObject) != objidWindow || idChild != 0 {
+	// idObject and idChild are LONGs. The fifth argument is passed on the
+	// stack, so the upper half of idChild can hold anything, for any event.
+	if hwnd == 0 || int32(idObject) != objidWindow || int32(idChild) != 0 {
 		return 0
 	}
 	// A destroyed HWND no longer has a live PID/class to filter against.
@@ -124,7 +121,10 @@ func qemuWindowEvent(_, event, hwnd, idObject, idChild, _, _ uintptr) uintptr {
 		restoreDisplayTitle(hwnd)
 	case eventObjectUncloaked:
 		// Not on the title enforcer, which may be busy placing the window.
-		go finishCurtainReveal()
+		go func() {
+			finishCurtainReveal()
+			redoLateReveal(hwnd)
+		}()
 	case eventSystemMoveSizeStart:
 		draggedWindows.Store(hwnd, qemuPid.Load())
 	case eventSystemMoveSizeEnd:

@@ -578,3 +578,40 @@ func TestCurtainRevealDone(t *testing.T) {
 		}
 	}
 }
+
+func TestLateReveals(t *testing.T) {
+	var late lateReveals
+	if waiting, _ := late.take(1); waiting {
+		t.Fatal("a window nobody handed over from waits")
+	}
+	late.add(1, true)
+	late.add(2, false)
+	// A window shown after the hand over gets its steps once.
+	if waiting, tab := late.take(1); !waiting || !tab {
+		t.Fatalf("window 1: waiting %v tab %v", waiting, tab)
+	}
+	if waiting, _ := late.take(1); waiting {
+		t.Fatal("window 1 got its steps twice")
+	}
+	// The curtain left this one's button alone.
+	if waiting, tab := late.take(2); !waiting || tab {
+		t.Fatalf("window 2: waiting %v tab %v", waiting, tab)
+	}
+}
+
+func TestFocusAfterLateReveal(t *testing.T) {
+	ours := func(h uintptr) bool { return h == 10 || h == 11 }
+	for _, tc := range []struct {
+		foreground uintptr
+		want       bool
+	}{
+		{0, true},   // nothing has the focus
+		{10, true},  // the launcher, or
+		{11, true},  // QEMU, still has it
+		{99, false}, // the user went to another app: it keeps the focus
+	} {
+		if got := focusAfterLateReveal(tc.foreground, ours); got != tc.want {
+			t.Errorf("foreground %d: focus %v, want %v", tc.foreground, got, tc.want)
+		}
+	}
+}

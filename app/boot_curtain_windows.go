@@ -81,6 +81,8 @@ var (
 	curtainWaitsForFrame atomic.Bool
 	// The lift waiting for QEMU to uncloak its windows, under curtainMu.
 	curtainRevealing *curtainReveal
+	// Windows the lift handed over from while still cloaked.
+	curtainLate lateReveals
 )
 
 type curtainReveal struct {
@@ -584,6 +586,7 @@ func refreshWindowFrame(hwnd uintptr) {
 // gives the same handle is concealed again.
 func forgetCurtainWindow(hwnd uintptr) {
 	taskbarFullscreen.forget(hwnd)
+	curtainLate.take(hwnd)
 	curtainMu.Lock()
 	delete(curtainWindows, hwnd)
 	delete(curtainLifting, hwnd)
@@ -914,12 +917,51 @@ func finishCurtainReveal() {
 	} else {
 		logf("startup: QEMU showed Omarchy's window %v after the lift", took)
 	}
+	var stillCloaked []uintptr
 	for hwnd, window := range reveal.windows {
-		if isQemuDisplayWindow(hwnd, pid) {
-			showCurtainTab(hwnd, window)
+		if !isQemuDisplayWindow(hwnd, pid) {
+			continue
+		}
+		showCurtainTab(hwnd, window)
+		if late && windowCloakedByApp(hwnd) {
+			curtainLate.add(hwnd, window.tabRemoved)
+			stillCloaked = append(stillCloaked, hwnd)
 		}
 	}
 	handOverFromCurtain()
+	// QEMU may have shown a window between the look and the record.
+	for _, hwnd := range stillCloaked {
+		if !windowCloakedByApp(hwnd) {
+			redoLateReveal(hwnd)
+		}
+	}
+}
+
+// redoLateReveal gives a window QEMU showed after the hand over the shell
+// steps the shell ignored while it was cloaked: its taskbar button and full
+// screen mark, and the focus unless the user went to another app since.
+func redoLateReveal(hwnd uintptr) {
+	waiting, tab := curtainLate.take(hwnd)
+	if !waiting {
+		return
+	}
+	if tab {
+		curtainTabMu.Lock()
+		taskbarTab(hwnd, true)
+		curtainTabMu.Unlock()
+	}
+	taskbarFullscreen.forget(hwnd)
+	syncFullscreenMark(hwnd)
+	foreground, _, _ := procGetForegroundWindow.Call()
+	focus := focusAfterLateReveal(foreground, func(h uintptr) bool {
+		var owner uint32
+		procGetWindowThreadProcessId.Call(h, uintptr(unsafe.Pointer(&owner)))
+		return owner == uint32(os.Getpid()) || isQemuDisplayWindow(h, qemuPid.Load())
+	})
+	if focus {
+		procSetForegroundWindow.Call(hwnd)
+	}
+	logf("startup: QEMU showed Omarchy's window after the hand over; taskbar button and full screen mark again, focus %v", focus)
 }
 
 // windowShowsDesktop reads the window's picture through the compositor, as
