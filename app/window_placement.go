@@ -273,11 +273,41 @@ func fullscreenPlacement(wasFullscreen, fullscreen bool, last *windowPlacement) 
 	return nil, false
 }
 
-// leftStartFullscreen reports that the window of a full screen start, which
-// had no frame on the last pass (wasFullscreen), has one again: the user
-// took it out of full screen.
-func leftStartFullscreen(wasFullscreen, framed bool) bool {
-	return wasFullscreen && framed
+// fullscreenStartPass is one title enforcer pass over a full screen start's
+// window: whether to place it in the work area (it left full screen) and
+// whether it counts as full screen from now on. A window without a frame is
+// full screen, also while a display mode change leaves it short of its
+// monitor for a moment. SDL gives the window its frame back a moment before
+// its windowed size, so a framed window that still has the full screen
+// rectangle (fullscreenRect), or whose rectangle could not be read (rect is
+// nil), is left as it was until a later pass.
+func fullscreenStartPass(wasFullscreen, framed bool, rect *screenRect, monitors []hostMonitor) (place, fullscreen bool) {
+	if framed && (rect == nil || fullscreenRect(*rect, monitors)) {
+		return false, wasFullscreen
+	}
+	return wasFullscreen && framed, !framed
+}
+
+// savablePlacement is the placement to remember for a window, or nil while
+// it has no frame. QEMU's windows have one outside full screen; SDL takes it
+// off, along with the maximized state, before the window covers its monitor,
+// and that step is not the user's.
+func savablePlacement(now *windowPlacement, framed bool) *windowPlacement {
+	if !framed {
+		return nil
+	}
+	return now
+}
+
+// fullscreenRect reports whether r is a monitor's full screen rectangle:
+// the monitor's own, or one line larger (fullscreenGrown).
+func fullscreenRect(r screenRect, monitors []hostMonitor) bool {
+	for _, m := range monitors {
+		if r == m.Bounds {
+			return true
+		}
+	}
+	return grownFullscreen(r, monitors)
 }
 
 // windowIntoWorkArea is where a window of size now goes to be inside work:
@@ -296,18 +326,6 @@ func windowIntoWorkArea(now, work screenRect) (to screenRect, move bool) {
 	left, top := place(now.width(), work.Left, work.Right), place(now.height(), work.Top, work.Bottom)
 	to = screenRect{left, top, left + now.width(), top + now.height()}
 	return to, to != now
-}
-
-// placementBeforeFullscreen picks the placement to put back after fullscreen.
-// SDL un-maximizes a maximized window on its way into fullscreen, and that
-// step can be saved like a user's change just before the window covers the
-// screen. A save that recent belongs to the transition, so the placement it
-// replaced is the one to restore.
-func placementBeforeFullscreen(last, previous *windowPlacement, sinceSave time.Duration) *windowPlacement {
-	if previous != nil && sinceSave >= 0 && sinceSave < 2*time.Second {
-		return previous
-	}
-	return last
 }
 
 type placementStep int

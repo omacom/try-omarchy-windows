@@ -21,6 +21,12 @@
   window the wrong size when it appears. The hidden window now moves to where
   it will be shown on the new layout, so Omarchy's desktop is drawn at that
   size before the window appears instead of redrawing black right after.
+- Taking a full screen start out of full screen with Ctrl+Alt+F brings the
+  window back where it belongs. It could land in the top left corner of the
+  screen when the window got its title bar back a moment before its size.
+- A maximized window comes back maximized after full screen every time.
+  Going into full screen could be saved as the window's size, so it came back
+  un-maximized at the size of the screen, then and on later starts.
 - The taskbar shows one Try Omarchy button while Omarchy starts. A second
   button for the still hidden window could appear and stay until the window
   was shown.

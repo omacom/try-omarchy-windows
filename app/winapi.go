@@ -228,9 +228,7 @@ type displayWindowState struct {
 	topologyRepair bool             // retained while minimized or being dragged
 	fullscreen     bool             // QEMU's Ctrl+Alt+F fullscreen, seen on the last pass
 	beforeFull     *windowPlacement // what to put back when fullscreen ends
-	previous       *windowPlacement // last before its most recent save
-	savedAt        time.Time
-	concealed      bool // the boot curtain hid it on an earlier pass
+	concealed      bool             // the boot curtain hid it on an earlier pass
 }
 
 func (state *displayWindowState) repairTopology(now *windowPlacement, dragging bool, monitors []hostMonitor, apply func(*windowPlacement) bool) *windowPlacement {
@@ -402,23 +400,24 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		// it spills off the screen. It goes to the work area's corner, or the
 		// middle when it fits, keeping its size. The caption tells, since the
 		// window can stop covering its monitor while the display mode changes.
-		style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
-		framed := style&wsCaption == wsCaption
-		if leftStartFullscreen(state.fullscreen, framed) {
-			var now screenRect
+		var now screenRect
+		rect := &now
+		if got, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&now))); got == 0 {
+			rect = nil
+		}
+		place, fullscreen := fullscreenStartPass(state.fullscreen, windowFramed(hwnd), rect, enumTitleMonitorDetails)
+		state.fullscreen = fullscreen
+		if place {
 			if monitor, ok := hostMonitorForWindow(hwnd); ok {
-				if result, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&now))); result != 0 {
-					if to, move := windowIntoWorkArea(now, monitor.Work); move {
-						procSetWindowPos.Call(hwnd, 0, uintptr(to.Left), uintptr(to.Top), 0, 0, swpNoSize|swpNoZorder|swpNoOwnerZOrder)
-						logf("full screen: the window left full screen at %dx%d; moved it to %d,%d", now.width(), now.height(), to.Left, to.Top)
-					}
+				if to, move := windowIntoWorkArea(now, monitor.Work); move {
+					procSetWindowPos.Call(hwnd, 0, uintptr(to.Left), uintptr(to.Top), 0, 0, swpNoSize|swpNoZorder|swpNoOwnerZOrder)
+					logf("full screen: the window left full screen at %dx%d; moved it to %d,%d", now.width(), now.height(), to.Left, to.Top)
 				}
 			}
 		}
-		state.fullscreen = !framed
 	}
 	if !enumTitleFullscreen && !state.fullscreen {
-		if restored := state.repairTopology(capturePlacement(hwnd), beingDragged(hwnd), enumTitleMonitorDetails, func(p *windowPlacement) bool {
+		if restored := state.repairTopology(userPlacement(hwnd), beingDragged(hwnd), enumTitleMonitorDetails, func(p *windowPlacement) bool {
 			return correctPlacement(hwnd, p)
 		}); restored != nil {
 			restored.SavedAt = time.Now()
@@ -443,7 +442,7 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	if !enumTitleFullscreen {
 		fullscreen := displayWindowFullscreen(hwnd)
 		if fullscreen && !state.fullscreen {
-			state.beforeFull = placementBeforeFullscreen(state.last, state.previous, time.Since(state.savedAt))
+			state.beforeFull = state.last
 		}
 		restore, handled := fullscreenPlacement(state.fullscreen, fullscreen, state.beforeFull)
 		state.fullscreen = fullscreen
@@ -453,12 +452,11 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 			}
 			return 1
 		}
-		now := capturePlacement(hwnd)
+		now := userPlacement(hwnd)
 		switch nextPlacementStep(now, state.last, state.target, takeUserMoved(hwnd), beingDragged(hwnd), !guestFollowsWindow.Load()) {
 		case placementSave:
 			now.SavedAt = time.Now()
 			if saveDisplayPlacement(enumTitleDir, state.index, *now) == nil {
-				state.previous, state.savedAt = state.last, now.SavedAt
 				state.last = now
 			}
 			state.target = now
