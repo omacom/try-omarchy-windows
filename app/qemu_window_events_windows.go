@@ -85,6 +85,11 @@ func pruneWindowEventState(pid uint32, live func(uintptr, uint32) bool) {
 }
 
 func qemuWindowEvent(_, event, hwnd, idObject, idChild, _, _ uintptr) uintptr {
+	// idChild is a LONG: the cloak events arrive with the upper half of
+	// the register set.
+	if event == eventObjectUncloaked || event == eventObjectCloaked {
+		idChild = uintptr(uint32(idChild))
+	}
 	if hwnd == 0 || int32(idObject) != objidWindow || idChild != 0 {
 		return 0
 	}
