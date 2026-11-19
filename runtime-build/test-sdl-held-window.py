@@ -85,7 +85,7 @@ typedef struct { unsigned cbSize; UINT64 cFrame; char rest[300]; } DWM_TIMING_IN
 typedef struct { int version; struct { struct { HWND window; } win; } info; } SDL_SysWMinfo;
 #define SDL_VERSION(v) (*(v) = 2)
 struct sdl2_console { SDL_Window *real_window; int hidden; int64_t hold_ms, held_until;
-    bool cloaked, cloak_framed, cloak_counted; uint64_t cloak_composed; int64_t cloak_shown, cloak_until; int cloak_w, cloak_h; };
+    bool cloaked, cloak_framed, cloak_counted; uint64_t cloak_composed; int64_t cloak_shown, cloak_until; int cloak_w, cloak_h; int cloak_rect[4]; };
 static const char *env;
 static int64_t clock_ms;
 static int shows, props, prop_fails;
@@ -122,7 +122,7 @@ static HANDLE RemovePropW(HWND hwnd, const WCHAR *name) {
 }
 static void SDL_ShowWindow(SDL_Window *w) { shows++; }
 /* The window as Windows and DWM see it. */
-static int visible, region = 0, client_w = 800, client_h = 600, cloak, cloak_calls, dwm_refuses, fills;
+static int visible, region = 0, client_w = 800, client_h = 600, frame_x, frame_y, cloak, cloak_calls, dwm_refuses, fills;
 /* DWM's count of composed frames; timing_fails makes it unable to say. */
 static UINT64 composed;
 static int timing_fails;
@@ -131,6 +131,11 @@ static HRGN CreateRectRgn(int a, int b, int c, int d) { return (HRGN)1; }
 static int GetWindowRgn(HWND hwnd, HRGN r) { return region; }
 static BOOL DeleteObject(HGDIOBJ o) { return 1; }
 static BOOL GetClientRect(HWND hwnd, RECT *r) { r->left = r->top = 0; r->right = client_w; r->bottom = client_h; return 1; }
+/* The window's rectangle: its client area, moved by frame_x and frame_y. */
+static BOOL GetWindowRect(HWND hwnd, RECT *r) {
+    r->left = -frame_x; r->top = -frame_y; r->right = client_w + frame_x; r->bottom = client_h + frame_x;
+    return 1;
+}
 static HDC GetDC(HWND hwnd) { return (HDC)hwnd; }
 static int ReleaseDC(HWND hwnd, HDC dc) { return 1; }
 static HGDIOBJ GetStockObject(int i) { assert(i == BLACK_BRUSH); return (HGDIOBJ)8; }
@@ -163,7 +168,7 @@ static struct window window = {1};
 static struct sdl2_console fresh(void) {
     struct sdl2_console scon = { .real_window = 0, .hidden = 0, .hold_ms = 7, .held_until = 9 };
     shows = props = prop_fails = 0;
-    visible = 0; region = 0; client_w = 800; client_h = 600;
+    visible = 0; region = 0; client_w = 800; client_h = 600; frame_x = frame_y = 0;
     cloak = cloak_calls = dwm_refuses = fills = timing_fails = 0;
     return scon;
 }
@@ -279,6 +284,24 @@ int main(void) {
     win_cloak_presented(&scon, 800, 600);
     assert(!win_cloak_poll(&scon) && cloak);
     win_cloak_presented(&scon, 1280, 720);
+    composed++;
+    assert(!win_cloak_poll(&scon) && !cloak);
+
+    /* The window gets its frame back, or is moved, after its frame: the
+     * client size stays but the picture moves, so it waits for a frame
+     * drawn after that. */
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    win_cloak_presented(&scon, 800, 600);
+    frame_x = 8; frame_y = 31;
+    composed++;
+    assert(win_cloak_poll(&scon) && cloak);
+    composed++;
+    assert(!win_cloak_poll(&scon) && cloak);
+    win_cloak_presented(&scon, 800, 600);
+    assert(!win_cloak_poll(&scon) && cloak);
     composed++;
     assert(!win_cloak_poll(&scon) && !cloak);
 

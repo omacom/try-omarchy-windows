@@ -372,7 +372,8 @@ uncloaked anyway one second after it came on screen
 without such a frame, ten minutes after it was cloaked, on Ctrl+Alt+F and
 when it is destroyed; if DWM refuses the cloak the window behaves as before.
 `test-sdl-held-window.py` also runs the cloak against mocked Win32 and DWM
-calls: frames drawn hidden, with an empty region or at another size, a region
+calls: frames drawn hidden, with an empty region, at another size or before
+the window got its frame back, a region
 emptied and restored between two rounds, a resize after the frame, paused
 composition and an unreadable frame count, both time limits, the old self show, every exit and refused
 calls, and checks that every present reports its size.

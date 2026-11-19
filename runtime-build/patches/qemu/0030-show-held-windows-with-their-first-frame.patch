@@ -18,15 +18,15 @@ at the size the window has then, in the same round when it can. QEMU only
 reads the count and never waits on DWM, which can take far longer than a
 frame with the display off or the session disconnected. If DWM cannot give
 the count the window is uncloaked on the round after its frame. A window
-resized after its
-frame waits for one at the new size. It is uncloaked anyway a second after
+resized, moved or given its frame back after its frame waits for one drawn
+after that. It is uncloaked anyway a second after
 it came on screen without such a frame, ten minutes after it was cloaked,
 on Ctrl+Alt+F and when it is destroyed. If DWM refuses the cloak the window behaves as before, and a
 refused uncloak is tried again on the next round.
 
 --- a/include/ui/sdl2.h
 +++ b/include/ui/sdl2.h
-@@ -62,6 +62,11 @@ struct sdl2_console {
+@@ -62,6 +62,12 @@ struct sdl2_console {
      bool has_dmabuf;
      /* Windows: shown by the launcher (sdl2-held-win32.h) */
      int64_t hold_ms, held_until;
@@ -35,10 +35,11 @@ refused uncloak is tried again on the next round.
 +    uint64_t cloak_composed;
 +    int64_t cloak_shown, cloak_until;
 +    int cloak_w, cloak_h;
++    int cloak_rect[4];
      /* Created full screen and not yet left it: no windowed size of its own */
      bool fullscreen_start;
  #ifdef CONFIG_OPENGL
-@@ -77,6 +82,7 @@ void sdl2_window_create(struct sdl2_console *scon);
+@@ -77,6 +83,7 @@ void sdl2_window_create(struct sdl2_console *scon);
  void sdl2_window_destroy(struct sdl2_console *scon);
  void sdl2_window_resize(struct sdl2_console *scon);
  void sdl2_poll_events(struct sdl2_console *scon);
@@ -112,7 +113,7 @@ refused uncloak is tried again on the next round.
  }
  
  static void win_hold_release(struct sdl2_console *scon, bool show)
-@@ -90,10 +95,202 @@ static void win_hold_poll(struct sdl2_console *scon)
+@@ -90,10 +95,221 @@ static void win_hold_poll(struct sdl2_console *scon)
          win_hold_release(scon, true);
      }
  }
@@ -235,6 +236,18 @@ refused uncloak is tried again on the next round.
 +        client.right - client.left == w && client.bottom - client.top == h;
 +}
 +
++/* The frame was presented at the window's current size and rectangle. A
++ * new frame or placement keeps the client size but moves the picture. */
++static bool win_cloak_frame_current(struct sdl2_console *scon, HWND hwnd)
++{
++    RECT r;
++
++    return win_cloak_size_is(hwnd, scon->cloak_w, scon->cloak_h) &&
++        GetWindowRect(hwnd, &r) && r.left == scon->cloak_rect[0] &&
++        r.top == scon->cloak_rect[1] && r.right == scon->cloak_rect[2] &&
++        r.bottom == scon->cloak_rect[3];
++}
++
 +/* Runs after each round of window messages; true asks for a frame. */
 +static bool win_cloak_poll(struct sdl2_console *scon)
 +{
@@ -272,7 +285,7 @@ refused uncloak is tried again on the next round.
 +        scon->cloak_framed = false;
 +        return true;
 +    }
-+    if (scon->cloak_framed && win_cloak_size_is(hwnd, scon->cloak_w, scon->cloak_h) &&
++    if (scon->cloak_framed && win_cloak_frame_current(scon, hwnd) &&
 +        win_cloak_composed(scon)) {
 +        win_cloak_end(scon);
 +        return false;
@@ -281,8 +294,9 @@ refused uncloak is tried again on the next round.
 +        win_cloak_end(scon);
 +        return false;
 +    }
-+    /* The window was resized after the frame: wait for one at its size. */
-+    if (scon->cloak_framed && !win_cloak_size_is(hwnd, scon->cloak_w, scon->cloak_h)) {
++    /* The window was resized, moved or given another frame after the
++     * frame: wait for one drawn after that. */
++    if (scon->cloak_framed && !win_cloak_frame_current(scon, hwnd)) {
 +        scon->cloak_framed = false;
 +        return true;
 +    }
@@ -293,13 +307,19 @@ refused uncloak is tried again on the next round.
 +static void win_cloak_presented(struct sdl2_console *scon, int w, int h)
 +{
 +    HWND hwnd;
++    RECT r;
 +
 +    if (!scon->cloaked || !scon->cloak_shown) {
 +        return;
 +    }
 +    hwnd = win_hold_hwnd(scon->real_window);
-+    if (hwnd && win_cloak_exposed(hwnd) && win_cloak_size_is(hwnd, w, h)) {
++    if (hwnd && win_cloak_exposed(hwnd) && win_cloak_size_is(hwnd, w, h) &&
++        GetWindowRect(hwnd, &r)) {
 +        scon->cloak_framed = true;
++        scon->cloak_rect[0] = r.left;
++        scon->cloak_rect[1] = r.top;
++        scon->cloak_rect[2] = r.right;
++        scon->cloak_rect[3] = r.bottom;
 +        scon->cloak_w = w;
 +        scon->cloak_h = h;
 +        scon->cloak_counted = win_dwm_composed(&scon->cloak_composed);
