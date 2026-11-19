@@ -365,11 +365,14 @@ what its surface held from before until QEMU's next frame: black, and on some
 GPUs a white block where the window was first created. A held window is now
 also cloaked with `DWMWA_CLOAK`; DWM goes on composing it, so frames reach it.
 Once it is shown with a region that is not empty, QEMU paints it black, draws
-a frame, and uncloaks it after a frame at its current size has been presented
-and composed. It is uncloaked anyway one second after it came on screen
+a frame, and uncloaks it once DWM's composed frame count has moved on since a
+frame at its current size was presented. QEMU only reads that count and never
+waits on DWM, so a paused or slow compositor cannot stall its main loop. It is
+uncloaked anyway one second after it came on screen
 without such a frame, ten minutes after it was cloaked, on Ctrl+Alt+F and
 when it is destroyed; if DWM refuses the cloak the window behaves as before.
 `test-sdl-held-window.py` also runs the cloak against mocked Win32 and DWM
-calls: frames drawn hidden, with an empty region or at another size, a resize
-after the frame, both time limits, the old self show, every exit and refused
+calls: frames drawn hidden, with an empty region or at another size, a region
+emptied and restored between two rounds, a resize after the frame, paused
+composition and an unreadable frame count, both time limits, the old self show, every exit and refused
 calls, and checks that every present reports its size.

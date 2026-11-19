@@ -11,6 +11,11 @@ root = parser.parse_args().source
 header = (root / 'ui/sdl2-held-win32.h').read_text(encoding='utf-8')
 source = (root / 'ui/sdl2.c').read_text(encoding='utf-8')
 body = header[header.index('#ifdef CONFIG_WIN32\n') + len('#ifdef CONFIG_WIN32\n'):header.index('#else\n')]
+# The mocks below stand in for the DWM types.
+assert body.startswith('#include <dwmapi.h>\n')
+body = body[len('#include <dwmapi.h>\n'):]
+# Nothing waits for DWM on QEMU's main thread.
+assert 'DwmFlush' not in header
 
 
 def section(text, start, end):
@@ -64,10 +69,13 @@ typedef const void *LPCVOID;
 typedef void *HMODULE, *HRGN, *HDC, *HBRUSH, *HGDIOBJ;
 typedef void (*FARPROC)(void);
 typedef struct { long left, top, right, bottom; } RECT;
+typedef uint64_t UINT64;
+typedef struct { unsigned cbSize; UINT64 cFrame; char rest[300]; } DWM_TIMING_INFO;
 #define WINAPI
 #define TRUE 1
 #define FALSE 0
 #define SUCCEEDED(hr) ((hr) >= 0)
+#define FAILED(hr) ((hr) < 0)
 #define NULLREGION 1
 #define SIMPLEREGION 2
 #define BLACK_BRUSH 4
@@ -77,7 +85,7 @@ typedef struct { long left, top, right, bottom; } RECT;
 typedef struct { int version; struct { struct { HWND window; } win; } info; } SDL_SysWMinfo;
 #define SDL_VERSION(v) (*(v) = 2)
 struct sdl2_console { SDL_Window *real_window; int hidden; int64_t hold_ms, held_until;
-    bool cloaked, cloak_framed; int64_t cloak_shown, cloak_until; int cloak_w, cloak_h; };
+    bool cloaked, cloak_framed, cloak_counted; uint64_t cloak_composed; int64_t cloak_shown, cloak_until; int cloak_w, cloak_h; };
 static const char *env;
 static int64_t clock_ms;
 static int shows, props, prop_fails;
@@ -114,7 +122,10 @@ static HANDLE RemovePropW(HWND hwnd, const WCHAR *name) {
 }
 static void SDL_ShowWindow(SDL_Window *w) { shows++; }
 /* The window as Windows and DWM see it. */
-static int visible, region = 0, client_w = 800, client_h = 600, cloak, cloak_calls, dwm_refuses, fills, flushes;
+static int visible, region = 0, client_w = 800, client_h = 600, cloak, cloak_calls, dwm_refuses, fills;
+/* DWM's count of composed frames; timing_fails makes it unable to say. */
+static UINT64 composed;
+static int timing_fails;
 static BOOL IsWindowVisible(HWND hwnd) { return visible; }
 static HRGN CreateRectRgn(int a, int b, int c, int d) { return (HRGN)1; }
 static int GetWindowRgn(HWND hwnd, HRGN r) { return region; }
@@ -135,11 +146,16 @@ static HRESULT WINAPI set_attribute(HWND hwnd, DWORD attribute, LPCVOID value, D
     cloak = *(const BOOL *)value;
     return 0;
 }
-static HRESULT WINAPI flush(void) { flushes++; return 0; }
+static HRESULT WINAPI timing(HWND hwnd, DWM_TIMING_INFO *info) {
+    assert(!hwnd && info->cbSize == sizeof(*info));
+    if (timing_fails) return (HRESULT)0x80263001;
+    info->cFrame = composed;
+    return 0;
+}
 static HMODULE LoadLibraryW(const WCHAR *name) { assert(!wcscmp(name, L"dwmapi.dll")); return (HMODULE)1; }
 static FARPROC GetProcAddress(HMODULE dll, const char *name) {
     if (!strcmp(name, "DwmSetWindowAttribute")) return (FARPROC)set_attribute;
-    if (!strcmp(name, "DwmFlush")) return (FARPROC)flush;
+    if (!strcmp(name, "DwmGetCompositionTimingInfo")) return (FARPROC)timing;
     return 0;
 }
 ''' + body + r'''
@@ -148,7 +164,7 @@ static struct sdl2_console fresh(void) {
     struct sdl2_console scon = { .real_window = 0, .hidden = 0, .hold_ms = 7, .held_until = 9 };
     shows = props = prop_fails = 0;
     visible = 0; region = 0; client_w = 800; client_h = 600;
-    cloak = cloak_calls = dwm_refuses = fills = flushes = 0;
+    cloak = cloak_calls = dwm_refuses = fills = timing_fails = 0;
     return scon;
 }
 static int create(struct sdl2_console *scon) {
@@ -239,10 +255,15 @@ int main(void) {
     /* A frame at another size than the window has does not count. */
     win_cloak_presented(&scon, 640, 480);
     assert(!win_cloak_poll(&scon) && cloak);
-    /* One at its size does, once DWM had it. */
+    /* One at its size does, once DWM has composed a frame since; nothing
+     * waits for that. */
+    composed = 40;
     win_cloak_presented(&scon, 800, 600);
     assert(cloak);
-    assert(!win_cloak_poll(&scon) && !cloak && !scon.cloaked && flushes == 1);
+    assert(!win_cloak_poll(&scon) && cloak);
+    assert(!win_cloak_poll(&scon) && cloak);
+    composed = 41;
+    assert(!win_cloak_poll(&scon) && !cloak && !scon.cloaked);
     win_cloak_presented(&scon, 800, 600);
     assert(!win_cloak_poll(&scon) && cloak_calls == 2);
 
@@ -258,6 +279,7 @@ int main(void) {
     win_cloak_presented(&scon, 800, 600);
     assert(!win_cloak_poll(&scon) && cloak);
     win_cloak_presented(&scon, 1280, 720);
+    composed++;
     assert(!win_cloak_poll(&scon) && !cloak);
 
     /* The region goes empty again before a frame: frames then do not count
@@ -272,6 +294,7 @@ int main(void) {
     region = SIMPLEREGION;
     assert(win_cloak_poll(&scon) && fills == 2 && cloak);
     win_cloak_presented(&scon, 800, 600);
+    composed++;
     assert(!win_cloak_poll(&scon) && !cloak);
 
     /* No frame comes: shown black WIN_CLOAK_FRAME_WAIT_MS after it came on screen. */
@@ -283,7 +306,7 @@ int main(void) {
     clock_ms = 2999;
     assert(!win_cloak_poll(&scon) && cloak);
     clock_ms = 3000;
-    assert(!win_cloak_poll(&scon) && !cloak && !flushes);
+    assert(!win_cloak_poll(&scon) && !cloak);
 
     /* Never on screen (the launcher never lifts, or is gone): uncloaked
      * WIN_CLOAK_MAX_MS after it was cloaked. */
@@ -308,6 +331,7 @@ int main(void) {
     visible = 1;
     assert(win_cloak_poll(&scon));
     win_cloak_presented(&scon, 800, 600);
+    composed++;
     assert(!win_cloak_poll(&scon) && !cloak);
 
     /* Ctrl+Alt+F and destroying the window uncloak at once. */
@@ -325,10 +349,56 @@ int main(void) {
     visible = 1;
     assert(win_cloak_poll(&scon));
     win_cloak_presented(&scon, 800, 600);
+    composed++;
     dwm_refuses = 1;
     assert(!win_cloak_poll(&scon) && cloak && scon.cloaked);
     dwm_refuses = 0;
     assert(!win_cloak_poll(&scon) && !cloak && !scon.cloaked);
+
+    /* DWM composes nothing (session locked, display off): the window shows
+     * at the time limit, and no round waited. */
+    clock_ms = 5;
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    win_cloak_presented(&scon, 800, 600);
+    clock_ms = 1004;
+    assert(!win_cloak_poll(&scon) && cloak);
+    clock_ms = 1005;
+    assert(!win_cloak_poll(&scon) && !cloak);
+
+    /* DWM cannot say: the round after the frame. */
+    clock_ms = 5;
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    timing_fails = 1;
+    win_cloak_presented(&scon, 800, 600);
+    assert(!win_cloak_poll(&scon) && !cloak);
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    win_cloak_presented(&scon, 800, 600);
+    timing_fails = 1;
+    assert(!win_cloak_poll(&scon) && !cloak);
+
+    /* The region empties and comes back between two rounds, with a frame
+     * presented while it was empty: that frame does not count. */
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    region = NULLREGION;
+    win_cloak_presented(&scon, 800, 600);
+    region = 0;
+    composed++;
+    assert(!win_cloak_poll(&scon) && cloak);
+    win_cloak_presented(&scon, 800, 600);
+    composed++;
+    assert(!win_cloak_poll(&scon) && !cloak);
 
     /* DWM refuses the cloak: the window behaves as before. */
     scon = fresh();
