@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the held SDL windows the launcher shows, with mocked SDL and Win32."""
+"""Exercise the held SDL windows the launcher shows, and their cloak, with mocked SDL and Win32."""
 import argparse
 from pathlib import Path
 import subprocess
@@ -28,6 +28,24 @@ shown = section(source, 'case SDL_WINDOWEVENT_SHOWN:', 'break;')
 assert 'win_hold_release(scon, false)' in shown
 poll = section(source, 'void sdl2_poll_events(', 'static void sdl_mouse_warp(')
 assert poll.index('while (SDL_PollEvent(ev))') < poll.index('win_hold_poll(scon)')
+# A window that came on screen cloaked gets a frame at once.
+cloak_poll = section(poll, 'if (win_cloak_poll(scon)) {', '    }\n')
+assert cloak_poll.index('sdl2_redraw(scon);') < cloak_poll.index('win_cloak_poll(scon);', len('if (win_cloak_poll(scon))'))
+assert poll.index('win_hold_poll(scon)') < poll.index('win_cloak_poll(scon)')
+# Every way out uncloaks: destroyed, and Ctrl+Alt+F.
+destroy = section(source, 'void sdl2_window_destroy(', 'void sdl2_window_resize(')
+assert destroy.index('win_cloak_end(scon);\n    scon->cloaked = false;') < destroy.index('SDL_DestroyWindow(')
+toggle = section(source, 'static void toggle_full_screen(', 'static int get_mod_state(')
+assert toggle.index('win_cloak_end(scon);') < toggle.index('SDL_SetWindowFullscreen(')
+assert 'win_cloak_presented(scon, w, h)' in section(source, 'void sdl2_window_presented(', 'static void sdl2_redraw(')
+# Every present reports the size it drew at.
+for name, call in (('ui/sdl2-gl.c', 'SDL_GL_SwapWindow(scon->real_window);'),
+                   ('ui/sdl2-2d.c', 'SDL_RenderPresent(scon->real_renderer);')):
+    text = (root / name).read_text(encoding='utf-8')
+    parts = text.split(call)
+    assert len(parts) > 1, name
+    for after in parts[1:]:
+        assert 'sdl2_window_presented(scon, ww, wh);' in after[:120], name
 
 harness = r'''
 #include <assert.h>
@@ -40,12 +58,26 @@ typedef wchar_t WCHAR;
 typedef void *HANDLE;
 typedef struct window { int id; } SDL_Window, *HWND;
 typedef int BOOL;
+typedef int32_t HRESULT;
+typedef unsigned long DWORD;
+typedef const void *LPCVOID;
+typedef void *HMODULE, *HRGN, *HDC, *HBRUSH, *HGDIOBJ;
+typedef void (*FARPROC)(void);
+typedef struct { long left, top, right, bottom; } RECT;
+#define WINAPI
+#define TRUE 1
+#define FALSE 0
+#define SUCCEEDED(hr) ((hr) >= 0)
+#define NULLREGION 1
+#define SIMPLEREGION 2
+#define BLACK_BRUSH 4
 #define SDL_WINDOW_HIDDEN 8
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define QEMU_CLOCK_REALTIME 0
 typedef struct { int version; struct { struct { HWND window; } win; } info; } SDL_SysWMinfo;
 #define SDL_VERSION(v) (*(v) = 2)
-struct sdl2_console { SDL_Window *real_window; int hidden; int64_t hold_ms, held_until; };
+struct sdl2_console { SDL_Window *real_window; int hidden; int64_t hold_ms, held_until;
+    bool cloaked, cloak_framed; int64_t cloak_shown, cloak_until; int cloak_w, cloak_h; };
 static const char *env;
 static int64_t clock_ms;
 static int shows, props, prop_fails;
@@ -81,11 +113,42 @@ static HANDLE RemovePropW(HWND hwnd, const WCHAR *name) {
     return (HANDLE)1;
 }
 static void SDL_ShowWindow(SDL_Window *w) { shows++; }
+/* The window as Windows and DWM see it. */
+static int visible, region = 0, client_w = 800, client_h = 600, cloak, cloak_calls, dwm_refuses, fills, flushes;
+static BOOL IsWindowVisible(HWND hwnd) { return visible; }
+static HRGN CreateRectRgn(int a, int b, int c, int d) { return (HRGN)1; }
+static int GetWindowRgn(HWND hwnd, HRGN r) { return region; }
+static BOOL DeleteObject(HGDIOBJ o) { return 1; }
+static BOOL GetClientRect(HWND hwnd, RECT *r) { r->left = r->top = 0; r->right = client_w; r->bottom = client_h; return 1; }
+static HDC GetDC(HWND hwnd) { return (HDC)hwnd; }
+static int ReleaseDC(HWND hwnd, HDC dc) { return 1; }
+static HGDIOBJ GetStockObject(int i) { assert(i == BLACK_BRUSH); return (HGDIOBJ)8; }
+static int FillRect(HDC dc, const RECT *r, HBRUSH b) {
+    assert(b == (HBRUSH)8 && r->right == client_w && r->bottom == client_h);
+    fills++;
+    return 1;
+}
+static HRESULT WINAPI set_attribute(HWND hwnd, DWORD attribute, LPCVOID value, DWORD size) {
+    assert(attribute == 13 && size == sizeof(BOOL));
+    cloak_calls++;
+    if (dwm_refuses) return (HRESULT)0x80070005;
+    cloak = *(const BOOL *)value;
+    return 0;
+}
+static HRESULT WINAPI flush(void) { flushes++; return 0; }
+static HMODULE LoadLibraryW(const WCHAR *name) { assert(!wcscmp(name, L"dwmapi.dll")); return (HMODULE)1; }
+static FARPROC GetProcAddress(HMODULE dll, const char *name) {
+    if (!strcmp(name, "DwmSetWindowAttribute")) return (FARPROC)set_attribute;
+    if (!strcmp(name, "DwmFlush")) return (FARPROC)flush;
+    return 0;
+}
 ''' + body + r'''
 static struct window window = {1};
 static struct sdl2_console fresh(void) {
     struct sdl2_console scon = { .real_window = 0, .hidden = 0, .hold_ms = 7, .held_until = 9 };
     shows = props = prop_fails = 0;
+    visible = 0; region = 0; client_w = 800; client_h = 600;
+    cloak = cloak_calls = dwm_refuses = fills = flushes = 0;
     return scon;
 }
 static int create(struct sdl2_console *scon) {
@@ -101,7 +164,7 @@ int main(void) {
     for (unsigned i = 0; i < sizeof(off) / sizeof(off[0]); i++) {
         env = off[i];
         scon = fresh();
-        assert(create(&scon) == 0 && !scon.hold_ms && !props);
+        assert(create(&scon) == 0 && !scon.hold_ms && !props && !scon.cloaked && !cloak_calls);
         clock_ms = 100000;
         win_hold_poll(&scon); win_hold_poll(&scon);
         win_hold_release(&scon, true);
@@ -143,16 +206,140 @@ int main(void) {
     scon = fresh();
     create(&scon);
     assert(scon.hold_ms == 60000);
-    /* A window that cannot be marked is shown at once. */
+    /* A window that cannot be marked is shown at once, and not cloaked. */
     env = "10000";
     scon = fresh();
     prop_fails = 1;
     assert(create(&scon) == SDL_WINDOW_HIDDEN && shows == 1 && !scon.hold_ms);
+    assert(!scon.cloaked && !cloak_calls);
     /* A window destroyed while held is not shown. */
     scon = fresh();
     create(&scon);
     win_hold_release(&scon, false);
     assert(!shows && !props);
+
+    /* The curtain: held windows are cloaked until their first frame on screen. */
+    clock_ms = 1000;
+    scon = fresh();
+    create(&scon);
+    assert(scon.cloaked && cloak == 1);
+    /* Hidden, then shown by the launcher with an empty region: frames drawn
+     * then never count, and the cloak stays past the hold. */
+    assert(!win_cloak_poll(&scon));
+    win_cloak_presented(&scon, 800, 600);
+    visible = 1; region = NULLREGION;
+    win_hold_release(&scon, false);
+    clock_ms = 30000;
+    win_cloak_presented(&scon, 800, 600);
+    assert(!win_cloak_poll(&scon) && scon.cloaked && cloak && !fills);
+    /* The region comes back: the surface goes black and a frame is asked for. */
+    region = 0;
+    assert(win_cloak_poll(&scon) && fills == 1 && cloak);
+    assert(!win_cloak_poll(&scon) && cloak && fills == 1);
+    /* A frame at another size than the window has does not count. */
+    win_cloak_presented(&scon, 640, 480);
+    assert(!win_cloak_poll(&scon) && cloak);
+    /* One at its size does, once DWM had it. */
+    win_cloak_presented(&scon, 800, 600);
+    assert(cloak);
+    assert(!win_cloak_poll(&scon) && !cloak && !scon.cloaked && flushes == 1);
+    win_cloak_presented(&scon, 800, 600);
+    assert(!win_cloak_poll(&scon) && cloak_calls == 2);
+
+    /* Resized after its frame (a resize in flight at the lift): it waits for
+     * a frame at the new size. */
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    win_cloak_presented(&scon, 800, 600);
+    client_w = 1280; client_h = 720;
+    assert(win_cloak_poll(&scon) && cloak);
+    win_cloak_presented(&scon, 800, 600);
+    assert(!win_cloak_poll(&scon) && cloak);
+    win_cloak_presented(&scon, 1280, 720);
+    assert(!win_cloak_poll(&scon) && !cloak);
+
+    /* The region goes empty again before a frame: frames then do not count
+     * and the wait starts over. */
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon) && fills == 1);
+    region = NULLREGION;
+    win_cloak_presented(&scon, 800, 600);
+    assert(!win_cloak_poll(&scon) && cloak);
+    region = SIMPLEREGION;
+    assert(win_cloak_poll(&scon) && fills == 2 && cloak);
+    win_cloak_presented(&scon, 800, 600);
+    assert(!win_cloak_poll(&scon) && !cloak);
+
+    /* No frame comes: shown black WIN_CLOAK_FRAME_WAIT_MS after it came on screen. */
+    clock_ms = 2000;
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon) && fills == 1);
+    clock_ms = 2999;
+    assert(!win_cloak_poll(&scon) && cloak);
+    clock_ms = 3000;
+    assert(!win_cloak_poll(&scon) && !cloak && !flushes);
+
+    /* Never on screen (the launcher never lifts, or is gone): uncloaked
+     * WIN_CLOAK_MAX_MS after it was cloaked. */
+    clock_ms = 10000;
+    scon = fresh();
+    create(&scon);
+    visible = 1; region = NULLREGION;
+    clock_ms = 609999;
+    assert(!win_cloak_poll(&scon) && cloak);
+    clock_ms = 610000;
+    assert(!win_cloak_poll(&scon) && !cloak);
+
+    /* Released the old way: QEMU shows it itself with no region, and it
+     * shows with its first frame. */
+    clock_ms = 0;
+    scon = fresh();
+    create(&scon);
+    win_hold_poll(&scon);
+    clock_ms = 10000;
+    win_hold_poll(&scon);
+    assert(shows == 1 && cloak);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    win_cloak_presented(&scon, 800, 600);
+    assert(!win_cloak_poll(&scon) && !cloak);
+
+    /* Ctrl+Alt+F and destroying the window uncloak at once. */
+    scon = fresh();
+    create(&scon);
+    win_cloak_end(&scon);
+    assert(!cloak && !scon.cloaked);
+    win_cloak_end(&scon);
+    assert(cloak_calls == 2);
+
+    /* A refused uncloak is tried again on the next round. */
+    clock_ms = 5;
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    win_cloak_presented(&scon, 800, 600);
+    dwm_refuses = 1;
+    assert(!win_cloak_poll(&scon) && cloak && scon.cloaked);
+    dwm_refuses = 0;
+    assert(!win_cloak_poll(&scon) && !cloak && !scon.cloaked);
+
+    /* DWM refuses the cloak: the window behaves as before. */
+    scon = fresh();
+    dwm_refuses = 1;
+    create(&scon);
+    assert(!scon.cloaked && !cloak && cloak_calls == 1);
+    visible = 1;
+    assert(!win_cloak_poll(&scon) && !fills);
+    win_cloak_presented(&scon, 800, 600);
+    win_cloak_end(&scon);
+    assert(cloak_calls == 1);
     return 0;
 }
 '''
@@ -161,4 +348,5 @@ with tempfile.TemporaryDirectory(prefix='sdl-held-') as directory:
     (work / 'test.c').write_text(harness, encoding='utf-8')
     subprocess.run(['gcc', '-std=gnu11', '-O2', '-Wall', '-Werror', str(work / 'test.c'), '-o', str(work / 'test.exe')], check=True)
     subprocess.run([str(work / 'test.exe')], check=True)
-print('ok - held windows: opt-in, own hidden consoles, launcher show, bounded fallback from the first messages, failed mark')
+print('ok - held windows: opt-in, own hidden consoles, launcher show, bounded fallback from the first messages, failed mark;'
+      ' cloaked until a frame at their size on screen, black and bounded without one, every exit uncloaks, refused cloak')

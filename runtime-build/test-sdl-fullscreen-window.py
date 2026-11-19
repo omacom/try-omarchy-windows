@@ -76,6 +76,7 @@ struct sdl2_console {
     int full_screen_size[4][2];
     int full_screen_sizes;
     bool after_full_screen;
+    bool cloaked;
 };
 static SDL_Rect monitors[2] = { {0, 0, 1920, 1080}, {1920, 0, 2560, 1440} };
 static SDL_Rect usable[2] = { {0, 0, 1920, 1040}, {1920, 0, 2560, 1400} };
@@ -159,6 +160,8 @@ static void *SDL_GL_CreateContext(SDL_Window *w) { (void)w; assert(0); return 0;
 static void SDL_GL_SetSwapInterval(int i) { (void)i; assert(0); }
 static int win_hold_flags(struct sdl2_console *scon) { (void)scon; return 0; }
 static void win_hold_window(struct sdl2_console *scon) { (void)scon; }
+static void win_cloak_end(struct sdl2_console *scon) { (void)scon; }
+static void win_cloak_presented(struct sdl2_console *scon, int w, int h) { (void)scon; (void)w; (void)h; }
 static void win_pinch_create(struct sdl2_console *scon) { (void)scon; }
 static void sdl_update_caption(struct sdl2_console *scon) { (void)scon; }
 static void *SDL_CreateRenderer(SDL_Window *w, int index, int flags) { (void)index; (void)flags; return w; }
