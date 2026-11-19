@@ -326,7 +326,7 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	if curtainUp.Load() {
 		concealForCurtain(hwnd)
 		curtainTaskbar(hwnd)
-	} else {
+	} else if !curtainRevealPending() {
 		uiDone()
 	}
 	if enumTitleIcon != 0 {
@@ -387,7 +387,10 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		}
 	}
 	state.concealed = false
-	syncFullscreenMark(hwnd)
+	// The lift gives the mark back once QEMU shows the window.
+	if !curtainRevealPending() {
+		syncFullscreenMark(hwnd)
+	}
 	// SDL puts a full screen window back on its monitor's rectangle when it
 	// enters full screen or the display changes.
 	if growFullscreenWindow(hwnd) {

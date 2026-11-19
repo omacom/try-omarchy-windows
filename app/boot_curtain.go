@@ -116,6 +116,23 @@ func (t bootCurtainTimes) liftReason(now time.Time) string {
 	return ""
 }
 
+// curtainFrameWait bounds how long the setup window stays up after the
+// curtain lifted, waiting for QEMU to show a window with its first frame
+// (curtainRevealDone). QEMU itself shows the window a second after it came
+// on screen without a frame.
+const curtainFrameWait = 2 * time.Second
+
+// curtainRevealDone reports whether the lift can hand over from the setup
+// window to Omarchy's: every window QEMU still has is no longer cloaked, or
+// curtainFrameWait has passed since the lift. cloaked holds one entry per
+// window; a window whose state cannot be read counts as not cloaked.
+func curtainRevealDone(cloaked []bool, lifted, now time.Time) (done, late bool) {
+	if !now.Before(lifted.Add(curtainFrameWait)) {
+		return true, slices.Contains(cloaked, true)
+	}
+	return !slices.Contains(cloaked, true), false
+}
+
 // slowStart reports whether the setup window should say that Omarchy is
 // taking longer than usual. Once the session has started, the curtain lifts
 // on the drawn report or curtainDrawWait later, both normal for the guest

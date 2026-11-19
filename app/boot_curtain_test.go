@@ -554,3 +554,27 @@ func TestGrownFullscreenIsNotRepairedBackOntoTheMonitor(t *testing.T) {
 		}
 	}
 }
+
+func TestCurtainRevealDone(t *testing.T) {
+	lifted := time.Date(2026, 11, 19, 9, 26, 34, 0, time.UTC)
+	for _, tc := range []struct {
+		name       string
+		cloaked    []bool
+		after      time.Duration
+		done, late bool
+	}{
+		{"still cloaked", []bool{true}, 0, false, false},
+		{"shown with its frame", []bool{false}, 40 * time.Millisecond, true, false},
+		{"one of two displays still cloaked", []bool{false, true}, time.Second, false, false},
+		{"both displays shown", []bool{false, false}, time.Second, true, false},
+		{"no window left", nil, 0, true, false},
+		{"bounded", []bool{true}, curtainFrameWait, true, true},
+		{"bounded with a window shown", []bool{false, true}, curtainFrameWait + time.Second, true, true},
+		{"shown just before the bound", []bool{false}, curtainFrameWait - time.Millisecond, true, false},
+	} {
+		done, late := curtainRevealDone(tc.cloaked, lifted, lifted.Add(tc.after))
+		if done != tc.done || late != tc.late {
+			t.Errorf("%s: done %v late %v, want %v %v", tc.name, done, late, tc.done, tc.late)
+		}
+	}
+}

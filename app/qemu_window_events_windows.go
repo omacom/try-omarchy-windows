@@ -23,6 +23,8 @@ import (
 //     While Omarchy first boots, a window is made invisible as it is created,
 //     and a window the runtime holds hidden is shown only after that
 //     (boot_curtain_windows.go).
+//   - Uncloaked. QEMU shows a held window with its first frame, and the
+//     setup window waits for that after the curtain lifted.
 //   - The start and end of a move or resize the user makes with the mouse or
 //     the window menu. Those, and maximizing, are the only placements the
 //     enforcer remembers.
@@ -44,6 +46,8 @@ const (
 	eventObjectShow           = 0x8002
 	eventObjectLocationChange = 0x800B
 	eventObjectNameChange     = 0x800C
+	eventObjectCloaked        = 0x8017
+	eventObjectUncloaked      = 0x8018
 	wineventOutOfContext      = 0x0000
 	wineventSkipOwnProcess    = 0x0002
 	objidWindow               = 0
@@ -179,6 +183,8 @@ func installQemuWindowHooks() {
 		{eventSystemMoveSizeStart, eventSystemMoveSizeEnd},
 		{eventObjectCreate, eventObjectShow},
 		{eventObjectLocationChange, eventObjectNameChange},
+		// QEMU uncloaks a held window with its first frame (curtainReveal).
+		{eventObjectCloaked, eventObjectUncloaked},
 	} {
 		hook, _, _ := procSetWinEventHook.Call(events[0], events[1], 0, callback, 0, 0,
 			wineventOutOfContext|wineventSkipOwnProcess)
