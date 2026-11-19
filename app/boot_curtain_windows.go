@@ -92,9 +92,9 @@ var (
 type curtainReveal struct {
 	windows map[uintptr]*curtainWindow
 	lifted  time.Time
-	// unexposed holds the cloaked windows that have their frame and
-	// placement back but not their region yet (exposeCurtainWindow).
-	unexposed map[uintptr]bool
+	// regions holds the cloaked windows that get their region back only
+	// after their frame and placement (exposeCurtainWindow).
+	regions *revealRegions
 }
 
 type curtainWindow struct {
@@ -515,7 +515,7 @@ func hideCurtainWindow(hwnd uintptr, window *curtainWindow) bool {
 	// A held window that is not shown yet gets no taskbar button at all as
 	// a tool window. Deleting the button of a shown one races the taskbar,
 	// which can put it back for a moment (curtainTabInterval).
-	if visible, _, _ := procIsWindowVisible.Call(hwnd); visible == 0 && windowHeld(hwnd) {
+	if visible, _, _ := procIsWindowVisible.Call(hwnd); curtainToolWindow(visible != 0, windowHeld(hwnd), curtainWaitsForFrame.Load()) {
 		ex, _, _ := procGetWindowLongW.Call(hwnd, gwlExStyle)
 		procSetWindowLongW.Call(hwnd, gwlExStyle, ex|wsExToolWindow)
 		window.toolWindow, window.tabRemoved = true, true
@@ -870,41 +870,65 @@ func liftCurtain(reason string) {
 		}
 	}
 	waits := curtainWaitsForFrame.Load() && len(windows) > 0
-	var reveal *curtainReveal
+	// Everything that changes a cloaked window's frame happens while QEMU
+	// still has it cloaked, and its region comes back last, once the title
+	// enforcer has placed it (exposeCurtainWindow): QEMU waits for a frame
+	// drawn after that, so the first one shown is drawn in the window's
+	// final frame. All of them are marked before any is touched, since the
+	// time limit can end the reveal while this goes through them.
+	var cloaked, others []uintptr
+	for hwnd := range windows {
+		if waits && windowCloakedByApp(hwnd) {
+			cloaked = append(cloaked, hwnd)
+		} else {
+			others = append(others, hwnd)
+		}
+	}
 	if waits {
-		reveal = &curtainReveal{windows: windows, lifted: time.Now(), unexposed: map[uintptr]bool{}}
+		reveal := &curtainReveal{windows: windows, lifted: time.Now(), regions: newRevealRegions(cloaked)}
 		curtainMu.Lock()
 		curtainRevealing = reveal
 		curtainMu.Unlock()
+		liftCloakedWindows(cloaked, reveal.regions, func(hwnd uintptr) {
+			restoreCurtainFrame(hwnd, windows[hwnd])
+			curtainLifted(hwnd)
+		}, showCurtainRegion)
 	}
-	for hwnd, window := range windows {
-		if waits && windowCloakedByApp(hwnd) {
-			// Everything that changes the window's frame happens while QEMU
-			// still has it cloaked, and the region comes back last, once
-			// the title enforcer has placed it (exposeCurtainWindow): QEMU
-			// waits for a frame drawn after that, so the first one shown
-			// is drawn in the window's final frame.
-			curtainMu.Lock()
-			reveal.unexposed[hwnd] = true
-			curtainMu.Unlock()
-			restoreCurtainFrame(hwnd, window)
-		} else {
-			showCurtainWindow(hwnd, window)
-			procRedrawWindow.Call(hwnd, 0, 0, rdwInvalidate|rdwAllChildren|rdwFrame)
-		}
+	for _, hwnd := range others {
+		showCurtainWindow(hwnd, windows[hwnd])
+		procRedrawWindow.Call(hwnd, 0, 0, rdwInvalidate|rdwAllChildren|rdwFrame)
 		if !waits {
-			showCurtainTab(hwnd, window)
+			showCurtainTab(hwnd, windows[hwnd])
 		}
-		// Only now may the title enforcer put the window back where it
-		// belongs: its frame is part of the remembered placement.
-		curtainMu.Lock()
-		delete(curtainLifting, hwnd)
-		curtainMu.Unlock()
+		curtainLifted(hwnd)
 	}
 	wakeTitleEnforcer()
 	if !waits {
 		handOverFromCurtain()
 	}
+}
+
+// curtainLifted lets the title enforcer put the window back where it
+// belongs: its frame is part of the remembered placement.
+func curtainLifted(hwnd uintptr) {
+	curtainMu.Lock()
+	delete(curtainLifting, hwnd)
+	curtainMu.Unlock()
+}
+
+// showCurtainRegion gives a window its region back and has it drawn.
+func showCurtainRegion(hwnd uintptr) {
+	restoreCurtainRegion(hwnd)
+	procRedrawWindow.Call(hwnd, 0, 0, rdwInvalidate|rdwAllChildren|rdwFrame)
+}
+
+// curtainRegionPending reports whether the lift keeps hwnd cloaked and
+// without its region until it is placed.
+func curtainRegionPending(hwnd uintptr) bool {
+	curtainMu.Lock()
+	reveal := curtainRevealing
+	curtainMu.Unlock()
+	return reveal != nil && reveal.regions.held(hwnd)
 }
 
 // exposeCurtainWindow gives a window the lift left without its region its
@@ -913,14 +937,10 @@ func liftCurtain(reason string) {
 // waiting.
 func exposeCurtainWindow(hwnd uintptr) {
 	curtainMu.Lock()
-	pending := curtainRevealing != nil && curtainRevealing.unexposed[hwnd]
-	if pending {
-		delete(curtainRevealing.unexposed, hwnd)
-	}
+	reveal := curtainRevealing
 	curtainMu.Unlock()
-	if pending {
-		restoreCurtainRegion(hwnd)
-		procRedrawWindow.Call(hwnd, 0, 0, rdwInvalidate|rdwAllChildren|rdwFrame)
+	if reveal != nil && reveal.regions.release(hwnd) {
+		showCurtainRegion(hwnd)
 	}
 }
 
@@ -997,13 +1017,10 @@ func finishCurtainReveal() {
 		return
 	}
 	curtainRevealing = nil
-	unexposed := reveal.unexposed
-	reveal.unexposed = nil
 	curtainMu.Unlock()
 	// Never leave a window without its region.
-	for hwnd := range unexposed {
-		restoreCurtainRegion(hwnd)
-		procRedrawWindow.Call(hwnd, 0, 0, rdwInvalidate|rdwAllChildren|rdwFrame)
+	for _, hwnd := range reveal.regions.close() {
+		showCurtainRegion(hwnd)
 	}
 	took := time.Since(reveal.lifted).Round(time.Millisecond)
 	if late {
@@ -1035,7 +1052,9 @@ func finishCurtainReveal() {
 // steps the shell ignored while it was cloaked: its taskbar button and full
 // screen mark, and the focus as on the lift.
 func redoLateReveal(hwnd uintptr) {
-	waiting, tab := curtainLate.take(hwnd)
+	// An uncloak by the shell, such as a virtual desktop switch, while QEMU
+	// still has the window cloaked is not the reveal.
+	waiting, tab := curtainLate.takeShown(hwnd, windowCloakedByApp(hwnd))
 	if !waiting {
 		return
 	}

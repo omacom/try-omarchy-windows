@@ -377,8 +377,13 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 				// rectangle. Setting both at once on a restored window
 				// shows it at that rectangle for a moment, and a window
 				// the curtain placed is already where a maximized one
-				// goes, so this way it does not move at all.
-				procShowWindow.Call(hwnd, swShowMaximized)
+				// goes, so this way it does not move at all. A window
+				// the lift keeps cloaked and without its region shows
+				// nothing yet, so it takes both in one call: each call
+				// waits on QEMU's window thread.
+				if !curtainRegionPending(hwnd) {
+					procShowWindow.Call(hwnd, swShowMaximized)
+				}
 				state.concealed = !applyPlacement(hwnd, p)
 			} else {
 				state.concealed = !correctPlacement(hwnd, p)

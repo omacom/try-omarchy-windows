@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -596,5 +597,129 @@ func TestLateReveals(t *testing.T) {
 	// The curtain left this one's button alone.
 	if waiting, tab := late.take(2); !waiting || tab {
 		t.Fatalf("window 2: waiting %v tab %v", waiting, tab)
+	}
+}
+
+func TestRevealRegions(t *testing.T) {
+	r := newRevealRegions([]uintptr{1, 2})
+	if !r.held(1) || !r.held(2) || r.held(3) {
+		t.Fatal("every cloaked window is held from the start")
+	}
+	if !r.release(1) || r.release(1) || r.held(1) {
+		t.Fatal("a window's region is due once")
+	}
+	if left := r.close(); len(left) != 1 || left[0] != 2 {
+		t.Fatalf("close left %v, want [2]", left)
+	}
+	if r.held(2) || r.release(2) || len(r.close()) != 0 {
+		t.Fatal("nothing is held once the reveal ended")
+	}
+}
+
+// The time limit ends the reveal while the lift is still giving the first of
+// two windows its frame: both windows still get their region, once the lift
+// is done with each, and nothing writes to a map the reveal let go of.
+func TestLiftCloakedWindowsAndLimit(t *testing.T) {
+	for _, limitDuring := range []uintptr{1, 2} {
+		r := newRevealRegions([]uintptr{1, 2})
+		var mu sync.Mutex
+		regions := map[uintptr]int{}
+		framed := map[uintptr]bool{}
+		region := func(hwnd uintptr) {
+			mu.Lock()
+			regions[hwnd]++
+			mu.Unlock()
+		}
+		limited := make(chan struct{})
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			liftCloakedWindows([]uintptr{1, 2}, r, func(hwnd uintptr) {
+				if hwnd == limitDuring {
+					<-limited
+				}
+				mu.Lock()
+				framed[hwnd] = true
+				mu.Unlock()
+			}, region)
+		}()
+		for _, hwnd := range r.close() {
+			region(hwnd)
+		}
+		close(limited)
+		<-done
+		// The title enforcer comes by later and finds nothing to do.
+		if r.release(1) || r.release(2) {
+			t.Fatal("a region was released after the reveal ended")
+		}
+		for _, hwnd := range []uintptr{1, 2} {
+			if !framed[hwnd] || regions[hwnd] == 0 {
+				t.Errorf("limit during window %d: window %d framed %v, region %d times", limitDuring, hwnd, framed[hwnd], regions[hwnd])
+			}
+		}
+	}
+}
+
+// The same with the limit, the title enforcer and the lift racing freely.
+func TestLiftCloakedWindowsRace(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		r := newRevealRegions([]uintptr{1, 2})
+		var mu sync.Mutex
+		regions := map[uintptr]int{}
+		region := func(hwnd uintptr) {
+			mu.Lock()
+			regions[hwnd]++
+			mu.Unlock()
+		}
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			liftCloakedWindows([]uintptr{1, 2}, r, func(uintptr) {}, region)
+		}()
+		go func() {
+			defer wg.Done()
+			for _, hwnd := range []uintptr{1, 2} {
+				if r.release(hwnd) {
+					region(hwnd)
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for _, hwnd := range r.close() {
+				region(hwnd)
+			}
+		}()
+		wg.Wait()
+		if regions[1] == 0 || regions[2] == 0 {
+			t.Fatalf("run %d: regions %v", i, regions)
+		}
+	}
+}
+
+func TestCurtainToolWindow(t *testing.T) {
+	for _, tc := range []struct{ visible, held, waits, want bool }{
+		{false, true, true, true},
+		// A runtime with 0026 to 0029 but not 0030: as before.
+		{false, true, false, false},
+		{true, true, true, false},
+		{false, false, true, false},
+	} {
+		if got := curtainToolWindow(tc.visible, tc.held, tc.waits); got != tc.want {
+			t.Errorf("visible %v held %v waits %v: %v", tc.visible, tc.held, tc.waits, got)
+		}
+	}
+}
+
+func TestLateRevealsTakeShown(t *testing.T) {
+	var late lateReveals
+	late.add(1, true)
+	// The shell uncloaked it while QEMU still has it cloaked.
+	if waiting, _ := late.takeShown(1, true); waiting {
+		t.Fatal("a window QEMU still cloaks was taken")
+	}
+	if waiting, tab := late.takeShown(1, false); !waiting || !tab {
+		t.Fatal("the reveal did not find the window")
 	}
 }
