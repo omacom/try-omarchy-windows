@@ -1,0 +1,84 @@
+TEST ONLY: hold back frames after a cloaked window comes on screen
+
+Applies on top of 0030. OMARCHY_SDL_DEBUG_FRAME_DELAY_MS.
+
+--- a/include/ui/sdl2.h
++++ b/include/ui/sdl2.h
+@@ -68,6 +68,8 @@ struct sdl2_console {
+     int64_t cloak_shown, cloak_until;
+     int cloak_w, cloak_h;
+     int cloak_rect[4];
++    int64_t debug_from;
++    bool debug_redraw;
+     /* Created full screen and not yet left it: no windowed size of its own */
+     bool fullscreen_start;
+ #ifdef CONFIG_OPENGL
+@@ -84,6 +86,7 @@ void sdl2_window_destroy(struct sdl2_console *scon);
+ void sdl2_window_resize(struct sdl2_console *scon);
+ void sdl2_poll_events(struct sdl2_console *scon);
+ void sdl2_window_presented(struct sdl2_console *scon, int w, int h);
++bool sdl2_debug_frame_held(struct sdl2_console *scon);
+ 
+ void sdl2_process_key(struct sdl2_console *scon,
+                       SDL_KeyboardEvent *ev);
+--- a/ui/sdl2-2d.c
++++ b/ui/sdl2-2d.c
+@@ -27,6 +27,7 @@
+ #include "ui/console.h"
+ #include "ui/input.h"
+ #include "ui/sdl2.h"
++#include "qemu/timer.h"
+ 
+ void sdl2_2d_update(DisplayChangeListener *dcl,
+                     int x, int y, int w, int h)
+@@ -52,6 +53,9 @@ void sdl2_2d_update(DisplayChangeListener *dcl,
+     SDL_UpdateTexture(scon->texture, &rect,
+                       surface_data(surf) + surface_data_offset,
+                       surface_stride(surf));
++    if (sdl2_debug_frame_held(scon)) {
++        return;
++    }
+     SDL_RenderClear(scon->real_renderer);
+     SDL_RenderCopy(scon->real_renderer, scon->texture, NULL, NULL);
+     SDL_RenderPresent(scon->real_renderer);
+@@ -166,3 +170,27 @@ bool sdl2_2d_check_format(DisplayChangeListener *dcl,
+             format == PIXMAN_x1r5g5b5 ||
+             format == PIXMAN_r5g6b5);
+ }
++
++/* Test builds only: hold back frames for a while after a cloaked window
++ * came on screen. */
++bool sdl2_debug_frame_held(struct sdl2_console *scon)
++{
++    static int64_t delay = -1;
++    int64_t now = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
++
++    if (delay < 0) {
++        const char *value = getenv("OMARCHY_SDL_DEBUG_FRAME_DELAY_MS");
++        delay = value ? atoll(value) : 0;
++    }
++    if (!delay) {
++        return false;
++    }
++    if (!scon->debug_from && scon->cloaked && scon->cloak_shown) {
++        scon->debug_from = now;
++    }
++    if (scon->debug_from && now - scon->debug_from < delay) {
++        scon->debug_redraw = true;
++        return true;
++    }
++    return false;
++}
+--- a/ui/sdl2.c
++++ b/ui/sdl2.c
+@@ -1130,6 +1130,10 @@ void sdl2_poll_events(struct sdl2_console *scon)
+         /* DWM may have composed the frame already. */
+         win_cloak_poll(scon);
+     }
++    if (scon->debug_redraw && !sdl2_debug_frame_held(scon)) {
++        scon->debug_redraw = false;
++        sdl2_redraw(scon);
++    }
+ 
+     if (idle) {
+         if (scon->idle_counter < SDL2_MAX_IDLE_COUNT) {
