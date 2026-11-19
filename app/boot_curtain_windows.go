@@ -912,7 +912,7 @@ func finishCurtainReveal() {
 	if late {
 		logf("startup: QEMU had not shown Omarchy's window %v after the lift; showing Omarchy anyway", took)
 	} else {
-		logf("startup: QEMU showed Omarchy's window with its first frame %v after the lift", took)
+		logf("startup: QEMU showed Omarchy's window %v after the lift", took)
 	}
 	for hwnd, window := range reveal.windows {
 		if isQemuDisplayWindow(hwnd, pid) {
