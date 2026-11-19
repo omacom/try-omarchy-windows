@@ -54,7 +54,12 @@ typedef struct {
 #define SDL_WINDOW_HIDDEN 0x8
 #define SDL_WINDOWPOS_UNDEFINED 0x1FFF0000
 typedef struct { int w, h; } DisplaySurface;
-typedef struct { int unused; } DisplayChangeListener;
+typedef struct { int unused; } QemuConsole;
+typedef struct { QemuConsole *con; } DisplayChangeListener;
+typedef struct { unsigned width, height; } QemuUIInfo;
+/* The size the window last asked the guest for (dpy_set_ui_info). */
+static QemuUIInfo asked;
+__attribute__((unused)) static const QemuUIInfo *dpy_get_ui_info(QemuConsole *con) { (void)con; return &asked; }
 enum { DISPLAY_GL_MODE_ES = 2 };
 typedef struct { int gl; } DisplayOptions;
 struct sdl2_console {
@@ -153,8 +158,9 @@ static void *SDL_CreateRenderer(SDL_Window *w, int index, int flags) { (void)ind
 /* The RESIZED handler, with the size SDL reports. */
 static void resized(struct sdl2_console *scon, int width, int height)
 {
-    struct { int width, height; } info = { width, height };
+    QemuUIInfo info = { (unsigned)width, (unsigned)height };
 ''' + resized + r'''
+    asked = info;
 }
 /* SDL reports the window's size after it changed. */
 static void reported(struct sdl2_console *scon)
@@ -336,8 +342,9 @@ int main(void)
     zoom_reset(&scon);
     assert(win.now.w == 1920 && win.now.h == 1081 && !scon.after_full_screen);
 
-    /* A round of full screen in which the guest never changed size: the
-     * window still holds back, and lets go at the guest's next size. */
+    /* A round of full screen in which the guest never changed size. The
+     * window still holds back the full screen size, which may be on its
+     * way, and follows the user's resize, any other size, and Ctrl+Alt+0. */
     gui_fullscreen = 0;
     surface = (DisplaySurface){1280, 800};
     create(&scon, &win, 0);
@@ -348,10 +355,52 @@ int main(void)
     reported(&scon);
     assert(scon.after_full_screen);
     user_resizes(&win, 1024, 768);
+    reported(&scon);
     guest_resizes(&scon, 1024, 768);
-    assert(!scon.after_full_screen);
+    assert(win.now.w == 1024 && win.now.h == 768);
+    guest_resizes(&scon, 800, 600);
+    assert(win.now.w == 800 && win.now.h == 600);
+    guest_resizes(&scon, 1920, 1080);
+    assert(win.now.w == 800 && win.now.h == 600);
+    zoom_reset(&scon);
+    assert(win.now.w == 1920 && win.now.h == 1080);
+    /* A size the window asks for is followed even if it was a full screen
+     * size. */
+    toggle_full_screen(&scon);
+    reported(&scon);
+    toggle_full_screen(&scon);
+    reported(&scon);
+    user_resizes(&win, 1920, 1080);
+    reported(&scon);
+    guest_resizes(&scon, 1280, 720);
     guest_resizes(&scon, 1920, 1080);
     assert(win.now.w == 1920 && win.now.h == 1080);
+
+    /* A guest a round of full screen behind: after the window left full
+     * screen it shows the windowed size it was given before the round, then
+     * the round's full screen size, then the windowed size again. */
+    gui_fullscreen = 0;
+    surface = (DisplaySurface){1280, 800};
+    create(&scon, &win, 0);
+    reported(&scon);
+    before = win.now;
+    toggle_full_screen(&scon);
+    reported(&scon);
+    launcher_grows(&scon);
+    guest_resizes(&scon, 1920, 1081);
+    toggle_full_screen(&scon);
+    reported(&scon);
+    toggle_full_screen(&scon);
+    reported(&scon);
+    launcher_grows(&scon);
+    toggle_full_screen(&scon);
+    reported(&scon);
+    guest_resizes(&scon, 1280, 800);
+    assert(same(win.now, before));
+    guest_resizes(&scon, 1920, 1081);
+    assert(same(win.now, before) && same(win.windowed, before));
+    guest_resizes(&scon, 1280, 800);
+    assert(same(win.now, before));
 
     /* A window destroyed with a size held back and created again starts
      * clean. */
