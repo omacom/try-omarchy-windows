@@ -881,7 +881,8 @@ func windowCloakedByApp(hwnd uintptr) bool {
 
 // finishCurtainReveal ends the lift once QEMU shows its windows: their
 // taskbar buttons come back, Omarchy gets the focus and the setup window
-// closes. It runs on the title enforcer, which an uncloaked window wakes.
+// closes. It runs when a window is uncloaked and on each title enforcer
+// pass, which also catches the time limit.
 func finishCurtainReveal() {
 	curtainMu.Lock()
 	reveal := curtainRevealing

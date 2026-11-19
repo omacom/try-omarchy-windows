@@ -24,7 +24,8 @@ import (
 //     and a window the runtime holds hidden is shown only after that
 //     (boot_curtain_windows.go).
 //   - Uncloaked. QEMU shows a held window with its first frame, and the
-//     setup window waits for that after the curtain lifted.
+//     setup window waits for that after the curtain lifted. The hand-over
+//     runs at once, beside the enforcer.
 //   - The start and end of a move or resize the user makes with the mouse or
 //     the window menu. Those, and maximizing, are the only placements the
 //     enforcer remembers.
@@ -116,6 +117,9 @@ func qemuWindowEvent(_, event, hwnd, idObject, idChild, _, _ uintptr) uintptr {
 	switch event {
 	case eventObjectNameChange:
 		restoreDisplayTitle(hwnd)
+	case eventObjectUncloaked:
+		// Not on the title enforcer, which may be busy placing the window.
+		go finishCurtainReveal()
 	case eventSystemMoveSizeStart:
 		draggedWindows.Store(hwnd, qemuPid.Load())
 	case eventSystemMoveSizeEnd:
