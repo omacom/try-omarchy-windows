@@ -277,6 +277,12 @@ func concealForCurtain(hwnd uintptr) {
 	if hidden && !current && isQemuDisplayWindow(hwnd, qemuPid.Load()) {
 		showCurtainWindow(hwnd, window)
 		showHeldWindow(hwnd)
+		if window.toolWindow {
+			// It was a tool window when shown, so it has no button yet.
+			curtainTabMu.Lock()
+			taskbarTab(hwnd, true)
+			curtainTabMu.Unlock()
+		}
 	}
 	if !current {
 		curtainMu.Lock()
