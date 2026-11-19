@@ -598,20 +598,3 @@ func TestLateReveals(t *testing.T) {
 		t.Fatalf("window 2: waiting %v tab %v", waiting, tab)
 	}
 }
-
-func TestFocusAfterLateReveal(t *testing.T) {
-	ours := func(h uintptr) bool { return h == 10 || h == 11 }
-	for _, tc := range []struct {
-		foreground uintptr
-		want       bool
-	}{
-		{0, true},   // nothing has the focus
-		{10, true},  // the launcher, or
-		{11, true},  // QEMU, still has it
-		{99, false}, // the user went to another app: it keeps the focus
-	} {
-		if got := focusAfterLateReveal(tc.foreground, ours); got != tc.want {
-			t.Errorf("foreground %d: focus %v, want %v", tc.foreground, got, tc.want)
-		}
-	}
-}

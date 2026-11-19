@@ -383,10 +383,15 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 			} else {
 				state.concealed = !correctPlacement(hwnd, p)
 			}
+			if !state.concealed {
+				exposeCurtainWindow(hwnd)
+			}
 			return 1
 		}
 	}
 	state.concealed = false
+	// Placed: a window the lift left without its region gets it now.
+	exposeCurtainWindow(hwnd)
 	// The lift gives the mark back once QEMU shows the window.
 	if !curtainRevealPending() {
 		syncFullscreenMark(hwnd)
