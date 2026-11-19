@@ -324,3 +324,16 @@ of its display, centered, the first time it leaves full screen.
 and Ctrl+Alt+F against SDL's windowed size rules: windowed and full screen
 starts, the launcher growing a full screen window, a second monitor and
 missing usable bounds.
+
+`0028-judge-sdl-hotkeys-by-their-key-events.patch` makes Ctrl+Alt+F and the
+other Ctrl+Alt hotkeys work when they arrive together with other events.
+QEMU handles SDL's event queue in one go, after SDL has read every pending
+Windows message, so `SDL_GetModState()` already counts keys further down the
+queue. A pointer entering the window just before Ctrl+Alt+F made the enter
+event see Ctrl and Alt down and hold hotkeys back, and the keys went to the
+guest instead; Ctrl and Alt let go in the same queue as F hid the hotkey. A
+hotkey now uses the modifiers of its own key event, and enter and focus
+events the modifiers as of the last key event handled. Ctrl and Alt held as a
+window gets focus still hold hotkeys back until a key goes up.
+`test-sdl-hotkey-modifiers.py` replays those queues through QEMU's key and
+window event handlers against mocked SDL.
