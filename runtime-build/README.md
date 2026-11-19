@@ -366,8 +366,10 @@ GPUs a white block where the window was first created. A held window is now
 also cloaked with `DWMWA_CLOAK`; DWM goes on composing it, so frames reach it.
 Once it is shown with a region that is not empty, QEMU paints it black, draws
 a frame, and uncloaks it once DWM's composed frame count has moved on since a
-frame at its current size was presented. QEMU only reads that count and never
-waits on DWM, so a paused or slow compositor cannot stall its main loop. It is
+frame at its current size and rectangle was presented. QEMU only reads that
+count and never waits on DWM, so a paused or slow compositor cannot stall its
+main loop; without the count it uncloaks on the first round at least 34 ms
+after the frame. It is
 uncloaked anyway one second after it came on screen
 without such a frame, ten minutes after it was cloaked, on Ctrl+Alt+F and
 when it is destroyed; if DWM refuses the cloak the window behaves as before.

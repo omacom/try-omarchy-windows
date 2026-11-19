@@ -17,7 +17,8 @@ it once DWM's composed frame count has moved on since it presented a frame
 at the size the window has then, in the same round when it can. QEMU only
 reads the count and never waits on DWM, which can take far longer than a
 frame with the display off or the session disconnected. If DWM cannot give
-the count the window is uncloaked on the round after its frame. A window
+the count the window is uncloaked on the first round at least 34 ms after
+its frame, never in the round that presented it. A window
 resized, moved or given its frame back after its frame waits for one drawn
 after that. It is uncloaked anyway a second after
 it came on screen without such a frame, ten minutes after it was cloaked,
@@ -33,7 +34,7 @@ refused uncloak is tried again on the next round.
 +    /* Windows: cloaked until its first frame on screen (sdl2-held-win32.h) */
 +    bool cloaked, cloak_framed, cloak_counted;
 +    uint64_t cloak_composed;
-+    int64_t cloak_shown, cloak_until;
++    int64_t cloak_shown, cloak_until, cloak_framed_at;
 +    int cloak_w, cloak_h;
 +    int cloak_rect[4];
      /* Created full screen and not yet left it: no windowed size of its own */
@@ -113,7 +114,7 @@ refused uncloak is tried again on the next round.
  }
  
  static void win_hold_release(struct sdl2_console *scon, bool show)
-@@ -90,10 +95,221 @@ static void win_hold_poll(struct sdl2_console *scon)
+@@ -90,10 +95,227 @@ static void win_hold_poll(struct sdl2_console *scon)
          win_hold_release(scon, true);
      }
  }
@@ -135,6 +136,8 @@ refused uncloak is tried again on the next round.
 + */
 +#define WIN_CLOAK_FRAME_WAIT_MS 1000
 +#define WIN_CLOAK_MAX_MS 600000
++/* Without DWM's frame count: two frames at 60 Hz after the present. */
++#define WIN_CLOAK_UNCOUNTED_MS 34
 +#define WIN_DWMWA_CLOAK 13
 +
 +typedef HRESULT (WINAPI *win_dwm_set_attribute_fn)(HWND, DWORD, LPCVOID, DWORD);
@@ -178,14 +181,17 @@ refused uncloak is tried again on the next round.
 +    return true;
 +}
 +
-+/* DWM composed a frame since the counted one was presented, or cannot say:
-+ * then the round after the present is the best there is. */
-+static bool win_cloak_composed(struct sdl2_console *scon)
++/* DWM composed a frame since the counted one was presented. If DWM cannot
++ * say, the first round WIN_CLOAK_UNCOUNTED_MS after the present, never the
++ * round that presented it: DWM has had a chance to compose it by then. */
++static bool win_cloak_composed(struct sdl2_console *scon, int64_t now)
 +{
 +    UINT64 frames;
 +
-+    return !scon->cloak_counted || !win_dwm_composed(&frames) ||
-+        frames != scon->cloak_composed;
++    if (scon->cloak_counted && win_dwm_composed(&frames)) {
++        return frames != scon->cloak_composed;
++    }
++    return now - scon->cloak_framed_at >= WIN_CLOAK_UNCOUNTED_MS;
 +}
 +
 +static void win_cloak_start(struct sdl2_console *scon, HWND hwnd)
@@ -286,7 +292,7 @@ refused uncloak is tried again on the next round.
 +        return true;
 +    }
 +    if (scon->cloak_framed && win_cloak_frame_current(scon, hwnd) &&
-+        win_cloak_composed(scon)) {
++        win_cloak_composed(scon, now)) {
 +        win_cloak_end(scon);
 +        return false;
 +    }
@@ -323,6 +329,7 @@ refused uncloak is tried again on the next round.
 +        scon->cloak_w = w;
 +        scon->cloak_h = h;
 +        scon->cloak_counted = win_dwm_composed(&scon->cloak_composed);
++        scon->cloak_framed_at = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
 +    }
 +}
  #else

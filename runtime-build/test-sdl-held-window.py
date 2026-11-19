@@ -85,7 +85,7 @@ typedef struct { unsigned cbSize; UINT64 cFrame; char rest[300]; } DWM_TIMING_IN
 typedef struct { int version; struct { struct { HWND window; } win; } info; } SDL_SysWMinfo;
 #define SDL_VERSION(v) (*(v) = 2)
 struct sdl2_console { SDL_Window *real_window; int hidden; int64_t hold_ms, held_until;
-    bool cloaked, cloak_framed, cloak_counted; uint64_t cloak_composed; int64_t cloak_shown, cloak_until; int cloak_w, cloak_h; int cloak_rect[4]; };
+    bool cloaked, cloak_framed, cloak_counted; uint64_t cloak_composed; int64_t cloak_shown, cloak_until, cloak_framed_at; int cloak_w, cloak_h; int cloak_rect[4]; };
 static const char *env;
 static int64_t clock_ms;
 static int shows, props, prop_fails;
@@ -122,7 +122,7 @@ static HANDLE RemovePropW(HWND hwnd, const WCHAR *name) {
 }
 static void SDL_ShowWindow(SDL_Window *w) { shows++; }
 /* The window as Windows and DWM see it. */
-static int visible, region = 0, client_w = 800, client_h = 600, frame_x, frame_y, cloak, cloak_calls, dwm_refuses, fills;
+static int visible, region = 0, client_w = 800, client_h = 600, frame_x, frame_y, frame_left, cloak, cloak_calls, dwm_refuses, fills;
 /* DWM's count of composed frames; timing_fails makes it unable to say. */
 static UINT64 composed;
 static int timing_fails;
@@ -133,7 +133,7 @@ static BOOL DeleteObject(HGDIOBJ o) { return 1; }
 static BOOL GetClientRect(HWND hwnd, RECT *r) { r->left = r->top = 0; r->right = client_w; r->bottom = client_h; return 1; }
 /* The window's rectangle: its client area, moved by frame_x and frame_y. */
 static BOOL GetWindowRect(HWND hwnd, RECT *r) {
-    r->left = -frame_x; r->top = -frame_y; r->right = client_w + frame_x; r->bottom = client_h + frame_x;
+    r->left = -frame_x - frame_left; r->top = -frame_y; r->right = client_w + frame_x; r->bottom = client_h + frame_x;
     return 1;
 }
 static HDC GetDC(HWND hwnd) { return (HDC)hwnd; }
@@ -168,7 +168,7 @@ static struct window window = {1};
 static struct sdl2_console fresh(void) {
     struct sdl2_console scon = { .real_window = 0, .hidden = 0, .hold_ms = 7, .held_until = 9 };
     shows = props = prop_fails = 0;
-    visible = 0; region = 0; client_w = 800; client_h = 600; frame_x = frame_y = 0;
+    visible = 0; region = 0; client_w = 800; client_h = 600; frame_x = frame_y = frame_left = 0;
     cloak = cloak_calls = dwm_refuses = fills = timing_fails = 0;
     return scon;
 }
@@ -304,6 +304,31 @@ int main(void) {
     assert(!win_cloak_poll(&scon) && cloak);
     composed++;
     assert(!win_cloak_poll(&scon) && !cloak);
+    /* Only the top moves: a caption 32 px high comes back over a window
+     * whose sides and bottom stay where they were. */
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    win_cloak_presented(&scon, 800, 600);
+    frame_y = 32;
+    composed++;
+    assert(win_cloak_poll(&scon) && cloak);
+    win_cloak_presented(&scon, 800, 600);
+    composed++;
+    assert(!win_cloak_poll(&scon) && !cloak);
+    /* Only the left edge moves. */
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    win_cloak_presented(&scon, 800, 600);
+    frame_left = 8;
+    composed++;
+    assert(win_cloak_poll(&scon) && cloak);
+    win_cloak_presented(&scon, 800, 600);
+    composed++;
+    assert(!win_cloak_poll(&scon) && !cloak);
 
     /* The region goes empty again before a frame: frames then do not count
      * and the wait starts over. */
@@ -391,7 +416,8 @@ int main(void) {
     clock_ms = 1005;
     assert(!win_cloak_poll(&scon) && !cloak);
 
-    /* DWM cannot say: the round after the frame. */
+    /* DWM cannot say: never in the round that presented the frame, but the
+     * first round WIN_CLOAK_UNCOUNTED_MS after it. */
     clock_ms = 5;
     scon = fresh();
     create(&scon);
@@ -399,13 +425,21 @@ int main(void) {
     assert(win_cloak_poll(&scon));
     timing_fails = 1;
     win_cloak_presented(&scon, 800, 600);
+    assert(!win_cloak_poll(&scon) && cloak);
+    clock_ms = 38;
+    assert(!win_cloak_poll(&scon) && cloak);
+    clock_ms = 39;
     assert(!win_cloak_poll(&scon) && !cloak);
+    /* It stops saying after the frame was counted. */
+    clock_ms = 5;
     scon = fresh();
     create(&scon);
     visible = 1;
     assert(win_cloak_poll(&scon));
     win_cloak_presented(&scon, 800, 600);
     timing_fails = 1;
+    assert(!win_cloak_poll(&scon) && cloak);
+    clock_ms = 39;
     assert(!win_cloak_poll(&scon) && !cloak);
 
     /* The region empties and comes back between two rounds, with a frame
