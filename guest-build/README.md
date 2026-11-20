@@ -215,9 +215,20 @@ two displays both outputs ended at the second one's mode. QEMU recreated the
 window of each output whose mode changed, the launcher put it back at its own
 size, and the EDID change that followed started the next round, until the
 start timed out. With several displays each output now gets its own
-`hl.monitor` rule, which Hyprland merges into any rule it already has, and an
-output named in the user's `monitors.lua` is left alone. One display keeps the
-catch-all rule and the mode recorded for config reloads. Compatibility
+`hl.monitor` rule. Hyprland cannot list its monitor rules, so display sync runs
+the user's Hyprland config under Lua with `hl.monitor` recording, from
+`hyprland.lua` through the modules it requires (Omarchy's defaults are not
+run), and leaves alone each output a rule there names, by connector or
+`desc:`; when it cannot follow the config, it leaves every output alone. A rule
+for one output starts from Hyprland's defaults, so it carries the catch-all's
+other settings (transform, vrr, bitdepth, color and the rest). The display
+panel of newer Omarchy keeps its choices by monitor in
+`~/.local/state/omarchy/monitors/settings` and applies them as rules for the
+connector; a mode or scale chosen there is kept, and only what the panel left
+open follows the window. An output left with a rule of its own after the other
+displays go away keeps following its window. One display keeps the catch-all
+rule and the mode recorded for config reloads. The contract tests need a Lua
+interpreter on the build host, so the guest jobs install one. Compatibility
 revision 76 delivers it; the runtime package is unchanged.
 
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
