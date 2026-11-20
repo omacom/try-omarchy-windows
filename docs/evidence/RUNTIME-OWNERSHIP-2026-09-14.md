@@ -64,16 +64,10 @@ No lock verification was bypassed. The full build/boot rerun is recorded below.
 
 ## Reproduction and evidence
 
-Apply the repository's complete patch series to the locked guest builder, then:
-
-```sh
-python3 scripts/release/smoke-runtime-ownership.py \
-  /path/to/verified-v18-artifacts /path/to/patched-builder /path/to/new-work-directory
-```
-
-The verified artifact directory must include decompressed `rootfs.ext4`, the
-kernel, initramfs and build spec. The runner keeps its disposable disk and logs;
-never execute its guest fixture scripts on a valued installation.
+This run used `scripts/release/smoke-runtime-ownership.py` against the
+verified v18 artifacts. That runner was retired on 2026-11-20: it was tied to
+the v18 image and the 4.0.3 runtime and cannot run against current builders.
+It remains in the repository history.
 
 Local evidence: `/home/bts/Projects/try-omarchy-evidence/issue116-run04`.
 
