@@ -442,6 +442,49 @@ int main(void) {
     clock_ms = 39;
     assert(!win_cloak_poll(&scon) && !cloak);
 
+    /* A guest that presents more often than WIN_CLOAK_UNCOUNTED_MS: the
+     * first frame is the one waited for, later ones do not move the wait. */
+    clock_ms = 5;
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    timing_fails = 1;
+    win_cloak_presented(&scon, 800, 600);
+    clock_ms = 25;
+    win_cloak_presented(&scon, 800, 600);
+    assert(!win_cloak_poll(&scon) && cloak);
+    clock_ms = 39;
+    win_cloak_presented(&scon, 800, 600);
+    assert(!win_cloak_poll(&scon) && !cloak);
+    /* With the count: a present just before each round does not move the
+     * count the wait started from. */
+    clock_ms = 5;
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    win_cloak_presented(&scon, 800, 600);
+    composed++;
+    win_cloak_presented(&scon, 800, 600);
+    assert(!win_cloak_poll(&scon) && !cloak);
+    /* Resized after the frame, with a frame at the new size presented before
+     * the round sees the resize: the round asks for a frame, and the one at
+     * the new size counts. */
+    scon = fresh();
+    create(&scon);
+    visible = 1;
+    assert(win_cloak_poll(&scon));
+    win_cloak_presented(&scon, 800, 600);
+    client_w = 1280; client_h = 720;
+    win_cloak_presented(&scon, 1280, 720);
+    composed++;
+    assert(win_cloak_poll(&scon) && cloak);
+    win_cloak_presented(&scon, 1280, 720);
+    assert(!win_cloak_poll(&scon) && cloak);
+    composed++;
+    assert(!win_cloak_poll(&scon) && !cloak);
+
     /* The region empties and comes back between two rounds, with a frame
      * presented while it was empty: that frame does not count. */
     scon = fresh();

@@ -13,8 +13,8 @@ region is empty.
 A held window is now also cloaked. DWM goes on composing a cloaked window,
 so frames reach it, but nothing of it shows. Once the window is shown with a
 region that is not empty, QEMU paints it black, draws a frame, and uncloaks
-it once DWM's composed frame count has moved on since it presented a frame
-at the size the window has then, in the same round when it can. QEMU only
+it once DWM's composed frame count has moved on since the first frame it
+presented at the size the window has then, in the same round when it can. QEMU only
 reads the count and never waits on DWM, which can take far longer than a
 frame with the display off or the session disconnected. If DWM cannot give
 the count the window is uncloaked on the first round at least 34 ms after
@@ -114,7 +114,7 @@ refused uncloak is tried again on the next round.
  }
  
  static void win_hold_release(struct sdl2_console *scon, bool show)
-@@ -90,10 +95,227 @@ static void win_hold_poll(struct sdl2_console *scon)
+@@ -90,10 +95,230 @@ static void win_hold_poll(struct sdl2_console *scon)
          win_hold_release(scon, true);
      }
  }
@@ -309,13 +309,16 @@ refused uncloak is tried again on the next round.
 +    return false;
 +}
 +
-+/* QEMU presented a frame drawn at w x h. */
++/* QEMU presented a frame drawn at w x h. The first such frame is the one
++ * waited for: later presents would keep moving the wait along with a guest
++ * that draws often. A window resized, moved or given another frame after it
++ * waits for a new one (win_cloak_poll). */
 +static void win_cloak_presented(struct sdl2_console *scon, int w, int h)
 +{
 +    HWND hwnd;
 +    RECT r;
 +
-+    if (!scon->cloaked || !scon->cloak_shown) {
++    if (!scon->cloaked || !scon->cloak_shown || scon->cloak_framed) {
 +        return;
 +    }
 +    hwnd = win_hold_hwnd(scon->real_window);

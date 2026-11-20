@@ -128,7 +128,7 @@
       },
       {
         "file": "patches/qemu/0030-show-held-windows-with-their-first-frame.patch",
-        "sha256": "fffb44f32e1092904c0e9deff936cfc7bab974bd8d6e9d6746cf13c35e645230"
+        "sha256": "8d52ad788eaec6e389f0939ba1e8f8d2dc54a7560b9d294446c00f58a44cb10d"
       }
     ]
   },
