@@ -125,6 +125,10 @@
       {
         "file": "patches/qemu/0029-keep-the-window-size-after-full-screen.patch",
         "sha256": "60ca6c1fdcae52f2279ae4e1a98a437c9e52fb67cc510a3974e62fd409d3cbe2"
+      },
+      {
+        "file": "patches/qemu/0030-show-held-windows-with-their-first-frame.patch",
+        "sha256": "8d52ad788eaec6e389f0939ba1e8f8d2dc54a7560b9d294446c00f58a44cb10d"
       }
     ]
   },

@@ -33,6 +33,29 @@ func TestRuntimeHoldsWindows(t *testing.T) {
 	}
 }
 
+func TestRuntimeShowsHeldWindowsWithFrame(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "bin", "qemu-system-x86_64w.exe")
+	if err := os.MkdirAll(filepath.Join(dir, "provenance"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "provenance", "sources.lock.json")
+	for _, tc := range []struct {
+		data string
+		want bool
+	}{
+		{`{"qemu":{"patches":[{"file":"` + heldWindowsPatch + `"}]}}`, false},
+		{`{"qemu":{"patches":[{"file":"` + heldWindowsPatch + `"},{"file":"` + heldWindowFramePatch + `"}]}}`, true},
+	} {
+		if err := os.WriteFile(path, []byte(tc.data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := runtimeShowsHeldWindowsWithFrame(exe); got != tc.want {
+			t.Fatalf("shows with frame = %v, want %v for %s", got, tc.want, tc.data)
+		}
+	}
+}
+
 func TestHeldWindowsEnvironment(t *testing.T) {
 	// A value left in the launcher's own environment never reaches QEMU, so a
 	// runtime is told to hold its windows only when the curtain will show them.

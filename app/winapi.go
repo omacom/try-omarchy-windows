@@ -326,7 +326,7 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	if curtainUp.Load() {
 		concealForCurtain(hwnd)
 		curtainTaskbar(hwnd)
-	} else {
+	} else if !curtainRevealPending() {
 		uiDone()
 	}
 	if enumTitleIcon != 0 {
@@ -377,17 +377,30 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 				// rectangle. Setting both at once on a restored window
 				// shows it at that rectangle for a moment, and a window
 				// the curtain placed is already where a maximized one
-				// goes, so this way it does not move at all.
-				procShowWindow.Call(hwnd, swShowMaximized)
+				// goes, so this way it does not move at all. A window
+				// the lift keeps cloaked and without its region shows
+				// nothing yet, so it takes both in one call: each call
+				// waits on QEMU's window thread.
+				if !curtainRegionPending(hwnd) {
+					procShowWindow.Call(hwnd, swShowMaximized)
+				}
 				state.concealed = !applyPlacement(hwnd, p)
 			} else {
 				state.concealed = !correctPlacement(hwnd, p)
+			}
+			if !state.concealed {
+				exposeCurtainWindow(hwnd)
 			}
 			return 1
 		}
 	}
 	state.concealed = false
-	syncFullscreenMark(hwnd)
+	// Placed: a window the lift left without its region gets it now.
+	exposeCurtainWindow(hwnd)
+	// The lift gives the mark back once QEMU shows the window.
+	if !curtainRevealPending() {
+		syncFullscreenMark(hwnd)
+	}
 	// SDL puts a full screen window back on its monitor's rectangle when it
 	// enters full screen or the display changes.
 	if growFullscreenWindow(hwnd) {

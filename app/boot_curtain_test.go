@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -553,4 +556,223 @@ func TestGrownFullscreenIsNotRepairedBackOntoTheMonitor(t *testing.T) {
 			t.Errorf("%v was taken for a grown full screen window", r)
 		}
 	}
+}
+
+func TestCurtainRevealDone(t *testing.T) {
+	lifted := time.Date(2026, 11, 19, 9, 26, 34, 0, time.UTC)
+	for _, tc := range []struct {
+		name       string
+		cloaked    []bool
+		after      time.Duration
+		done, late bool
+	}{
+		{"still cloaked", []bool{true}, 0, false, false},
+		{"shown with its frame", []bool{false}, 40 * time.Millisecond, true, false},
+		{"one of two displays still cloaked", []bool{false, true}, time.Second, false, false},
+		{"both displays shown", []bool{false, false}, time.Second, true, false},
+		{"no window left", nil, 0, true, false},
+		{"bounded", []bool{true}, curtainFrameWait, true, true},
+		{"bounded with a window shown", []bool{false, true}, curtainFrameWait + time.Second, true, true},
+		{"shown just before the bound", []bool{false}, curtainFrameWait - time.Millisecond, true, false},
+	} {
+		done, late := curtainRevealDone(tc.cloaked, lifted, lifted.Add(tc.after))
+		if done != tc.done || late != tc.late {
+			t.Errorf("%s: done %v late %v, want %v %v", tc.name, done, late, tc.done, tc.late)
+		}
+	}
+}
+
+func TestLateReveals(t *testing.T) {
+	var late lateReveals
+	if waiting, _ := late.take(1); waiting {
+		t.Fatal("a window nobody handed over from waits")
+	}
+	late.add(1, true)
+	late.add(2, false)
+	// A window shown after the hand over gets its steps once.
+	if waiting, tab := late.take(1); !waiting || !tab {
+		t.Fatalf("window 1: waiting %v tab %v", waiting, tab)
+	}
+	if waiting, _ := late.take(1); waiting {
+		t.Fatal("window 1 got its steps twice")
+	}
+	// The curtain left this one's button alone.
+	if waiting, tab := late.take(2); !waiting || tab {
+		t.Fatalf("window 2: waiting %v tab %v", waiting, tab)
+	}
+}
+
+func TestRevealRegions(t *testing.T) {
+	r := newRevealRegions([]uintptr{1, 2})
+	if !r.held(1) || !r.held(2) || r.held(3) {
+		t.Fatal("every cloaked window is held from the start")
+	}
+	if !r.release(1) || r.release(1) || r.held(1) {
+		t.Fatal("a window's region is due once")
+	}
+	if left := r.close(); len(left) != 1 || left[0] != 2 {
+		t.Fatalf("close left %v, want [2]", left)
+	}
+	if r.held(2) || r.release(2) || len(r.close()) != 0 {
+		t.Fatal("nothing is held once the reveal ended")
+	}
+}
+
+// The time limit ends the reveal while the lift is still giving the first of
+// two windows its frame: both windows still get their region, once the lift
+// is done with each, and nothing writes to a map the reveal let go of.
+func TestLiftCloakedWindowsAndLimit(t *testing.T) {
+	for _, limitDuring := range []uintptr{1, 2} {
+		r := newRevealRegions([]uintptr{1, 2})
+		var mu sync.Mutex
+		regions := map[uintptr]int{}
+		framed := map[uintptr]bool{}
+		region := func(hwnd uintptr) {
+			mu.Lock()
+			regions[hwnd]++
+			mu.Unlock()
+		}
+		limited := make(chan struct{})
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			liftCloakedWindows([]uintptr{1, 2}, r, func(hwnd uintptr) {
+				if hwnd == limitDuring {
+					<-limited
+				}
+				mu.Lock()
+				framed[hwnd] = true
+				mu.Unlock()
+			}, region)
+		}()
+		for _, hwnd := range r.close() {
+			region(hwnd)
+		}
+		close(limited)
+		<-done
+		// The title enforcer comes by later and finds nothing to do.
+		if r.release(1) || r.release(2) {
+			t.Fatal("a region was released after the reveal ended")
+		}
+		for _, hwnd := range []uintptr{1, 2} {
+			if !framed[hwnd] || regions[hwnd] == 0 {
+				t.Errorf("limit during window %d: window %d framed %v, region %d times", limitDuring, hwnd, framed[hwnd], regions[hwnd])
+			}
+		}
+	}
+}
+
+// The same with the limit, the title enforcer and the lift racing freely.
+func TestLiftCloakedWindowsRace(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		r := newRevealRegions([]uintptr{1, 2})
+		var mu sync.Mutex
+		regions := map[uintptr]int{}
+		region := func(hwnd uintptr) {
+			mu.Lock()
+			regions[hwnd]++
+			mu.Unlock()
+		}
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			liftCloakedWindows([]uintptr{1, 2}, r, func(uintptr) {}, region)
+		}()
+		go func() {
+			defer wg.Done()
+			for _, hwnd := range []uintptr{1, 2} {
+				if r.release(hwnd) {
+					region(hwnd)
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for _, hwnd := range r.close() {
+				region(hwnd)
+			}
+		}()
+		wg.Wait()
+		if regions[1] == 0 || regions[2] == 0 {
+			t.Fatalf("run %d: regions %v", i, regions)
+		}
+	}
+}
+
+func TestCurtainToolWindow(t *testing.T) {
+	for _, tc := range []struct{ visible, held, waits, want bool }{
+		{false, true, true, true},
+		// A runtime with 0026 to 0029 but not 0030: as before.
+		{false, true, false, false},
+		{true, true, true, false},
+		{false, false, true, false},
+	} {
+		if got := curtainToolWindow(tc.visible, tc.held, tc.waits); got != tc.want {
+			t.Errorf("visible %v held %v waits %v: %v", tc.visible, tc.held, tc.waits, got)
+		}
+	}
+}
+
+func TestLateRevealsTakeShown(t *testing.T) {
+	var late lateReveals
+	late.add(1, true)
+	// The shell uncloaked it while QEMU still has it cloaked.
+	if waiting, _ := late.takeShown(1, true); waiting {
+		t.Fatal("a window QEMU still cloaks was taken")
+	}
+	if waiting, tab := late.takeShown(1, false); !waiting || !tab {
+		t.Fatal("the reveal did not find the window")
+	}
+}
+
+// QEMU shows a window right after the shell was asked for its button, which
+// the shell ignored while it was cloaked: the window was recorded before
+// that, and the look after the hand over gives it its steps again.
+func TestHandOverRevealedLate(t *testing.T) {
+	var late lateReveals
+	var steps []string
+	cloaked := map[uintptr]bool{1: true, 2: true}
+	redone := map[uintptr]int{}
+	s := revealHandOver{
+		record: func(hwnd uintptr) {
+			late.add(hwnd, true)
+			steps = append(steps, fmt.Sprintf("record %d", hwnd))
+		},
+		showTab: func(hwnd uintptr) {
+			steps = append(steps, fmt.Sprintf("tab %d", hwnd))
+			if hwnd == 1 {
+				// QEMU shows window 1 now; its uncloak event finds it.
+				cloaked[1] = false
+				if waiting, _ := late.takeShown(1, false); waiting {
+					redone[1]++
+				}
+			}
+		},
+		handOver: func() { steps = append(steps, "hand over") },
+		cloaked:  func(hwnd uintptr) bool { return cloaked[hwnd] },
+		redo: func(hwnd uintptr) {
+			// A redundant redo finds nothing to do.
+			if waiting, _ := late.takeShown(hwnd, cloaked[hwnd]); waiting {
+				redone[hwnd]++
+			}
+		},
+	}
+	handOverRevealed([]uintptr{1, 2}, true, s)
+	if want := "record 1,record 2,tab 1,tab 2,hand over"; strings.Join(steps, ",") != want {
+		t.Fatalf("steps %v, want %s", steps, want)
+	}
+	if redone[1] != 1 || redone[2] != 0 {
+		t.Fatalf("redone %v: window 1 once, window 2 not yet", redone)
+	}
+	// Window 2 is shown later; its uncloak event redoes it.
+	if waiting, _ := late.takeShown(2, false); !waiting {
+		t.Fatal("window 2 was not waiting")
+	}
+
+	// In time: nothing is recorded or redone.
+	steps = nil
+	s.record = func(uintptr) { t.Fatal("recorded on time") }
+	s.redo = func(uintptr) { t.Fatal("redone on time") }
+	handOverRevealed([]uintptr{1}, false, s)
 }

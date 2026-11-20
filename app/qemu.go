@@ -485,6 +485,16 @@ func runtimeHoldsWindows(qemu string) bool {
 	return runtimeHasPatch(qemu, heldWindowsPatch)
 }
 
+// A runtime with this patch also keeps a held window cloaked until it has
+// presented a frame on screen at the window's size, so the curtain's lift
+// shows the desktop at once instead of what the hidden window held
+// (boot_curtain_windows.go).
+const heldWindowFramePatch = "patches/qemu/0030-show-held-windows-with-their-first-frame.patch"
+
+func runtimeShowsHeldWindowsWithFrame(qemu string) bool {
+	return runtimeHasPatch(qemu, heldWindowFramePatch)
+}
+
 func heldWindowsEnvironment(env []string, enabled bool) []string {
 	result := make([]string, 0, len(env)+1)
 	for _, value := range env {

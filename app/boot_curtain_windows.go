@@ -33,6 +33,18 @@ import (
 // hidden while the curtain is up and marks them with heldWindowProperty; the
 // launcher shows such a window only once the curtain has hidden it. An older
 // runtime shows its windows itself and the curtain hides them as before.
+//
+// Nothing QEMU presents reaches a window with an empty region, so when the
+// region came back the window showed what it held from before, black or
+// white, until QEMU's next frame. A runtime with heldWindowFramePatch also
+// cloaks a held window and uncloaks it once it has presented a frame on
+// screen. The setup window then stays up until QEMU's windows are no longer
+// cloaked, at most curtainFrameWait, and the taskbar button, the full screen
+// mark and the focus follow then: the shell leaves cloaked windows alone.
+// The lift gives such a window its frame and placement back while it is
+// still cloaked and its region last, so the frame QEMU waits for is drawn
+// in the window's final frame. A held window is also a tool window while it
+// is hidden, so the taskbar never gives it a button before the lift.
 
 var (
 	procSetWindowRgn       = user32.NewProc("SetWindowRgn")
@@ -48,6 +60,7 @@ var (
 	procCreateRectRgn      = gdi32.NewProc("CreateRectRgn")
 	procClientToScreen     = user32.NewProc("ClientToScreen")
 	procGetPropW           = user32.NewProc("GetPropW")
+	procDwmGetWindowAttr   = syscall.NewLazyDLL("dwmapi.dll").NewProc("DwmGetWindowAttribute")
 	heldWindowProperty, _  = syscall.UTF16PtrFromString("TryOmarchy.HeldWindow")
 
 	// curtainUp is true from launch until the window is shown for the first
@@ -67,7 +80,22 @@ var (
 	curtainStatus    string
 	// When watchDesktop last looked at the window after the curtain lifted.
 	desktopCheckedAt time.Time
+	// curtainWaitsForFrame is set when QEMU keeps its held windows cloaked
+	// until their first frame (heldWindowFramePatch).
+	curtainWaitsForFrame atomic.Bool
+	// The lift waiting for QEMU to uncloak its windows, under curtainMu.
+	curtainRevealing *curtainReveal
+	// Windows the lift handed over from while still cloaked.
+	curtainLate lateReveals
 )
+
+type curtainReveal struct {
+	windows map[uintptr]*curtainWindow
+	lifted  time.Time
+	// regions holds the cloaked windows that get their region back only
+	// after their frame and placement (exposeCurtainWindow).
+	regions *revealRegions
+}
 
 type curtainWindow struct {
 	// ready is set once the window is hidden. Until then the goroutine
@@ -95,7 +123,15 @@ type curtainWindow struct {
 	placed bool
 	// offMonitor is set once the window was moved off the whole monitor.
 	offMonitor bool
+	// toolWindow says the curtain made the window a tool window before it
+	// was first shown, so the taskbar never gave it a button.
+	toolWindow bool
 }
+
+const (
+	gwlExStyle     = ^uintptr(19) // -20
+	wsExToolWindow = 0x00000080
+)
 
 // Windows draws a window's title bar and border even when its region is
 // empty, so the curtain also takes the frame off while it is up.
@@ -241,6 +277,12 @@ func concealForCurtain(hwnd uintptr) {
 	if hidden && !current && isQemuDisplayWindow(hwnd, qemuPid.Load()) {
 		showCurtainWindow(hwnd, window)
 		showHeldWindow(hwnd)
+		if window.toolWindow {
+			// It was a tool window when shown, so it has no button yet.
+			curtainTabMu.Lock()
+			taskbarTab(hwnd, true)
+			curtainTabMu.Unlock()
+		}
 	}
 	if !current {
 		curtainMu.Lock()
@@ -470,6 +512,14 @@ func hideCurtainWindow(hwnd uintptr, window *curtainWindow) bool {
 		logf("startup: cannot hide the window while Omarchy boots: %v", err)
 		return false
 	}
+	// A held window that is not shown yet gets no taskbar button at all as
+	// a tool window. Deleting the button of a shown one races the taskbar,
+	// which can put it back for a moment (curtainTabInterval).
+	if visible, _, _ := procIsWindowVisible.Call(hwnd); curtainToolWindow(visible != 0, windowHeld(hwnd), curtainWaitsForFrame.Load()) {
+		ex, _, _ := procGetWindowLongW.Call(hwnd, gwlExStyle)
+		procSetWindowLongW.Call(hwnd, gwlExStyle, ex|wsExToolWindow)
+		window.toolWindow, window.tabRemoved = true, true
+	}
 	style, _, _ := procGetWindowLongW.Call(hwnd, gwlStyle)
 	window.frame, window.style = style&curtainFrameStyles, style
 	if window.frame == 0 {
@@ -500,6 +550,12 @@ func hideCurtainWindow(hwnd uintptr, window *curtainWindow) bool {
 // the curtain took off (other style changes since are kept), and the window's
 // old rectangle unless something moved or sized it since.
 func showCurtainWindow(hwnd uintptr, window *curtainWindow) {
+	restoreCurtainRegion(hwnd)
+	restoreCurtainFrame(hwnd, window)
+}
+
+// restoreCurtainRegion gives a window its full region back.
+func restoreCurtainRegion(hwnd uintptr) {
 	// An empty region left behind would keep the window invisible for the
 	// whole session, so retry before giving up.
 	restored := false
@@ -514,6 +570,18 @@ func showCurtainWindow(hwnd uintptr, window *curtainWindow) {
 	}
 	if !restored {
 		logf("startup: cannot show the window again: %v", err)
+	}
+}
+
+// restoreCurtainFrame gives a window its frame, rectangle and taskbar
+// eligibility back.
+func restoreCurtainFrame(hwnd uintptr, window *curtainWindow) {
+	if window.toolWindow {
+		ex, _, _ := procGetWindowLongW.Call(hwnd, gwlExStyle)
+		procSetWindowLongW.Call(hwnd, gwlExStyle, ex&^wsExToolWindow)
+		if window.frame == 0 {
+			refreshWindowFrame(hwnd)
+		}
 	}
 	if window.frame == 0 {
 		return
@@ -565,6 +633,7 @@ func refreshWindowFrame(hwnd uintptr) {
 // gives the same handle is concealed again.
 func forgetCurtainWindow(hwnd uintptr) {
 	taskbarFullscreen.forget(hwnd)
+	curtainLate.take(hwnd)
 	curtainMu.Lock()
 	delete(curtainWindows, hwnd)
 	delete(curtainLifting, hwnd)
@@ -606,7 +675,10 @@ func curtainTaskbar(hwnd uintptr) {
 // primary is the window of the guest's first display, or 0.
 func curtainTick(primary uintptr) {
 	if !curtainUp.Load() {
-		watchDesktop(primary)
+		finishCurtainReveal()
+		if !curtainRevealPending() {
+			watchDesktop(primary)
+		}
 		return
 	}
 	times := curtainTimes()
@@ -762,7 +834,7 @@ func watchDesktop(primary uintptr) {
 // curtainPolling makes the title enforcer look more often while the
 // desktop may appear at any moment.
 func curtainPolling() bool {
-	return curtainUp.Load() && curtainTimes().checkPaint()
+	return curtainUp.Load() && curtainTimes().checkPaint() || curtainRevealPending()
 }
 
 // liftCurtain gives the guest's windows back their full region and taskbar
@@ -797,26 +869,199 @@ func liftCurtain(reason string) {
 			curtainMu.Unlock()
 		}
 	}
-	for hwnd, window := range windows {
-		showCurtainWindow(hwnd, window)
-		procRedrawWindow.Call(hwnd, 0, 0, rdwInvalidate|rdwAllChildren|rdwFrame)
-		if window.tabRemoved {
-			curtainTabMu.Lock()
-			taskbarTab(hwnd, true)
-			curtainTabMu.Unlock()
+	waits := curtainWaitsForFrame.Load() && len(windows) > 0
+	// Everything that changes a cloaked window's frame happens while QEMU
+	// still has it cloaked, and its region comes back last, once the title
+	// enforcer has placed it (exposeCurtainWindow): QEMU waits for a frame
+	// drawn after that, so the first one shown is drawn in the window's
+	// final frame. All of them are marked before any is touched, since the
+	// time limit can end the reveal while this goes through them.
+	var cloaked, others []uintptr
+	for hwnd := range windows {
+		if waits && windowCloakedByApp(hwnd) {
+			cloaked = append(cloaked, hwnd)
+		} else {
+			others = append(others, hwnd)
 		}
-		syncFullscreenMark(hwnd)
-		// Only now may the title enforcer put the window back where it
-		// belongs: its frame is part of the remembered placement.
+	}
+	if waits {
+		reveal := &curtainReveal{windows: windows, lifted: time.Now(), regions: newRevealRegions(cloaked)}
 		curtainMu.Lock()
-		delete(curtainLifting, hwnd)
+		curtainRevealing = reveal
 		curtainMu.Unlock()
+		liftCloakedWindows(cloaked, reveal.regions, func(hwnd uintptr) {
+			restoreCurtainFrame(hwnd, windows[hwnd])
+			curtainLifted(hwnd)
+		}, showCurtainRegion)
+	}
+	for _, hwnd := range others {
+		showCurtainWindow(hwnd, windows[hwnd])
+		procRedrawWindow.Call(hwnd, 0, 0, rdwInvalidate|rdwAllChildren|rdwFrame)
+		if !waits {
+			showCurtainTab(hwnd, windows[hwnd])
+		}
+		curtainLifted(hwnd)
 	}
 	wakeTitleEnforcer()
+	if !waits {
+		handOverFromCurtain()
+	}
+}
+
+// curtainLifted lets the title enforcer put the window back where it
+// belongs: its frame is part of the remembered placement.
+func curtainLifted(hwnd uintptr) {
+	curtainMu.Lock()
+	delete(curtainLifting, hwnd)
+	curtainMu.Unlock()
+}
+
+// showCurtainRegion gives a window its region back and has it drawn.
+func showCurtainRegion(hwnd uintptr) {
+	restoreCurtainRegion(hwnd)
+	procRedrawWindow.Call(hwnd, 0, 0, rdwInvalidate|rdwAllChildren|rdwFrame)
+}
+
+// curtainRegionPending reports whether the lift keeps hwnd cloaked and
+// without its region until it is placed.
+func curtainRegionPending(hwnd uintptr) bool {
+	curtainMu.Lock()
+	reveal := curtainRevealing
+	curtainMu.Unlock()
+	return reveal != nil && reveal.regions.held(hwnd)
+}
+
+// exposeCurtainWindow gives a window the lift left without its region its
+// region back. The title enforcer calls it once the window is where it
+// belongs; finishCurtainReveal does at the latest when the lift stops
+// waiting.
+func exposeCurtainWindow(hwnd uintptr) {
+	curtainMu.Lock()
+	reveal := curtainRevealing
+	curtainMu.Unlock()
+	if reveal != nil && reveal.regions.release(hwnd) {
+		showCurtainRegion(hwnd)
+	}
+}
+
+// showCurtainTab gives a window the curtain hid its taskbar button and full
+// screen mark back.
+func showCurtainTab(hwnd uintptr, window *curtainWindow) {
+	if window.tabRemoved {
+		curtainTabMu.Lock()
+		taskbarTab(hwnd, true)
+		curtainTabMu.Unlock()
+	}
+	syncFullscreenMark(hwnd)
+}
+
+func handOverFromCurtain() {
 	if hwnd := qemuHwnd.Load(); hwnd != 0 {
-		procSetForegroundWindow.Call(hwnd)
+		focusOmarchy(hwnd)
 	}
 	uiDone()
+}
+
+// focusOmarchy asks for the focus for Omarchy's window, on the lift and when
+// QEMU shows a window after the hand over. Windows grants it only while the
+// launcher or QEMU is in front, so a user who went to another app while
+// Omarchy started keeps it.
+func focusOmarchy(hwnd uintptr) bool {
+	ok, _, _ := procSetForegroundWindow.Call(hwnd)
+	return ok != 0
+}
+
+// curtainRevealPending reports whether the lift is waiting for QEMU to show
+// its windows; the setup window and the full screen mark wait with it.
+func curtainRevealPending() bool {
+	curtainMu.Lock()
+	defer curtainMu.Unlock()
+	return curtainRevealing != nil
+}
+
+// windowCloakedByApp reports whether QEMU cloaked hwnd. A window the shell
+// cloaks, on another virtual desktop, or whose state cannot be read, does
+// not count.
+func windowCloakedByApp(hwnd uintptr) bool {
+	const dwmwaCloaked, dwmCloakedApp = 14, 1
+	var cloaked uint32
+	hr, _, _ := procDwmGetWindowAttr.Call(hwnd, dwmwaCloaked, uintptr(unsafe.Pointer(&cloaked)), 4)
+	return hr == 0 && cloaked&dwmCloakedApp != 0
+}
+
+// finishCurtainReveal ends the lift once QEMU shows its windows: their
+// taskbar buttons come back, Omarchy gets the focus and the setup window
+// closes. It runs when a window is uncloaked and on each title enforcer
+// pass, which also catches the time limit.
+func finishCurtainReveal() {
+	curtainMu.Lock()
+	reveal := curtainRevealing
+	curtainMu.Unlock()
+	if reveal == nil {
+		return
+	}
+	pid := qemuPid.Load()
+	var cloaked []bool
+	for hwnd := range reveal.windows {
+		if isQemuDisplayWindow(hwnd, pid) {
+			cloaked = append(cloaked, windowCloakedByApp(hwnd))
+		}
+	}
+	done, late := curtainRevealDone(cloaked, reveal.lifted, time.Now())
+	if !done {
+		return
+	}
+	curtainMu.Lock()
+	if curtainRevealing != reveal {
+		curtainMu.Unlock()
+		return
+	}
+	curtainRevealing = nil
+	curtainMu.Unlock()
+	// Never leave a window without its region.
+	for _, hwnd := range reveal.regions.close() {
+		showCurtainRegion(hwnd)
+	}
+	took := time.Since(reveal.lifted).Round(time.Millisecond)
+	if late {
+		logf("startup: QEMU had not shown Omarchy's window %v after the lift; showing Omarchy anyway", took)
+	} else {
+		logf("startup: QEMU showed Omarchy's window %v after the lift", took)
+	}
+	var hwnds []uintptr
+	for hwnd := range reveal.windows {
+		if isQemuDisplayWindow(hwnd, pid) {
+			hwnds = append(hwnds, hwnd)
+		}
+	}
+	handOverRevealed(hwnds, late, revealHandOver{
+		record:   func(hwnd uintptr) { curtainLate.add(hwnd, reveal.windows[hwnd].tabRemoved) },
+		showTab:  func(hwnd uintptr) { showCurtainTab(hwnd, reveal.windows[hwnd]) },
+		handOver: handOverFromCurtain,
+		cloaked:  windowCloakedByApp,
+		redo:     redoLateReveal,
+	})
+}
+
+// redoLateReveal gives a window QEMU showed after the hand over the shell
+// steps the shell ignored while it was cloaked: its taskbar button and full
+// screen mark, and the focus as on the lift.
+func redoLateReveal(hwnd uintptr) {
+	// An uncloak by the shell, such as a virtual desktop switch, while QEMU
+	// still has the window cloaked is not the reveal.
+	waiting, tab := curtainLate.takeShown(hwnd, windowCloakedByApp(hwnd))
+	if !waiting {
+		return
+	}
+	if tab {
+		curtainTabMu.Lock()
+		taskbarTab(hwnd, true)
+		curtainTabMu.Unlock()
+	}
+	taskbarFullscreen.forget(hwnd)
+	syncFullscreenMark(hwnd)
+	focus := focusOmarchy(hwnd)
+	logf("startup: QEMU showed Omarchy's window after the hand over; taskbar button and full screen mark again, focus %v", focus)
 }
 
 // windowShowsDesktop reads the window's picture through the compositor, as

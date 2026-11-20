@@ -1,0 +1,390 @@
+sdl2: show a held window with its first frame
+
+Applies on top of 0029.
+
+While Omarchy boots, the launcher hides a held window with an empty window
+region, and nothing QEMU presents reaches a window with an empty region.
+When the curtain lifted, the window showed what its surface held from before
+the region went empty until QEMU's next frame: black, and on some GPUs a
+white block where the window was first created. SDL paints a window black
+only on the first erase in the process, which a held window misses while its
+region is empty.
+
+A held window is now also cloaked. DWM goes on composing a cloaked window,
+so frames reach it, but nothing of it shows. Once the window is shown with a
+region that is not empty, QEMU paints it black, draws a frame, and uncloaks
+it once DWM's composed frame count has moved on since the first frame it
+presented at the size the window has then, in the same round when it can. QEMU only
+reads the count and never waits on DWM, which can take far longer than a
+frame with the display off or the session disconnected. If DWM cannot give
+the count the window is uncloaked on the first round at least 34 ms after
+its frame, never in the round that presented it. A window
+resized, moved or given its frame back after its frame waits for one drawn
+after that. It is uncloaked anyway a second after
+it came on screen without such a frame, ten minutes after it was cloaked,
+on Ctrl+Alt+F and when it is destroyed. If DWM refuses the cloak the window behaves as before, and a
+refused uncloak is tried again on the next round.
+
+--- a/include/ui/sdl2.h
++++ b/include/ui/sdl2.h
+@@ -62,6 +62,12 @@ struct sdl2_console {
+     bool has_dmabuf;
+     /* Windows: shown by the launcher (sdl2-held-win32.h) */
+     int64_t hold_ms, held_until;
++    /* Windows: cloaked until its first frame on screen (sdl2-held-win32.h) */
++    bool cloaked, cloak_framed, cloak_counted;
++    uint64_t cloak_composed;
++    int64_t cloak_shown, cloak_until, cloak_framed_at;
++    int cloak_w, cloak_h;
++    int cloak_rect[4];
+     /* Created full screen and not yet left it: no windowed size of its own */
+     bool fullscreen_start;
+ #ifdef CONFIG_OPENGL
+@@ -77,6 +83,7 @@ void sdl2_window_create(struct sdl2_console *scon);
+ void sdl2_window_destroy(struct sdl2_console *scon);
+ void sdl2_window_resize(struct sdl2_console *scon);
+ void sdl2_poll_events(struct sdl2_console *scon);
++void sdl2_window_presented(struct sdl2_console *scon, int w, int h);
+ 
+ void sdl2_process_key(struct sdl2_console *scon,
+                       SDL_KeyboardEvent *ev);
+--- a/ui/sdl2-2d.c
++++ b/ui/sdl2-2d.c
+@@ -35,6 +35,7 @@ void sdl2_2d_update(DisplayChangeListener *dcl,
+     DisplaySurface *surf = scon->surface;
+     SDL_Rect rect;
+     size_t surface_data_offset;
++    int ww, wh;
+     assert(!scon->opengl);
+ 
+     if (!scon->texture) {
+@@ -54,6 +55,8 @@ void sdl2_2d_update(DisplayChangeListener *dcl,
+     SDL_RenderClear(scon->real_renderer);
+     SDL_RenderCopy(scon->real_renderer, scon->texture, NULL, NULL);
+     SDL_RenderPresent(scon->real_renderer);
++    SDL_GetWindowSize(scon->real_window, &ww, &wh);
++    sdl2_window_presented(scon, ww, wh);
+ }
+ 
+ void sdl2_2d_switch(DisplayChangeListener *dcl,
+--- a/ui/sdl2-gl.c
++++ b/ui/sdl2-gl.c
+@@ -59,6 +59,7 @@ static void sdl2_gl_render_surface(struct sdl2_console *scon)
+ 
+     surface_gl_render_texture(scon->gls, scon->surface);
+     SDL_GL_SwapWindow(scon->real_window);
++    sdl2_window_presented(scon, ww, wh);
+ }
+ 
+ void sdl2_gl_update(DisplayChangeListener *dcl,
+@@ -258,6 +259,7 @@ void sdl2_gl_scanout_flush(DisplayChangeListener *dcl,
+     egl_fb_blit(&scon->win_fb, &scon->guest_fb, !scon->y0_top);
+ 
+     SDL_GL_SwapWindow(scon->real_window);
++    sdl2_window_presented(scon, ww, wh);
+ 
+     /* Keep poll rate high while frames are being presented */
+     scon->idle_counter = 0;
+--- a/ui/sdl2-held-win32.h
++++ b/ui/sdl2-held-win32.h
+@@ -2,6 +2,7 @@
+ #ifndef SDL2_HELD_WIN32_H
+ #define SDL2_HELD_WIN32_H
+ #ifdef CONFIG_WIN32
++#include <dwmapi.h>
+ /*
+  * While Omarchy boots, the Try Omarchy launcher hides the display windows
+  * itself. Windows carries out those calls on this thread, which goes on
+@@ -41,6 +42,8 @@ static int win_hold_flags(struct sdl2_console *scon)
+ }
+ 
+ /* Marks a window created with win_hold_flags, or shows it if it cannot. */
++static void win_cloak_start(struct sdl2_console *scon, HWND hwnd);
++
+ static void win_hold_window(struct sdl2_console *scon)
+ {
+     HWND hwnd;
+@@ -54,7 +57,9 @@ static void win_hold_window(struct sdl2_console *scon)
+         if (scon->real_window) {
+             SDL_ShowWindow(scon->real_window);
+         }
++        return;
+     }
++    win_cloak_start(scon, hwnd);
+ }
+ 
+ static void win_hold_release(struct sdl2_console *scon, bool show)
+@@ -90,10 +95,230 @@ static void win_hold_poll(struct sdl2_console *scon)
+         win_hold_release(scon, true);
+     }
+ }
++
++/*
++ * The launcher hides a held window with an empty window region, and nothing
++ * QEMU presents reaches a window with an empty region. When the region came
++ * back the window showed what its surface held from before, black or white,
++ * until QEMU's next frame. So a held window is also cloaked: DWM goes on
++ * composing it, and frames reach it, but nothing of it shows. It stays
++ * cloaked until it is shown with a region that is not empty, QEMU has
++ * presented a frame at the size it has then, and DWM has composed a frame
++ * since. Nothing here waits for DWM: a locked session or a display that is
++ * off can hold composition back. It is uncloaked anyway
++ * WIN_CLOAK_FRAME_WAIT_MS after it came on screen without such a frame,
++ * WIN_CLOAK_MAX_MS after it was cloaked, on Ctrl+Alt+F and when it is
++ * destroyed, so it can never stay invisible. If DWM refuses the cloak the
++ * window behaves as before.
++ */
++#define WIN_CLOAK_FRAME_WAIT_MS 1000
++#define WIN_CLOAK_MAX_MS 600000
++/* Without DWM's frame count: two frames at 60 Hz after the present. */
++#define WIN_CLOAK_UNCOUNTED_MS 34
++#define WIN_DWMWA_CLOAK 13
++
++typedef HRESULT (WINAPI *win_dwm_set_attribute_fn)(HWND, DWORD, LPCVOID, DWORD);
++typedef HRESULT (WINAPI *win_dwm_timing_fn)(HWND, DWM_TIMING_INFO *);
++static win_dwm_set_attribute_fn win_dwm_set_attribute;
++static win_dwm_timing_fn win_dwm_timing;
++
++static bool win_cloak_set(HWND hwnd, BOOL on)
++{
++    static bool loaded;
++
++    if (!loaded) {
++        HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
++
++        loaded = true;
++        if (dwm) {
++            win_dwm_set_attribute = (win_dwm_set_attribute_fn)(void (*)(void))
++                GetProcAddress(dwm, "DwmSetWindowAttribute");
++            win_dwm_timing = (win_dwm_timing_fn)(void (*)(void))
++                GetProcAddress(dwm, "DwmGetCompositionTimingInfo");
++        }
++    }
++    return win_dwm_set_attribute &&
++        SUCCEEDED(win_dwm_set_attribute(hwnd, WIN_DWMWA_CLOAK, &on, sizeof(on)));
++}
++
++/* How many frames DWM has composed, if it can say. */
++static bool win_dwm_composed(UINT64 *frames)
++{
++    DWM_TIMING_INFO info;
++
++    if (!win_dwm_timing) {
++        return false;
++    }
++    memset(&info, 0, sizeof(info));
++    info.cbSize = sizeof(info);
++    if (FAILED(win_dwm_timing(NULL, &info))) {
++        return false;
++    }
++    *frames = info.cFrame;
++    return true;
++}
++
++/* DWM composed a frame since the counted one was presented. If DWM cannot
++ * say, the first round WIN_CLOAK_UNCOUNTED_MS after the present, never the
++ * round that presented it: DWM has had a chance to compose it by then. */
++static bool win_cloak_composed(struct sdl2_console *scon, int64_t now)
++{
++    UINT64 frames;
++
++    if (scon->cloak_counted && win_dwm_composed(&frames)) {
++        return frames != scon->cloak_composed;
++    }
++    return now - scon->cloak_framed_at >= WIN_CLOAK_UNCOUNTED_MS;
++}
++
++static void win_cloak_start(struct sdl2_console *scon, HWND hwnd)
++{
++    scon->cloaked = win_cloak_set(hwnd, TRUE);
++    scon->cloak_shown = 0;
++    scon->cloak_framed = false;
++    scon->cloak_until = qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + WIN_CLOAK_MAX_MS;
++}
++
++/* A refused uncloak is tried again on the next round. */
++static void win_cloak_end(struct sdl2_console *scon)
++{
++    HWND hwnd;
++
++    if (!scon->cloaked) {
++        return;
++    }
++    hwnd = win_hold_hwnd(scon->real_window);
++    if (!hwnd || win_cloak_set(hwnd, FALSE)) {
++        scon->cloaked = false;
++    }
++}
++
++/* Shown and with a region that is not empty: on screen if not cloaked. */
++static bool win_cloak_exposed(HWND hwnd)
++{
++    HRGN region;
++    int kind;
++
++    if (!IsWindowVisible(hwnd)) {
++        return false;
++    }
++    region = CreateRectRgn(0, 0, 0, 0);
++    if (!region) {
++        return true;
++    }
++    kind = GetWindowRgn(hwnd, region);
++    DeleteObject(region);
++    return kind != NULLREGION;
++}
++
++static bool win_cloak_size_is(HWND hwnd, int w, int h)
++{
++    RECT client;
++
++    return GetClientRect(hwnd, &client) &&
++        client.right - client.left == w && client.bottom - client.top == h;
++}
++
++/* The frame was presented at the window's current size and rectangle. A
++ * new frame or placement keeps the client size but moves the picture. */
++static bool win_cloak_frame_current(struct sdl2_console *scon, HWND hwnd)
++{
++    RECT r;
++
++    return win_cloak_size_is(hwnd, scon->cloak_w, scon->cloak_h) &&
++        GetWindowRect(hwnd, &r) && r.left == scon->cloak_rect[0] &&
++        r.top == scon->cloak_rect[1] && r.right == scon->cloak_rect[2] &&
++        r.bottom == scon->cloak_rect[3];
++}
++
++/* Runs after each round of window messages; true asks for a frame. */
++static bool win_cloak_poll(struct sdl2_console *scon)
++{
++    HWND hwnd;
++    int64_t now;
++
++    if (!scon->cloaked) {
++        return false;
++    }
++    hwnd = win_hold_hwnd(scon->real_window);
++    now = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
++    if (!hwnd || now >= scon->cloak_until) {
++        win_cloak_end(scon);
++        return false;
++    }
++    if (!win_cloak_exposed(hwnd)) {
++        scon->cloak_shown = 0;
++        scon->cloak_framed = false;
++        return false;
++    }
++    if (!scon->cloak_shown) {
++        HDC dc = GetDC(hwnd);
++        RECT client;
++
++        /* SDL paints a window black only on the first erase in the process,
++         * which a held window misses while its region is empty, and nothing
++         * else draws in its surface: black, not white, if no frame comes. */
++        if (dc) {
++            if (GetClientRect(hwnd, &client)) {
++                FillRect(dc, &client, (HBRUSH)GetStockObject(BLACK_BRUSH));
++            }
++            ReleaseDC(hwnd, dc);
++        }
++        scon->cloak_shown = now;
++        scon->cloak_framed = false;
++        return true;
++    }
++    if (scon->cloak_framed && win_cloak_frame_current(scon, hwnd) &&
++        win_cloak_composed(scon, now)) {
++        win_cloak_end(scon);
++        return false;
++    }
++    if (now - scon->cloak_shown >= WIN_CLOAK_FRAME_WAIT_MS) {
++        win_cloak_end(scon);
++        return false;
++    }
++    /* The window was resized, moved or given another frame after the
++     * frame: wait for one drawn after that. */
++    if (scon->cloak_framed && !win_cloak_frame_current(scon, hwnd)) {
++        scon->cloak_framed = false;
++        return true;
++    }
++    return false;
++}
++
++/* QEMU presented a frame drawn at w x h. The first such frame is the one
++ * waited for: later presents would keep moving the wait along with a guest
++ * that draws often. A window resized, moved or given another frame after it
++ * waits for a new one (win_cloak_poll). */
++static void win_cloak_presented(struct sdl2_console *scon, int w, int h)
++{
++    HWND hwnd;
++    RECT r;
++
++    if (!scon->cloaked || !scon->cloak_shown || scon->cloak_framed) {
++        return;
++    }
++    hwnd = win_hold_hwnd(scon->real_window);
++    if (hwnd && win_cloak_exposed(hwnd) && win_cloak_size_is(hwnd, w, h) &&
++        GetWindowRect(hwnd, &r)) {
++        scon->cloak_framed = true;
++        scon->cloak_rect[0] = r.left;
++        scon->cloak_rect[1] = r.top;
++        scon->cloak_rect[2] = r.right;
++        scon->cloak_rect[3] = r.bottom;
++        scon->cloak_w = w;
++        scon->cloak_h = h;
++        scon->cloak_counted = win_dwm_composed(&scon->cloak_composed);
++        scon->cloak_framed_at = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
++    }
++}
+ #else
+ static inline int win_hold_flags(struct sdl2_console *scon) { return 0; }
+ static inline void win_hold_window(struct sdl2_console *scon) {}
+ static inline void win_hold_release(struct sdl2_console *scon, bool show) {}
+ static inline void win_hold_poll(struct sdl2_console *scon) {}
++static inline void win_cloak_end(struct sdl2_console *scon) {}
++static inline bool win_cloak_poll(struct sdl2_console *scon) { return false; }
++static inline void win_cloak_presented(struct sdl2_console *scon, int w, int h) {}
+ #endif
+ #endif
+--- a/ui/sdl2.c
++++ b/ui/sdl2.c
+@@ -171,6 +171,8 @@ void sdl2_window_destroy(struct sdl2_console *scon)
+     sdl_cursor_free(scon);
+     win_pinch_destroy(scon);
+     win_hold_release(scon, false);
++    win_cloak_end(scon);
++    scon->cloaked = false;
+     if (scon->winctx) {
+         SDL_GL_DeleteContext(scon->winctx);
+         scon->winctx = NULL;
+@@ -250,6 +252,11 @@ void sdl2_window_resize(struct sdl2_console *scon)
+                       surface_height(scon->surface));
+ }
+ 
++void sdl2_window_presented(struct sdl2_console *scon, int w, int h)
++{
++    win_cloak_presented(scon, w, h);
++}
++
+ static void sdl2_redraw(struct sdl2_console *scon)
+ {
+     if (scon->opengl) {
+@@ -591,6 +598,7 @@ static void sdl2_record_full_screen_size(struct sdl2_console *scon)
+ 
+ static void toggle_full_screen(struct sdl2_console *scon)
+ {
++    win_cloak_end(scon);
+     /* Ctrl+Alt+F switches only the window it is pressed in, and
+      * gui_fullscreen is shared by every window, so go by this window's own
+      * state: with two displays started full screen, the second window's
+@@ -1117,6 +1125,11 @@ void sdl2_poll_events(struct sdl2_console *scon)
+     sdl_cursor_focus();
+     win_pinch_poll(scon);
+     win_hold_poll(scon);
++    if (win_cloak_poll(scon)) {
++        sdl2_redraw(scon);
++        /* DWM may have composed the frame already. */
++        win_cloak_poll(scon);
++    }
+ 
+     if (idle) {
+         if (scon->idle_counter < SDL2_MAX_IDLE_COUNT) {

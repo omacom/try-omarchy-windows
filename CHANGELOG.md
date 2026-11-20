@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Omarchy's window appears with its desktop when Omarchy finishes starting.
+  For a moment it could show black, sometimes with a white block, before the
+  desktop was drawn in it, or the desktop a little off its place for one
+  frame. The loading window now stays up until the desktop is on screen.
+- While Omarchy starts, the taskbar shows only the loading window's button.
+  A second Try Omarchy button could flash up for a moment.
 - Ctrl+Alt+F switches full screen on the first press right after the pointer
   comes back into the window. Pressed within a moment of the pointer entering
   the window, or let go quickly while Omarchy was busy, it reached Omarchy as

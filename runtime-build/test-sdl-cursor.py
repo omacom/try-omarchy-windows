@@ -62,7 +62,7 @@ enum {SDL_WINDOWEVENT_RESIZED,SDL_WINDOWEVENT_EXPOSED,SDL_WINDOWEVENT_FOCUS_GAIN
 struct sdl2_console {
  DisplayChangeListener dcl; DisplayOptions *opts; SDL_Window *real_window;
  DisplaySurface *surface; bool opengl,scanout_mode,hidden;
- void *winctx,*real_renderer;
+ void *winctx,*real_renderer; bool cloaked;
  int ignore_hotkeys; struct {int width,height;} guest_fb;
 ''' + section(header, '    SDLScroll scroll;', '    bool has_dmabuf;') + r'''
 };
@@ -125,6 +125,7 @@ static void SDL_HideWindow(SDL_Window *w) {}
 static void SDL_QuitSubSystem(int s) {}
 static void win_pinch_destroy(struct sdl2_console *s) {}
 static void win_hold_release(struct sdl2_console *s, bool show) {}
+static void win_cloak_end(struct sdl2_console *s) {}
 static void sdl2_window_size_after_full_screen(struct sdl2_console *s) {}
 static void sdl2_record_full_screen_size(struct sdl2_console *s) {}
 static void SDL_GL_DeleteContext(void *ctx) {}

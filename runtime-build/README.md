@@ -357,3 +357,25 @@ screen. A window created again starts clean, and a display without ui-info is
 never asked for a size, so it follows the guest. `test-sdl-fullscreen-window.py`
 runs a guest that switches late, for windowed and full screen starts and for
 two windows, through QEMU's own `sdl2_window_create`.
+
+`0030-show-held-windows-with-their-first-frame.patch` shows a held window
+together with its first frame. Nothing QEMU presents reaches a window whose
+region the launcher has emptied, so when the curtain lifted the window showed
+what its surface held from before until QEMU's next frame: black, and on some
+GPUs a white block where the window was first created. A held window is now
+also cloaked with `DWMWA_CLOAK`; DWM goes on composing it, so frames reach it.
+Once it is shown with a region that is not empty, QEMU paints it black, draws
+a frame, and uncloaks it once DWM's composed frame count has moved on since a
+frame at its current size and rectangle was presented. QEMU only reads that
+count and never waits on DWM, so a paused or slow compositor cannot stall its
+main loop; without the count it uncloaks on the first round at least 34 ms
+after the frame. It is
+uncloaked anyway one second after it came on screen
+without such a frame, ten minutes after it was cloaked, on Ctrl+Alt+F and
+when it is destroyed; if DWM refuses the cloak the window behaves as before.
+`test-sdl-held-window.py` also runs the cloak against mocked Win32 and DWM
+calls: frames drawn hidden, with an empty region, at another size or before
+the window got its frame back, a region
+emptied and restored between two rounds, a resize after the frame, paused
+composition and an unreadable frame count, both time limits, the old self show, every exit and refused
+calls, and checks that every present reports its size.

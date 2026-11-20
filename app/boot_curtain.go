@@ -116,6 +116,165 @@ func (t bootCurtainTimes) liftReason(now time.Time) string {
 	return ""
 }
 
+// curtainFrameWait bounds how long the setup window stays up after the
+// curtain lifted, waiting for QEMU to show a window with its first frame
+// (curtainRevealDone). QEMU itself shows the window a second after it came
+// on screen without a frame.
+const curtainFrameWait = 2 * time.Second
+
+// curtainRevealDone reports whether the lift can hand over from the setup
+// window to Omarchy's: every window QEMU still has is no longer cloaked, or
+// curtainFrameWait has passed since the lift. cloaked holds one entry per
+// window; a window whose state cannot be read counts as not cloaked.
+func curtainRevealDone(cloaked []bool, lifted, now time.Time) (done, late bool) {
+	if !now.Before(lifted.Add(curtainFrameWait)) {
+		return true, slices.Contains(cloaked, true)
+	}
+	return !slices.Contains(cloaked, true), false
+}
+
+// revealRegions holds the windows a lift gives their frame and placement
+// back while QEMU still has them cloaked, and their region only after that.
+// The lift, the title enforcer, the uncloak hook and the time limit all
+// reach it from their own goroutines, and the lift can still be going
+// through its windows when the limit ends the reveal.
+type revealRegions struct {
+	mu      sync.Mutex
+	pending map[uintptr]bool
+	closed  bool
+}
+
+// newRevealRegions marks every window at once, before the lift touches any.
+func newRevealRegions(hwnds []uintptr) *revealRegions {
+	r := &revealRegions{pending: map[uintptr]bool{}}
+	for _, hwnd := range hwnds {
+		r.pending[hwnd] = true
+	}
+	return r
+}
+
+// held reports whether hwnd still waits for its region. Once the reveal
+// has ended, nothing does.
+func (r *revealRegions) held(hwnd uintptr) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !r.closed && r.pending[hwnd]
+}
+
+// release reports, once, that hwnd's region is due now.
+func (r *revealRegions) release(hwnd uintptr) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	due := !r.closed && r.pending[hwnd]
+	delete(r.pending, hwnd)
+	return due
+}
+
+// close ends the reveal and returns the windows still waiting for their
+// region, which the caller gives it now.
+func (r *revealRegions) close() []uintptr {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closed = true
+	var left []uintptr
+	for hwnd := range r.pending {
+		left = append(left, hwnd)
+	}
+	r.pending = nil
+	return left
+}
+
+// liftCloakedWindows gives each cloaked window its frame back. A window
+// the reveal no longer holds, because the time limit ended it meanwhile,
+// gets its region at once, as without the wait.
+func liftCloakedWindows(hwnds []uintptr, regions *revealRegions, restoreFrame, restoreRegion func(uintptr)) {
+	for _, hwnd := range hwnds {
+		restoreFrame(hwnd)
+		if !regions.held(hwnd) {
+			restoreRegion(hwnd)
+		}
+	}
+}
+
+// revealHandOver are the steps that end a reveal, as finishCurtainReveal
+// runs them (handOverRevealed).
+type revealHandOver struct {
+	record   func(hwnd uintptr)      // the window waits for QEMU to show it
+	showTab  func(hwnd uintptr)      // taskbar button and full screen mark
+	handOver func()                  // focus and the setup window
+	cloaked  func(hwnd uintptr) bool // QEMU still cloaks it
+	redo     func(hwnd uintptr)      // the steps again, once QEMU shows it
+}
+
+// handOverRevealed ends a reveal. On a late one every window is recorded
+// before the shell is asked for anything, so QEMU showing a window at any
+// point after that finds it recorded; after the hand over each window QEMU
+// no longer cloaks gets its steps again, which is harmless if they took.
+func handOverRevealed(hwnds []uintptr, late bool, s revealHandOver) {
+	if late {
+		for _, hwnd := range hwnds {
+			s.record(hwnd)
+		}
+	}
+	for _, hwnd := range hwnds {
+		s.showTab(hwnd)
+	}
+	s.handOver()
+	if late {
+		for _, hwnd := range hwnds {
+			if !s.cloaked(hwnd) {
+				s.redo(hwnd)
+			}
+		}
+	}
+}
+
+// curtainToolWindow reports whether the curtain makes a window a tool
+// window while it is hidden: only a held window not shown yet, and only
+// with a runtime that shows it with its first frame (curtainWaitsForFrame),
+// whose lift gives the taskbar button back once QEMU shows the window.
+func curtainToolWindow(visible, held, waitsForFrame bool) bool {
+	return !visible && held && waitsForFrame
+}
+
+// lateReveals holds the windows a lift handed over from while QEMU still had
+// them cloaked, after curtainFrameWait. The shell leaves a cloaked window
+// alone, so their taskbar buttons, full screen marks and the focus go again
+// once QEMU shows them. tab says the curtain had taken the button off.
+type lateReveals struct {
+	mu      sync.Mutex
+	windows map[uintptr]bool
+}
+
+func (l *lateReveals) add(hwnd uintptr, tab bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.windows == nil {
+		l.windows = map[uintptr]bool{}
+	}
+	l.windows[hwnd] = tab
+}
+
+// take reports, once, whether hwnd waits for its shell steps, and whether
+// its taskbar button goes back.
+func (l *lateReveals) take(hwnd uintptr) (waiting, tab bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	tab, waiting = l.windows[hwnd]
+	delete(l.windows, hwnd)
+	return waiting, tab
+}
+
+// takeShown is take for an uncloak event: while QEMU still has the window
+// cloaked, as when the shell uncloaks it on a virtual desktop switch, the
+// window keeps waiting.
+func (l *lateReveals) takeShown(hwnd uintptr, cloakedByApp bool) (waiting, tab bool) {
+	if cloakedByApp {
+		return false, false
+	}
+	return l.take(hwnd)
+}
+
 // slowStart reports whether the setup window should say that Omarchy is
 // taking longer than usual. Once the session has started, the curtain lifts
 // on the drawn report or curtainDrawWait later, both normal for the guest

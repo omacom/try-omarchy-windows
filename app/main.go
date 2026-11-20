@@ -1124,6 +1124,7 @@ func supervise(cfg *config, cmdline string) bool {
 		// launcher, which hides them first (boot_curtain_windows.go).
 		holdWindows := curtainUp.Load() && runtimeHoldsWindows(cfg.qemu)
 		proc.Env = heldWindowsEnvironment(proc.Env, holdWindows)
+		curtainWaitsForFrame.Store(holdWindows && runtimeShowsHeldWindowsWithFrame(cfg.qemu))
 		if holdWindows {
 			logf("startup: QEMU's windows wait for the curtain to hide them")
 		} else if curtainUp.Load() {
