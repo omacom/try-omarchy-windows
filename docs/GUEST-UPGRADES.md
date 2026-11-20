@@ -180,6 +180,12 @@ override there, whether it is installed already or later, and wherever it is
 started from; other apps and other hosts keep the real version. Nothing is
 written to the user's files or to files a package owns.
 
+Compatibility revision 75 keeps each display window's pointer on its own
+screen when Omarchy uses more than one display. Every window has its own
+pointer device, and the guest maps each one onto its own output wherever the
+outputs are placed and whatever their size, scale or rotation. One display is
+unchanged.
+
 If repository publication fails, inspect:
 
 ```sh
