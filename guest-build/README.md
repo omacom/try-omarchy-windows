@@ -209,6 +209,17 @@ reload events, after a GPU hotplug (a window resize) and every five seconds.
 udev starts it for the first such tablet, so one display never runs it.
 Compatibility revision 75 delivers it; the runtime package is unchanged.
 
+Patch 0190 gives each display its own synced mode. Display sync applied every
+display's EDID mode through Omarchy's catch-all monitor rule in turn, so with
+two displays both outputs ended at the second one's mode. QEMU recreated the
+window of each output whose mode changed, the launcher put it back at its own
+size, and the EDID change that followed started the next round, until the
+start timed out. With several displays each output now gets its own
+`hl.monitor` rule, which Hyprland merges into any rule it already has, and an
+output named in the user's `monitors.lua` is left alone. One display keeps the
+catch-all rule and the mode recorded for config reloads. Compatibility
+revision 76 delivers it; the runtime package is unchanged.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME

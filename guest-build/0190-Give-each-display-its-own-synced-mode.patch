@@ -1,0 +1,407 @@
+From ae0a7859133fb7cec8125f5d5878a434a9daac99 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Fri, 20 Nov 2026 17:01:47 -0500
+Subject: [PATCH] Give each display its own synced mode
+
+Display sync applied every display's EDID mode through Omarchy's catch-all monitor rule, one after the other, so with two displays both outputs ended at the last display's mode. The first output no longer matched its window, and QEMU recreated the window of each output whose mode changed. The launcher put the recreated window back at its own size, which changed its EDID and started the next round, so the outputs flipped between the two sizes until the start timed out on a black wallpaper.
+
+With several displays each output now gets its own rule, which Hyprland merges into any rule it already has, and an output the user configured in monitors.lua is left alone. One display keeps the catch-all rule and the recorded mode for reloads. Revision 76 delivers the script to existing disks.
+---
+ .../usr/local/bin/omarchy-native-display-sync | 55 +++++++++++++++----
+ guest/scripts/finalize-rootfs.sh              |  4 +-
+ guest/tests/test_aquamarine_contract.py       |  2 +-
+ guest/tests/test_battery_details.py           |  2 +-
+ guest/tests/test_clipboard_pull.py            |  2 +-
+ guest/tests/test_compositor_health.py         |  2 +-
+ guest/tests/test_desktop_drawn.py             |  2 +-
+ guest/tests/test_ghostty_gl.py                |  2 +-
+ guest/tests/test_guest_qol.py                 |  2 +-
+ guest/tests/test_kernel_headers_hold.py       |  2 +-
+ guest/tests/test_live_update.py               |  2 +-
+ guest/tests/test_native_nightlight.py         |  2 +-
+ guest/tests/test_notification_privacy.py      |  2 +-
+ guest/tests/test_qt612_palette.py             |  2 +-
+ guest/tests/test_refresh_pacman.py            |  2 +-
+ guest/tests/test_snapper_guest.py             |  2 +-
+ guest/tests/test_url_schemes.py               |  2 +-
+ guest/tests/test_windows_volume_sync.py       |  2 +-
+ guest/tests/verify.py                         | 39 +++++++++++--
+ 19 files changed, 97 insertions(+), 33 deletions(-)
+
+diff --git a/guest/native-overlay/usr/local/bin/omarchy-native-display-sync b/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
+index dfcfe19..e14ccfd 100755
+--- a/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
++++ b/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
+@@ -256,21 +256,35 @@ raise SystemExit(1)
+ PY
+ }
+ 
++# An explicit rule for this output in the user's monitors.lua outranks the
++# synced mode, as it does over Omarchy's catch-all rule.
++user_output_rule() {
++  local config=${OMARCHY_DISPLAY_SYNC_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr/monitors.lua}
++
++  [[ -r $config ]] || return 1
++  grep -Eq "^[^-]*output[[:space:]]*=[[:space:]]*\"$1\"" "$config"
++}
++
+ apply_preferred_modes() {
+   local connector
+   local connector_name
++  local index
+   local mode
+   local output
+   local preferred
+   local response
+   local rule
+   local scale
++  local target
+   local user_scale
+   local applied=0
+   local last_mode=""
+   local last_scale=""
++  local -a modes=()
++  local -a outputs=()
++  local -a scales=()
+ 
+-  # Several displays share the single catch-all rule, so read the file once.
++  # Several displays share the user's scale, so read the file once.
+   user_scale=$(configured_scale)
+   shopt -s nullglob
+   for connector in "$drm_root"/card*-Virtual-*; do
+@@ -284,17 +298,38 @@ apply_preferred_modes() {
+     fi
+     IFS=$'\t' read -r mode scale <<<"$preferred"
+     [[ -n $mode && -n $scale ]] || continue
++    outputs+=("$output")
++    modes+=("$mode")
++    scales+=("$scale")
++  done
++  shopt -u nullglob
++
++  for index in "${!outputs[@]}"; do
++    output=${outputs[index]}
++    mode=${modes[index]}
++    scale=${scales[index]}
+ 
+     # Aquamarine 0.14 does not refresh its mode cache when an existing DRM
+     # connector's EDID or physical size changes. A complete modeline bypasses
+     # the stale mode cache; an explicit scale calculated from the fresh EDID
+     # avoids using the stale fullscreen dimensions for Hyprland's auto scale,
+     # unless the user set a number, which comes first. Hyprland's Lua config
+-    # parser requires eval instead of the legacy keyword command. Update
+-    # Omarchy's single-output catch-all mode and scale; its placement, color,
+-    # and other policy remain intact, while an explicit per-output user rule
+-    # still wins.
+-    rule="hl.monitor({ output = \"\", mode = \"$mode\", scale = \"$scale\" })"
++    # parser requires eval instead of the legacy keyword command.
++    #
++    # One display updates the mode and scale of Omarchy's catch-all rule; its
++    # placement, color, and other policy remain intact, while an explicit
++    # per-output user rule still wins. With several displays, each window has
++    # its own size, and the catch-all would leave every output at the last
++    # display's mode. QEMU then recreates the window of each output that
++    # changed, the launcher puts it back at its own size, and the EDID change
++    # that follows starts the next round. Give each output its own rule then;
++    # Hyprland merges it into any rule that output already has.
++    target=""
++    if (( ${#outputs[@]} > 1 )); then
++      user_output_rule "$output" && continue
++      target=$output
++    fi
++    rule="hl.monitor({ output = \"$target\", mode = \"$mode\", scale = \"$scale\" })"
+     if ! response=$(hyprctl eval "$rule" 2>&1); then
+       printf 'omarchy-native-display-sync: failed to apply %s to %s: %s\n' \
+         "$mode" "$output" "$response" >&2
+@@ -307,10 +342,10 @@ apply_preferred_modes() {
+       last_scale=$scale
+     fi
+   done
+-  shopt -u nullglob
+-  # The rule is a catch-all, so one recorded mode only fits a single display.
+-  # With several, drop the record and let reloads use Omarchy's own rule.
+-  if (( applied == 1 )); then
++  # Reloads apply the recorded mode through the catch-all rule, so it only
++  # fits a single display. With several, drop the record and let reloads use
++  # Omarchy's own rule until the modes are applied again.
++  if (( ${#outputs[@]} == 1 && applied == 1 )); then
+     record_mode "$last_mode" "$last_scale"
+   else
+     rm -f "$state_file"
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index c70936d..1679648 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -298,7 +298,9 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # offers only 4.2, through a wrapper link, its D-Bus service and a pacman hook.
+ # Revision 75 keeps the pointer of each display window on its own output when
+ # the launcher shows more than one display.
+-compat_revision=75
++# Revision 76 gives each display its own synced mode when there are several, so
++# a second display window keeps its size instead of taking the first one's.
++compat_revision=76
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/test_aquamarine_contract.py b/guest/tests/test_aquamarine_contract.py
+index 14909ff..60fb746 100644
+--- a/guest/tests/test_aquamarine_contract.py
++++ b/guest/tests/test_aquamarine_contract.py
+@@ -76,7 +76,7 @@ class AquamarineContractTests(unittest.TestCase):
+         runtime = (GUEST / 'scripts/register-omarchy-runtime.sh').read_text()
+         self.assertIn('depend = aquamarine>={version}', runtime)
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=75', finalizer)
++        self.assertIn('compat_revision=76', finalizer)
+         self.assertIn('cp /usr/share/try-omarchy/repo/*.pkg.tar.zst', finalizer)
+         self.assertIn('usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua', finalizer)
+         repo = (GUEST / 'scripts/register-local-repository.sh').read_text()
+diff --git a/guest/tests/test_battery_details.py b/guest/tests/test_battery_details.py
+index cd1a627..9404f99 100644
+--- a/guest/tests/test_battery_details.py
++++ b/guest/tests/test_battery_details.py
+@@ -204,7 +204,7 @@ class BatteryDetailsFlowTests(unittest.TestCase):
+     def test_compatibility_delivery_and_dkms_version(self):
+         overlay = GUEST / "factory-overlay"
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=75", finalize)
++        self.assertIn("compat_revision=76", finalize)
+         self.assertIn("usr/src/try-omarchy-battery-1.1.0", finalize)
+         self.assertIn("usr/local/lib/try-omarchy/update-battery-dkms", finalize)
+         self.assertIn('PACKAGE_VERSION="1.1.0"', (MODULE_SOURCE.parent / "dkms.conf").read_text())
+diff --git a/guest/tests/test_clipboard_pull.py b/guest/tests/test_clipboard_pull.py
+index c7a532c..b53b94b 100644
+--- a/guest/tests/test_clipboard_pull.py
++++ b/guest/tests/test_clipboard_pull.py
+@@ -71,4 +71,4 @@ class ClipboardPullTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn('usr/local/bin/clipboard-bridge', paths)
+-        self.assertIn('compat_revision=75', finalizer)
++        self.assertIn('compat_revision=76', finalizer)
+diff --git a/guest/tests/test_compositor_health.py b/guest/tests/test_compositor_health.py
+index 94e9395..60a6ad3 100644
+--- a/guest/tests/test_compositor_health.py
++++ b/guest/tests/test_compositor_health.py
+@@ -55,7 +55,7 @@ class CompositorHealthTests(unittest.TestCase):
+ 
+     def test_existing_disks_receive_health_files(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=75', finalizer)
++        self.assertIn('compat_revision=76', finalizer)
+         for name in ['agent', 'compositor-health']:
+             self.assertIn('  usr/local/lib/try-omarchy/' + name, finalizer)
+         self.assertTrue(HELPER.stat().st_mode & 0o111)
+diff --git a/guest/tests/test_desktop_drawn.py b/guest/tests/test_desktop_drawn.py
+index 86769f0..ad18e52 100644
+--- a/guest/tests/test_desktop_drawn.py
++++ b/guest/tests/test_desktop_drawn.py
+@@ -296,7 +296,7 @@ class AgentTests(unittest.TestCase):
+ 
+     def test_existing_disks_receive_the_probe(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=75', finalizer)
++        self.assertIn('compat_revision=76', finalizer)
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
+         for name in ['agent', 'desktop-drawn']:
+             self.assertIn('usr/local/lib/try-omarchy/' + name, paths)
+diff --git a/guest/tests/test_ghostty_gl.py b/guest/tests/test_ghostty_gl.py
+index 5d9d785..334bd56 100644
+--- a/guest/tests/test_ghostty_gl.py
++++ b/guest/tests/test_ghostty_gl.py
+@@ -316,7 +316,7 @@ class GhosttyWiringTests(unittest.TestCase):
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
+         for path in (HELPER, WRAPPER, PROBE, PROBE_UNIT, DROP_IN, HOOK):
+             self.assertIn(str(path.relative_to(OVERLAY)), paths)
+-        self.assertIn('compat_revision=75', finalizer)
++        self.assertIn('compat_revision=76', finalizer)
+         for path in (HELPER, WRAPPER, PROBE):
+             self.assertTrue(os.access(path, os.X_OK), path)
+ 
+diff --git a/guest/tests/test_guest_qol.py b/guest/tests/test_guest_qol.py
+index 7650898..d54d798 100644
+--- a/guest/tests/test_guest_qol.py
++++ b/guest/tests/test_guest_qol.py
+@@ -225,7 +225,7 @@ class GuestQolTests(unittest.TestCase):
+     def test_compatibility_delivers_guarded_payload_once_per_revision(self):
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalize.split("compat_paths=(", 1)[1].split(")", 1)[0]
+-        self.assertIn("compat_revision=75", finalize)
++        self.assertIn("compat_revision=76", finalize)
+         for path in ("usr/local/bin/omarchy-native-screensaver-text", "usr/local/lib/try-omarchy/install-guest-qol", "usr/share/try-omarchy/guest-qol", "usr/local/bin/omarchy-windows-audio-bridge"):
+             self.assertIn(path, paths)
+         self.assertNotIn("etc/fonts/conf.d/30-try-omarchy.conf", paths)
+diff --git a/guest/tests/test_kernel_headers_hold.py b/guest/tests/test_kernel_headers_hold.py
+index e94a21d..3b8e71a 100644
+--- a/guest/tests/test_kernel_headers_hold.py
++++ b/guest/tests/test_kernel_headers_hold.py
+@@ -133,7 +133,7 @@ class HoldTests(unittest.TestCase):
+         finalize = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalize.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
+         self.assertIn('usr/local/lib/try-omarchy/hold-kernel-headers', paths)
+-        self.assertIn('compat_revision=75', finalize)
++        self.assertIn('compat_revision=76', finalize)
+         self.assertTrue(os.access(HOLD, os.X_OK))
+ 
+ 
+diff --git a/guest/tests/test_live_update.py b/guest/tests/test_live_update.py
+index 12de409..137c55e 100644
+--- a/guest/tests/test_live_update.py
++++ b/guest/tests/test_live_update.py
+@@ -176,7 +176,7 @@ class LiveUpdateTests(unittest.TestCase):
+ 
+     def test_delivery_and_best_effort_hook(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=75', finalizer)
++        self.assertIn('compat_revision=76', finalizer)
+         for path in ['usr/local/lib/try-omarchy/live-update', 'etc/pacman.d/hooks/00-try-omarchy-live-update.hook', 'etc/pacman.d/hooks/zz-try-omarchy-live-update.hook']:
+             self.assertIn(path, finalizer)
+         pre = (GUEST / 'factory-overlay/etc/pacman.d/hooks/00-try-omarchy-live-update.hook').read_text()
+diff --git a/guest/tests/test_native_nightlight.py b/guest/tests/test_native_nightlight.py
+index ea1eee9..3ddf6ed 100644
+--- a/guest/tests/test_native_nightlight.py
++++ b/guest/tests/test_native_nightlight.py
+@@ -214,5 +214,5 @@ class PersistentNightlightTests(unittest.TestCase):
+         catch_up = (self.overlay / 'usr/local/lib/try-omarchy/catch-up').read_text()
+         for path in ['usr/local/bin/omarchy-native-nightlight', 'usr/local/share/try-omarchy/nightlight.frag', 'usr/local/lib/try-omarchy/install-nightlight', 'usr/share/try-omarchy/nightlight']:
+             self.assertIn(path, finalizer)
+-        self.assertIn('compat_revision=75', finalizer)
++        self.assertIn('compat_revision=76', finalizer)
+         self.assertIn('previous_revision < 55', catch_up)
+diff --git a/guest/tests/test_notification_privacy.py b/guest/tests/test_notification_privacy.py
+index 2092766..faa3928 100644
+--- a/guest/tests/test_notification_privacy.py
++++ b/guest/tests/test_notification_privacy.py
+@@ -116,7 +116,7 @@ for (const state of [null, {screensaverStateKnown:false}, {screensaverStateKnown
+     def test_compatibility_overlay_and_catch_up_revision(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         catch_up = (GUEST / 'factory-overlay/usr/local/lib/try-omarchy/catch-up').read_text()
+-        self.assertIn('compat_revision=75', finalizer)
++        self.assertIn('compat_revision=76', finalizer)
+         self.assertIn('usr/share/try-omarchy/notifications', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-notifications', finalizer)
+         self.assertIn('previous_revision < 52', catch_up)
+diff --git a/guest/tests/test_qt612_palette.py b/guest/tests/test_qt612_palette.py
+index e739b15..810b766 100644
+--- a/guest/tests/test_qt612_palette.py
++++ b/guest/tests/test_qt612_palette.py
+@@ -170,7 +170,7 @@ class Qt612PaletteTests(unittest.TestCase):
+     def test_compatibility_delivery_runs_after_older_repairs_and_before_login(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+-        self.assertIn('compat_revision=75', finalizer)
++        self.assertIn('compat_revision=76', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-qt612-palette', paths)
+         self.assertIn('usr/share/try-omarchy/qt612-palette', paths)
+         self.assertEqual(self.build_spec['upstream']['packageRelease'], 16)
+diff --git a/guest/tests/test_refresh_pacman.py b/guest/tests/test_refresh_pacman.py
+index 5a843f5..0c01492 100644
+--- a/guest/tests/test_refresh_pacman.py
++++ b/guest/tests/test_refresh_pacman.py
+@@ -157,7 +157,7 @@ class BackportTests(unittest.TestCase):
+         copies = finalize.index('install -D -m 0644 "/usr/bin/$command" "/usr/share/try-omarchy/refresh-pacman/$command"')
+         self.assertLess(copies, finalize.index('tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar'))
+         self.assertIn('for command in omarchy-refresh-pacman omarchy-reinstall-pkgs; do', finalize)
+-        self.assertIn('compat_revision=75', finalize)
++        self.assertIn('compat_revision=76', finalize)
+         self.assertTrue(os.access(LAYER, os.X_OK))
+         configure = (GUEST / 'scripts/configure-rootfs.sh').read_text()
+         self.assertIn('install -D -m 0644 /etc/pacman.d/mirrorlist "$root/usr/share/try-omarchy/arch-mirrorlist"',
+diff --git a/guest/tests/test_snapper_guest.py b/guest/tests/test_snapper_guest.py
+index 95ca90d..db07c1e 100644
+--- a/guest/tests/test_snapper_guest.py
++++ b/guest/tests/test_snapper_guest.py
+@@ -44,5 +44,5 @@ class GuestSnapperTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn(TARGET, paths)
+-        self.assertIn('compat_revision=75', finalizer)
++        self.assertIn('compat_revision=76', finalizer)
+         self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 16)
+diff --git a/guest/tests/test_url_schemes.py b/guest/tests/test_url_schemes.py
+index 9f91b01..4a81d8e 100644
+--- a/guest/tests/test_url_schemes.py
++++ b/guest/tests/test_url_schemes.py
+@@ -398,7 +398,7 @@ class DeliveryTests(unittest.TestCase):
+     def test_revision_62_delivers_the_link_helper(self) -> None:
+         finalizer = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalizer.split("compat_paths=(", 1)[1].split(")", 1)[0].split()
+-        self.assertIn("compat_revision=75", finalizer)
++        self.assertIn("compat_revision=76", finalizer)
+         self.assertIn("# Revision 62 opens links from Windows for approved URL schemes.", finalizer)
+         for path in ("usr/local/lib/try-omarchy/url-schemes", "usr/local/lib/try-omarchy/agent"):
+             self.assertIn(path, paths)
+diff --git a/guest/tests/test_windows_volume_sync.py b/guest/tests/test_windows_volume_sync.py
+index 2dff410..d1a9057 100644
+--- a/guest/tests/test_windows_volume_sync.py
++++ b/guest/tests/test_windows_volume_sync.py
+@@ -285,7 +285,7 @@ class VolumeSyncTests(unittest.TestCase):
+ 
+     def test_revision_delivers_bridge_to_existing_disks(self):
+         finalize = (Path(__file__).resolve().parents[1] / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=75", finalize)
++        self.assertIn("compat_revision=76", finalize)
+         self.assertIn("usr/local/bin/omarchy-windows-audio-bridge", finalize)
+ 
+ 
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index 2a2cc9c..28cf146 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -376,7 +376,7 @@ def main() -> None:
+         "system services run without watchdogs, which fire after Windows sleeps",
+     )
+     check(
+-        "compat_revision=75" in finalize_rootfs
++        "compat_revision=76" in finalize_rootfs
+         and "usr/local/bin/mpv" in compat_paths
+         and "usr/share/dkms/modules_to_force_install/try-omarchy" in compat_paths
+         and "usr/local/lib/try-omarchy/try-omarchy-import.pyz" in compat_paths
+@@ -665,12 +665,39 @@ HOTPLUG=1
+         check(
+             reload_log.read_text(encoding="utf-8").splitlines()
+             == [
+-                'eval hl.monitor({ output = "", mode = "modeline 1236 5120 6400 6553 6912 2880 2894 2908 2980 -hsync -vsync", scale = "2" })',
+-                'eval hl.monitor({ output = "", mode = "modeline 149 1920 2008 2052 2200 1080 1084 1089 1125 -hsync -vsync", scale = "1" })',
+-                'eval hl.monitor({ output = "", mode = "modeline 1236 5120 6400 6553 6912 2880 2894 2908 2980 -hsync -vsync", scale = "2" })',
+-                'eval hl.monitor({ output = "", mode = "modeline 149 1920 2008 2052 2200 1080 1084 1089 1125 -hsync -vsync", scale = "1" })',
++                'eval hl.monitor({ output = "Virtual-1", mode = "modeline 1236 5120 6400 6553 6912 2880 2894 2908 2980 -hsync -vsync", scale = "2" })',
++                'eval hl.monitor({ output = "Virtual-2", mode = "modeline 149 1920 2008 2052 2200 1080 1084 1089 1125 -hsync -vsync", scale = "1" })',
++                'eval hl.monitor({ output = "Virtual-1", mode = "modeline 1236 5120 6400 6553 6912 2880 2894 2908 2980 -hsync -vsync", scale = "2" })',
++                'eval hl.monitor({ output = "Virtual-2", mode = "modeline 149 1920 2008 2052 2200 1080 1084 1089 1125 -hsync -vsync", scale = "1" })',
+             ],
+-            "native display sync handles QEMU DisplayID and legacy EDID hotplug modes",
++            "native display sync gives each of several displays its own mode, from QEMU DisplayID and legacy EDID",
++        )
++        # A catch-all rule per display would leave both outputs at the last
++        # display's mode, and the windows QEMU recreates for them would keep
++        # changing the EDID. A rule the user wrote for one output still wins.
++        user_rule_config = temporary_path / "monitors-user-rule.lua"
++        user_rule_config.write_text(
++            '-- hl.monitor({ output = "Virtual-1", mode = "preferred" })\n'
++            'hl.monitor({ output = "Virtual-2", mode = "1920x1080@60", position = "0x0" })\n',
++            encoding="utf-8",
++        )
++        user_rule_environment = dict(environment)
++        user_rule_environment["OMARCHY_DISPLAY_SYNC_CONFIG"] = str(user_rule_config)
++        user_rule_log = temporary_path / "reloads-user-rule"
++        user_rule_environment["HYPRCTL_LOG"] = str(user_rule_log)
++        subprocess.run(
++            [str(display_sync), "--from-stdin"],
++            input="ACTION=change\nSUBSYSTEM=drm\nHOTPLUG=1\n",
++            text=True,
++            env=user_rule_environment,
++            check=True,
++        )
++        check(
++            user_rule_log.read_text(encoding="utf-8").splitlines()
++            == [
++                'eval hl.monitor({ output = "Virtual-1", mode = "modeline 1236 5120 6400 6553 6912 2880 2894 2908 2980 -hsync -vsync", scale = "2" })',
++            ],
++            "native display sync leaves an output the user configured in monitors.lua alone",
+         )
+         (legacy_connector / "status").write_text("disconnected\n", encoding="utf-8")
+         subprocess.run(
+-- 
+2.53.0
+
