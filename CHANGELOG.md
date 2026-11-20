@@ -2,48 +2,10 @@
 
 ## Unreleased
 
-- Omarchy's window appears with its desktop when Omarchy finishes starting.
-  For a moment it could show black, sometimes with a white block, before the
-  desktop was drawn in it, or the desktop a little off its place for one
-  frame. The loading window now stays up until the desktop is on screen.
-- While Omarchy starts, the taskbar shows only the loading window's button.
-  A second Try Omarchy button could flash up for a moment.
-- Ctrl+Alt+F switches full screen on the first press right after the pointer
-  comes back into the window. Pressed within a moment of the pointer entering
-  the window, or let go quickly while Omarchy was busy, it reached Omarchy as
-  keys instead and the window stayed as it was until the next press.
-- With more than one display, the pointer stays visible across every window.
-  Each window moved the pointer across the whole Omarchy desktop, so it left
-  the first screen halfway across its window and only showed on the right
-  half of the second. Each window now has its own pointer device mapped to
-  its own screen, wherever the screens are arranged and whatever their size,
-  scale or rotation (#424).
-- Full screen no longer flickers black when the pointer moves or while
-  Omarchy starts, and the Windows taskbar no longer shows over it, on graphics
-  drivers that take over a window covering the whole screen. Taking a full
-  screen start out of full screen with Ctrl+Alt+F keeps the window's title bar
-  on the screen instead of leaving the window hanging off its edges.
-- Leaving full screen keeps the window's size even when Omarchy is slow to
-  follow. When Omarchy had not yet switched to the full screen size, it
-  switched afterwards and the window grew to the size of the screen plus its
-  frame, moved to the corner of the screen, and could keep that size for
-  later rounds of full screen and the next start.
-- With two displays, Ctrl+Alt+F switches the window it is pressed in each
-  time. After one window had left full screen, the other window's first press
-  did nothing.
-- A display mode or taskbar change while Omarchy starts no longer leaves the
-  window the wrong size when it appears. The hidden window now moves to where
-  it will be shown on the new layout, so Omarchy's desktop is drawn at that
-  size before the window appears instead of redrawing black right after.
-- Taking a full screen start out of full screen with Ctrl+Alt+F brings the
-  window back where it belongs. It could land in the top left corner of the
-  screen when the window got its title bar back a moment before its size.
-- A maximized window comes back maximized after full screen every time.
-  Going into full screen could be saved as the window's size, so it came back
-  un-maximized at the size of the screen, then and on later starts.
-- The taskbar shows one Try Omarchy button while Omarchy starts. A second
-  button for the still hidden window could appear and stay until the window
-  was shown.
+- Vulkan apps no longer freeze Omarchy. Closing one, such as vkcube or Zed,
+  and then starting another could stop the whole guest, so the window,
+  SSH and the launcher all stopped responding. The Windows graphics runtime
+  could deadlock while it tore down the closed app's context (#416, #407).
 - `omarchy refresh pacman`, switching the Omarchy channel and reinstalling
   Omarchy's packages finish again instead of failing on a dependency error.
   They had replaced the package setup with Omarchy's own, which left out Try
@@ -51,20 +13,71 @@
   snapshot. The refresh now keeps both and the current Arch mirrors, and
   downgrades nothing. Existing installs get the fixed refresh on their next
   start, before **Update > Omarchy**, and an install a failed refresh had left
-  that way is put back on its next start (#408).
+  that way is put back on its next start (#411, #414, #408).
+- With more than one display, the pointer stays visible across every window.
+  Each window moved the pointer across the whole Omarchy desktop, so it left
+  the first screen halfway across its window and only showed on the right
+  half of the second. Each window now has its own pointer device mapped to
+  its own screen, wherever the screens are arranged and whatever their size,
+  scale or rotation (#425, #424).
 - Ghostty opens on Intel graphics. There the graphics layer offers OpenGL 4.2,
   one version short of what Ghostty asks for, so no window appeared. Ghostty
   now starts with 4.3 on those PCs, however it is opened, and nothing changes
-  for other apps or other PCs (#383).
-- Vulkan apps no longer freeze Omarchy. Closing one, such as vkcube or Zed,
-  and then starting another could stop the whole guest, so the window,
-  SSH and the launcher all stopped responding. The Windows graphics runtime
-  could deadlock while it tore down the closed app's context (#407).
-
+  for other apps or other PCs (#417, #383).
+- Ghostty draws its window on AMD graphics. The Windows graphics runtime
+  wrote shaders that use storage buffers in a form AMD's OpenGL driver
+  refuses, so Ghostty's window stayed empty (#405, #383).
+- Vulkan windows on Intel graphics show red and blue the right way round.
+  Since runtime r27 straightened those windows, their red and blue were
+  swapped (#404, #400).
+- Omarchy's window appears with its desktop when Omarchy finishes starting.
+  The loading window now stays up until the guest reports that the wallpaper
+  and bar are drawn and the first frame is in the window. Before, the window
+  could open black for several seconds on a slow PC, show black for a moment,
+  sometimes with a white block, or show the desktop a little off its place
+  for one frame (#412, #430).
+- QEMU's empty window no longer shows for a moment before the loading window
+  covers it (#415, #413).
+- On some AMD graphics cards, such as the RX 6800 XT, GPU rendering no longer
+  leaves the Omarchy window black for the whole session after the loading
+  window lifts (#399, #358).
+- While Omarchy starts, the taskbar shows only the loading window's button.
+  A second Try Omarchy button for the still hidden window could flash up or
+  stay until the window was shown (#419, #421, #430).
+- A display mode or taskbar change while Omarchy starts no longer leaves the
+  window the wrong size when it appears. The hidden window now moves to where
+  it will be shown on the new layout, so Omarchy's desktop is drawn at that
+  size before the window appears instead of redrawing black right after
+  (#420).
+- Full screen no longer flickers black when the pointer moves or while
+  Omarchy starts, and the Windows taskbar no longer shows over it, on graphics
+  drivers that take over a window covering the whole screen (#422).
 - Leaving full screen with Ctrl+Alt+F after starting in full screen gives a
-  window that fits the screen and can be resized and maximized. It used to
-  come back larger than the screen, under the taskbar and onto a second
-  monitor, and could not be resized (#423).
+  window that fits the screen, in its place, with its title bar on the
+  screen, and it can be resized and maximized. It used to come back larger
+  than the screen, under the taskbar and onto a second monitor, could land in
+  the top left corner, and could not be resized (#422, #423, #429).
+- Leaving full screen keeps the window's size even when Omarchy is slow to
+  follow. When Omarchy had not yet switched to the full screen size, it
+  switched afterwards and the window grew to the size of the screen plus its
+  frame, moved to the corner of the screen, and could keep that size for
+  later rounds of full screen and the next start (#428).
+- A maximized window comes back maximized after full screen every time.
+  Going into full screen could be saved as the window's size, so it came back
+  un-maximized at the size of the screen, then and on later starts (#429).
+- With two displays, Ctrl+Alt+F switches the window it is pressed in each
+  time. After one window had left full screen, the other window's first press
+  did nothing (#428).
+- Ctrl+Alt+F switches full screen on the first press right after the pointer
+  comes back into the window. Pressed within a moment of the pointer entering
+  the window, or let go quickly while Omarchy was busy, it reached Omarchy as
+  keys instead and the window stayed as it was until the next press (#427).
+- Runtime r28 carries the graphics runtime and QEMU fixes above (#404, #405,
+  #415, #416, #423, #427, #428, #430).
+- The guest package lock is refreshed twice, bringing in kernel 7.3.4,
+  Mesa 26.2.7, glibc 2.44 and PipeWire 1.6.11-2 (#418, #426).
+- A daily check follows stable Omarchy releases and opens an upgrade PR,
+  marked ready only once the full guest build and boot pass (#387).
 
 ## v0.15.0 - 2026-11-10
 
