@@ -112,6 +112,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
+      - name: Install Lua for the guest contract tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends lua5.4
+
       - name: Apply guest patches and run contract tests
         run: scripts/release/build-guest.sh --contract-only
 
@@ -132,7 +137,7 @@ jobs:
           test -e /dev/kvm
           sudo chmod 666 /dev/kvm
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends qemu-system-x86
+          sudo apt-get install --yes --no-install-recommends qemu-system-x86 lua5.4
 
       - name: Build locked guest image
         run: scripts/release/build-guest.sh --output "$ARTIFACT_DIR"

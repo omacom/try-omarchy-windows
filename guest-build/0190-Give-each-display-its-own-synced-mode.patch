@@ -1,133 +1,532 @@
-From ae0a7859133fb7cec8125f5d5878a434a9daac99 Mon Sep 17 00:00:00 2001
+From 8dfefcbd034e7c72d302e411ee249d800757e4cc Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Fri, 20 Nov 2026 17:01:47 -0500
 Subject: [PATCH] Give each display its own synced mode
 
 Display sync applied every display's EDID mode through Omarchy's catch-all monitor rule, one after the other, so with two displays both outputs ended at the last display's mode. The first output no longer matched its window, and QEMU recreated the window of each output whose mode changed. The launcher put the recreated window back at its own size, which changed its EDID and started the next round, so the outputs flipped between the two sizes until the start timed out on a black wallpaper.
 
-With several displays each output now gets its own rule, which Hyprland merges into any rule it already has, and an output the user configured in monitors.lua is left alone. One display keeps the catch-all rule and the recorded mode for reloads. Revision 76 delivers the script to existing disks.
+With several displays each output now gets its own rule. Hyprland cannot list its monitor rules, so display sync runs the user's Hyprland config under Lua with hl.monitor recording, from hyprland.lua through the modules it requires, and leaves alone every output a rule there names by connector or desc:. When the config does something it cannot follow, it leaves every output alone. A new rule for one output starts from Hyprland's defaults, so it carries the catch-all's other settings, such as transform, vrr and bitdepth. The display panel of newer Omarchy saves its choices by monitor in ~/.local/state/omarchy/monitors/settings and applies them as rules for the connector; a mode or scale chosen there stays. An output that keeps a rule of its own after the other displays go away follows its window too.
+
+One display keeps the catch-all rule and the recorded mode for reloads. Revision 76 delivers the script to existing disks.
 ---
- .../usr/local/bin/omarchy-native-display-sync | 55 +++++++++++++++----
- guest/scripts/finalize-rootfs.sh              |  4 +-
- guest/tests/test_aquamarine_contract.py       |  2 +-
- guest/tests/test_battery_details.py           |  2 +-
- guest/tests/test_clipboard_pull.py            |  2 +-
- guest/tests/test_compositor_health.py         |  2 +-
- guest/tests/test_desktop_drawn.py             |  2 +-
- guest/tests/test_ghostty_gl.py                |  2 +-
- guest/tests/test_guest_qol.py                 |  2 +-
- guest/tests/test_kernel_headers_hold.py       |  2 +-
- guest/tests/test_live_update.py               |  2 +-
- guest/tests/test_native_nightlight.py         |  2 +-
- guest/tests/test_notification_privacy.py      |  2 +-
- guest/tests/test_qt612_palette.py             |  2 +-
- guest/tests/test_refresh_pacman.py            |  2 +-
- guest/tests/test_snapper_guest.py             |  2 +-
- guest/tests/test_url_schemes.py               |  2 +-
- guest/tests/test_windows_volume_sync.py       |  2 +-
- guest/tests/verify.py                         | 39 +++++++++++--
- 19 files changed, 97 insertions(+), 33 deletions(-)
+ .../usr/local/bin/omarchy-native-display-sync | 446 ++++++++++++++++--
+ guest/scripts/finalize-rootfs.sh              |   4 +-
+ guest/tests/test_aquamarine_contract.py       |   2 +-
+ guest/tests/test_battery_details.py           |   2 +-
+ guest/tests/test_clipboard_pull.py            |   2 +-
+ guest/tests/test_compositor_health.py         |   2 +-
+ guest/tests/test_desktop_drawn.py             |   2 +-
+ guest/tests/test_ghostty_gl.py                |   2 +-
+ guest/tests/test_guest_qol.py                 |   2 +-
+ guest/tests/test_kernel_headers_hold.py       |   2 +-
+ guest/tests/test_live_update.py               |   2 +-
+ guest/tests/test_native_nightlight.py         |   2 +-
+ guest/tests/test_notification_privacy.py      |   2 +-
+ guest/tests/test_qt612_palette.py             |   2 +-
+ guest/tests/test_refresh_pacman.py            |   2 +-
+ guest/tests/test_snapper_guest.py             |   2 +-
+ guest/tests/test_url_schemes.py               |   2 +-
+ guest/tests/test_windows_volume_sync.py       |   2 +-
+ guest/tests/verify.py                         | 182 ++++++-
+ 19 files changed, 606 insertions(+), 58 deletions(-)
 
 diff --git a/guest/native-overlay/usr/local/bin/omarchy-native-display-sync b/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
-index dfcfe19..e14ccfd 100755
+index dfcfe19..51acb73 100755
 --- a/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
 +++ b/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
-@@ -256,21 +256,35 @@ raise SystemExit(1)
+@@ -6,6 +6,7 @@ drm_root=${OMARCHY_DISPLAY_SYNC_DRM_ROOT:-/sys/class/drm}
+ # The QEMU profile in monitors.lua reads the last applied mode from here, so a
+ # config reload keeps that mode instead of falling back to "preferred".
+ state_file=${OMARCHY_DISPLAY_SYNC_STATE:-${XDG_RUNTIME_DIR:-/run/user/$UID}/try-omarchy/display-mode}
++own_rules_file=${state_file%/*}/own-output-rules
+ 
+ # Omarchy's monitors.lua keeps the user's catch-all scale in a Lua variable.
+ # A number there is explicit intent and outranks the scale guessed from the
+@@ -256,21 +257,362 @@ raise SystemExit(1)
  PY
  }
  
-+# An explicit rule for this output in the user's monitors.lua outranks the
-+# synced mode, as it does over Omarchy's catch-all rule.
-+user_output_rule() {
-+  local config=${OMARCHY_DISPLAY_SYNC_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr/monitors.lua}
++# Which outputs the user's own Hyprland config already gives a rule, and the
++# settings of its catch-all rule. Hyprland cannot list its monitor rules, so
++# run the config the way Hyprland loads it, from hyprland.lua through every
++# user module it requires, with hl.monitor recording instead of applying.
++# Omarchy's defaults are not run. Fails when the config does something it
++# cannot follow, and then no output gets a rule of its own.
++configured_rules() {
++  local config_home=$HOME/.config
++  local entry=${OMARCHY_DISPLAY_SYNC_HYPR_CONFIG:-$config_home/hypr/hyprland.lua}
 +
-+  [[ -r $config ]] || return 1
-+  grep -Eq "^[^-]*output[[:space:]]*=[[:space:]]*\"$1\"" "$config"
++  timeout 10 lua - "$entry" "$config_home" "$HOME/.local/state" \
++    "${OMARCHY_PATH:-/usr/share/omarchy}" <<'LUA'
++-- Run the user's Hyprland config with hl.monitor recording instead of
++-- applying, and print the rules it makes: "named<TAB>selector" for each
++-- output or desc: rule, "field<TAB>key<TAB>literal" for the catch-all's
++-- settings, and "panel<TAB>false" when the panel's saved settings are off.
++-- Anything it cannot follow is an error, and the caller leaves outputs alone.
++local entry, config_home, state_home, omarchy_path = arg[1], arg[2], arg[3], arg[4]
++
++local real_open = io.open
++local function readable(path)
++  local file = real_open(path, "r")
++  if file then
++    file:close()
++    return true
++  end
++  return false
++end
++
++-- Stands in for Omarchy's helpers and anything hl offers besides monitor:
++-- every field and call gives the stand-in back, and it lists nothing.
++local stand_in
++stand_in = setmetatable({}, {
++  __index = function(_, key)
++    if type(key) == "string" then
++      return stand_in
++    end
++    return nil
++  end,
++  __call = function()
++    return stand_in
++  end,
++  __newindex = function() end,
++})
++
++local named, fields, order = {}, {}, {}
++local copied = {
++  reserved = true, reserved_area = true, transform = true, bitdepth = true, cm = true,
++  sdr_eotf = true, sdrbrightness = true, sdrsaturation = true, vrr = true, icc = true,
++}
++
++local function record(rule)
++  if type(rule) ~= "table" or type(rule.output) ~= "string" then
++    error("hl.monitor without a string output")
++  end
++  if rule.output ~= "" then
++    named[rule.output] = true
++    return
++  end
++  for key, value in pairs(rule) do
++    if copied[key] then
++      if fields[key] == nil then
++        order[#order + 1] = key
++      end
++      fields[key] = value
++    end
++  end
++end
++
++local env = {}
++local loaded = {}
++
++local function run(path)
++  local chunk, err = loadfile(path, "t", env)
++  if not chunk then
++    error(err)
++  end
++  return chunk()
++end
++
++local function omarchy_file(path)
++  return path:sub(1, #omarchy_path + 1) == omarchy_path .. "/"
++end
++
++local function sandbox_require(name)
++  if loaded[name] ~= nil then
++    return loaded[name]
++  end
++  -- Omarchy's own defaults and the current theme are not the user's rules;
++  -- the panel's saved settings are read from their state file instead.
++  if name:match("^default%.") or name:match("^omarchy%.") then
++    loaded[name] = stand_in
++    return stand_in
++  end
++  local relative = name:gsub("%.", "/")
++  for _, root in ipairs({ state_home, config_home }) do
++    local path = root .. "/" .. relative .. ".lua"
++    if readable(path) then
++      loaded[name] = true
++      local result = run(path)
++      if result ~= nil then
++        loaded[name] = result
++      end
++      return loaded[name]
++    end
++  end
++  error("module " .. name .. " is not in the user's config")
++end
++
++local function read_only_open(path, mode)
++  if mode == nil or mode == "r" or mode == "rb" then
++    return real_open(path, mode)
++  end
++  return nil, "read only"
++end
++
++for _, name in ipairs({
++  "assert", "error", "ipairs", "next", "pairs", "pcall", "rawequal", "rawget", "rawlen",
++  "rawset", "select", "setmetatable", "getmetatable", "tonumber", "tostring", "type", "xpcall",
++}) do
++  env[name] = _G[name]
++end
++env.string, env.table, env.math, env.utf8 = string, table, math, utf8
++env.print = function() end
++env.os = { getenv = os.getenv, time = os.time, clock = os.clock, date = os.date,
++  execute = function() return nil end, remove = function() return nil end, rename = function() return nil end }
++env.io = { open = read_only_open, lines = function(path) return io.lines(path) end,
++  popen = function() return nil end, write = function() end }
++env.package = { path = state_home .. "/?.lua;" .. config_home .. "/?.lua;", loaded = loaded }
++env.require = sandbox_require
++env.dofile = function(path)
++  if type(path) ~= "string" then
++    error("dofile without a literal path")
++  end
++  if omarchy_file(path) then
++    return stand_in
++  end
++  return run(path)
++end
++env.loadfile = function(path, mode, chunk_env)
++  return loadfile(path, mode, chunk_env or env)
++end
++env.load = function(chunk, name, mode, chunk_env)
++  return load(chunk, name, mode, chunk_env or env)
++end
++env.o = stand_in
++env.hl = setmetatable({ monitor = record }, getmetatable(stand_in))
++env._G = env
++
++local function literal(value)
++  local kind = type(value)
++  if kind == "string" then
++    if value:find("[\r\n]") then
++      error("unsupported multi-line string")
++    end
++    return string.format("%q", value)
++  elseif kind == "number" or kind == "boolean" then
++    return tostring(value)
++  elseif kind == "table" then
++    local parts = {}
++    for index, item in ipairs(value) do
++      parts[index] = literal(item)
++    end
++    for key, item in pairs(value) do
++      if type(key) == "string" then
++        parts[#parts + 1] = key .. " = " .. literal(item)
++      elseif type(key) ~= "number" or key < 1 or key > #value or key % 1 ~= 0 then
++        error("unsupported table key")
++      end
++    end
++    return "{ " .. table.concat(parts, ", ") .. " }"
++  end
++  error("unsupported " .. kind .. " value")
++end
++
++if readable(entry) then
++  run(entry)
++end
++
++local selectors = {}
++for selector in pairs(named) do
++  selectors[#selectors + 1] = selector
++end
++table.sort(selectors)
++for _, selector in ipairs(selectors) do
++  print("named\t" .. (selector:gsub("[\t\r\n]", " ")))
++end
++table.sort(order)
++for _, key in ipairs(order) do
++  print("field\t" .. key .. "\t" .. literal(fields[key]))
++end
++if rawget(env, "omarchy_monitor_panel_settings") == false then
++  print("panel\tfalse")
++end
++LUA
++}
++
++# Prints "output<TAB>rule" for each output that should get a rule of its own,
++# from the recorded rules and "output mode scale" triples. An output
++# the user's config names, by connector or desc:, keeps its rule. One the
++# display panel saved settings for gets the mode or the scale only when the
++# panel did not choose it, merged into the panel's rule. Any other output gets
++# the catch-all's settings with its own mode and scale, since a new rule for
++# one output starts from Hyprland's defaults, not from the catch-all.
++plan_output_rules() {
++  python3 - "$@" <<'PY'
++import json
++import os
++import pathlib
++import subprocess
++import sys
++
++recorded, *args = sys.argv[1:]
++outputs = [args[index : index + 3] for index in range(0, len(args), 3)]
++
++named = set()
++fields = []
++panel_on = True
++for line in recorded.splitlines():
++    kind, _, value = line.partition("\t")
++    if kind == "named":
++        named.add(value)
++    elif kind == "field":
++        key, _, literal = value.partition("\t")
++        fields.append((key, literal))
++    elif kind == "panel" and value == "false":
++        panel_on = False
++
++monitors = {
++    monitor["name"]: monitor
++    for monitor in json.loads(
++        subprocess.run(
++            ["hyprctl", "-j", "monitors", "all"],
++            capture_output=True,
++            text=True,
++            timeout=10,
++            check=True,
++        ).stdout
++    )
++}
++
++
++def description_matches(selector: str, monitor: dict) -> bool:
++    # Hyprland matches desc: as a prefix of the description, or of make,
++    # model and serial.
++    wanted = selector[5:].strip()
++    short = " ".join(
++        str(monitor.get(key) or "") for key in ("make", "model", "serial")
++    ).strip()
++    return str(monitor.get("description") or "").startswith(wanted) or short.startswith(wanted)
++
++
++state_home = pathlib.Path(
++    os.environ.get("XDG_STATE_HOME") or pathlib.Path.home() / ".local/state"
++)
++panel_dir = state_home / "omarchy/monitors"
++
++
++def identity(output: str) -> str:
++    # As omarchy-hyprland-monitor-identity: the name monitor-workspaces gave
++    # the monitor on this connector, else its description, else the connector.
++    found = ""
++    try:
++        for line in (panel_dir / "workspaces").read_text(encoding="utf-8").splitlines():
++            columns = line.split("\t", 2)
++            if len(columns) == 3 and columns[1] == output:
++                found = columns[2]
++                break
++    except FileNotFoundError:
++        pass
++    found = found or str(monitors.get(output, {}).get("description") or "") or output
++    return found.replace("\t", " ").replace("\n", " ")
++
++
++# The display panel of newer Omarchy keeps each monitor's choices here and
++# applies them as rules for its connector: mode, position, scale, transform
++# (missing on older lines), then the identity.
++saved = {}
++if panel_on:
++    try:
++        lines = (panel_dir / "settings").read_text(encoding="utf-8").splitlines()
++    except FileNotFoundError:
++        lines = []
++    for line in lines:
++        columns = line.split("\t")
++        if len(columns) in (4, 5) and columns[-1]:
++            saved[columns[-1]] = {"mode": columns[0], "scale": columns[2]}
++
++
++def number(text: str) -> bool:
++    try:
++        float(text)
++    except ValueError:
++        return False
++    return True
++
++
++for output, mode, scale in outputs:
++    monitor = monitors.get(output)
++    if monitor is None:
++        print(f"omarchy-native-display-sync: Hyprland does not list {output}; leaving it alone", file=sys.stderr)
++        continue
++    if output in named or any(
++        selector.startswith("desc:") and description_matches(selector, monitor)
++        for selector in named
++    ):
++        continue
++    entry = [f"mode = {json.dumps(mode)}", f"scale = {json.dumps(scale)}"]
++    choice = saved.get(identity(output))
++    if choice is not None:
++        entry = []
++        if not choice["mode"]:
++            entry.append(f"mode = {json.dumps(mode)}")
++        if not number(choice["scale"]):
++            entry.append(f"scale = {json.dumps(scale)}")
++        if not entry:
++            continue
++    else:
++        entry += [f"{key} = {literal}" for key, literal in fields]
++    print(f"{output}\thl.monitor({{ output = {json.dumps(output)}, {', '.join(entry)} }})")
++PY
++}
++
++apply_rule() {
++  local output=$1
++  local rule=$2
++  local response
++
++  if ! response=$(hyprctl eval "$rule" 2>&1); then
++    printf 'omarchy-native-display-sync: failed to apply %s to %s: %s\n' \
++      "$rule" "$output" "$response" >&2
++    return 1
++  elif [[ $response != ok ]]; then
++    printf 'omarchy-native-display-sync: Hyprland rejected %s for %s: %s\n' \
++      "$rule" "$output" "$response" >&2
++    return 1
++  fi
 +}
 +
  apply_preferred_modes() {
    local connector
    local connector_name
-+  local index
    local mode
    local output
++  local plan
    local preferred
-   local response
+-  local response
    local rule
++  local rules
    local scale
-+  local target
    local user_scale
-   local applied=0
-   local last_mode=""
-   local last_scale=""
+-  local applied=0
+-  local last_mode=""
+-  local last_scale=""
 +  local -a modes=()
 +  local -a outputs=()
 +  local -a scales=()
++  local -a triples=()
  
 -  # Several displays share the single catch-all rule, so read the file once.
 +  # Several displays share the user's scale, so read the file once.
    user_scale=$(configured_scale)
    shopt -s nullglob
    for connector in "$drm_root"/card*-Virtual-*; do
-@@ -284,17 +298,38 @@ apply_preferred_modes() {
+@@ -284,36 +626,69 @@ apply_preferred_modes() {
      fi
      IFS=$'\t' read -r mode scale <<<"$preferred"
      [[ -n $mode && -n $scale ]] || continue
-+    outputs+=("$output")
-+    modes+=("$mode")
-+    scales+=("$scale")
-+  done
-+  shopt -u nullglob
-+
-+  for index in "${!outputs[@]}"; do
-+    output=${outputs[index]}
-+    mode=${modes[index]}
-+    scale=${scales[index]}
- 
-     # Aquamarine 0.14 does not refresh its mode cache when an existing DRM
-     # connector's EDID or physical size changes. A complete modeline bypasses
-     # the stale mode cache; an explicit scale calculated from the fresh EDID
-     # avoids using the stale fullscreen dimensions for Hyprland's auto scale,
-     # unless the user set a number, which comes first. Hyprland's Lua config
+-
+-    # Aquamarine 0.14 does not refresh its mode cache when an existing DRM
+-    # connector's EDID or physical size changes. A complete modeline bypasses
+-    # the stale mode cache; an explicit scale calculated from the fresh EDID
+-    # avoids using the stale fullscreen dimensions for Hyprland's auto scale,
+-    # unless the user set a number, which comes first. Hyprland's Lua config
 -    # parser requires eval instead of the legacy keyword command. Update
 -    # Omarchy's single-output catch-all mode and scale; its placement, color,
 -    # and other policy remain intact, while an explicit per-output user rule
 -    # still wins.
 -    rule="hl.monitor({ output = \"\", mode = \"$mode\", scale = \"$scale\" })"
-+    # parser requires eval instead of the legacy keyword command.
-+    #
-+    # One display updates the mode and scale of Omarchy's catch-all rule; its
-+    # placement, color, and other policy remain intact, while an explicit
-+    # per-output user rule still wins. With several displays, each window has
-+    # its own size, and the catch-all would leave every output at the last
-+    # display's mode. QEMU then recreates the window of each output that
-+    # changed, the launcher puts it back at its own size, and the EDID change
-+    # that follows starts the next round. Give each output its own rule then;
-+    # Hyprland merges it into any rule that output already has.
-+    target=""
-+    if (( ${#outputs[@]} > 1 )); then
-+      user_output_rule "$output" && continue
-+      target=$output
-+    fi
-+    rule="hl.monitor({ output = \"$target\", mode = \"$mode\", scale = \"$scale\" })"
-     if ! response=$(hyprctl eval "$rule" 2>&1); then
-       printf 'omarchy-native-display-sync: failed to apply %s to %s: %s\n' \
-         "$mode" "$output" "$response" >&2
-@@ -307,10 +342,10 @@ apply_preferred_modes() {
-       last_scale=$scale
-     fi
+-    if ! response=$(hyprctl eval "$rule" 2>&1); then
+-      printf 'omarchy-native-display-sync: failed to apply %s to %s: %s\n' \
+-        "$mode" "$output" "$response" >&2
+-    elif [[ $response != ok ]]; then
+-      printf 'omarchy-native-display-sync: Hyprland rejected %s for %s: %s\n' \
+-        "$mode" "$output" "$response" >&2
+-    else
+-      applied=$((applied + 1))
+-      last_mode=$mode
+-      last_scale=$scale
+-    fi
++    outputs+=("$output")
++    modes+=("$mode")
++    scales+=("$scale")
++    triples+=("$output" "$mode" "$scale")
    done
--  shopt -u nullglob
+   shopt -u nullglob
 -  # The rule is a catch-all, so one recorded mode only fits a single display.
 -  # With several, drop the record and let reloads use Omarchy's own rule.
 -  if (( applied == 1 )); then
-+  # Reloads apply the recorded mode through the catch-all rule, so it only
-+  # fits a single display. With several, drop the record and let reloads use
-+  # Omarchy's own rule until the modes are applied again.
-+  if (( ${#outputs[@]} == 1 && applied == 1 )); then
-     record_mode "$last_mode" "$last_scale"
-   else
-     rm -f "$state_file"
+-    record_mode "$last_mode" "$last_scale"
+-  else
+-    rm -f "$state_file"
++  (( ${#outputs[@]} )) || { rm -f "$state_file"; return 0; }
++
++  # Aquamarine 0.16 still does not refresh its mode cache when an existing DRM
++  # connector's EDID or physical size changes. A complete modeline bypasses
++  # the stale mode cache; an explicit scale calculated from the fresh EDID
++  # avoids using the stale fullscreen dimensions for Hyprland's auto scale,
++  # unless the user set a number, which comes first. Hyprland's Lua config
++  # parser requires eval instead of the legacy keyword command.
++  if (( ${#outputs[@]} == 1 )); then
++    # One display updates the mode and scale of Omarchy's catch-all rule; its
++    # placement, color, and other policy remain intact, while an explicit
++    # per-output user rule still wins. A rule given to this output while
++    # there were several displays outranks the catch-all, so it follows too.
++    output=${outputs[0]}
++    mode=${modes[0]}
++    scale=${scales[0]}
++    if apply_rule "$output" "hl.monitor({ output = \"\", mode = \"$mode\", scale = \"$scale\" })"; then
++      record_mode "$mode" "$scale"
++    else
++      rm -f "$state_file"
++    fi
++    if [[ -r $own_rules_file ]] && grep -qxF "$output" "$own_rules_file"; then
++      apply_rule "$output" "hl.monitor({ output = \"$output\", mode = \"$mode\", scale = \"$scale\" })" || true
++    fi
++    return 0
++  fi
++
++  # With several displays each window has its own size, and the catch-all
++  # would leave every output at the last display's mode. QEMU then recreates
++  # the window of each output that changed, the launcher puts it back at its
++  # own size, and the EDID change that follows starts the next round. So each
++  # output gets a rule of its own, except one the user configured. Reloads
++  # apply the recorded mode through the catch-all rule, so drop the record and
++  # let reloads use Omarchy's own rule until the modes are applied again.
++  rm -f "$state_file"
++  if ! rules=$(configured_rules); then
++    printf 'omarchy-native-display-sync: could not follow the Hyprland config; leaving the displays alone\n' >&2
++    return 0
++  fi
++  if ! plan=$(plan_output_rules "$rules" "${triples[@]}"); then
++    printf 'omarchy-native-display-sync: could not plan the display rules; leaving the displays alone\n' >&2
++    return 0
++  fi
++  while IFS=$'\t' read -r output rule; do
++    [[ -n $output && -n $rule ]] || continue
++    if apply_rule "$output" "$rule"; then
++      remember_own_rule "$output"
++    fi
++  done <<<"$plan"
++}
++
++# The outputs this script gave a rule of their own since Hyprland last loaded
++# its config, which drops such rules.
++remember_own_rule() {
++  mkdir -p "${own_rules_file%/*}" || return 0
++  if ! grep -qxF "$1" "$own_rules_file" 2>/dev/null; then
++    printf '%s\n' "$1" >>"$own_rules_file" || true
+   fi
+ }
+ 
+@@ -336,6 +711,7 @@ apply_after_config_reload() {
+ 
+   while IFS= read -r line; do
+     if [[ $line == configreloaded* ]]; then
++      rm -f "$own_rules_file"
+       apply_preferred_modes
+     fi
+   done
+@@ -400,7 +776,9 @@ if [[ ${1:-} == --config-reloads-from-stdin ]]; then
+ fi
+ 
+ # QEMU changes the virtio-gpu EDID whenever its SDL window changes size.
+-# Linux exposes that as a DRM hotplug change.
++# Linux exposes that as a DRM hotplug change. Hyprland has just loaded its
++# config, so no output has a rule from an earlier run.
++rm -f "$own_rules_file"
+ apply_preferred_modes
+ watch_config_reloads &
+ while true; do
 diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
 index c70936d..1679648 100755
 --- a/guest/scripts/finalize-rootfs.sh
@@ -345,10 +744,18 @@ index 2dff410..d1a9057 100644
  
  
 diff --git a/guest/tests/verify.py b/guest/tests/verify.py
-index 2a2cc9c..28cf146 100755
+index 2a2cc9c..d343edc 100755
 --- a/guest/tests/verify.py
 +++ b/guest/tests/verify.py
-@@ -376,7 +376,7 @@ def main() -> None:
+@@ -8,6 +8,7 @@ import hashlib
+ import json
+ import os
+ import py_compile
++import shutil
+ import stat
+ import subprocess
+ import tempfile
+@@ -376,7 +377,7 @@ def main() -> None:
          "system services run without watchdogs, which fire after Windows sleeps",
      )
      check(
@@ -357,7 +764,53 @@ index 2a2cc9c..28cf146 100755
          and "usr/local/bin/mpv" in compat_paths
          and "usr/share/dkms/modules_to_force_install/try-omarchy" in compat_paths
          and "usr/local/lib/try-omarchy/try-omarchy-import.pyz" in compat_paths
-@@ -665,12 +665,39 @@ HOTPLUG=1
+@@ -620,9 +621,23 @@ def main() -> None:
+         )
+         legacy_edid[127] = (-sum(legacy_edid[:127])) & 0xFF
+         (legacy_connector / "edid").write_bytes(legacy_edid)
++        # Display sync runs the user's Hyprland config under the guest's Lua,
++        # Hyprland's own dependency; a build host may only have 5.4.
++        lua = next(
++            (found for name in ("lua5.5", "lua", "lua5.4") if (found := shutil.which(name))),
++            None,
++        )
++        check(lua is not None, "a Lua interpreter is available for the display sync checks")
++        (fake_bin / "lua").symlink_to(lua)
+         fake_hyprctl = fake_bin / "hyprctl"
+         fake_hyprctl.write_text(
+-            '#!/bin/bash\nprintf "%s\\n" "$*" >>"$HYPRCTL_LOG"\nprintf "ok\\n"\n',
++            "#!/bin/bash\n"
++            'if [[ $* == "-j monitors all" ]]; then\n'
++            '  printf \'%s\\n\' "$HYPRCTL_MONITORS"\n'
++            "  exit 0\n"
++            "fi\n"
++            'printf "%s\\n" "$*" >>"$HYPRCTL_LOG"\n'
++            'printf "ok\\n"\n',
+             encoding="utf-8",
+         )
+         fake_hyprctl.chmod(0o755)
+@@ -651,6 +666,20 @@ HOTPLUG=1
+         environment["OMARCHY_DISPLAY_SYNC_STATE"] = str(state_file)
+         # Keep the checks below off the monitors.lua of whoever runs them.
+         environment["OMARCHY_DISPLAY_SYNC_CONFIG"] = str(temporary_path / "no-monitors.lua")
++        # The user's Hyprland config is read from HOME and the display panel's
++        # saved settings from XDG_STATE_HOME.
++        empty_home = temporary_path / "home"
++        empty_home.mkdir()
++        environment["HOME"] = str(empty_home)
++        environment["XDG_STATE_HOME"] = str(empty_home / ".local/state")
++        environment["OMARCHY_PATH"] = str(temporary_path / "omarchy")
++        environment["HYPRCTL_MONITORS"] = json.dumps(
++            [
++                {"name": f"Virtual-{head}", "description": f"Red Hat Inc. Omarchy {head}",
++                 "make": "Red Hat, Inc.", "model": f"Omarchy {head}", "serial": ""}
++                for head in (1, 2)
++            ]
++        )
+         subprocess.run(
+             [str(display_sync), "--from-stdin"],
+             input=events,
+@@ -665,12 +694,140 @@ HOTPLUG=1
          check(
              reload_log.read_text(encoding="utf-8").splitlines()
              == [
@@ -369,39 +822,158 @@ index 2a2cc9c..28cf146 100755
 +                'eval hl.monitor({ output = "Virtual-2", mode = "modeline 149 1920 2008 2052 2200 1080 1084 1089 1125 -hsync -vsync", scale = "1" })',
 +                'eval hl.monitor({ output = "Virtual-1", mode = "modeline 1236 5120 6400 6553 6912 2880 2894 2908 2980 -hsync -vsync", scale = "2" })',
 +                'eval hl.monitor({ output = "Virtual-2", mode = "modeline 149 1920 2008 2052 2200 1080 1084 1089 1125 -hsync -vsync", scale = "1" })',
-             ],
--            "native display sync handles QEMU DisplayID and legacy EDID hotplug modes",
++            ],
 +            "native display sync gives each of several displays its own mode, from QEMU DisplayID and legacy EDID",
 +        )
++        mode_1 = "modeline 1236 5120 6400 6553 6912 2880 2894 2908 2980 -hsync -vsync"
++        mode_2 = "modeline 149 1920 2008 2052 2200 1080 1084 1089 1125 -hsync -vsync"
++        own_1 = f'eval hl.monitor({{ output = "Virtual-1", mode = "{mode_1}", scale = "2" }})'
++        own_2 = f'eval hl.monitor({{ output = "Virtual-2", mode = "{mode_2}", scale = "1" }})'
++        hyprland_lua = (
++            'dofile((os.getenv("OMARCHY_PATH") or "/usr/share/omarchy") .. "/default/hypr/bootstrap.lua")\n'
++            'require("default.hypr.omarchy")\n'
++            'require("hypr.monitors")\n'
++            'require("hypr.input")\n'
++            'require("default.hypr.toggles")\n'
++        )
++        omarchy_monitors = (
++            'local omarchy_monitor_scale = "auto"\n'
++            'hl.monitor({ output = "", mode = "preferred", position = "auto", scale = omarchy_monitor_scale })\n'
++        )
++
++        def sync_with(name, files, panel=None, events="ACTION=change\nSUBSYSTEM=drm\nHOTPLUG=1\n"):
++            """Two displays, the given files under ~/.config/hypr, and the
++            display panel's saved settings; returns the rules applied."""
++            home = temporary_path / f"home-{name}"
++            hypr = home / ".config/hypr"
++            hypr.mkdir(parents=True)
++            files = {"hyprland.lua": hyprland_lua, "monitors.lua": omarchy_monitors, "input.lua": "", **files}
++            for relative, text in files.items():
++                (hypr / relative).parent.mkdir(parents=True, exist_ok=True)
++                (hypr / relative).write_text(text, encoding="utf-8")
++            if panel is not None:
++                panel_dir = home / ".local/state/omarchy/monitors"
++                panel_dir.mkdir(parents=True)
++                (panel_dir / "settings").write_text(panel, encoding="utf-8")
++            log = temporary_path / f"reloads-{name}"
++            log.touch()
++            run_environment = dict(environment)
++            run_environment.update(
++                HOME=str(home),
++                XDG_STATE_HOME=str(home / ".local/state"),
++                HYPRCTL_LOG=str(log),
++                OMARCHY_DISPLAY_SYNC_STATE=str(home / "runtime/try-omarchy/display-mode"),
++                OMARCHY_DISPLAY_SYNC_CONFIG=str(hypr / "monitors.lua"),
++            )
++            subprocess.run(
++                [str(display_sync), "--from-stdin"],
++                input=events,
++                text=True,
++                env=run_environment,
++                check=True,
++                stderr=subprocess.DEVNULL,
++            )
++            return log.read_text(encoding="utf-8").splitlines()
++
 +        # A catch-all rule per display would leave both outputs at the last
 +        # display's mode, and the windows QEMU recreates for them would keep
-+        # changing the EDID. A rule the user wrote for one output still wins.
-+        user_rule_config = temporary_path / "monitors-user-rule.lua"
-+        user_rule_config.write_text(
-+            '-- hl.monitor({ output = "Virtual-1", mode = "preferred" })\n'
-+            'hl.monitor({ output = "Virtual-2", mode = "1920x1080@60", position = "0x0" })\n',
-+            encoding="utf-8",
-+        )
-+        user_rule_environment = dict(environment)
-+        user_rule_environment["OMARCHY_DISPLAY_SYNC_CONFIG"] = str(user_rule_config)
-+        user_rule_log = temporary_path / "reloads-user-rule"
-+        user_rule_environment["HYPRCTL_LOG"] = str(user_rule_log)
-+        subprocess.run(
-+            [str(display_sync), "--from-stdin"],
-+            input="ACTION=change\nSUBSYSTEM=drm\nHOTPLUG=1\n",
-+            text=True,
-+            env=user_rule_environment,
-+            check=True,
++        # changing the EDID. Hyprland cannot list its rules, so display sync
++        # runs the user's config to find the outputs it names: in any quoting,
++        # after other code on the line, by desc:, or in a module it requires,
++        # while a rule inside a block comment names nothing.
++        check(
++            sync_with(
++                "named",
++                {
++                    "monitors.lua": omarchy_monitors
++                    + '--[[\nhl.monitor({ output = "Virtual-1", mode = "preferred" })\n]]\n'
++                    + 'local n = "a-b"; hl.monitor({ output = \'Virtual-2\', mode = "1920x1080@60" })\n',
++                },
++            )
++            == [own_1],
++            "native display sync leaves an output named in single quotes alone, and not one in a block comment",
 +        )
 +        check(
-+            user_rule_log.read_text(encoding="utf-8").splitlines()
++            sync_with(
++                "required",
++                {
++                    "monitors.lua": omarchy_monitors + 'require("hypr.screens.left")\n',
++                    "screens/left.lua": 'local head = 1\nhl.monitor({ output = "Virtual-" .. head, transform = 1 })\n',
++                },
++            )
++            == [own_2],
++            "native display sync leaves an output named in a module the config requires alone",
++        )
++        check(
++            sync_with(
++                "desc",
++                {"input.lua": 'hl.monitor({ output = "desc:Red Hat Inc. Omarchy 2", scale = 2 })\n'},
++            )
++            == [own_1],
++            "native display sync leaves an output a desc: rule matches alone",
++        )
++        check(
++            sync_with("unknown", {"monitors.lua": omarchy_monitors + "hl.monitor(nil)\n"}) == [],
++            "native display sync leaves every output alone when it cannot follow the config",
++        )
++        # A rule for one output starts from Hyprland's defaults, not from the
++        # catch-all, so it carries the catch-all's own settings along.
++        check(
++            sync_with(
++                "catch-all",
++                {
++                    "monitors.lua": 'local omarchy_monitor_scale = "auto"\n'
++                    'local rotation = 1\n'
++                    'hl.monitor({ output = "", mode = "preferred", position = "auto", scale = omarchy_monitor_scale,'
++                    ' transform = rotation, vrr = 1, bitdepth = 10, cm = "srgb" })\n',
++                },
++            )
 +            == [
-+                'eval hl.monitor({ output = "Virtual-1", mode = "modeline 1236 5120 6400 6553 6912 2880 2894 2908 2980 -hsync -vsync", scale = "2" })',
-+            ],
-+            "native display sync leaves an output the user configured in monitors.lua alone",
++                f'eval hl.monitor({{ output = "Virtual-1", mode = "{mode_1}", scale = "2", bitdepth = 10, cm = "srgb", transform = 1, vrr = 1 }})',
++                f'eval hl.monitor({{ output = "Virtual-2", mode = "{mode_2}", scale = "1", bitdepth = 10, cm = "srgb", transform = 1, vrr = 1 }})',
+             ],
+-            "native display sync handles QEMU DisplayID and legacy EDID hotplug modes",
++            "native display sync carries the catch-all's transform, vrr, bitdepth and color into each output's rule",
++        )
++        # Newer Omarchy's display panel saves each monitor's choices by its
++        # identity and applies them as a rule for its connector. A scale or
++        # mode chosen there stays; only what the panel left open follows the
++        # window, merged into the panel's rule.
++        panel = "\t\t1.5\t\tRed Hat Inc. Omarchy 2\n" "1920x1080@60\t0x0\t2\t1\tRed Hat Inc. Omarchy 1\n"
++        check(
++            sync_with("panel", {}, panel=panel)
++            == [f'eval hl.monitor({{ output = "Virtual-2", mode = "{mode_2}" }})'],
++            "native display sync keeps the mode and scale chosen in the display panel",
++        )
++        check(
++            sync_with(
++                "panel-off",
++                {"monitors.lua": omarchy_monitors + "omarchy_monitor_panel_settings = false\n"},
++                panel=panel,
++            )
++            == [own_1, own_2],
++            "native display sync ignores the panel's settings when monitors.lua turns them off",
          )
          (legacy_connector / "status").write_text("disconnected\n", encoding="utf-8")
          subprocess.run(
+@@ -685,6 +842,17 @@ HOTPLUG=1
+             == "modeline 1236 5120 6400 6553 6912 2880 2894 2908 2980 -hsync -vsync\n2\n",
+             "native display sync records the single display's mode for config reloads",
+         )
++        # The rule Virtual-1 got while there were two displays outranks the
++        # catch-all, so it has to follow the window too, or the output would
++        # keep the old mode.
++        check(
++            reload_log.read_text(encoding="utf-8").splitlines()[-2:]
++            == [
++                f'eval hl.monitor({{ output = "", mode = "{mode_1}", scale = "2" }})',
++                own_1,
++            ],
++            "native display sync updates an output's own rule when only that display is left",
++        )
+         monitor_config = temporary_path / "monitors.lua"
+         monitor_config.write_text(
+             'local omarchy_monitor_scale = 3\n'
 -- 
 2.53.0
 
