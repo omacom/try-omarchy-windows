@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -722,4 +724,55 @@ func TestLateRevealsTakeShown(t *testing.T) {
 	if waiting, tab := late.takeShown(1, false); !waiting || !tab {
 		t.Fatal("the reveal did not find the window")
 	}
+}
+
+// QEMU shows a window right after the shell was asked for its button, which
+// the shell ignored while it was cloaked: the window was recorded before
+// that, and the look after the hand over gives it its steps again.
+func TestHandOverRevealedLate(t *testing.T) {
+	var late lateReveals
+	var steps []string
+	cloaked := map[uintptr]bool{1: true, 2: true}
+	redone := map[uintptr]int{}
+	s := revealHandOver{
+		record: func(hwnd uintptr) {
+			late.add(hwnd, true)
+			steps = append(steps, fmt.Sprintf("record %d", hwnd))
+		},
+		showTab: func(hwnd uintptr) {
+			steps = append(steps, fmt.Sprintf("tab %d", hwnd))
+			if hwnd == 1 {
+				// QEMU shows window 1 now; its uncloak event finds it.
+				cloaked[1] = false
+				if waiting, _ := late.takeShown(1, false); waiting {
+					redone[1]++
+				}
+			}
+		},
+		handOver: func() { steps = append(steps, "hand over") },
+		cloaked:  func(hwnd uintptr) bool { return cloaked[hwnd] },
+		redo: func(hwnd uintptr) {
+			// A redundant redo finds nothing to do.
+			if waiting, _ := late.takeShown(hwnd, cloaked[hwnd]); waiting {
+				redone[hwnd]++
+			}
+		},
+	}
+	handOverRevealed([]uintptr{1, 2}, true, s)
+	if want := "record 1,record 2,tab 1,tab 2,hand over"; strings.Join(steps, ",") != want {
+		t.Fatalf("steps %v, want %s", steps, want)
+	}
+	if redone[1] != 1 || redone[2] != 0 {
+		t.Fatalf("redone %v: window 1 once, window 2 not yet", redone)
+	}
+	// Window 2 is shown later; its uncloak event redoes it.
+	if waiting, _ := late.takeShown(2, false); !waiting {
+		t.Fatal("window 2 was not waiting")
+	}
+
+	// In time: nothing is recorded or redone.
+	steps = nil
+	s.record = func(uintptr) { t.Fatal("recorded on time") }
+	s.redo = func(uintptr) { t.Fatal("redone on time") }
+	handOverRevealed([]uintptr{1}, false, s)
 }

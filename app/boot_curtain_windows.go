@@ -1028,24 +1028,19 @@ func finishCurtainReveal() {
 	} else {
 		logf("startup: QEMU showed Omarchy's window %v after the lift", took)
 	}
-	var stillCloaked []uintptr
-	for hwnd, window := range reveal.windows {
-		if !isQemuDisplayWindow(hwnd, pid) {
-			continue
-		}
-		showCurtainTab(hwnd, window)
-		if late && windowCloakedByApp(hwnd) {
-			curtainLate.add(hwnd, window.tabRemoved)
-			stillCloaked = append(stillCloaked, hwnd)
+	var hwnds []uintptr
+	for hwnd := range reveal.windows {
+		if isQemuDisplayWindow(hwnd, pid) {
+			hwnds = append(hwnds, hwnd)
 		}
 	}
-	handOverFromCurtain()
-	// QEMU may have shown a window between the look and the record.
-	for _, hwnd := range stillCloaked {
-		if !windowCloakedByApp(hwnd) {
-			redoLateReveal(hwnd)
-		}
-	}
+	handOverRevealed(hwnds, late, revealHandOver{
+		record:   func(hwnd uintptr) { curtainLate.add(hwnd, reveal.windows[hwnd].tabRemoved) },
+		showTab:  func(hwnd uintptr) { showCurtainTab(hwnd, reveal.windows[hwnd]) },
+		handOver: handOverFromCurtain,
+		cloaked:  windowCloakedByApp,
+		redo:     redoLateReveal,
+	})
 }
 
 // redoLateReveal gives a window QEMU showed after the hand over the shell

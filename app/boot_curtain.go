@@ -196,6 +196,39 @@ func liftCloakedWindows(hwnds []uintptr, regions *revealRegions, restoreFrame, r
 	}
 }
 
+// revealHandOver are the steps that end a reveal, as finishCurtainReveal
+// runs them (handOverRevealed).
+type revealHandOver struct {
+	record   func(hwnd uintptr)      // the window waits for QEMU to show it
+	showTab  func(hwnd uintptr)      // taskbar button and full screen mark
+	handOver func()                  // focus and the setup window
+	cloaked  func(hwnd uintptr) bool // QEMU still cloaks it
+	redo     func(hwnd uintptr)      // the steps again, once QEMU shows it
+}
+
+// handOverRevealed ends a reveal. On a late one every window is recorded
+// before the shell is asked for anything, so QEMU showing a window at any
+// point after that finds it recorded; after the hand over each window QEMU
+// no longer cloaks gets its steps again, which is harmless if they took.
+func handOverRevealed(hwnds []uintptr, late bool, s revealHandOver) {
+	if late {
+		for _, hwnd := range hwnds {
+			s.record(hwnd)
+		}
+	}
+	for _, hwnd := range hwnds {
+		s.showTab(hwnd)
+	}
+	s.handOver()
+	if late {
+		for _, hwnd := range hwnds {
+			if !s.cloaked(hwnd) {
+				s.redo(hwnd)
+			}
+		}
+	}
+}
+
 // curtainToolWindow reports whether the curtain makes a window a tool
 // window while it is hidden: only a held window not shown yet, and only
 // with a runtime that shows it with its first frame (curtainWaitsForFrame),
