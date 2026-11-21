@@ -11,6 +11,28 @@ concurrency:
   group: virtio-dxg-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  guest-modules:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Export the pinned guest builder and compile matching modules
+        shell: bash
+        run: |
+          scripts/release/build-guest.sh --source-only --output "$RUNNER_TEMP/guest-source"
+          guest="$RUNNER_TEMP/guest-source/guest"
+          image=$(awk '$1 == "FROM" {print $2; exit}' "$guest/Containerfile")
+          [[ $image =~ @sha256:[0-9a-f]{64}$ ]]
+          mkdir "$RUNNER_TEMP/guest-modules"
+          docker run --rm --cpus=2 --memory=4g --pids-limit=512 \
+            -v "$GITHUB_WORKSPACE:/repo:ro" -v "$guest:/guest:ro" \
+            -v "$RUNNER_TEMP/guest-modules:/out" "$image" \
+            bash /repo/virtio-dxg/guest/build-locked-modules.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: virtio-dxg-guest-modules
+          path: ${{ runner.temp }}/guest-modules/
+          if-no-files-found: error
   host-mocks:
     runs-on: windows-2025
     timeout-minutes: 10

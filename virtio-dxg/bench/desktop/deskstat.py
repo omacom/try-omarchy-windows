@@ -15,15 +15,17 @@ for line in open(trace, errors='replace'):
         flips.append(t)
     elif 'tracing_mark' in m.group(2):
         marks.append((t, m.group(3).strip()))
-print(f"{'phase':10s} {'flips/s':>8s} {'missed':>7s} {'worst gaps (ms)':s}")
+print(f"{'phase':10s} {'flips/s':>8s} {'est. missed':>11s} {'p99 ms':>8s} {'worst ms':>8s}")
 for i, (t0, name) in enumerate(marks[:-1]):
     t1 = marks[i + 1][0]
-    f = [t for t in flips if t0 + 1.0 <= t < t1]  # skip the load's start-up second
-    gaps = [(b - a) * 1000 for a, b in zip(f, f[1:])]
-    # Hyprland renders only when something changed: between workspace
-    # switches it may idle; count gaps inside animation bursts only.
-    burst = [g for g in gaps if g < 100]
-    missed = sum(1 for g in burst if g > 1.5 * period)
-    span = (f[-1] - f[0]) if len(f) > 1 else 1
-    worst = sorted(burst, reverse=True)[:5]
-    print(f"{name:10s} {len(f) / span:8.1f} {missed:7d} {[round(g, 1) for g in worst]}")
+    if t1 <= t0:
+        continue
+    f = sorted(t for t in flips if t0 <= t < t1)
+    # deskload animates continuously. Include both phase boundaries so a
+    # sustained stall before the first or after the last flip stays visible.
+    edges = [t0, *f, t1]
+    gaps = sorted((b - a) * 1000 for a, b in zip(edges, edges[1:]))
+    expected = round((t1 - t0) * hz)
+    p99 = gaps[(99 * len(gaps) - 1) // 100]
+    print(f"{name:10s} {len(f)/(t1-t0):8.1f} {max(0, expected-len(f)):11d} "
+          f"{p99:8.2f} {gaps[-1]:8.2f}")

@@ -5,14 +5,21 @@
 # every core busy. Nice -10 with reset-on-fork, so what the desktop launches
 # starts at normal priority. Threads created later are caught on the next
 # pass.
+prioritize_thread() {
+    local task=$1 tid=${1##*/} stat
+    IFS= read -r stat < "$task/stat" || return
+    # A thread name can contain spaces and parentheses. Fields after its
+    # final ')' start at field 3 (state); nice is field 19, policy field 41.
+    set -- ${stat##*) }
+    [ "${17:-}" != -10 ] && [ "${39:-}" = 0 ] || return
+    chrt -o -R -p 0 "$tid" 2>/dev/null &&
+        renice -n -10 -p "$tid" >/dev/null 2>&1
+}
 while :; do
     for name in Hyprland Xwayland quickshell; do
         for p in $(pgrep -x "$name"); do
             for t in /proc/$p/task/*; do
-                tid=${t##*/}
-                [ "$(cut -d' ' -f19 "$t/stat" 2>/dev/null)" = -10 ] && continue
-                chrt -o -R -p 0 "$tid" 2>/dev/null
-                renice -n -10 -p "$tid" >/dev/null 2>&1
+                prioritize_thread "$t" 2>/dev/null
             done
         done
     done

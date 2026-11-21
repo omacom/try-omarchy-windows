@@ -102,7 +102,7 @@ setup_desktop() {
     # GPU ahead of llvmpipe). VK_DRIVER_FILES would replace the search, and
     # Wine passes the session's environment to Windows programs, whose
     # Vulkan loader would then ignore its registered drivers (dxgvk).
-    # GTK 4 renders with OpenGL (GSK_RENDERER=ngl), not its default Vulkan
+    # GTK 4 renders with OpenGL (GSK_RENDERER=gl), not its default Vulkan
     # renderer: its windows open in about 390 ms instead of 650 (Nautilus),
     # because a GL context on d3d12 starts faster than a Vulkan device on
     # Dozen.
@@ -119,7 +119,7 @@ setup_desktop() {
         "LIBGL_DRIVERS_PATH=$m/lib/dri" "GBM_BACKENDS_PATH=$m/lib/gbm" \
         "LIBVA_DRIVERS_PATH=$m/lib/dri" \
         "VK_ADD_DRIVER_FILES=$m/share/vulkan/icd.d/dzn_icd.x86_64.json" \
-        GSK_RENDERER=ngl \
+        GSK_RENDERER=gl \
         >/run/environment.d/90-virtio-dxg.conf.pending || return 1
     mv /run/environment.d/90-virtio-dxg.conf.pending \
         /run/environment.d/90-virtio-dxg.conf || return 1

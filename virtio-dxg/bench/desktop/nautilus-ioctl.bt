@@ -1,0 +1,23 @@
+// Run in the guest with the PID of its existing Nautilus instance. The
+// command number matches _IOWR(0x47, nr, ...) in d3dkmthk.h. Collect
+// all threads in that process; no syscall arguments or file data are read.
+tracepoint:syscalls:sys_enter_ioctl
+/pid == $1 && ((args.cmd >> 8) & 255) == 0x47/
+{
+    @start[tid] = nsecs;
+    @op[tid] = args.cmd & 255;
+}
+
+tracepoint:syscalls:sys_exit_ioctl
+/@start[tid]/
+{
+    $ns = nsecs - @start[tid];
+    @calls[@op[tid]] = count();
+    @total_us[@op[tid]] = sum($ns / 1000);
+    @worst_us[@op[tid]] = max($ns / 1000);
+    delete(@start[tid]);
+    delete(@op[tid]);
+}
+
+interval:s:15 { exit(); }
+END { clear(@start); clear(@op); }

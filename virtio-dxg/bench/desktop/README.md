@@ -6,6 +6,26 @@ set).
 
 ## Frame pacing under load
 
+For a single active guest output, `deskstat.py` reports the rate across the
+entire marked phase, including startup and intervals of 100 ms or longer.
+The estimated shortfall compares delivered events with the requested refresh
+rate. Guest page flips and browser callbacks each need a matching host
+presentation trace before claiming sustained 240 Hz on the Windows display.
+The historical table below used the older calculation.
+
+### Files scrolling
+
+In a disposable guest session, open Files on the same 3,000-entry directory
+for each build. Keep the viewport, icon theme, scale, sort mode, thumbnail
+cache and scroll sequence identical. Record the Nautilus process ID. During
+a 15-second scroll, run `sudo bpftrace nautilus-ioctl.bt PID` inside the guest.
+It groups DXG ioctls from all Nautilus threads by command number and reports
+count, summed elapsed microseconds and worst call. Match command numbers to
+the second argument of `_IOWR(0x47, ...)` in the guest's `d3dkmthk.h`.
+Overlapping waits can sum to more than wall time. Compare a second untraced
+run for pacing. Also check icon pixels, thumbnail updates, selection and
+menu animations. No new measurements are available for this candidate.
+
 A window that animates every frame stays on screen while the guest is idle,
 while every core is busy (stress-ng), while the GPU is busy (a heavy
 off-screen glmark2 scene) and both. The kernel's page-flip events show

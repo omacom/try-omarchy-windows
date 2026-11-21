@@ -155,7 +155,8 @@ static void dxgvirtio_req_free(struct kref *ref)
  * Builds a scatterlist for a kmalloc'ed or vmalloc'ed buffer. Each page of a
  * vmalloc'ed buffer is a separate entry.
  */
-static int dxgvirtio_sg_table(struct sg_table *table, void *buf, u32 size)
+static int dxgvirtio_sg_table(struct sg_table *table, struct scatterlist *single,
+			      void *buf, u32 size)
 {
 	struct scatterlist *sg;
 	unsigned long first, last;
@@ -163,10 +164,8 @@ static int dxgvirtio_sg_table(struct sg_table *table, void *buf, u32 size)
 	int ret;
 
 	if (!is_vmalloc_addr(buf)) {
-		ret = sg_alloc_table(table, 1, GFP_KERNEL);
-		if (ret)
-			return ret;
-		sg_set_buf(table->sgl, buf, size);
+		sg_init_one(single, buf, size);
+		table->sgl = single;
 		return 0;
 	}
 
@@ -238,21 +237,22 @@ static void dxgvirtio_ctrl_poll(struct dxgvirtio *dv)
 static int dxgvirtio_queue(struct dxgvirtio *dv, struct dxgvirtio_req *req)
 {
 	struct scatterlist hdr_sg, resp_sg, *sgs[4];
-	struct sg_table cmd_table, res_table = {};
+	struct sg_table cmd_table = {}, res_table = {};
+	struct scatterlist cmd_single, res_single;
 	unsigned int out = 0, in = 0;
 	unsigned long flags;
 	bool notify;
 	int ret;
 
-	ret = dxgvirtio_sg_table(&cmd_table, req->buf, req->cmd_size);
+	ret = dxgvirtio_sg_table(&cmd_table, &cmd_single, req->buf, req->cmd_size);
 	if (ret)
 		return ret;
 	if (req->result_size) {
-		ret = dxgvirtio_sg_table(&res_table,
+		ret = dxgvirtio_sg_table(&res_table, &res_single,
 					 (u8 *)req->buf + req->cmd_size,
 					 req->result_size);
 		if (ret)
-			goto cleanup;
+			goto free_command;
 	}
 
 	sg_init_one(&hdr_sg, &req->hdr, sizeof(req->hdr));
@@ -308,11 +308,12 @@ static int dxgvirtio_queue(struct dxgvirtio *dv, struct dxgvirtio_req *req)
 	if (notify)
 		virtqueue_notify(dv->ctrl);
 
-cleanup:
 	/* The ring holds DMA addresses; the tables themselves can go. */
-	sg_free_table(&cmd_table);
-	if (req->result_size)
+	if (res_table.sgl && res_table.sgl != &res_single)
 		sg_free_table(&res_table);
+free_command:
+	if (cmd_table.sgl != &cmd_single)
+		sg_free_table(&cmd_table);
 	return ret;
 }
 

@@ -25,9 +25,14 @@ SKIP = {'foot-server', 'try-omarchy-follow-timezone', 'disk usage', 'docker', 'u
 
 def apps():
     seen, out = set(), []
-    for d in (os.path.expanduser('~/.local/share/applications'), '/usr/share/applications'):
-        for f in sorted(glob.glob(d + '/*.desktop')):
-            did = os.path.basename(f)[:-8]
+    data_home = os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share')
+    data_dirs = os.environ.get('XDG_DATA_DIRS') or '/usr/local/share:/usr/share'
+    for root in [data_home, *data_dirs.split(':')]:
+        if not os.path.isabs(root):
+            continue
+        d = os.path.join(root, 'applications')
+        for f in sorted(glob.glob(d + '/**/*.desktop', recursive=True)):
+            did = os.path.relpath(f, d)[:-8].replace(os.sep, '-')
             if did in seen:
                 continue
             seen.add(did)
@@ -43,6 +48,7 @@ def apps():
                 continue
             name = e.get('Name', did)
             if did.lower() in SKIP or name.lower() in SKIP:
+                print(f'skipped by benchmark policy: {did} ({name})', flush=True)
                 continue
             if FILTER and not any(f in name.lower() or f in did.lower() for f in FILTER):
                 continue
@@ -61,24 +67,31 @@ def drain():
     global buf
     try:
         while True:
-            buf += hs.recv(65536)
+            data = hs.recv(65536)
+            if not data:
+                raise ConnectionError('Hyprland event socket closed')
+            buf += data
     except BlockingIOError:
-        pass
+        # Discard complete stale events. Retain a partial trailing line.
+        buf = buf.rsplit(b'\n', 1)[-1]
 
 
 def wait_event(prefix, timeout, t0):
     """First compositor event starting with prefix after now; (ms since t0, payload)."""
     global buf
-    end = time.time() + timeout
-    while time.time() < end:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
         try:
-            buf += hs.recv(65536)
+            data = hs.recv(65536)
+            if not data:
+                raise ConnectionError('Hyprland event socket closed')
+            buf += data
         except BlockingIOError:
             time.sleep(0.001)
         while b'\n' in buf:
             line, buf = buf.split(b'\n', 1)
             if line.startswith(prefix):
-                return (time.time() - t0) * 1000, line[len(prefix):].decode(errors='replace')
+                return (time.monotonic() - t0) * 1000, line[len(prefix):].decode(errors='replace')
     return None, None
 
 
@@ -121,14 +134,17 @@ for rnd in range(ROUNDS):
         close_menu()
         before = scopes()
         drain()
-        t0 = time.time()
+        t0 = time.monotonic()
         k.combo('meta_l', 'spc')
         menu_ms, _ = wait_event(b'openlayer>>omarchy-menu', 3, t0)
+        if menu_ms is None:
+            print(f'round {rnd + 1}  {name}: menu did not appear; no keys sent to app', flush=True)
+            continue
         time.sleep(0.15)
         k.type(term(name))
         time.sleep(0.45)
         drain()
-        t1 = time.time()
+        t1 = time.monotonic()
         k.combo('ret')
         win_ms, payload = wait_event(b'openwindow>>', 25, t1)
         cls = ''

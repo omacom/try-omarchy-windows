@@ -11,6 +11,7 @@ list=0
 [ "${1:-}" = --list ] && list=1
 
 declare -A seen
+declare -A programs
 files=()
 add() {
     local f
@@ -27,6 +28,9 @@ add_prog() {
     local p
     p=$(command -v "$1" 2>/dev/null) || return
     p=$(readlink -f "$p")
+    [ -n "$p" ] || return
+    [ -z "${programs[$p]:-}" ] || return
+    programs[$p]=1
     add "$p"
     case $(head -c 4 "$p" 2>/dev/null) in
     $'\x7fELF')
@@ -45,6 +49,7 @@ add_prog() {
 add_dir() { [ -d "$1" ] && while IFS= read -r -d '' f; do add "$f"; done < <(find "$1" -type f -size -256M -print0 2>/dev/null); }
 
 # Every application the launcher lists.
+[ "$list" = 1 ] || sleep "${PREFETCH_DELAY:-8}"
 for d in /usr/share/applications /home/*/.local/share/applications; do
     for f in "$d"/*.desktop; do
         [ -f "$f" ] || continue
@@ -71,8 +76,6 @@ if [ $list = 1 ]; then
     printf '%s\n' "${files[@]}"
     exit 0
 fi
-# Let the desktop finish starting first.
-sleep "${PREFETCH_DELAY:-8}"
 start=$(date +%s%N)
 printf '%s\0' "${files[@]}" | xargs -0 -n 64 -P 4 cat >/dev/null 2>&1
 bytes=$(printf '%s\0' "${files[@]}" | du -cb --files0-from=- 2>/dev/null | tail -1 | cut -f1)
