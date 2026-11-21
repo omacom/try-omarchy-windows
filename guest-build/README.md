@@ -209,6 +209,37 @@ reload events, after a GPU hotplug (a window resize) and every five seconds.
 udev starts it for the first such tablet, so one display never runs it.
 Compatibility revision 75 delivers it; the runtime package is unchanged.
 
+Patch 0190 gives each display its own synced mode. Display sync applied every
+display's EDID mode through Omarchy's catch-all monitor rule in turn, so with
+two displays both outputs ended at the second one's mode. QEMU recreated the
+window of each output whose mode changed, the launcher put it back at its own
+size, and the EDID change that followed started the next round, until the
+start timed out. With several displays each output now gets its own
+`hl.monitor` rule. Hyprland cannot list its monitor rules, so when Hyprland
+starts or reloads, display sync runs the config Hyprland loads under Lua with
+`hl.monitor` recording, through the modules it requires on the search path
+Hyprland reports (Omarchy's defaults are not run), and keeps the answer for the
+resizes that follow, one change at a time. Each output a rule there names, by
+connector or `desc:`,
+is left alone. Event handlers run once after the config, so an output they
+name is seen, and Omarchy's command checks, which only look for files, run for
+real. The run fails closed: reading Hyprland's state, timers, a handler that
+uses its event, fails or changes the catch-all, running a command, writing a file, a config that does not end,
+or a catch-all value that is not plain finite data all leave every output
+alone; a module the config requires that is not there is an ordinary error it
+may catch. Registration calls (binds, rules, settings, devices, start commands)
+are ignored, so the stock config with the QEMU profile runs clean. A rule for one output starts from Hyprland's
+defaults, so it carries every other field of the catch-all, except a mirror of
+that output itself. The display panel of newer Omarchy keeps its choices by
+monitor in `~/.local/state/omarchy/monitors/settings` and applies them as rules
+for the connector; a mode or scale chosen there is kept, and only what the
+panel left open follows the window. An output left with a rule of its own
+after the other displays go away keeps following its window with only the
+fields display sync set there. One display keeps the catch-all rule and the
+mode recorded for config reloads. The contract tests need a Lua interpreter on
+the build host, so the guest jobs install one. Compatibility
+revision 76 delivers it; the runtime package is unchanged.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME
