@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -8,35 +11,135 @@ import (
 func TestBootCurtainLiftsWhenTheDesktopIsDrawn(t *testing.T) {
 	boot := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
 	times := bootCurtainTimes{boot: boot, ready: boot.Add(22 * time.Second), session: boot.Add(37 * time.Second)}
-	if reason := times.liftReason(boot.Add(38*time.Second), false); reason != "" {
+	if reason := times.liftReason(boot.Add(38 * time.Second)); reason != "" {
 		t.Fatalf("lifted %q one second into the session with nothing drawn", reason)
 	}
-	if reason := times.liftReason(boot.Add(38*time.Second), true); reason == "" {
-		t.Fatal("stayed up with the desktop drawn")
+	if reason := times.liftReason(boot.Add(37*time.Second + curtainDrawWait - time.Second)); reason != "" {
+		t.Fatalf("lifted %q before the draw wait ran out", reason)
 	}
-	if reason := times.liftReason(boot.Add(37*time.Second+curtainPaintWait), false); reason == "" {
-		t.Fatal("waited past the paint wait for a wallpaper that cannot be told from an empty screen")
+	if reason := times.liftReason(boot.Add(37*time.Second + curtainDrawWait)); reason == "" {
+		t.Fatal("waited past the draw wait for a guest that does not report the desktop")
+	}
+	times.drawn = boot.Add(50 * time.Second)
+	if reason := times.liftReason(boot.Add(50 * time.Second)); reason != "Omarchy reported its desktop drawn" {
+		t.Fatalf("stayed up or lifted %q with the desktop drawn", reason)
+	}
+}
+
+func TestBootCurtainNeverLiftsOnADrawnReportBeforeTheSession(t *testing.T) {
+	boot := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
+	early := bootCurtainTimes{boot: boot, ready: boot.Add(20 * time.Second), drawn: boot.Add(25 * time.Second)}
+	if reason := early.liftReason(boot.Add(26 * time.Second)); reason != "" {
+		t.Fatalf("lifted %q before the session started", reason)
+	}
+	early.session = boot.Add(30 * time.Second)
+	if reason := early.liftReason(boot.Add(30 * time.Second)); reason != "Omarchy reported its desktop drawn" {
+		t.Fatalf("got %q once the session started", reason)
 	}
 }
 
 func TestBootCurtainWaitsForAMissingSessionAndASlowBoot(t *testing.T) {
 	boot := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
 	ready := bootCurtainTimes{boot: boot, ready: boot.Add(20 * time.Second)}
-	if reason := ready.liftReason(boot.Add(20*time.Second+curtainSessionWait-time.Second), false); reason != "" {
+	if reason := ready.liftReason(boot.Add(20*time.Second + curtainSessionWait - time.Second)); reason != "" {
 		t.Fatalf("lifted %q before the session wait ran out", reason)
 	}
-	if reason := ready.liftReason(boot.Add(20*time.Second+curtainSessionWait), false); reason == "" {
+	if reason := ready.liftReason(boot.Add(20*time.Second + curtainSessionWait)); reason == "" {
 		t.Fatal("kept a login screen or a broken session invisible")
 	}
 	stuck := bootCurtainTimes{boot: boot}
 	if stuck.checkPaint() {
 		t.Fatal("read the screen before userspace was up")
 	}
-	if reason := stuck.liftReason(boot.Add(curtainBootWait-time.Second), false); reason != "" {
+	if reason := stuck.liftReason(boot.Add(curtainBootWait - time.Second)); reason != "" {
 		t.Fatalf("lifted %q before the boot wait ran out", reason)
 	}
-	if reason := stuck.liftReason(boot.Add(curtainBootWait), false); reason == "" {
+	if reason := stuck.liftReason(boot.Add(curtainBootWait)); reason == "" {
 		t.Fatal("kept a boot that never came up invisible")
+	}
+}
+
+func TestBootCurtainSlowNoticeWaitsOutANormalStart(t *testing.T) {
+	boot := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
+	// An older guest on the AMD PC: the session at 26 s, no drawn report, so
+	// the curtain lifts on the draw wait 66 s after the boot. Every look until
+	// then is part of a normal start.
+	old := bootCurtainTimes{boot: boot, ready: boot.Add(17 * time.Second), session: boot.Add(26 * time.Second)}
+	for at := time.Duration(0); at <= 26*time.Second+curtainDrawWait; at += 250 * time.Millisecond {
+		now := boot.Add(at)
+		if at < 26*time.Second {
+			old.session = time.Time{}
+		} else {
+			old.session = boot.Add(26 * time.Second)
+		}
+		if old.liftReason(now) != "" {
+			break
+		}
+		if old.slowStart(now) {
+			t.Fatalf("said the start is slow %v after the boot, before a normal lift", at)
+		}
+	}
+	if old.liftReason(boot.Add(26*time.Second+curtainDrawWait)) == "" {
+		t.Fatal("the old guest's start never lifted the curtain")
+	}
+	// The latest session a normal start has still lifts on the draw wait
+	// without the notice.
+	late := bootCurtainTimes{boot: boot, session: boot.Add(curtainSlowNotice - time.Second)}
+	if late.slowStart(late.session.Add(curtainDrawWait - time.Second)) {
+		t.Fatal("said a session that started in time is slow")
+	}
+}
+
+func TestBootCurtainSlowNoticeForSlowStarts(t *testing.T) {
+	boot := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
+	if (bootCurtainTimes{}).slowStart(boot.Add(time.Hour)) {
+		t.Fatal("said a boot that has not started is slow")
+	}
+	// No session: firmware, a disk check, a login screen or a broken config.
+	stuck := bootCurtainTimes{boot: boot}
+	if stuck.slowStart(boot.Add(curtainSlowNotice - time.Second)) {
+		t.Fatal("said the start is slow before the notice wait")
+	}
+	if !stuck.slowStart(boot.Add(curtainSlowNotice)) {
+		t.Fatal("kept quiet about a boot with no session after the notice wait")
+	}
+	ready := bootCurtainTimes{boot: boot, ready: boot.Add(30 * time.Second)}
+	at := boot.Add(curtainSlowNotice)
+	if ready.liftReason(at) != "" || !ready.slowStart(at) {
+		t.Fatal("kept quiet about a session that has not started while the curtain waits for it")
+	}
+	// A session that started late keeps the notice the setup window already
+	// shows until the lift, instead of taking it back.
+	late := bootCurtainTimes{boot: boot, ready: boot.Add(50 * time.Second), session: boot.Add(75 * time.Second)}
+	for _, now := range []time.Time{boot.Add(75 * time.Second), boot.Add(75*time.Second + curtainDrawWait - time.Second)} {
+		if late.liftReason(now) != "" || !late.slowStart(now) {
+			t.Fatalf("dropped the notice for a late session at %v", now.Sub(boot))
+		}
+	}
+}
+
+func TestShownWindowRects(t *testing.T) {
+	// A 1280x800 monitor with a 48 pixel taskbar, and Windows 11's frame at
+	// 100%: 8 pixel borders and a 23 pixel title bar.
+	work := screenRect{0, 0, 1280, 752}
+	border := screenRect{8, 31, 8, 8}
+	// Maximized without its frame the window covered the whole monitor; with
+	// its frame its client area is the work area under the title bar.
+	outer, client := shownWindowRects(screenRect{0, 0, 1280, 800}, true, work, border)
+	if outer != (screenRect{-8, -8, 1288, 760}) || client != (screenRect{0, 23, 1280, 752}) {
+		t.Fatalf("maximized: outer %v client %v", outer, client)
+	}
+	// A second monitor to the left.
+	left := screenRect{-1920, 0, 0, 1040}
+	if _, client := shownWindowRects(screenRect{}, true, left, border); client != (screenRect{-1920, 23, 0, 1040}) {
+		t.Fatalf("maximized on the left monitor: client %v", client)
+	}
+	// Placed at its remembered framed rectangle: the frame goes back on the
+	// same rectangle, so the client area is what lies inside it.
+	placed := screenRect{100, 50, 1100, 750}
+	outer, client = shownWindowRects(placed, false, work, border)
+	if outer != placed || client != (screenRect{108, 81, 1092, 742}) {
+		t.Fatalf("placed: outer %v client %v", outer, client)
 	}
 }
 
@@ -207,4 +310,469 @@ func TestDesktopStreakIgnoresTimeWithoutLooks(t *testing.T) {
 	if !streak.look(restored.Add(desktopSteadyWait), true) {
 		t.Fatal("looks after the gap did not count")
 	}
+}
+
+func TestFramelessPlacementIsTheShownClientArea(t *testing.T) {
+	// The AMD PC's frame at 100%: 8 pixel borders and a 31 pixel title bar
+	// with the top border. A saved 200,100,1480,860 window shows a 1264x721
+	// client area; the hidden frameless window must get exactly that, not one
+	// frame less (1248x682, #413).
+	frame := screenRect{8, 31, 8, 8}
+	client := frameless(screenRect{200, 100, 1480, 860}, frame)
+	if client != (screenRect{208, 131, 1472, 852}) || client.width() != 1264 || client.height() != 721 {
+		t.Fatalf("client %v (%dx%d)", client, client.width(), client.height())
+	}
+	if _, shown := shownWindowRects(screenRect{200, 100, 1480, 860}, false, screenRect{}, frame); shown != client {
+		t.Fatalf("frameless %v and shownWindowRects %v disagree", client, shown)
+	}
+}
+
+func TestHiddenWindowNeverCoversItsMonitor(t *testing.T) {
+	monitor := hostMonitor{Bounds: screenRect{0, 0, 1920, 1080}, Work: screenRect{0, 0, 1920, 1032}, Primary: true}
+	frame := screenRect{8, 31, 8, 8}
+	// A frameless window Windows maximized, or QEMU sized to the guest's
+	// 1920x1080 display at 0,0: it goes to a maximized window's client area.
+	for _, now := range []screenRect{{0, 0, 1920, 1080}, {-8, -8, 1928, 1088}} {
+		outer, target, move := hiddenWindowOffMonitor(now, monitor, frame, screenRect{}, false)
+		if !move || target != (screenRect{0, 23, 1920, 1032}) || target.covers(monitor.Bounds) {
+			t.Fatalf("%v: move %v to %v", now, move, target)
+		}
+		// The lift frames it as a maximized window.
+		if outer != (screenRect{-8, -8, 1928, 1040}) || frameless(outer, frame) != target {
+			t.Fatalf("%v: framed at %v around %v", now, outer, target)
+		}
+	}
+	// One the curtain placed goes back to its own client area.
+	placed := screenRect{208, 131, 1472, 852}
+	if _, target, move := hiddenWindowOffMonitor(screenRect{0, 0, 1920, 1080}, monitor, frame, placed, true); !move || target != placed {
+		t.Fatalf("placed window: move %v to %v", move, target)
+	}
+	// The usual hidden rectangles are left alone.
+	for _, now := range []screenRect{{0, 23, 1920, 1032}, {0, 0, 1920, 1001}, {208, 131, 1472, 852}, {-8, -8, 1928, 1040}} {
+		if _, _, move := hiddenWindowOffMonitor(now, monitor, frame, screenRect{}, false); move {
+			t.Fatalf("moved %v", now)
+		}
+	}
+	// After the display mode changed behind the curtain (1280x800 to
+	// 1024x768), Windows maximized the frameless window over the new mode.
+	small := hostMonitor{Bounds: screenRect{0, 0, 1024, 768}, Work: screenRect{0, 0, 1024, 720}, Primary: true}
+	if outer, target, move := hiddenWindowOffMonitor(small.Bounds, small, frame, screenRect{}, false); !move ||
+		target != (screenRect{0, 23, 1024, 720}) || outer != (screenRect{-8, -8, 1032, 728}) {
+		t.Fatalf("after a mode change: move %v to %v framed at %v", move, target, outer)
+	}
+	// A second monitor to the left.
+	left := hostMonitor{Bounds: screenRect{-1920, 0, 0, 1080}, Work: screenRect{-1920, 0, 0, 1040}}
+	if _, target, move := hiddenWindowOffMonitor(left.Bounds, left, frame, screenRect{}, false); !move || target != (screenRect{-1920, 23, 0, 1040}) {
+		t.Fatalf("left monitor: move %v to %v", move, target)
+	}
+	// A full screen window is meant to fill its monitor, so it stays there,
+	// one row larger: exactly covering it is what makes the display flicker.
+	fullscreen, _ := fullscreenGrown(monitor, nil, "")
+	if fullscreen == monitor.Bounds || !fullscreen.covers(monitor.Bounds) {
+		t.Fatalf("full screen window kept at %v on %v", fullscreen, monitor.Bounds)
+	}
+}
+
+func TestFullscreenGrownPicksAnEdgeWithoutANeighbourOrTheTaskbar(t *testing.T) {
+	bounds := screenRect{0, 0, 1920, 1080}
+	bottomBar := hostMonitor{Bounds: bounds, Work: screenRect{0, 0, 1920, 1032}}
+	above := screenRect{0, -1080, 1920, 0}
+	left := screenRect{-1920, 0, 0, 1080}
+	right := screenRect{1920, 0, 4480, 1440}
+	below := screenRect{0, 1080, 1920, 2160}
+	tests := []struct {
+		name    string
+		monitor hostMonitor
+		others  []screenRect
+		hidden  string
+		want    screenRect
+		edge    string
+	}{
+		{"single monitor", bottomBar, nil, "", screenRect{0, -1, 1920, 1080}, "top"},
+		{"auto-hidden taskbar", hostMonitor{Bounds: bounds, Work: bounds}, nil, "", screenRect{0, -1, 1920, 1080}, "top"},
+		{"monitor to the right", bottomBar, []screenRect{right}, "", screenRect{0, -1, 1920, 1080}, "top"},
+		{"monitor below", bottomBar, []screenRect{below}, "", screenRect{0, -1, 1920, 1080}, "top"},
+		{"monitor above", bottomBar, []screenRect{above}, "", screenRect{-1, 0, 1920, 1080}, "left"},
+		{"monitors above and to the left", bottomBar, []screenRect{above, {-2560, 0, 0, 1440}}, "", screenRect{0, 0, 1921, 1080}, "right"},
+		// The bottom edge is free but holds the taskbar; a line on the
+		// monitor above is the lesser harm.
+		{"monitors above and to both sides", bottomBar, []screenRect{above, left, right}, "", screenRect{0, -1, 1920, 1080}, "top"},
+		{"monitors on every side", bottomBar, []screenRect{above, left, right, below}, "", screenRect{0, -1, 1920, 1080}, "top"},
+		// Without a taskbar there, the free bottom edge is used.
+		{"monitors above and to both sides, taskbar elsewhere", hostMonitor{Bounds: bounds, Work: bounds}, []screenRect{above, left, right}, "", screenRect{0, 0, 1920, 1081}, "bottom"},
+		{"taskbar at the top", hostMonitor{Bounds: bounds, Work: screenRect{0, 48, 1920, 1080}}, nil, "", screenRect{-1, 0, 1920, 1080}, "left"},
+		{"taskbar on the left", hostMonitor{Bounds: bounds, Work: screenRect{62, 0, 1920, 1080}}, []screenRect{above}, "", screenRect{0, 0, 1921, 1080}, "right"},
+		// An auto-hidden taskbar reserves no work area but still counts.
+		{"auto-hidden taskbar at the top", hostMonitor{Bounds: bounds, Work: bounds}, nil, "top", screenRect{-1, 0, 1920, 1080}, "left"},
+		{"auto-hidden taskbar at the bottom, monitors above and to both sides", hostMonitor{Bounds: bounds, Work: bounds}, []screenRect{above, left, right}, "bottom", screenRect{0, -1, 1920, 1080}, "top"},
+		// A smaller monitor above that does not reach over this one's top
+		// edge leaves the edge free.
+		{"smaller monitor above to the side", hostMonitor{Bounds: screenRect{1920, 0, 4480, 1440}, Work: screenRect{1920, 0, 4480, 1392}}, []screenRect{above}, "", screenRect{1920, -1, 4480, 1440}, "top"},
+		{"larger scaled monitor above, one to the left", hostMonitor{Bounds: screenRect{0, 1440, 1920, 2520}, Work: screenRect{0, 1440, 1920, 2472}}, []screenRect{{0, 0, 2560, 1440}, {-3840, 1440, 0, 3600}}, "", screenRect{0, 1440, 1921, 2520}, "right"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, edge := fullscreenGrown(tt.monitor, tt.others, tt.hidden)
+			if got != tt.want || edge != tt.edge {
+				t.Fatalf("got %v at the %s edge, want %v at the %s edge", got, edge, tt.want, tt.edge)
+			}
+			// One edge moved out by one, the others stay on the monitor's.
+			m := tt.monitor.Bounds
+			moved := []int32{m.Left - got.Left, m.Top - got.Top, got.Right - m.Right, got.Bottom - m.Bottom}
+			if moved[0]+moved[1]+moved[2]+moved[3] != 1 || min(moved[0], moved[1], moved[2], moved[3]) != 0 {
+				t.Fatalf("%v grows %v by more than one row or column", got, m)
+			}
+			// It is still SDL's full screen window to the launcher: the
+			// cursor clip keeps working and nothing saves it as a placement.
+			fullscreen := windowIsFullscreen(got, m, false, false)
+			if !fullscreen {
+				t.Fatalf("%v on %v is not full screen", got, m)
+			}
+			if _, handled := fullscreenPlacement(true, fullscreen, nil); !handled {
+				t.Fatal("the grown window's pass was not handled as full screen")
+			}
+			taskbar := screenRect{m.Left, m.Bottom - 2, m.Right, m.Bottom + 46}
+			if _, ok := fullscreenCursorClip(fullscreen, m, m, taskbar); !ok {
+				t.Fatal("no cursor clip for the grown window")
+			}
+		})
+	}
+}
+
+func TestCurtainFrameBackSkipsAWindowThatWentFullScreen(t *testing.T) {
+	const (
+		normal     = 0x16CA0000 // QEMU's window as SDL creates it, held
+		fullscreen = 0x96000000 // after SDL made it a full screen popup
+		frame      = 0x00CA0000
+	)
+	if got := curtainFrameBack(frame, normal, normal&^frame); got != frame {
+		t.Fatalf("windowed window: frame back %#x, want %#x", got, frame)
+	}
+	if got := curtainFrameBack(frame, normal, fullscreen); got != 0 {
+		t.Fatalf("window that went full screen behind the curtain: frame back %#x, want 0", got)
+	}
+	// Full screen from the start, as with a runtime that does not hold
+	// its windows: whatever the curtain took off goes back.
+	if got := curtainFrameBack(0x00020000, fullscreen|0x00020000, fullscreen); got != 0x00020000 {
+		t.Fatalf("full screen window: frame back %#x, want 0x20000", got)
+	}
+}
+
+func TestCurtainTabDeleteRepeatsUntilTheLift(t *testing.T) {
+	start := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	if !curtainTabDeleteDue(time.Time{}, start) {
+		t.Fatal("the first pass must take the button off")
+	}
+	at := func(d time.Duration) time.Time { return start.Add(d) }
+	cases := []struct {
+		last, now time.Duration
+		want      bool
+	}{
+		{0, 100 * time.Millisecond, false}, // a burst of window events, too soon
+		{0, 250 * time.Millisecond, true},  // the next enforcer pass
+		{4750 * time.Millisecond, 5 * time.Second, true},
+		// The same short pace late in a long curtain, so a button the
+		// taskbar put back shows for a moment at most.
+		{55 * time.Second, 55100 * time.Millisecond, false},
+		{55 * time.Second, 55250 * time.Millisecond, true},
+	}
+	for _, c := range cases {
+		if got := curtainTabDeleteDue(at(c.last), at(c.now)); got != c.want {
+			t.Errorf("last %v now %v: due %v, want %v", c.last, c.now, got, c.want)
+		}
+	}
+}
+
+func TestFullscreenMarksFollowTheWindow(t *testing.T) {
+	var marks fullscreenMarks
+	const a, b = uintptr(0x100), uintptr(0x200)
+	steps := []struct {
+		name       string
+		hwnd       uintptr
+		fullscreen bool
+		change     bool
+	}{
+		{"windowed start, shown windowed", a, false, false},
+		{"full screen at the lift", b, true, true},
+		{"next pass, still full screen", b, true, false},
+		{"left full screen", b, false, true},
+		{"still windowed", b, false, false},
+		{"entered full screen again", b, true, true},
+		{"the other window entered full screen", a, true, true},
+	}
+	for _, s := range steps {
+		if got := marks.differs(s.hwnd, s.fullscreen); got != s.change {
+			t.Fatalf("%s: change %v, want %v", s.name, got, s.change)
+		}
+		if s.change {
+			marks.set(s.hwnd, s.fullscreen)
+		}
+	}
+	// A mark the taskbar refused (Explorer restarting) is not recorded, so
+	// the next pass tries again.
+	const c = uintptr(0x300)
+	if !marks.differs(c, true) || !marks.differs(c, true) {
+		t.Fatal("a refused mark was not tried again")
+	}
+	// A destroyed window's mark is gone with it; the rest are taken back
+	// when the launcher exits.
+	marks.forget(a)
+	if all := marks.clear(); len(all) != 1 || all[0] != b {
+		t.Fatalf("marks to take back at exit: %v, want [%#x]", all, b)
+	}
+	if all := marks.clear(); len(all) != 0 {
+		t.Fatalf("cleared twice: %v", all)
+	}
+	if !marks.differs(b, true) {
+		t.Fatal("a window marked after a clear was not marked")
+	}
+}
+
+func TestTaskbarEdge(t *testing.T) {
+	monitor := screenRect{0, 0, 1920, 1080}
+	for bar, want := range map[screenRect]string{
+		{0, 1078, 1920, 1126}: "bottom", // auto-hidden, two pixels showing
+		{0, 1032, 1920, 1080}: "bottom",
+		{0, -46, 1920, 2}:     "top",
+		{-62, 0, 2, 1080}:     "left",
+		{1918, 0, 1980, 1080}: "right",
+		{}:                    "",
+	} {
+		if got := taskbarEdge(bar, monitor); got != want {
+			t.Errorf("taskbar at %v: %q, want %q", bar, got, want)
+		}
+	}
+}
+
+func TestGrownFullscreenIsNotRepairedBackOntoTheMonitor(t *testing.T) {
+	monitors := []hostMonitor{{Bounds: screenRect{0, 0, 1920, 1080}, Work: screenRect{0, 0, 1920, 1032}, Primary: true}, {Bounds: screenRect{1920, 0, 4480, 1440}}}
+	for _, r := range []screenRect{{0, -1, 1920, 1080}, {-1, 0, 1920, 1080}, {1920, -1, 4480, 1440}, {1920, 0, 4481, 1440}} {
+		if !grownFullscreen(r, monitors) {
+			t.Errorf("%v was not taken for a grown full screen window", r)
+		}
+	}
+	for _, r := range []screenRect{{0, 0, 1920, 1080}, {0, -2, 1920, 1080}, {-1, -1, 1920, 1080}, {100, 100, 900, 700}, {0, -1, 1024, 768}} {
+		if grownFullscreen(r, monitors) {
+			t.Errorf("%v was taken for a grown full screen window", r)
+		}
+	}
+}
+
+func TestCurtainRevealDone(t *testing.T) {
+	lifted := time.Date(2026, 11, 19, 9, 26, 34, 0, time.UTC)
+	for _, tc := range []struct {
+		name       string
+		cloaked    []bool
+		after      time.Duration
+		done, late bool
+	}{
+		{"still cloaked", []bool{true}, 0, false, false},
+		{"shown with its frame", []bool{false}, 40 * time.Millisecond, true, false},
+		{"one of two displays still cloaked", []bool{false, true}, time.Second, false, false},
+		{"both displays shown", []bool{false, false}, time.Second, true, false},
+		{"no window left", nil, 0, true, false},
+		{"bounded", []bool{true}, curtainFrameWait, true, true},
+		{"bounded with a window shown", []bool{false, true}, curtainFrameWait + time.Second, true, true},
+		{"shown just before the bound", []bool{false}, curtainFrameWait - time.Millisecond, true, false},
+	} {
+		done, late := curtainRevealDone(tc.cloaked, lifted, lifted.Add(tc.after))
+		if done != tc.done || late != tc.late {
+			t.Errorf("%s: done %v late %v, want %v %v", tc.name, done, late, tc.done, tc.late)
+		}
+	}
+}
+
+func TestLateReveals(t *testing.T) {
+	var late lateReveals
+	if waiting, _ := late.take(1); waiting {
+		t.Fatal("a window nobody handed over from waits")
+	}
+	late.add(1, true)
+	late.add(2, false)
+	// A window shown after the hand over gets its steps once.
+	if waiting, tab := late.take(1); !waiting || !tab {
+		t.Fatalf("window 1: waiting %v tab %v", waiting, tab)
+	}
+	if waiting, _ := late.take(1); waiting {
+		t.Fatal("window 1 got its steps twice")
+	}
+	// The curtain left this one's button alone.
+	if waiting, tab := late.take(2); !waiting || tab {
+		t.Fatalf("window 2: waiting %v tab %v", waiting, tab)
+	}
+}
+
+func TestRevealRegions(t *testing.T) {
+	r := newRevealRegions([]uintptr{1, 2})
+	if !r.held(1) || !r.held(2) || r.held(3) {
+		t.Fatal("every cloaked window is held from the start")
+	}
+	if !r.release(1) || r.release(1) || r.held(1) {
+		t.Fatal("a window's region is due once")
+	}
+	if left := r.close(); len(left) != 1 || left[0] != 2 {
+		t.Fatalf("close left %v, want [2]", left)
+	}
+	if r.held(2) || r.release(2) || len(r.close()) != 0 {
+		t.Fatal("nothing is held once the reveal ended")
+	}
+}
+
+// The time limit ends the reveal while the lift is still giving the first of
+// two windows its frame: both windows still get their region, once the lift
+// is done with each, and nothing writes to a map the reveal let go of.
+func TestLiftCloakedWindowsAndLimit(t *testing.T) {
+	for _, limitDuring := range []uintptr{1, 2} {
+		r := newRevealRegions([]uintptr{1, 2})
+		var mu sync.Mutex
+		regions := map[uintptr]int{}
+		framed := map[uintptr]bool{}
+		region := func(hwnd uintptr) {
+			mu.Lock()
+			regions[hwnd]++
+			mu.Unlock()
+		}
+		limited := make(chan struct{})
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			liftCloakedWindows([]uintptr{1, 2}, r, func(hwnd uintptr) {
+				if hwnd == limitDuring {
+					<-limited
+				}
+				mu.Lock()
+				framed[hwnd] = true
+				mu.Unlock()
+			}, region)
+		}()
+		for _, hwnd := range r.close() {
+			region(hwnd)
+		}
+		close(limited)
+		<-done
+		// The title enforcer comes by later and finds nothing to do.
+		if r.release(1) || r.release(2) {
+			t.Fatal("a region was released after the reveal ended")
+		}
+		for _, hwnd := range []uintptr{1, 2} {
+			if !framed[hwnd] || regions[hwnd] == 0 {
+				t.Errorf("limit during window %d: window %d framed %v, region %d times", limitDuring, hwnd, framed[hwnd], regions[hwnd])
+			}
+		}
+	}
+}
+
+// The same with the limit, the title enforcer and the lift racing freely.
+func TestLiftCloakedWindowsRace(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		r := newRevealRegions([]uintptr{1, 2})
+		var mu sync.Mutex
+		regions := map[uintptr]int{}
+		region := func(hwnd uintptr) {
+			mu.Lock()
+			regions[hwnd]++
+			mu.Unlock()
+		}
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			liftCloakedWindows([]uintptr{1, 2}, r, func(uintptr) {}, region)
+		}()
+		go func() {
+			defer wg.Done()
+			for _, hwnd := range []uintptr{1, 2} {
+				if r.release(hwnd) {
+					region(hwnd)
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for _, hwnd := range r.close() {
+				region(hwnd)
+			}
+		}()
+		wg.Wait()
+		if regions[1] == 0 || regions[2] == 0 {
+			t.Fatalf("run %d: regions %v", i, regions)
+		}
+	}
+}
+
+func TestCurtainToolWindow(t *testing.T) {
+	for _, tc := range []struct{ visible, held, waits, want bool }{
+		{false, true, true, true},
+		// A runtime with 0026 to 0029 but not 0030: as before.
+		{false, true, false, false},
+		{true, true, true, false},
+		{false, false, true, false},
+	} {
+		if got := curtainToolWindow(tc.visible, tc.held, tc.waits); got != tc.want {
+			t.Errorf("visible %v held %v waits %v: %v", tc.visible, tc.held, tc.waits, got)
+		}
+	}
+}
+
+func TestLateRevealsTakeShown(t *testing.T) {
+	var late lateReveals
+	late.add(1, true)
+	// The shell uncloaked it while QEMU still has it cloaked.
+	if waiting, _ := late.takeShown(1, true); waiting {
+		t.Fatal("a window QEMU still cloaks was taken")
+	}
+	if waiting, tab := late.takeShown(1, false); !waiting || !tab {
+		t.Fatal("the reveal did not find the window")
+	}
+}
+
+// QEMU shows a window right after the shell was asked for its button, which
+// the shell ignored while it was cloaked: the window was recorded before
+// that, and the look after the hand over gives it its steps again.
+func TestHandOverRevealedLate(t *testing.T) {
+	var late lateReveals
+	var steps []string
+	cloaked := map[uintptr]bool{1: true, 2: true}
+	redone := map[uintptr]int{}
+	s := revealHandOver{
+		record: func(hwnd uintptr) {
+			late.add(hwnd, true)
+			steps = append(steps, fmt.Sprintf("record %d", hwnd))
+		},
+		showTab: func(hwnd uintptr) {
+			steps = append(steps, fmt.Sprintf("tab %d", hwnd))
+			if hwnd == 1 {
+				// QEMU shows window 1 now; its uncloak event finds it.
+				cloaked[1] = false
+				if waiting, _ := late.takeShown(1, false); waiting {
+					redone[1]++
+				}
+			}
+		},
+		handOver: func() { steps = append(steps, "hand over") },
+		cloaked:  func(hwnd uintptr) bool { return cloaked[hwnd] },
+		redo: func(hwnd uintptr) {
+			// A redundant redo finds nothing to do.
+			if waiting, _ := late.takeShown(hwnd, cloaked[hwnd]); waiting {
+				redone[hwnd]++
+			}
+		},
+	}
+	handOverRevealed([]uintptr{1, 2}, true, s)
+	if want := "record 1,record 2,tab 1,tab 2,hand over"; strings.Join(steps, ",") != want {
+		t.Fatalf("steps %v, want %s", steps, want)
+	}
+	if redone[1] != 1 || redone[2] != 0 {
+		t.Fatalf("redone %v: window 1 once, window 2 not yet", redone)
+	}
+	// Window 2 is shown later; its uncloak event redoes it.
+	if waiting, _ := late.takeShown(2, false); !waiting {
+		t.Fatal("window 2 was not waiting")
+	}
+
+	// In time: nothing is recorded or redone.
+	steps = nil
+	s.record = func(uintptr) { t.Fatal("recorded on time") }
+	s.redo = func(uintptr) { t.Fatal("redone on time") }
+	handOverRevealed([]uintptr{1}, false, s)
 }

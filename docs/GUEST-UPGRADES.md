@@ -106,7 +106,11 @@ The managed rebuild keeps Arch's package name, dependencies and SONAME provide.
 The local repository is after Arch. An unchanged Arch `0.15.1-1` keeps the
 installed patched `0.15.1-1.1`. A newer Arch release or version replaces it in
 the ordinary update transaction, including a new SONAME required by Hyprland.
-No version hold or custom provider blocks the upgrade. Until we re-pin the new
+No version hold or custom provider blocks the upgrade. Omarchy's
+downgrade-capable refresh is the one exception: `omarchy refresh pacman` and
+`omarchy-reinstall-pkgs` ignore aquamarine while Arch offers the same version
+or an older one, so `-uu` keeps the rebuild. A newer Arch release still
+replaces it there too. Until we re-pin the new
 source, the cursor can return to being drawn within desktop frames. The host
 cursor presentation fix is separate from this guest groundwork.
 
@@ -133,6 +137,60 @@ Omarchy 4.5 also removes orphaned packages without asking during later updates;
 packages the guest needs are explicit or runtime dependencies, so they are not
 orphans. The upgrade smoke runs a second update to check that nothing is
 removed.
+
+Compatibility revision 71 keeps the guest's pacman setup through
+`omarchy refresh pacman`, which channel switches and package reinstalls also
+run. Omarchy's refresh replaces `pacman.conf` and the mirrorlist with its
+stable templates, which have no `[try-omarchy]` repository, no kernel hold
+and Omarchy's stable mirror snapshot in place of the Arch mirrors. Its
+`-Syyuu` then tried to downgrade the system, was refused, and left the disk
+on that snapshot. With runtime `4.5.0-16` the refresh puts the hold, the local
+repository and the Arch mirrors back before the user's `pre-refresh-pacman`
+hook, then syncs the package databases after the hook, so the transaction
+completes without downgrading anything. The Arch mirrors are the ones Omarchy
+saved in `mirrorlist.bak` when they are the guest's own, otherwise the image's
+copy. Disks a refused refresh already rewrote are repaired before login: when
+`pacman.conf` has no `[try-omarchy]` and the mirrorlist lists only Omarchy's
+mirrors, catch-up restores the Arch mirrors and the local repository and
+hold. It puts back `pacman.conf.bak` when that is the guest's own and
+`pacman.conf` is still exactly Omarchy's template; a `pacman.conf` edited since
+keeps its edits and only gets the missing pieces. Any other `pacman.conf` or mirrorlist is left alone, and no package
+transaction runs during boot. The next **Update > Omarchy** then installs the
+new runtime as usual. The guest keeps following rolling Arch rather than
+Omarchy's stable snapshot.
+
+Compatibility revision 72 delivers agent version 7 and its `desktop-drawn`
+helper, which tell the launcher once per session that the shell's wallpaper
+and bar are on screen, checked with a small screen capture. The launcher shows its window on that report. Disks
+are updated before login on their first boot with a launcher that carries the
+revision, so they report on that same boot. Older launchers ignore the line.
+
+Compatibility revision 73 covers the time before that **Update > Omarchy**.
+On a disk still on an older 4.5.0 runtime, catch-up replaces Omarchy's
+refresh and reinstall commands with the patched ones before login, only when
+they are exactly Omarchy's reviewed originals, so `omarchy refresh pacman`
+keeps the guest's setup at once. The repair above now runs at every boot
+instead of once, so a disk that an unpatched refresh rewrote again is put back
+on its next start. A healthy or otherwise configured disk is not written, and
+no package transaction runs during boot.
+
+Compatibility revision 74 lets Ghostty open on hosts whose renderer offers
+only OpenGL 4.2, one short of the 4.3 Ghostty needs. Ghostty gets a 4.3
+override there, whether it is installed already or later, and wherever it is
+started from; other apps and other hosts keep the real version. Nothing is
+written to the user's files or to files a package owns.
+
+Compatibility revision 75 keeps each display window's pointer on its own
+screen when Omarchy uses more than one display. Every window has its own
+pointer device, and the guest maps each one onto its own output wherever the
+outputs are placed and whatever their size, scale or rotation. One display is
+unchanged.
+
+Compatibility revision 76 gives each display its own mode when Omarchy uses
+more than one display, so each output keeps its own window's size instead of
+all of them taking the last display's mode. An output the user configured in
+Hyprland's config or in the display panel is left alone. One display is
+unchanged.
 
 If repository publication fails, inspect:
 

@@ -68,10 +68,10 @@ jobs:
           sudo chmod 666 /dev/kvm
           df -h "$RUNNER_TEMP" /var/lib/docker
 
-      - name: Install headless QEMU
+      - name: Install headless QEMU and Lua for the guest tests
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends qemu-system-x86
+          sudo apt-get install --yes --no-install-recommends qemu-system-x86 lua5.4
 
       - name: Build locked guest image
         run: scripts/release/build-guest.sh --output "$ARTIFACT_DIR"

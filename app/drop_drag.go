@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -151,4 +152,28 @@ func abs(value int) int {
 		return -value
 	}
 	return value
+}
+
+// pointerStepCommand moves the virtual tablet for a drag. With a tablet per
+// display (tabletDevices) an event that names no head reaches none of them,
+// so it goes to the first display's tablet, where the guest shows its drag
+// source.
+func pointerStepCommand(step pointerStep, headBound bool) string {
+	events := fmt.Sprintf(`{"type":"abs","data":{"axis":"x","value":%d}},{"type":"abs","data":{"axis":"y","value":%d}}`, step.x, step.y)
+	if step.button >= 0 {
+		events += fmt.Sprintf(`,{"type":"btn","data":{"down":%t,"button":"left"}}`, step.button == 1)
+	}
+	return pointerCommand(events, headBound)
+}
+
+func pointerReleaseCommand(headBound bool) string {
+	return pointerCommand(`{"type":"btn","data":{"down":false,"button":"left"}}`, headBound)
+}
+
+func pointerCommand(events string, headBound bool) string {
+	target := ""
+	if headBound {
+		target = fmt.Sprintf(`"device":%q,"head":0,`, guestDisplayDeviceID)
+	}
+	return `{"execute":"input-send-event","arguments":{` + target + `"events":[` + events + `]}}`
 }

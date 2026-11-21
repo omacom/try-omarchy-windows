@@ -326,8 +326,6 @@ Reproduction entry points:
   [instructions](GUEST-UPGRADES.md#validation).
 - `scripts/release/smoke-package-recovery.py`: controlled lock interruption;
   [instructions](GUEST-UPGRADES.md#package-lock-interruption-test).
-- `scripts/release/smoke-runtime-ownership.py`: direct packaging/upgrade regression;
-  [instructions](evidence/RUNTIME-OWNERSHIP-2026-09-14.md#reproduction-and-evidence).
 
 ## Remaining work and next steps
 

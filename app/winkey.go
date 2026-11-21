@@ -37,6 +37,9 @@ var (
 	// dragButtonHeld is set while a drag has pressed the tablet button and not
 	// yet released it; a reconnect releases it first. QMP drain goroutine only.
 	dragButtonHeld bool
+	// pointerHeadBound is set for a QEMU with a tablet per display. Those
+	// tablets only take events for their own head, so drags name the first.
+	pointerHeadBound atomic.Bool
 )
 
 const (
@@ -280,7 +283,7 @@ func runWinKeyQmp() {
 		logf("winkey: QMP connected on %d", qmpFwdPort)
 		if dragButtonHeld {
 			// The last connection broke mid-drag; let go of the button.
-			if err := c.writeLine(`{"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":false,"button":"left"}}]}}`); err != nil {
+			if err := c.writeLine(pointerReleaseCommand(pointerHeadBound.Load())); err != nil {
 				c.close()
 				time.Sleep(2 * time.Second)
 				continue
@@ -327,7 +330,7 @@ func runWinKeyQmp() {
 				if step.button == 1 {
 					dragButtonHeld = true
 				}
-				if err := c.writeLine(pointerStepCommand(step)); err != nil {
+				if err := c.writeLine(pointerStepCommand(step, pointerHeadBound.Load())); err != nil {
 					break
 				}
 				if step.button >= 0 {
@@ -407,7 +410,7 @@ func runTitleEnforcer(dir string, fullscreen bool, fullscreenDisplay string) {
 			qemuHwnd.Store(0)
 		}
 		wait := time.Second
-		if curtainPolling() {
+		if curtainPolling() || curtainHidesWindows() {
 			wait = 250 * time.Millisecond
 		}
 		select {
@@ -431,14 +434,6 @@ func runCursorReleaseGuard() {
 	for range ticker.C {
 		updateQemuCursorClip()
 	}
-}
-
-func pointerStepCommand(step pointerStep) string {
-	events := fmt.Sprintf(`{"type":"abs","data":{"axis":"x","value":%d}},{"type":"abs","data":{"axis":"y","value":%d}}`, step.x, step.y)
-	if step.button >= 0 {
-		events += fmt.Sprintf(`,{"type":"btn","data":{"down":%t,"button":"left"}}`, step.button == 1)
-	}
-	return `{"execute":"input-send-event","arguments":{"events":[` + events + `]}}`
 }
 
 func keyCommand(key forwardedKey) string {

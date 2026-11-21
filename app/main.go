@@ -1042,6 +1042,7 @@ func main() {
 			}
 		}
 	}
+	clearFullscreenMarks()
 	logf("---- exiting ----")
 }
 
@@ -1120,6 +1121,7 @@ func supervise(cfg *config, cmdline string) bool {
 			logf("SDL audio sample rates: output=%d Hz input=%d Hz", cfg.audioRates.Output, cfg.audioRates.Input)
 		}
 		proc = exec.Command(cfg.qemu, buildQemuArgs(cfg, cmdline)...)
+		pointerHeadBound.Store(guestDisplayCount(cfg.displays) > 1)
 		if !audioSelection && (cfg.audioDevices.Output != "" || (!cfg.desktop.MicrophoneDisabled && cfg.audioDevices.Input != "")) {
 			logf("Selected audio devices require the updated SDL runtime; this attempt uses Windows defaults")
 		}
@@ -1138,6 +1140,16 @@ func supervise(cfg *config, cmdline string) bool {
 		externalHook := keyboardRuntimeSupportsExternalHook(cfg.qemu)
 		qemuExternalKeyboardHook.Store(externalHook)
 		proc.Env = keyboardEnvironment(proc.Env, externalHook)
+		// While the curtain is up, QEMU leaves showing its windows to the
+		// launcher, which hides them first (boot_curtain_windows.go).
+		holdWindows := curtainUp.Load() && runtimeHoldsWindows(cfg.qemu)
+		proc.Env = heldWindowsEnvironment(proc.Env, holdWindows)
+		curtainWaitsForFrame.Store(holdWindows && runtimeShowsHeldWindowsWithFrame(cfg.qemu))
+		if holdWindows {
+			logf("startup: QEMU's windows wait for the curtain to hide them")
+		} else if curtainUp.Load() {
+			logf("startup: this runtime shows its windows itself; the curtain hides them as they appear")
+		}
 		if cfg.useGpu {
 			cfg.displayDriver = displayDriverIdentity()
 			logGPULaunchFacts(cfg, proc.Env, dxgiAdapterFacts(), qemuGPUPreference(cfg.qemu))

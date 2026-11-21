@@ -8,9 +8,9 @@ virglrenderer fork commits in `sources.lock.json`. It produces:
 - `SHA256SUMS`, hashes for both archives
 
 The portable archive includes source provenance, the MSYS2 package inventory,
-per-file hashes, and licenses. The Runtime workflow remains manual. Its r27
-output is published as `runtime-v1-r27` and is pinned for the next app release;
-r26 shipped in `v0.14.0`, r25 in `v0.13.0`, r24 in `v0.12.0` and `v0.12.1`, r23
+per-file hashes, and licenses. The Runtime workflow remains manual. Its r28
+output is published as `runtime-v1-r28` and is pinned for the next app release;
+r27 shipped in `v0.15.0`, r26 in `v0.14.0`, r25 in `v0.13.0`, r24 in `v0.12.0` and `v0.12.1`, r23
 in `v0.11.0`, r22 in `v0.10.0` and `v0.10.1`, r21 in `v0.9.0`, and r20c from
 `v0.3.0` through `v0.8.0`. Future runtime
 replacements stay test artifacts until they pass physical Windows validation.
@@ -56,6 +56,46 @@ such an image (copies and uploads from the GL side) still store GL's own
 order. `TRYOMARCHY_BGRA_SWAP=off` restores the old sampling. `test-bgra-swap.py
 <patched-renderer-source>` covers the switch, BGRA and RGBA views, swizzles with
 constants and the unchanged Linux path against fake sampler views.
+
+`0008-compile-storage-buffer-shaders-as-glsl-430.patch` keeps OpenGL apps that
+use shader storage buffers drawing, such as Ghostty (#383). The renderer
+declares every storage buffer with the `std430` layout but wrote such shaders
+as GLSL 1.30 to 1.50 with `GL_ARB_shader_storage_buffer_object`. AMD's Windows
+driver rejects `std430` there ("not supported with this profile"), and the
+failed compile puts the whole GL context in error, so the app's later draws
+are dropped too and its window stays empty. When the host offers GLSL 4.30 in
+a core profile, a shader with storage buffers is now written as GLSL 4.30.
+Its inputs then drop the `invariant` qualifier that older versions need to
+match an invariant output, because GLSL 4.30 rejects it on inputs.
+`TRYOMARCHY_SSBO_GLSL430=off` restores the old version choice.
+`test-ssbo-glsl430.py <patched-renderer-source>` covers the switch, the
+version choice and invariant inputs against fake shader configs.
+
+`0009-join-venus-workers-without-the-workers-lock.patch` keeps Omarchy from
+freezing when a Vulkan app closes and another one starts (#407). On Windows
+the render server runs inside QEMU, with a thread per Vulkan context. When an
+app closed, the server waited for that context's thread to finish while
+holding the lock on its list of contexts. Destroying the context waits for its
+queue threads, and a queue thread that was just signaling a fence needed that
+same lock. Nothing moved again, and the next Vulkan app froze the whole guest
+because QEMU waits for the server to create its context. The server now takes
+the context off the list, lets go of the lock, and then waits. A fence that
+signals after that is dropped: QEMU has stopped reading the context's fences
+by then. The context's socket used to be closed twice, by the server to wake
+the thread and by the thread itself, and a thread still busy with a command
+could then use a handle value Windows had already given to another socket.
+Now the server sets a stop event instead. The thread's socket reads and
+writes are overlapped and wait for either their completion or that event, so
+a thread blocked in a read wakes at once and a busy one stops before its next
+read. The server closes the socket once, after the thread has finished.
+(`shutdown()` does not wake a blocked read on Windows while QEMU's end is
+open.) `test-venus-worker-destroy.py <patched-renderer-source>` runs the
+actual worker thread and teardown code with real threads and fake sockets,
+under ThreadSanitizer on Linux: destroying, resetting or exiting while a
+fence is being retired, a worker busy in a command, repeated destroys and a
+worker whose peer already hung up, with each socket closed exactly once and
+never used after. Under MSYS2 it also runs the worker's socket transfers on
+the real loopback pair.
 
 `test-image-capabilities.py <patched-renderer-source>` compiles the actual image
 dispatch against mocked Vulkan entry points. It runs on Linux or MSYS2 without
@@ -251,3 +291,91 @@ missing defaults, other errors, COM and loader failures, and released objects.
 `test-sdl-audio.py` and `test-sdl-capture.py` cover the open preflight, the
 fallback and single reports. An endpoint removed after the check can still enter SDL's
 wait once; the backoff keeps it from repeating.
+
+`0026-hold-sdl-windows-for-the-launcher.patch` lets the launcher hide a
+display window before it is ever on screen (#413). While Omarchy boots, the
+launcher hides QEMU's window with an empty window region and no frame.
+Windows carries out those calls on QEMU's main thread, which goes on setting
+up the machine for a second or more after it creates the window and handles
+no window messages until then, so the window SDL had just shown stayed on
+screen, an empty frame, for that time. With `OMARCHY_SDL_HOLD_WINDOWS_MS`
+set, SDL creates a display window hidden and QEMU marks it with the
+`TryOmarchy.HeldWindow` window property; the launcher shows it once it has
+hidden it. A window still hidden that many milliseconds (at most 60 s) after
+QEMU first handled window messages shows itself, so a launcher that never
+shows it cannot leave it invisible. Consoles QEMU hides itself, and the
+hidden window it creates to check for dma-buf support, are left alone.
+`test-sdl-held-window.py` compiles the hold, the launcher's show, the
+fallback and a window that cannot be marked against mocked SDL and Win32
+calls, and checks where `sdl2.c` calls them.
+
+`0027-make-full-screen-sdl-starts-resizable.patch` lets a window that starts
+full screen leave it for a window that fits the screen. QEMU created such a
+window without `SDL_WINDOW_RESIZABLE`, so after Ctrl+Alt+F neither the user
+nor Windows could resize or maximize it. And while a window is full screen,
+SDL takes the size QEMU gives it when the guest's display changes as the
+size to restore later, so leaving full screen brought back the guest's
+display size plus a frame, larger than the monitor's work area. A display
+window is now always resizable. While it is full screen QEMU no longer sizes
+it to the guest, so a window that started out as one gets back its own
+size. One that started full screen gets three quarters of the usable area
+of its display, centered, the first time it leaves full screen.
+`test-sdl-fullscreen-window.py` runs the window flags, the guest's resize
+and Ctrl+Alt+F against SDL's windowed size rules: windowed and full screen
+starts, the launcher growing a full screen window, a second monitor and
+missing usable bounds.
+
+`0028-judge-sdl-hotkeys-by-their-key-events.patch` makes Ctrl+Alt+F and the
+other Ctrl+Alt hotkeys work when they arrive together with other events.
+QEMU handles SDL's event queue in one go, after SDL has read every pending
+Windows message, so `SDL_GetModState()` already counts keys further down the
+queue. A pointer entering the window just before Ctrl+Alt+F made the enter
+event see Ctrl and Alt down and hold hotkeys back, and the keys went to the
+guest instead; Ctrl and Alt let go in the same queue as F hid the hotkey. A
+hotkey now uses the modifiers of its own key event, and enter and focus
+events the modifiers as of the last key event handled. Ctrl and Alt held as a
+window gets focus still hold hotkeys back until a key goes up.
+`test-sdl-hotkey-modifiers.py` replays those queues through QEMU's key and
+window event handlers against mocked SDL.
+
+`0029-keep-the-window-size-after-full-screen.patch` keeps a window's size
+when the guest catches up late after full screen. The guest takes the size
+the window gives it a second or more later, so after a quick Ctrl+Alt+F
+round trip it could still switch to the full screen size once the window had
+left full screen, and QEMU sized the window to it: the monitor's size plus a
+frame. SDL also kept that as the windowed size for later rounds. The sizes a
+window has while full screen are now remembered from SDL's resize events,
+and after leaving full screen the window does not follow the guest to one of
+them unless it is the size the window asks for now, until the user asks for
+the guest's size with Ctrl+Alt+0 or the window goes full screen again. A busy
+guest can be a round behind and show the last round's windowed size before
+this round's full screen size, so the sizes the guest shows do not end it.
+Ctrl+Alt+F switches only the window it is pressed in while `gui_fullscreen`
+is shared by every window, so it goes by that window's own SDL flag, and each
+window remembers its own full screen size when it enters and leaves full
+screen. A window created again starts clean, and a display without ui-info is
+never asked for a size, so it follows the guest. `test-sdl-fullscreen-window.py`
+runs a guest that switches late, for windowed and full screen starts and for
+two windows, through QEMU's own `sdl2_window_create`.
+
+`0030-show-held-windows-with-their-first-frame.patch` shows a held window
+together with its first frame. Nothing QEMU presents reaches a window whose
+region the launcher has emptied, so when the curtain lifted the window showed
+what its surface held from before until QEMU's next frame: black, and on some
+GPUs a white block where the window was first created. A held window is now
+also cloaked with `DWMWA_CLOAK`; DWM goes on composing it, so frames reach it.
+Once it is shown with a region that is not empty, QEMU paints it black, draws
+a frame, and uncloaks it once DWM's composed frame count has moved on since a
+frame at its current size and rectangle was presented. QEMU only reads that
+count and never waits on DWM, so a paused or slow compositor cannot stall its
+main loop; without the count it uncloaks on the first round at least 34 ms
+after the frame. It is
+uncloaked anyway one second after it came on screen
+without such a frame, ten minutes after it was cloaked, on Ctrl+Alt+F and
+when it is destroyed; if DWM refuses the cloak the window behaves as before.
+`test-sdl-held-window.py` also runs the cloak against mocked Win32 and DWM
+calls: frames drawn hidden, with an empty region, at another size or before
+the window got its frame back, a region
+emptied and restored between two rounds, a resize after the frame, paused
+composition and an unreadable frame count, both time limits, the old self show, every exit and refused
+calls, and checks that every present reports its size.

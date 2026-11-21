@@ -189,6 +189,27 @@ def main() -> None:
             with socket.socket(socket.AF_INET, kind) as probe:
                 probe.bind((args.network_address, 0))
                 network_ports.append(probe.getsockname()[1])
+    if args.package_update and args.compat_revision >= 71:
+        # A downgrade-capable upgrade, as omarchy refresh pacman runs it, must
+        # find nothing to downgrade on the image's own repositories.
+        FACT_CHECKS["downgrades"] = (
+            "sudo pacman -Syy >/dev/null 2>&1; ig=$(/usr/local/lib/try-omarchy/pacman-layer ignore); "
+            "if targets=$(sudo pacman -Suu --print --print-format '%n %v' ${ig:+--ignore \"$ig\"} 2>/tmp/tryomarchy-downgrades.log); then "
+            "printf '%s\\n' \"$targets\" | while read -r name version; do "
+            "installed=$(pacman -Q \"$name\" 2>/dev/null | cut -d' ' -f2); "
+            "test -n \"$installed\" && test \"$(vercmp \"$version\" \"$installed\")\" -lt 0 && echo \"$name $installed -> $version\" >&2 && echo x; "
+            "done | wc -l; else cat /tmp/tryomarchy-downgrades.log >&2; echo failed; fi"
+        )
+        EXPECTED_FACTS["downgrades"] = "0"
+        # Omarchy's own refresh completes, keeps the local repository, the
+        # kernel hold and the Arch mirrors, and downgrades nothing.
+        FACT_CHECKS["refresh-pacman"] = (
+            "OMARCHY_PATH=/usr/share/omarchy omarchy-refresh-pacman >/tmp/tryomarchy-refresh-pacman.log 2>&1 "
+            "&& grep -qx '\\[try-omarchy\\]' /etc/pacman.conf && grep -qx 'IgnorePkg = linux linux-headers' /etc/pacman.conf "
+            "&& ! grep -q 'omarchy[.]org' /etc/pacman.d/mirrorlist && ! grep -q '\\] downgraded ' /var/log/pacman.log "
+            "&& echo yes || { cat /tmp/tryomarchy-refresh-pacman.log >&2; echo no; }"
+        )
+        EXPECTED_FACTS["refresh-pacman"] = "yes"
     if args.package_update:
         FACT_CHECKS["package-update"] = "sudo pacman -Syu --noconfirm >/tmp/tryomarchy-package-update.log 2>&1 && echo yes || { cat /tmp/tryomarchy-package-update.log >&2; echo no; }"
         EXPECTED_FACTS["package-update"] = "yes"

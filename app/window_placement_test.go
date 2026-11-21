@@ -224,16 +224,116 @@ func TestFullscreenPlacementRestoresTheWindowedPlacement(t *testing.T) {
 	}
 }
 
-func TestPlacementBeforeFullscreenSkipsTheTransitionSave(t *testing.T) {
-	maximized := &windowPlacement{Normal: screenRect{Left: 100, Top: 80, Right: 1100, Bottom: 700}, Maximized: true}
-	restored := &windowPlacement{Normal: screenRect{Left: 100, Top: 80, Right: 1100, Bottom: 700}}
-	if got := placementBeforeFullscreen(restored, maximized, 300*time.Millisecond); got != maximized {
-		t.Fatalf("save during the transition: got %v, want the maximized placement", got)
+func TestTheWayIntoFullscreenIsNotSaved(t *testing.T) {
+	maximized := &windowPlacement{Normal: screenRect{Left: 24, Top: 24, Right: 1256, Bottom: 728}, Maximized: true}
+	// SDL has taken the frame and the maximized state off and not yet
+	// covered the monitor. Saved, it came back un-maximized on every later
+	// leave.
+	midway := &windowPlacement{Normal: screenRect{Left: -8, Top: -8, Right: 1288, Bottom: 760}}
+	for _, held := range []bool{false, true} {
+		if got := nextPlacementStep(savablePlacement(midway, false), maximized, maximized, false, false, held); got != placementKeep {
+			t.Fatalf("held=%v: %v, want keep", held, got)
+		}
 	}
-	if got := placementBeforeFullscreen(restored, maximized, 10*time.Second); got != restored {
-		t.Fatalf("older save: got %v, want the latest placement", got)
+	if got := nextPlacementStep(savablePlacement(midway, true), maximized, maximized, false, false, false); got != placementSave {
+		t.Fatalf("the user restoring a framed window: %v, want save", got)
 	}
-	if got := placementBeforeFullscreen(restored, nil, 0); got != restored {
-		t.Fatalf("nothing earlier: got %v, want the latest placement", got)
+}
+
+// A window the curtain hides when the display mode shrinks is placed for the
+// new mode as the repair after the lift would place it, so the lift does not
+// resize it again.
+func TestHiddenWindowPlacementFollowsAModeChange(t *testing.T) {
+	small := []hostMonitor{{Bounds: screenRect{0, 0, 1024, 768}, Work: screenRect{0, 0, 1024, 720}, Primary: true}}
+	target := &windowPlacement{Schema: 1, Normal: screenRect{40, 40, 1240, 740}}
+	fitted := repairDisplayPlacement(target, 0, small)
+	if fitted == nil {
+		t.Fatal("restored window: no placement")
+	}
+	// Its invisible borders may overhang the work area, as a shown window's do.
+	if n := fitted.Normal; fitted.Maximized || n.Left < -8 || n.Top < 0 || n.Right > 1032 || n.Bottom > 728 {
+		t.Fatalf("restored window: fitted to %+v", fitted)
+	}
+	if again := repairDisplayPlacement(fitted, 0, small); again == nil || !again.sameAs(fitted) {
+		t.Fatalf("the repair after the lift moves it again: %+v to %+v", fitted, again)
+	}
+	maximized := &windowPlacement{Schema: 1, Normal: screenRect{24, 24, 1256, 728}, Maximized: true}
+	if fitted := repairDisplayPlacement(maximized, 0, small); fitted == nil || !fitted.Maximized {
+		t.Fatalf("maximized window: fitted to %+v", fitted)
+	}
+}
+
+func TestLeavingAFullscreenStartPlacesTheWindow(t *testing.T) {
+	monitors := []hostMonitor{{Bounds: screenRect{0, 0, 1280, 800}, Work: screenRect{0, 0, 1280, 752}}}
+	rect := func(r screenRect) *screenRect { return &r }
+	grown := rect(screenRect{0, -1, 1280, 800})
+	window := rect(screenRect{152, 63, 1128, 666})
+	type pass struct {
+		name           string
+		framed         bool
+		rect           *screenRect
+		place, fullscr bool
+	}
+	run := func(name string, passes []pass) {
+		fullscreen := false
+		for _, p := range passes {
+			place, now := fullscreenStartPass(fullscreen, p.framed, p.rect, monitors)
+			if place != p.place || now != p.fullscr {
+				t.Fatalf("%s, %s: place=%v fullscreen=%v, want %v %v", name, p.name, place, now, p.place, p.fullscr)
+			}
+			fullscreen = now
+		}
+	}
+	run("Ctrl+Alt+F out of a full screen start", []pass{
+		{"QEMU sets the window up", true, window, false, false},
+		{"full screen", false, grown, false, true},
+		// A display mode change leaves it short of its monitor.
+		{"mode change", false, window, false, true},
+		// The frame is back before the windowed size: placing it now would
+		// put the full screen rectangle in the work area's corner.
+		{"frame back, still full screen size", true, grown, false, true},
+		{"frame back, monitor size", true, rect(screenRect{0, 0, 1280, 800}), false, true},
+		{"rectangle unreadable", true, nil, false, true},
+		{"windowed size", true, window, true, false},
+		{"next pass", true, window, false, false},
+		{"full screen again", false, grown, false, true},
+		{"and out again", true, window, true, false},
+	})
+}
+
+func TestFullscreenRect(t *testing.T) {
+	monitors := []hostMonitor{
+		{Bounds: screenRect{0, 0, 1280, 800}, Work: screenRect{0, 0, 1280, 752}},
+		{Bounds: screenRect{1280, 0, 3200, 1080}, Work: screenRect{1280, 0, 3200, 1032}},
+	}
+	for _, r := range []screenRect{{0, 0, 1280, 800}, {0, -1, 1280, 800}, {1280, 0, 3200, 1080}, {1279, 0, 3200, 1080}} {
+		if !fullscreenRect(r, monitors) {
+			t.Fatalf("%v is a full screen rectangle", r)
+		}
+	}
+	// A window, and SDL's guest-sized window spilling off the screen.
+	for _, r := range []screenRect{{152, 63, 1128, 666}, {-8, -20, 1288, 820}, {0, 0, 1280, 802}} {
+		if fullscreenRect(r, monitors) {
+			t.Fatalf("%v is not a full screen rectangle", r)
+		}
+	}
+}
+
+func TestWindowIntoWorkArea(t *testing.T) {
+	work := screenRect{0, 0, 1920, 1032}
+	// A full screen start's window taken out of full screen: the guest's
+	// 1920x1081 plus a frame, centred by SDL and spilling off the screen.
+	if to, move := windowIntoWorkArea(screenRect{637, 274, 2563, 1384}, work); !move || to != (screenRect{0, 0, 1926, 1110}) {
+		t.Fatalf("too large: %v, %v", to, move)
+	}
+	if to, move := windowIntoWorkArea(screenRect{1500, 900, 2500, 1600}, work); !move || to != (screenRect{460, 166, 1460, 866}) {
+		t.Fatalf("fits but off screen: %v, %v", to, move)
+	}
+	if _, move := windowIntoWorkArea(screenRect{100, 80, 1100, 700}, work); move {
+		t.Fatal("moved a window already inside")
+	}
+	// A work area that does not start at 0,0 (taskbar on the left, second monitor).
+	if to, _ := windowIntoWorkArea(screenRect{1900, 274, 3826, 1384}, screenRect{1982, 0, 3840, 1080}); to.Left != 1982 || to.Top != 0 {
+		t.Fatalf("offset work area: %v", to)
 	}
 }

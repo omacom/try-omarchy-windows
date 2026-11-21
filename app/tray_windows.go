@@ -356,7 +356,7 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 				liftCurtain("asked for from the tray")
 				// Approved Windows apps minimize a fullscreen VM. SW_SHOW leaves
 				// a minimized window minimized; restore it before focusing it.
-				procShowWindow.Call(qemuWindow, swRestore)
+				restoreMinimizedWindow(qemuWindow)
 				procSetForegroundWindow.Call(qemuWindow)
 			}
 		case trayCommandShare:
@@ -472,7 +472,7 @@ func runTray(cfg trayLaunchConfig, ready chan<- uintptr, done chan<- struct{}) {
 			case wmLButtonDblClk:
 				if qemuWindow := qemuHwnd.Load(); qemuWindow != 0 {
 					liftCurtain("asked for from the tray")
-					procShowWindow.Call(qemuWindow, swRestore)
+					restoreMinimizedWindow(qemuWindow)
 					procSetForegroundWindow.Call(qemuWindow)
 				}
 			case wmRButtonUp, wmContextMenu:
@@ -642,4 +642,13 @@ func selectTrayIcon(metric func() (uintptr, bool), fallback func() uintptr) (uin
 		return icon, true
 	}
 	return fallback(), false // LoadIconW returns a shared icon.
+}
+
+// restoreMinimizedWindow restores a minimized window and leaves any other
+// alone: SW_RESTORE would also take a maximized window out of maximized,
+// such as one the title enforcer has just maximized after the lift.
+func restoreMinimizedWindow(hwnd uintptr) {
+	if iconic, _, _ := procIsIconic.Call(hwnd); iconic != 0 {
+		procShowWindow.Call(hwnd, swRestore)
+	}
 }

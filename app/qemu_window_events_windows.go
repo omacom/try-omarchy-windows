@@ -21,7 +21,11 @@ import (
 //     is placed right away instead of up to a second later, and a resize QEMU
 //     makes while the guest boots or shuts down is undone before it lingers.
 //     While Omarchy first boots, a window is made invisible as it is created,
-//     before SDL shows it (boot_curtain_windows.go).
+//     and a window the runtime holds hidden is shown only after that
+//     (boot_curtain_windows.go).
+//   - Uncloaked. QEMU shows a held window with its first frame, and the
+//     setup window waits for that after the curtain lifted. The hand-over
+//     runs at once, beside the enforcer.
 //   - The start and end of a move or resize the user makes with the mouse or
 //     the window menu. Those, and maximizing, are the only placements the
 //     enforcer remembers.
@@ -43,6 +47,8 @@ const (
 	eventObjectShow           = 0x8002
 	eventObjectLocationChange = 0x800B
 	eventObjectNameChange     = 0x800C
+	eventObjectCloaked        = 0x8017
+	eventObjectUncloaked      = 0x8018
 	wineventOutOfContext      = 0x0000
 	wineventSkipOwnProcess    = 0x0002
 	objidWindow               = 0
@@ -79,7 +85,9 @@ func pruneWindowEventState(pid uint32, live func(uintptr, uint32) bool) {
 }
 
 func qemuWindowEvent(_, event, hwnd, idObject, idChild, _, _ uintptr) uintptr {
-	if hwnd == 0 || int32(idObject) != objidWindow || idChild != 0 {
+	// idObject and idChild are LONGs. The fifth argument is passed on the
+	// stack, so the upper half of idChild can hold anything, for any event.
+	if hwnd == 0 || int32(idObject) != objidWindow || int32(idChild) != 0 {
 		return 0
 	}
 	// A destroyed HWND no longer has a live PID/class to filter against.
@@ -104,8 +112,19 @@ func qemuWindowEvent(_, event, hwnd, idObject, idChild, _, _ uintptr) uintptr {
 	switch event {
 	case eventObjectCreate, eventObjectShow:
 		concealForCurtain(hwnd)
+	}
+	// A runtime that holds its windows marks one just after creating it, and
+	// names it next.
+	releaseHeldWindow(hwnd)
+	switch event {
 	case eventObjectNameChange:
 		restoreDisplayTitle(hwnd)
+	case eventObjectUncloaked:
+		// Not on the title enforcer, which may be busy placing the window.
+		go func() {
+			finishCurtainReveal()
+			redoLateReveal(hwnd)
+		}()
 	case eventSystemMoveSizeStart:
 		draggedWindows.Store(hwnd, qemuPid.Load())
 	case eventSystemMoveSizeEnd:
@@ -173,6 +192,8 @@ func installQemuWindowHooks() {
 		{eventSystemMoveSizeStart, eventSystemMoveSizeEnd},
 		{eventObjectCreate, eventObjectShow},
 		{eventObjectLocationChange, eventObjectNameChange},
+		// QEMU uncloaks a held window with its first frame (curtainReveal).
+		{eventObjectCloaked, eventObjectUncloaked},
 	} {
 		hook, _, _ := procSetWinEventHook.Call(events[0], events[1], 0, callback, 0, 0,
 			wineventOutOfContext|wineventSkipOwnProcess)

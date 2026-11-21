@@ -99,7 +99,10 @@ func buildQemuArgs(cfg *config, cmdline string) []string {
 		"-kernel", filepath.Join(cfg.guestDir, "vmlinuz-linux"),
 		"-initrd", initrd,
 		"-append", cmdline+" tryomarchy.render="+render+dxgCmdline(cfg.dxg),
-		"-device", "virtio-keyboard-pci", "-device", "virtio-tablet-pci",
+		"-device", "virtio-keyboard-pci",
+	)
+	args = append(args, tabletDevices(cfg)...)
+	args = append(args,
 		// No option ROM: the guest boots its kernel directly, and iPXE would
 		// only print its banner on the display.
 		"-device", "virtio-net-pci,netdev=n0,romfile=", "-netdev", netdevArg(cfg.forwards),
@@ -486,6 +489,42 @@ func keyboardEnvironment(env []string, enabled bool) []string {
 	}
 	if enabled {
 		result = append(result, externalKeyboardHookEnv+"=1")
+	}
+	return result
+}
+
+// A runtime with this patch can create its display windows hidden and leave
+// showing them to the launcher, so the boot curtain hides a window before it
+// is ever on screen (boot_curtain_windows.go). A window the launcher has not
+// shown heldWindowWait after QEMU starts handling window messages shows
+// itself.
+const heldWindowsPatch = "patches/qemu/0026-hold-sdl-windows-for-the-launcher.patch"
+const heldWindowsEnv = "OMARCHY_SDL_HOLD_WINDOWS_MS"
+const heldWindowWait = 10 * time.Second
+
+func runtimeHoldsWindows(qemu string) bool {
+	return runtimeHasPatch(qemu, heldWindowsPatch)
+}
+
+// A runtime with this patch also keeps a held window cloaked until it has
+// presented a frame on screen at the window's size, so the curtain's lift
+// shows the desktop at once instead of what the hidden window held
+// (boot_curtain_windows.go).
+const heldWindowFramePatch = "patches/qemu/0030-show-held-windows-with-their-first-frame.patch"
+
+func runtimeShowsHeldWindowsWithFrame(qemu string) bool {
+	return runtimeHasPatch(qemu, heldWindowFramePatch)
+}
+
+func heldWindowsEnvironment(env []string, enabled bool) []string {
+	result := make([]string, 0, len(env)+1)
+	for _, value := range env {
+		if !strings.EqualFold(strings.SplitN(value, "=", 2)[0], heldWindowsEnv) {
+			result = append(result, value)
+		}
+	}
+	if enabled {
+		result = append(result, fmt.Sprintf("%s=%d", heldWindowsEnv, heldWindowWait.Milliseconds()))
 	}
 	return result
 }

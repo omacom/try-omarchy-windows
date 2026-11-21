@@ -1,0 +1,41 @@
+From 8511d32bb3b9b93813be37f575a66beaaec56dc5 Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 14 Nov 2026 17:54:40 -0500
+Subject: [PATCH] Keep the lock PAM tests independent of the caller's umask
+
+The repair refuses a group- or world-writable /etc/pam.d, as it should. The tests made their etc and pam.d directories with mkdir, which follows the umask, so under a umask of 0002 the directories were group-writable and four tests failed while the redirected-directory test passed for the wrong reason. The tests now set the modes a real /etc has, and that test checks it was refused for the link.
+---
+ guest/tests/test_lock_pam.py | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/guest/tests/test_lock_pam.py b/guest/tests/test_lock_pam.py
+index cd3376c..8635ea4 100644
+--- a/guest/tests/test_lock_pam.py
++++ b/guest/tests/test_lock_pam.py
+@@ -20,6 +20,11 @@ class LockPamTests(unittest.TestCase):
+         self.root = Path(self.temp.name)
+         self.parent = self.root / 'etc/pam.d'
+         self.parent.mkdir(parents=True)
++        # The repair refuses group- or world-writable directories, as a real
++        # /etc/pam.d never is. mkdir follows the caller's umask, so set the
++        # modes /etc and /etc/pam.d have instead of inheriting it.
++        for directory in (self.root / 'etc', self.parent):
++            directory.chmod(0o755)
+         self.target = self.parent / 'omarchy-lock-password'
+ 
+     def test_missing_profile_installed_completely_and_idempotently(self):
+@@ -50,8 +55,10 @@ class LockPamTests(unittest.TestCase):
+         outside = self.root / 'outside'
+         outside.mkdir()
+         self.parent.symlink_to(outside)
+-        with self.assertRaises(OSError):
++        with self.assertRaises(OSError) as raised:
+             module.repair(self.root, b'replacement')
++        # Refused for the link, not for a directory mode the umask left.
++        self.assertNotIsInstance(raised.exception, PermissionError)
+         self.assertEqual(list(outside.iterdir()), [])
+ 
+     def test_writable_parent_rejected(self):
+-- 
+2.56.1
+

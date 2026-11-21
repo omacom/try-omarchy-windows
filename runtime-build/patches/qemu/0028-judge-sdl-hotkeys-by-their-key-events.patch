@@ -1,0 +1,70 @@
+sdl2: judge Ctrl+Alt hotkeys by the modifiers of their key events
+
+Applies on top of 0027.
+
+QEMU handles SDL's event queue in one go after SDL has pumped every pending
+Windows message, so SDL_GetModState() already counts keys that come later in
+the queue. When the pointer entered a display window just before Ctrl+Alt+F,
+the enter event saw Ctrl and Alt down and set ignore_hotkeys, so Ctrl+Alt+F
+went to the guest instead of toggling full screen. When Ctrl and Alt were let
+go in the same queue as F, the hotkey was not seen at all.
+
+The hotkey now takes the modifiers carried by its own key event, and the
+enter and focus events take the modifiers as of the last key event handled
+before them. Ctrl and Alt held when a window gets focus still hold hotkeys
+back until a key goes up.
+
+--- a/ui/sdl2.c
++++ b/ui/sdl2.c
+@@ -548,10 +548,8 @@
+     sdl_show_cursor(scon);
+ }
+ 
+-static int get_mod_state(void)
++static int get_mod_state(SDL_Keymod mod)
+ {
+-    SDL_Keymod mod = SDL_GetModState();
+-
+     if (alt_grab) {
+         return (mod & (gui_grab_code | KMOD_LSHIFT)) ==
+             (gui_grab_code | KMOD_LSHIFT);
+@@ -562,12 +560,21 @@
+     }
+ }
+ 
++/*
++ * The modifiers as of the last key event QEMU handled. SDL_GetModState()
++ * already counts every key in SDL's queue, and QEMU handles the queue in one
++ * go, so a pointer entering a window just before Ctrl+Alt+F, or Ctrl and Alt
++ * let go just after it, made the hotkey depend on keys later in the queue.
++ */
++static SDL_Keymod sdl_handled_mod;
++
+ static void handle_keydown(SDL_Event *ev)
+ {
+     int win;
+     struct sdl2_console *scon = get_scon_from_window(ev->key.windowID);
+-    int gui_key_modifier_pressed = get_mod_state();
++    int gui_key_modifier_pressed = get_mod_state(ev->key.keysym.mod);
+ 
++    sdl_handled_mod = ev->key.keysym.mod;
+     if (!scon) {
+         return;
+     }
+@@ -655,6 +662,7 @@
+ {
+     struct sdl2_console *scon = get_scon_from_window(ev->key.windowID);
+ 
++    sdl_handled_mod = ev->key.keysym.mod;
+     if (!scon) {
+         return;
+     }
+@@ -864,7 +872,7 @@
+          * key is released.
+          */
+         sdl_show_cursor(scon);
+-        scon->ignore_hotkeys = get_mod_state();
++        scon->ignore_hotkeys = get_mod_state(sdl_handled_mod);
+         break;
+     case SDL_WINDOWEVENT_FOCUS_LOST:
+         scon->scroll = (SDLScroll) {0};

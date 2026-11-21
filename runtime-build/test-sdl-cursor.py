@@ -35,6 +35,8 @@ harness = r'''
 #define SDL_DISABLE 0
 #define SDL_WINDOW_INPUT_FOCUS 1
 #define SDL_WINDOW_FULLSCREEN_DESKTOP 2
+#define SDL_WINDOW_FULLSCREEN 0x10
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 #define GUI_REFRESH_INTERVAL_DEFAULT 30
 #define SHUTDOWN_ACTION_POWEROFF 1
 #define SHUTDOWN_CAUSE_HOST_UI 1
@@ -60,7 +62,7 @@ enum {SDL_WINDOWEVENT_RESIZED,SDL_WINDOWEVENT_EXPOSED,SDL_WINDOWEVENT_FOCUS_GAIN
 struct sdl2_console {
  DisplayChangeListener dcl; DisplayOptions *opts; SDL_Window *real_window;
  DisplaySurface *surface; bool opengl,scanout_mode,hidden;
- void *winctx,*real_renderer;
+ void *winctx,*real_renderer; bool cloaked;
  int ignore_hotkeys; struct {int width,height;} guest_fb;
 ''' + section(header, '    SDLScroll scroll;', '    bool has_dmabuf;') + r'''
 };
@@ -102,14 +104,18 @@ static void SDL_SetWindowGrab(SDL_Window *w,int grab) {}
 static void SDL_WarpMouseInWindow(SDL_Window *w,int x,int y) {assert(w==focus);warps++;}
 static void SDL_GetMouseState(int *x,int *y) {*x=*y=50;}
 static void sdl_update_caption(struct sdl2_console *s) {}
-static void SDL_SetWindowFullscreen(SDL_Window *w,int f) {w->w=f?1600:800;w->h=f?1200:600;}
+static void SDL_SetWindowFullscreen(SDL_Window *w,int f) {
+ w->w=f?1600:800;w->h=f?1200:600;
+ w->flags=f?w->flags|SDL_WINDOW_FULLSCREEN:w->flags&~SDL_WINDOW_FULLSCREEN;
+}
 static void sdl2_redraw(struct sdl2_console *s) {}
 static SDL_Window *SDL_GetWindowFromID(uint32_t id) {
  for(int i=0;i<3;i++) if(consoles[i].real_window && consoles[i].real_window->id==id)
   return consoles[i].real_window;
  return NULL;
 }
-static int get_mod_state(void) {return 0;}
+static int sdl_handled_mod;
+static int get_mod_state(int mod) {return mod;}
 static void dpy_set_ui_info(QemuConsole *c,QemuUIInfo *i,bool b) {}
 static void SDL_StopTextInput(void) {}
 static void SDL_StartTextInput(void) {}
@@ -118,6 +124,10 @@ static void qemu_system_shutdown_request(int reason) {}
 static void SDL_HideWindow(SDL_Window *w) {}
 static void SDL_QuitSubSystem(int s) {}
 static void win_pinch_destroy(struct sdl2_console *s) {}
+static void win_hold_release(struct sdl2_console *s, bool show) {}
+static void win_cloak_end(struct sdl2_console *s) {}
+static void sdl2_window_size_after_full_screen(struct sdl2_console *s) {}
+static void sdl2_record_full_screen_size(struct sdl2_console *s) {}
 static void SDL_GL_DeleteContext(void *ctx) {}
 static void SDL_DestroyRenderer(void *renderer) {}
 static void SDL_DestroyWindow(SDL_Window *w) {if (focus==w) focus=NULL;}

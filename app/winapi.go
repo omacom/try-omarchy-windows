@@ -228,9 +228,7 @@ type displayWindowState struct {
 	topologyRepair bool             // retained while minimized or being dragged
 	fullscreen     bool             // QEMU's Ctrl+Alt+F fullscreen, seen on the last pass
 	beforeFull     *windowPlacement // what to put back when fullscreen ends
-	previous       *windowPlacement // last before its most recent save
-	savedAt        time.Time
-	concealed      bool // the boot curtain hid it on an earlier pass
+	concealed      bool             // the boot curtain hid it on an earlier pass
 }
 
 func (state *displayWindowState) repairTopology(now *windowPlacement, dragging bool, monitors []hostMonitor, apply func(*windowPlacement) bool) *windowPlacement {
@@ -278,6 +276,8 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		return 1
 	}
 	if visible, _, _ := procIsWindowVisible.Call(hwnd); visible == 0 {
+		// In case the window hooks missed it.
+		releaseHeldWindow(hwnd)
 		return 1
 	}
 	enumTitleSeen[hwnd] = true
@@ -303,10 +303,14 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		enumTitleWindows[hwnd] = state
 		if !enumTitleFullscreen {
 			placement := displayPlacement(enumTitleDir, index, enumTitleMonitorDetails)
-			if placement == nil || !applyPlacement(hwnd, placement) {
+			state.last, state.target = placement, placement
+			// A window the curtain hid before it was shown has no frame;
+			// the curtain places it and the placement follows the lift.
+			if target := placeConcealedWindow(hwnd, placement); target != nil {
+				state.target = target
+			} else if placement == nil || !applyPlacement(hwnd, placement) {
 				procShowWindow.Call(hwnd, swShowMaximized)
 			}
-			state.last, state.target = placement, placement
 		}
 		if enumTitleFullscreen {
 			monitors := enumTitleMonitorDetails
@@ -322,7 +326,7 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	if curtainUp.Load() {
 		concealForCurtain(hwnd)
 		curtainTaskbar(hwnd)
-	} else {
+	} else if !curtainRevealPending() {
 		uiDone()
 	}
 	if enumTitleIcon != 0 {
@@ -347,6 +351,17 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	// is recorded above and repaired once the curtain lifts.
 	if curtainConcealed(hwnd) {
 		state.concealed = true
+		// After a display mode or work area change the hidden window goes
+		// where it will be shown on the new layout, fitted as the repair after
+		// the lift would fit it, so the guest draws its desktop at that size
+		// and does not redraw it as the window appears.
+		if known && enumTitleTopologyChanged && !enumTitleFullscreen && state.target != nil {
+			if fitted := repairDisplayPlacement(state.target, state.index, enumTitleMonitorDetails); fitted != nil {
+				if target := placeConcealedWindow(hwnd, fitted); target != nil {
+					state.target = target
+				}
+			}
+		}
 		return 1
 	}
 	// The window goes back where it belongs before anything is saved; a
@@ -358,16 +373,64 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 		}
 		if p := placementAfterCurtain(now, state.target); p != nil {
 			if p.Maximized && !now.Maximized {
+				// Maximize first, then give the window its restore
+				// rectangle. Setting both at once on a restored window
+				// shows it at that rectangle for a moment, and a window
+				// the curtain placed is already where a maximized one
+				// goes, so this way it does not move at all. A window
+				// the lift keeps cloaked and without its region shows
+				// nothing yet, so it takes both in one call: each call
+				// waits on QEMU's window thread.
+				if !curtainRegionPending(hwnd) {
+					procShowWindow.Call(hwnd, swShowMaximized)
+				}
 				state.concealed = !applyPlacement(hwnd, p)
 			} else {
 				state.concealed = !correctPlacement(hwnd, p)
+			}
+			if !state.concealed {
+				exposeCurtainWindow(hwnd)
 			}
 			return 1
 		}
 	}
 	state.concealed = false
+	// Placed: a window the lift left without its region gets it now.
+	exposeCurtainWindow(hwnd)
+	// The lift gives the mark back once QEMU shows the window.
+	if !curtainRevealPending() {
+		syncFullscreenMark(hwnd)
+	}
+	// SDL puts a full screen window back on its monitor's rectangle when it
+	// enters full screen or the display changes.
+	if growFullscreenWindow(hwnd) {
+		return 1
+	}
+	if enumTitleFullscreen {
+		// QEMU makes a full screen start's window one that cannot be resized,
+		// and taken out of full screen SDL gives it the guest's display size
+		// plus a frame, centred on the monitor: larger than the work area, so
+		// it spills off the screen. It goes to the work area's corner, or the
+		// middle when it fits, keeping its size. The caption tells, since the
+		// window can stop covering its monitor while the display mode changes.
+		var now screenRect
+		rect := &now
+		if got, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&now))); got == 0 {
+			rect = nil
+		}
+		place, fullscreen := fullscreenStartPass(state.fullscreen, windowFramed(hwnd), rect, enumTitleMonitorDetails)
+		state.fullscreen = fullscreen
+		if place {
+			if monitor, ok := hostMonitorForWindow(hwnd); ok {
+				if to, move := windowIntoWorkArea(now, monitor.Work); move {
+					procSetWindowPos.Call(hwnd, 0, uintptr(to.Left), uintptr(to.Top), 0, 0, swpNoSize|swpNoZorder|swpNoOwnerZOrder)
+					logf("full screen: the window left full screen at %dx%d; moved it to %d,%d", now.width(), now.height(), to.Left, to.Top)
+				}
+			}
+		}
+	}
 	if !enumTitleFullscreen && !state.fullscreen {
-		if restored := state.repairTopology(capturePlacement(hwnd), beingDragged(hwnd), enumTitleMonitorDetails, func(p *windowPlacement) bool {
+		if restored := state.repairTopology(userPlacement(hwnd), beingDragged(hwnd), enumTitleMonitorDetails, func(p *windowPlacement) bool {
 			return correctPlacement(hwnd, p)
 		}); restored != nil {
 			restored.SavedAt = time.Now()
@@ -379,7 +442,7 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	if state.topologyRepair && enumTitleFullscreen && len(enumTitleMonitors) > 0 && capturePlacement(hwnd) != nil {
 		var bounds screenRect
 		if result, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&bounds))); result != 0 {
-			if current := (&windowPlacement{Normal: bounds}); !current.usable(enumTitleMonitors) {
+			if current := (&windowPlacement{Normal: bounds}); !current.usable(enumTitleMonitors) && !grownFullscreen(bounds, enumTitleMonitorDetails) {
 				first, _ := selectedHostMonitor(enumTitleFullscreenDisplay, enumTitleMonitorDetails)
 				m := enumTitleMonitorDetails[(first+state.index)%len(enumTitleMonitorDetails)].Bounds
 				if ok, _, _ := procSetWindowPos.Call(hwnd, 0, uintptr(m.Left), uintptr(m.Top), uintptr(m.width()), uintptr(m.height()), 0x0004|0x0010); ok == 0 {
@@ -392,7 +455,7 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 	if !enumTitleFullscreen {
 		fullscreen := displayWindowFullscreen(hwnd)
 		if fullscreen && !state.fullscreen {
-			state.beforeFull = placementBeforeFullscreen(state.last, state.previous, time.Since(state.savedAt))
+			state.beforeFull = state.last
 		}
 		restore, handled := fullscreenPlacement(state.fullscreen, fullscreen, state.beforeFull)
 		state.fullscreen = fullscreen
@@ -402,12 +465,11 @@ func enumTitleProc(hwnd, _ uintptr) uintptr {
 			}
 			return 1
 		}
-		now := capturePlacement(hwnd)
+		now := userPlacement(hwnd)
 		switch nextPlacementStep(now, state.last, state.target, takeUserMoved(hwnd), beingDragged(hwnd), !guestFollowsWindow.Load()) {
 		case placementSave:
 			now.SavedAt = time.Now()
 			if saveDisplayPlacement(enumTitleDir, state.index, *now) == nil {
-				state.previous, state.savedAt = state.last, now.SavedAt
 				state.last = now
 			}
 			state.target = now

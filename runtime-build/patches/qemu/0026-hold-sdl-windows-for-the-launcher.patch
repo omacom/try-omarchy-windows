@@ -1,0 +1,167 @@
+--- a/include/ui/sdl2.h
++++ b/include/ui/sdl2.h
+@@ -55,6 +55,8 @@ struct sdl2_console {
+     int guest_x, guest_y;
+     int cursor_width, cursor_height;
+     bool has_dmabuf;
++    /* Windows: shown by the launcher (sdl2-held-win32.h) */
++    int64_t hold_ms, held_until;
+ #ifdef CONFIG_OPENGL
+     QemuGLShader *gls;
+     egl_fb guest_fb;
+--- /dev/null
++++ b/ui/sdl2-held-win32.h
+@@ -0,0 +1,99 @@
++/* Display windows shown by the Try Omarchy launcher. SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef SDL2_HELD_WIN32_H
++#define SDL2_HELD_WIN32_H
++#ifdef CONFIG_WIN32
++/*
++ * While Omarchy boots, the Try Omarchy launcher hides the display windows
++ * itself. Windows carries out those calls on this thread, which goes on
++ * setting up the machine for a second or more after it creates a window and
++ * handles no messages until then, so a window SDL showed at once stayed on
++ * screen, empty, for that time. With OMARCHY_SDL_HOLD_WINDOWS_MS set, a
++ * display window is created hidden and marked with a window property, and
++ * the launcher shows it once it has hidden it its own way. A window nobody
++ * shows shows itself that many milliseconds after this thread first handled
++ * window messages for it, so it can never stay hidden.
++ */
++static const WCHAR win_hold_property[] = L"TryOmarchy.HeldWindow";
++
++static HWND win_hold_hwnd(SDL_Window *window)
++{
++    SDL_SysWMinfo info;
++
++    SDL_VERSION(&info.version);
++    return window && SDL_GetWindowWMInfo(window, &info) ?
++        info.info.win.window : NULL;
++}
++
++/* Window flags for a new window; QEMU's own hidden consoles stay as they are. */
++static int win_hold_flags(struct sdl2_console *scon)
++{
++    const char *value = getenv("OMARCHY_SDL_HOLD_WINDOWS_MS");
++    int64_t ms;
++
++    scon->hold_ms = 0;
++    scon->held_until = 0;
++    if (scon->hidden || !value || qemu_strtoi64(value, NULL, 10, &ms) ||
++        ms <= 0) {
++        return 0;
++    }
++    scon->hold_ms = MIN(ms, 60000);
++    return SDL_WINDOW_HIDDEN;
++}
++
++/* Marks a window created with win_hold_flags, or shows it if it cannot. */
++static void win_hold_window(struct sdl2_console *scon)
++{
++    HWND hwnd;
++
++    if (!scon->hold_ms) {
++        return;
++    }
++    hwnd = win_hold_hwnd(scon->real_window);
++    if (!hwnd || !SetPropW(hwnd, win_hold_property, (HANDLE)1)) {
++        scon->hold_ms = 0;
++        if (scon->real_window) {
++            SDL_ShowWindow(scon->real_window);
++        }
++    }
++}
++
++static void win_hold_release(struct sdl2_console *scon, bool show)
++{
++    HWND hwnd;
++
++    if (!scon->hold_ms) {
++        return;
++    }
++    scon->hold_ms = 0;
++    scon->held_until = 0;
++    hwnd = win_hold_hwnd(scon->real_window);
++    if (hwnd) {
++        RemovePropW(hwnd, win_hold_property);
++    }
++    if (show && scon->real_window) {
++        SDL_ShowWindow(scon->real_window);
++    }
++}
++
++/* Runs after each round of window messages. */
++static void win_hold_poll(struct sdl2_console *scon)
++{
++    int64_t now;
++
++    if (!scon->hold_ms) {
++        return;
++    }
++    now = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
++    if (!scon->held_until) {
++        scon->held_until = now + scon->hold_ms;
++    } else if (now >= scon->held_until) {
++        win_hold_release(scon, true);
++    }
++}
++#else
++static inline int win_hold_flags(struct sdl2_console *scon) { return 0; }
++static inline void win_hold_window(struct sdl2_console *scon) {}
++static inline void win_hold_release(struct sdl2_console *scon, bool show) {}
++static inline void win_hold_poll(struct sdl2_console *scon) {}
++#endif
++#endif
+--- a/ui/sdl2.c
++++ b/ui/sdl2.c
+@@ -33,9 +33,11 @@
+ #include "system/runstate-action.h"
+ #include "system/system.h"
+ #include "qemu/log.h"
++#include "qemu/timer.h"
+ #include "qemu-main.h"
+ #include "qapi/qapi-events-ui.h"
+ #include "sdl2-pinch-win32.h"
++#include "sdl2-held-win32.h"
+ 
+ #ifdef CONFIG_X11
+ #include <X11/Xlib.h>
+@@ -104,6 +106,7 @@ void sdl2_window_create(struct sdl2_console *scon)
+     if (scon->hidden) {
+         flags |= SDL_WINDOW_HIDDEN;
+     }
++    flags |= win_hold_flags(scon);
+ #ifdef CONFIG_OPENGL
+     if (scon->opengl) {
+         flags |= SDL_WINDOW_OPENGL;
+@@ -115,6 +118,7 @@ void sdl2_window_create(struct sdl2_console *scon)
+                                          surface_width(scon->surface),
+                                          surface_height(scon->surface),
+                                          flags);
++    win_hold_window(scon);
+     if (scon->opengl) {
+         const char *driver = "opengl";
+ 
+@@ -161,6 +165,7 @@ void sdl2_window_destroy(struct sdl2_console *scon)
+     scon->scroll = (SDLScroll) {0};
+     sdl_cursor_free(scon);
+     win_pinch_destroy(scon);
++    win_hold_release(scon, false);
+     if (scon->winctx) {
+         SDL_GL_DeleteContext(scon->winctx);
+         scon->winctx = NULL;
+@@ -854,6 +859,7 @@ static void handle_windowevent(SDL_Event *ev)
+         break;
+     case SDL_WINDOWEVENT_SHOWN:
+         scon->hidden = false;
++        win_hold_release(scon, false);
+         break;
+     case SDL_WINDOWEVENT_HIDDEN:
+         scon->hidden = true;
+@@ -986,6 +992,7 @@ void sdl2_poll_events(struct sdl2_console *scon)
+ 
+     sdl_cursor_focus();
+     win_pinch_poll(scon);
++    win_hold_poll(scon);
+ 
+     if (idle) {
+         if (scon->idle_counter < SDL2_MAX_IDLE_COUNT) {

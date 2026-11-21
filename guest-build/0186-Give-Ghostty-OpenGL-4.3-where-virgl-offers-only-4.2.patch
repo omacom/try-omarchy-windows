@@ -1,0 +1,1061 @@
+From 798afa1a8dc2875267eb7fe26c731519c06e424e Mon Sep 17 00:00:00 2001
+From: Tyler South <tsouth2@gmail.com>
+Date: Sat, 14 Nov 2026 20:23:39 -0500
+Subject: [PATCH] Give Ghostty OpenGL 4.3 where virgl offers only 4.2
+
+On some hosts, such as Intel UHD 770 (#383), virgl offers only an OpenGL 4.2
+core profile although the Windows driver has 4.6. Ghostty asks for 4.3, its
+EGL context fails with BadMatch and no window appears. With
+MESA_GL_VERSION_OVERRIDE=4.3 and MESA_GLSL_VERSION_OVERRIDE=430 it opens and
+draws correctly there.
+
+Give Ghostty, and only Ghostty, those two variables when the renderer stops at
+4.2. ghostty-gl decides once per login: on CPU rendering it does nothing,
+otherwise a small surfaceless EGL probe finds the highest core profile the
+renderer creates, and only 4.2 gets the override. The result lives in
+$XDG_RUNTIME_DIR, so a new host GPU or render mode is probed again. A probe
+that fails or times out saves nothing, so the next start probes again;
+starts that race share one probe under a lock, and for ten seconds after a
+failure they start Ghostty without probing. The probe needs only the render
+node, not the compositor.
+
+Launchers start Ghostty by D-Bus activation of app-com.mitchellh.ghostty.service,
+which gets a drop-in reading that file after the probe unit. Everything else
+(xdg-terminal-exec, the screensaver, typing ghostty, the unit's own
+ExecStart) runs a bare ghostty, so /usr/local/bin/ghostty links to a wrapper
+that applies the file and execs /usr/bin/ghostty. A pacman hook keeps the link
+only while Ghostty is installed, so Omarchy still sees it as missing until it
+is, and catch-up sets it at every boot for disks that installed Ghostty before
+the hook. None of it is a file the package owns.
+
+Compatibility revision 74 delivers it to existing disks.
+---
+ .../hooks/try-omarchy-ghostty-gl.hook         |  11 +
+ .../10-try-omarchy-gl.conf                    |   9 +
+ .../user/try-omarchy-ghostty-gl.service       |   9 +
+ .../usr/local/lib/try-omarchy/catch-up        |  15 +-
+ .../usr/local/lib/try-omarchy/ghostty         |  22 ++
+ .../usr/local/lib/try-omarchy/ghostty-gl      | 102 ++++++
+ .../local/lib/try-omarchy/ghostty-gl-probe    |  76 ++++
+ guest/scripts/finalize-rootfs.sh              |  10 +-
+ .../app-com.mitchellh.ghostty.service         |  14 +
+ .../com.mitchellh.ghostty.desktop             |  26 ++
+ .../dbus-com.mitchellh.ghostty.service        |   4 +
+ guest/tests/test_aquamarine_contract.py       |   2 +-
+ guest/tests/test_battery_details.py           |   2 +-
+ guest/tests/test_clipboard_pull.py            |   2 +-
+ guest/tests/test_compositor_health.py         |   2 +-
+ guest/tests/test_desktop_drawn.py             |   2 +-
+ guest/tests/test_ghostty_gl.py                | 333 ++++++++++++++++++
+ guest/tests/test_guest_qol.py                 |   2 +-
+ guest/tests/test_kernel_headers_hold.py       |   2 +-
+ guest/tests/test_live_update.py               |   2 +-
+ guest/tests/test_native_nightlight.py         |   2 +-
+ guest/tests/test_notification_privacy.py      |   2 +-
+ guest/tests/test_qt612_palette.py             |   2 +-
+ guest/tests/test_refresh_pacman.py            |  14 +-
+ guest/tests/test_snapper_guest.py             |   2 +-
+ guest/tests/test_url_schemes.py               |   2 +-
+ guest/tests/test_windows_volume_sync.py       |   2 +-
+ guest/tests/verify.py                         |  10 +-
+ 28 files changed, 658 insertions(+), 25 deletions(-)
+ create mode 100644 guest/factory-overlay/etc/pacman.d/hooks/try-omarchy-ghostty-gl.hook
+ create mode 100644 guest/factory-overlay/etc/systemd/user/app-com.mitchellh.ghostty.service.d/10-try-omarchy-gl.conf
+ create mode 100644 guest/factory-overlay/usr/lib/systemd/user/try-omarchy-ghostty-gl.service
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/ghostty
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/ghostty-gl
+ create mode 100755 guest/factory-overlay/usr/local/lib/try-omarchy/ghostty-gl-probe
+ create mode 100644 guest/tests/fixtures/ghostty-1.4.0-1/app-com.mitchellh.ghostty.service
+ create mode 100644 guest/tests/fixtures/ghostty-1.4.0-1/com.mitchellh.ghostty.desktop
+ create mode 100644 guest/tests/fixtures/ghostty-1.4.0-1/dbus-com.mitchellh.ghostty.service
+ create mode 100644 guest/tests/test_ghostty_gl.py
+
+diff --git a/guest/factory-overlay/etc/pacman.d/hooks/try-omarchy-ghostty-gl.hook b/guest/factory-overlay/etc/pacman.d/hooks/try-omarchy-ghostty-gl.hook
+new file mode 100644
+index 0000000..1c5a4ae
+--- /dev/null
++++ b/guest/factory-overlay/etc/pacman.d/hooks/try-omarchy-ghostty-gl.hook
+@@ -0,0 +1,11 @@
++[Trigger]
++Operation = Install
++Operation = Upgrade
++Operation = Remove
++Type = Path
++Target = usr/bin/ghostty
++
++[Action]
++Description = Link Ghostty to its OpenGL check
++When = PostTransaction
++Exec = /usr/local/lib/try-omarchy/ghostty-gl link
+diff --git a/guest/factory-overlay/etc/systemd/user/app-com.mitchellh.ghostty.service.d/10-try-omarchy-gl.conf b/guest/factory-overlay/etc/systemd/user/app-com.mitchellh.ghostty.service.d/10-try-omarchy-gl.conf
+new file mode 100644
+index 0000000..1362a96
+--- /dev/null
++++ b/guest/factory-overlay/etc/systemd/user/app-com.mitchellh.ghostty.service.d/10-try-omarchy-gl.conf
+@@ -0,0 +1,9 @@
++# Launchers start Ghostty by D-Bus activation of this service. On hosts whose
++# renderer offers only OpenGL 4.2 core, give it the 4.3 override it needs; the
++# file holds only comments everywhere else. Harmless while Ghostty is absent.
++[Unit]
++Wants=try-omarchy-ghostty-gl.service
++After=try-omarchy-ghostty-gl.service
++
++[Service]
++EnvironmentFile=-%t/try-omarchy/ghostty-gl.env
+diff --git a/guest/factory-overlay/usr/lib/systemd/user/try-omarchy-ghostty-gl.service b/guest/factory-overlay/usr/lib/systemd/user/try-omarchy-ghostty-gl.service
+new file mode 100644
+index 0000000..d74cc94
+--- /dev/null
++++ b/guest/factory-overlay/usr/lib/systemd/user/try-omarchy-ghostty-gl.service
+@@ -0,0 +1,9 @@
++[Unit]
++Description=Check whether Ghostty needs the OpenGL 4.3 override
++
++# Runs before each start of Ghostty's service. The answer is saved for the
++# login, so later runs only read it; a failed probe saves nothing and the next
++# start tries again. Ghostty starts either way, without the override.
++[Service]
++Type=oneshot
++ExecStart=-/usr/local/lib/try-omarchy/ghostty-gl env
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+index e0fc27b..76314a9 100755
+--- a/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/catch-up
+@@ -18,8 +18,10 @@
+ #   - put back the local repository, kernel hold and Arch mirrors on a disk
+ #     that a refused omarchy refresh pacman left on Omarchy's mirrors, and
+ #     patch that command, at every boot
+-# Runs before the display manager. Apart from the pacman layer, each step runs
+-# once per integration revision.
++#   - link /usr/local/bin/ghostty to the OpenGL 4.3 wrapper while Ghostty is
++#     installed and remove that link when it is not, at every boot
++# Runs before the display manager. Apart from the pacman layer and the Ghostty
++# link, each step runs once per integration revision.
+ set -euo pipefail
+ 
+ revision_file=${TRY_OMARCHY_COMPAT_VERSION:-/usr/share/try-omarchy/compat-version}
+@@ -53,6 +55,15 @@ if [[ -x $pacman_layer ]]; then
+   "$pacman_layer" repair || true
+ fi
+ 
++# Every boot: a pacman hook keeps /usr/local/bin/ghostty linked to the wrapper
++# that gives Ghostty the OpenGL 4.3 override where virgl offers only 4.2, but a
++# disk may have installed Ghostty before the hook arrived. Only our own link is
++# ever removed.
++ghostty_gl=${TRY_OMARCHY_GHOSTTY_GL:-/usr/local/lib/try-omarchy/ghostty-gl}
++if [[ -x $ghostty_gl ]]; then
++  "$ghostty_gl" link || true
++fi
++
+ [[ "$previous_revision" != "$revision" ]] || exit 0
+ mkdir -p "$state_dir"
+ 
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/ghostty b/guest/factory-overlay/usr/local/lib/try-omarchy/ghostty
+new file mode 100755
+index 0000000..5a1e948
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/ghostty
+@@ -0,0 +1,22 @@
++#!/bin/bash
++# /usr/local/bin/ghostty links here while Ghostty is installed, so every way
++# of starting it (Super+Return through xdg-terminal-exec, the screensaver,
++# typing ghostty, the D-Bus service's ExecStart) picks up the OpenGL 4.3
++# override on hosts whose renderer offers only 4.2. See ghostty-gl.
++# A MESA_GL_VERSION_OVERRIDE that is already set wins.
++helper=${TRY_OMARCHY_GHOSTTY_GL:-/usr/local/lib/try-omarchy/ghostty-gl}
++ghostty_bin=${TRY_OMARCHY_GHOSTTY_BIN:-/usr/bin/ghostty}
++
++if [[ -z ${MESA_GL_VERSION_OVERRIDE+set} ]] && env_file=$("$helper" env 2>/dev/null); then
++  while IFS= read -r line; do
++    if [[ $line =~ ^(MESA_GL_VERSION_OVERRIDE|MESA_GLSL_VERSION_OVERRIDE)=([0-9.]+)$ ]]; then
++      export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
++    fi
++  done <"$env_file"
++fi
++
++if [[ ! -x $ghostty_bin ]]; then
++  echo "ghostty: $ghostty_bin is not installed" >&2
++  exit 127
++fi
++exec "$ghostty_bin" "$@"
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/ghostty-gl b/guest/factory-overlay/usr/local/lib/try-omarchy/ghostty-gl
+new file mode 100755
+index 0000000..754e021
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/ghostty-gl
+@@ -0,0 +1,102 @@
++#!/bin/bash
++# Ghostty needs an OpenGL 4.3 core context. On some hosts (Intel graphics,
++# #383) virgl offers only 4.2 although Ghostty draws fine there once Mesa is
++# told to report 4.3. Only Ghostty gets that override, and only when the
++# renderer really stops at 4.2: other apps keep the real version, and hosts
++# that offer 4.3 or more, or CPU rendering, are left alone.
++#
++#   ghostty-gl env    decide once per login from what the renderer offers,
++#                     write $XDG_RUNTIME_DIR/try-omarchy/ghostty-gl.env and
++#                     print its path. The file holds the two Mesa variables
++#                     when they are needed and only comments otherwise. The
++#                     runtime directory is cleared at logout and boot, so a
++#                     new host GPU or render mode is probed again. A probe
++#                     that fails or times out saves nothing and exits 1, so
++#                     the next Ghostty start probes again; starts that race
++#                     share one probe, and for a few seconds after a failure
++#                     they do not probe again.
++#   ghostty-gl link   (root) link /usr/local/bin/ghostty to the wrapper that
++#                     applies the file while Ghostty is installed, and remove
++#                     that link when it is not. Anything else at that path is
++#                     left alone. The pacman hook and catch-up run this.
++set -u
++
++cmdline=${TRY_OMARCHY_CMDLINE:-/proc/cmdline}
++probe=${TRY_OMARCHY_GHOSTTY_GL_PROBE:-/usr/local/lib/try-omarchy/ghostty-gl-probe}
++ghostty_bin=${TRY_OMARCHY_GHOSTTY_BIN:-/usr/bin/ghostty}
++ghostty_link=${TRY_OMARCHY_GHOSTTY_LINK:-/usr/local/bin/ghostty}
++wrapper=${TRY_OMARCHY_GHOSTTY_WRAPPER:-/usr/local/lib/try-omarchy/ghostty}
++retry_after=${TRY_OMARCHY_GHOSTTY_GL_RETRY:-10}
++
++decide() {
++  if [[ " $(cat "$cmdline" 2>/dev/null) " == *" tryomarchy.render=cpu "* ]]; then
++    echo "# CPU rendering offers OpenGL 4.3 or later; no override"
++    return 0
++  fi
++  local version
++  if ! version=$(timeout 5 "$probe" 2>/dev/null) || [[ ! $version =~ ^[0-9]+\.[0-9]+$ ]]; then
++    return 1
++  fi
++  if [[ $version == 4.2 ]]; then
++    echo "# The renderer offers OpenGL $version core; Ghostty needs 4.3"
++    echo "MESA_GL_VERSION_OVERRIDE=4.3"
++    echo "MESA_GLSL_VERSION_OVERRIDE=430"
++  else
++    echo "# The renderer offers OpenGL $version core; no override"
++  fi
++}
++
++env_file() {
++  local runtime=${XDG_RUNTIME_DIR:-}
++  [[ -n $runtime && -d $runtime && -O $runtime ]] || return 1
++  local dir=$runtime/try-omarchy file failed tmp lock
++  file=$dir/ghostty-gl.env
++  failed=$dir/ghostty-gl.failed
++  if [[ ! -f $file ]]; then
++    mkdir -p -m 0700 "$dir" || return 1
++    # One probe at a time; a start that waited finds the answer saved.
++    exec {lock}>"$dir/ghostty-gl.lock" || return 1
++    flock -w 15 "$lock" || return 1
++    if [[ ! -f $file ]]; then
++      if [[ -f $failed ]] && (( $(date +%s) - $(stat -c %Y "$failed") < retry_after )); then
++        return 1
++      fi
++      tmp=$(mktemp "$file.XXXXXX") || return 1
++      if ! decide >"$tmp"; then
++        rm -f -- "$tmp"
++        touch -- "$failed"
++        echo "ghostty-gl: the OpenGL probe failed; trying again at the next start" >&2
++        return 1
++      fi
++      mv -f -- "$tmp" "$file" || { rm -f -- "$tmp"; return 1; }
++      rm -f -- "$failed"
++    fi
++  fi
++  printf '%s\n' "$file"
++}
++
++ours() {
++  [[ -L $ghostty_link && $(readlink -- "$ghostty_link") == "$wrapper" ]]
++}
++
++link() {
++  if [[ -x $ghostty_bin ]]; then
++    ours && return 0
++    [[ -e $ghostty_link || -L $ghostty_link ]] && return 0
++    mkdir -p -- "$(dirname -- "$ghostty_link")"
++    ln -s -- "$wrapper" "$ghostty_link"
++    echo "linked $ghostty_link so Ghostty gets the OpenGL 4.3 override where the renderer offers only 4.2"
++  elif ours; then
++    rm -f -- "$ghostty_link"
++    echo "removed the $ghostty_link link since Ghostty is not installed"
++  fi
++}
++
++case ${1:-} in
++  env) env_file ;;
++  link) link ;;
++  *)
++    echo "Usage: ghostty-gl env|link" >&2
++    exit 2
++    ;;
++esac
+diff --git a/guest/factory-overlay/usr/local/lib/try-omarchy/ghostty-gl-probe b/guest/factory-overlay/usr/local/lib/try-omarchy/ghostty-gl-probe
+new file mode 100755
+index 0000000..d230dc9
+--- /dev/null
++++ b/guest/factory-overlay/usr/local/lib/try-omarchy/ghostty-gl-probe
+@@ -0,0 +1,76 @@
++#!/usr/bin/python3 -I
++"""Print the highest OpenGL core profile version the guest renderer offers.
++
++Ghostty asks EGL for an OpenGL 4.3 core context. This makes the same kind of
++request on a surfaceless display, from 4.6 down, and prints the first version
++that succeeds, such as "4.2". It exits 1 when EGL or every request fails.
++"""
++import ctypes
++import sys
++
++EGL_NONE = 0x3038
++EGL_EXTENSIONS = 0x3055
++EGL_OPENGL_API = 0x30A2
++EGL_PLATFORM_SURFACELESS_MESA = 0x31DD
++EGL_CONTEXT_MAJOR_VERSION = 0x3098
++EGL_CONTEXT_MINOR_VERSION = 0x30FB
++EGL_CONTEXT_OPENGL_PROFILE_MASK = 0x30FD
++EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT = 0x1
++
++VERSIONS = [(4, 6), (4, 5), (4, 4), (4, 3), (4, 2), (4, 1), (4, 0), (3, 3)]
++
++
++def highest_core_version():
++    egl = ctypes.CDLL("libEGL.so.1")
++    egl.eglQueryString.restype = ctypes.c_char_p
++    egl.eglQueryString.argtypes = [ctypes.c_void_p, ctypes.c_int]
++    egl.eglGetPlatformDisplay.restype = ctypes.c_void_p
++    egl.eglGetPlatformDisplay.argtypes = [ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
++    egl.eglInitialize.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
++    egl.eglBindAPI.argtypes = [ctypes.c_uint]
++    egl.eglCreateContext.restype = ctypes.c_void_p
++    egl.eglCreateContext.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
++    egl.eglDestroyContext.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
++    egl.eglTerminate.argtypes = [ctypes.c_void_p]
++
++    client = (egl.eglQueryString(None, EGL_EXTENSIONS) or b"").split()
++    if b"EGL_MESA_platform_surfaceless" not in client:
++        return None
++    display = egl.eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA, None, None)
++    if not display or not egl.eglInitialize(display, None, None):
++        return None
++    try:
++        extensions = (egl.eglQueryString(display, EGL_EXTENSIONS) or b"").split()
++        if b"EGL_KHR_no_config_context" not in extensions and b"EGL_MESA_configless_context" not in extensions:
++            return None
++        if not egl.eglBindAPI(EGL_OPENGL_API):
++            return None
++        for major, minor in VERSIONS:
++            attributes = (ctypes.c_int * 7)(
++                EGL_CONTEXT_MAJOR_VERSION, major,
++                EGL_CONTEXT_MINOR_VERSION, minor,
++                EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
++                EGL_NONE,
++            )
++            context = egl.eglCreateContext(display, None, None, attributes)
++            if context:
++                egl.eglDestroyContext(display, context)
++                return f"{major}.{minor}"
++        return None
++    finally:
++        egl.eglTerminate(display)
++
++
++def main():
++    try:
++        version = highest_core_version()
++    except (OSError, AttributeError):
++        version = None
++    if version is None:
++        return 1
++    print(version)
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
+index 8a74d69..923f5df 100755
+--- a/guest/scripts/finalize-rootfs.sh
++++ b/guest/scripts/finalize-rootfs.sh
+@@ -191,6 +191,12 @@ compat_paths=(
+   usr/local/lib/try-omarchy/update-battery-dkms
+   usr/local/lib/try-omarchy/hold-kernel-headers
+   usr/local/lib/try-omarchy/pacman-layer
++  usr/local/lib/try-omarchy/ghostty
++  usr/local/lib/try-omarchy/ghostty-gl
++  usr/local/lib/try-omarchy/ghostty-gl-probe
++  usr/lib/systemd/user/try-omarchy-ghostty-gl.service
++  etc/systemd/user/app-com.mitchellh.ghostty.service.d/10-try-omarchy-gl.conf
++  etc/pacman.d/hooks/try-omarchy-ghostty-gl.hook
+   usr/share/try-omarchy/arch-mirrorlist
+   usr/share/try-omarchy/refresh-pacman
+   usr/local/lib/try-omarchy/battery-apply
+@@ -285,7 +291,9 @@ tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar "${compat_paths[@]}"
+ # an older 4.5.0 runtime, and repairs a disk an unpatched refresh rewrote at
+ # every boot, not only once. It also carries the QEMU profile's updated
+ # comment on the dmabuf quirk.
+-compat_revision=73
++# Revision 74 gives Ghostty the OpenGL 4.3 override on hosts whose renderer
++# offers only 4.2, through a wrapper link, its D-Bus service and a pacman hook.
++compat_revision=74
+ printf '%s:%s\n' "$compat_revision" "$kernel_release" >/usr/share/try-omarchy/compat-version
+ 
+ # Fail the build if DKMS or networking modules were not packaged for this kernel.
+diff --git a/guest/tests/fixtures/ghostty-1.4.0-1/app-com.mitchellh.ghostty.service b/guest/tests/fixtures/ghostty-1.4.0-1/app-com.mitchellh.ghostty.service
+new file mode 100644
+index 0000000..626981d
+--- /dev/null
++++ b/guest/tests/fixtures/ghostty-1.4.0-1/app-com.mitchellh.ghostty.service
+@@ -0,0 +1,14 @@
++[Unit]
++Description=Ghostty
++After=graphical-session.target
++After=dbus.socket
++Requires=dbus.socket
++
++[Service]
++Type=notify-reload
++ReloadSignal=SIGUSR2
++BusName=com.mitchellh.ghostty
++ExecStart=ghostty --gtk-single-instance=true --initial-window=false
++
++[Install]
++WantedBy=graphical-session.target
+diff --git a/guest/tests/fixtures/ghostty-1.4.0-1/com.mitchellh.ghostty.desktop b/guest/tests/fixtures/ghostty-1.4.0-1/com.mitchellh.ghostty.desktop
+new file mode 100644
+index 0000000..ccda357
+--- /dev/null
++++ b/guest/tests/fixtures/ghostty-1.4.0-1/com.mitchellh.ghostty.desktop
+@@ -0,0 +1,26 @@
++[Desktop Entry]
++Version=1.0
++Name=Ghostty
++Type=Application
++Comment=A terminal emulator
++TryExec=ghostty
++Exec=ghostty --gtk-single-instance=true
++Icon=com.mitchellh.ghostty
++Categories=System;TerminalEmulator;
++Keywords=terminal;tty;pty;
++StartupNotify=true
++StartupWMClass=com.mitchellh.ghostty
++Terminal=false
++Actions=new-window;
++X-GNOME-UsesNotifications=true
++X-TerminalArgExec=-e
++X-TerminalArgTitle=--title=
++X-TerminalArgAppId=--class=
++X-TerminalArgDir=--working-directory=
++X-TerminalArgHold=--wait-after-command
++DBusActivatable=true
++X-KDE-Shortcuts=Ctrl+Alt+T
++
++[Desktop Action new-window]
++Name=New Window
++Exec=ghostty --gtk-single-instance=true
+diff --git a/guest/tests/fixtures/ghostty-1.4.0-1/dbus-com.mitchellh.ghostty.service b/guest/tests/fixtures/ghostty-1.4.0-1/dbus-com.mitchellh.ghostty.service
+new file mode 100644
+index 0000000..b5da2f7
+--- /dev/null
++++ b/guest/tests/fixtures/ghostty-1.4.0-1/dbus-com.mitchellh.ghostty.service
+@@ -0,0 +1,4 @@
++[D-BUS Service]
++Name=com.mitchellh.ghostty
++SystemdService=app-com.mitchellh.ghostty.service
++Exec=ghostty --gtk-single-instance=true --initial-window=false
+diff --git a/guest/tests/test_aquamarine_contract.py b/guest/tests/test_aquamarine_contract.py
+index 69ecfdb..2e15176 100644
+--- a/guest/tests/test_aquamarine_contract.py
++++ b/guest/tests/test_aquamarine_contract.py
+@@ -76,7 +76,7 @@ class AquamarineContractTests(unittest.TestCase):
+         runtime = (GUEST / 'scripts/register-omarchy-runtime.sh').read_text()
+         self.assertIn('depend = aquamarine>={version}', runtime)
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=73', finalizer)
++        self.assertIn('compat_revision=74', finalizer)
+         self.assertIn('cp /usr/share/try-omarchy/repo/*.pkg.tar.zst', finalizer)
+         self.assertIn('usr/share/try-omarchy/skel-fragments/hypr-monitors-qemu.append.lua', finalizer)
+         repo = (GUEST / 'scripts/register-local-repository.sh').read_text()
+diff --git a/guest/tests/test_battery_details.py b/guest/tests/test_battery_details.py
+index d92b03e..fa35337 100644
+--- a/guest/tests/test_battery_details.py
++++ b/guest/tests/test_battery_details.py
+@@ -204,7 +204,7 @@ class BatteryDetailsFlowTests(unittest.TestCase):
+     def test_compatibility_delivery_and_dkms_version(self):
+         overlay = GUEST / "factory-overlay"
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=73", finalize)
++        self.assertIn("compat_revision=74", finalize)
+         self.assertIn("usr/src/try-omarchy-battery-1.1.0", finalize)
+         self.assertIn("usr/local/lib/try-omarchy/update-battery-dkms", finalize)
+         self.assertIn('PACKAGE_VERSION="1.1.0"', (MODULE_SOURCE.parent / "dkms.conf").read_text())
+diff --git a/guest/tests/test_clipboard_pull.py b/guest/tests/test_clipboard_pull.py
+index 7277c7a..f40d296 100644
+--- a/guest/tests/test_clipboard_pull.py
++++ b/guest/tests/test_clipboard_pull.py
+@@ -71,4 +71,4 @@ class ClipboardPullTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn('usr/local/bin/clipboard-bridge', paths)
+-        self.assertIn('compat_revision=73', finalizer)
++        self.assertIn('compat_revision=74', finalizer)
+diff --git a/guest/tests/test_compositor_health.py b/guest/tests/test_compositor_health.py
+index 995c04e..126fbb1 100644
+--- a/guest/tests/test_compositor_health.py
++++ b/guest/tests/test_compositor_health.py
+@@ -55,7 +55,7 @@ class CompositorHealthTests(unittest.TestCase):
+ 
+     def test_existing_disks_receive_health_files(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=73', finalizer)
++        self.assertIn('compat_revision=74', finalizer)
+         for name in ['agent', 'compositor-health']:
+             self.assertIn('  usr/local/lib/try-omarchy/' + name, finalizer)
+         self.assertTrue(HELPER.stat().st_mode & 0o111)
+diff --git a/guest/tests/test_desktop_drawn.py b/guest/tests/test_desktop_drawn.py
+index e18e76b..d28e3ef 100644
+--- a/guest/tests/test_desktop_drawn.py
++++ b/guest/tests/test_desktop_drawn.py
+@@ -296,7 +296,7 @@ class AgentTests(unittest.TestCase):
+ 
+     def test_existing_disks_receive_the_probe(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=73', finalizer)
++        self.assertIn('compat_revision=74', finalizer)
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
+         for name in ['agent', 'desktop-drawn']:
+             self.assertIn('usr/local/lib/try-omarchy/' + name, paths)
+diff --git a/guest/tests/test_ghostty_gl.py b/guest/tests/test_ghostty_gl.py
+new file mode 100644
+index 0000000..659d725
+--- /dev/null
++++ b/guest/tests/test_ghostty_gl.py
+@@ -0,0 +1,333 @@
++import configparser
++import os
++from pathlib import Path
++import subprocess
++import tempfile
++import unittest
++
++GUEST = Path(__file__).resolve().parents[1]
++OVERLAY = GUEST / 'factory-overlay'
++LIB = OVERLAY / 'usr/local/lib/try-omarchy'
++HELPER = LIB / 'ghostty-gl'
++WRAPPER = LIB / 'ghostty'
++PROBE = LIB / 'ghostty-gl-probe'
++DROP_IN = OVERLAY / 'etc/systemd/user/app-com.mitchellh.ghostty.service.d/10-try-omarchy-gl.conf'
++PROBE_UNIT = OVERLAY / 'usr/lib/systemd/user/try-omarchy-ghostty-gl.service'
++HOOK = OVERLAY / 'etc/pacman.d/hooks/try-omarchy-ghostty-gl.hook'
++CATCH_UP = LIB / 'catch-up'
++# The unit, D-Bus service and desktop entry from Arch's ghostty 1.4.0-1
++# (sha256 84774165c8fd9214d2eae42bdb730d6f9f850e87e5e70869f73795552c2da31c),
++# which installs them as usr/lib/systemd/user/app-com.mitchellh.ghostty.service,
++# usr/share/dbus-1/services/com.mitchellh.ghostty.service and
++# usr/share/applications/com.mitchellh.ghostty.desktop next to usr/bin/ghostty.
++ARCH = GUEST / 'tests/fixtures/ghostty-1.4.0-1'
++
++GPU = 'root=/dev/vda omarchy.qemu=1 tryomarchy.render=gpu quiet\n'
++CPU = 'root=/dev/vda omarchy.qemu=1 tryomarchy.render=cpu quiet\n'
++OVERRIDE = {'MESA_GL_VERSION_OVERRIDE': '4.3', 'MESA_GLSL_VERSION_OVERRIDE': '430'}
++
++
++def unit(text):
++    parser = configparser.ConfigParser(strict=False, interpolation=None)
++    parser.optionxform = str
++    parser.read_string(text)
++    return parser
++
++
++class GhosttyGlTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.root = Path(self.tmp.name)
++        self.runtime = self.root / 'run-user'
++        self.runtime.mkdir(mode=0o700)
++        self.cmdline = self.root / 'cmdline'
++        self.cmdline.write_text(GPU)
++        self.probe_log = self.root / 'probed'
++        self.probe = self.root / 'probe'
++        self.ghostty = self.root / 'usr/bin/ghostty'
++        self.link = self.root / 'usr/local/bin/ghostty'
++
++    def fake_probe(self, body):
++        self.probe.write_text(f'#!/bin/sh\necho run >> {self.probe_log}\n{body}\n')
++        self.probe.chmod(0o755)
++
++    def fake_ghostty(self):
++        # Prints the two variables as Ghostty's process would see them.
++        self.ghostty.parent.mkdir(parents=True, exist_ok=True)
++        self.ghostty.write_text('#!/bin/sh\necho "GL=${MESA_GL_VERSION_OVERRIDE-unset} '
++                                'GLSL=${MESA_GLSL_VERSION_OVERRIDE-unset} ARGS=$*"\n')
++        self.ghostty.chmod(0o755)
++
++    def env(self, **extra):
++        env = {key: value for key, value in os.environ.items() if not key.startswith('MESA_')}
++        env.update({'XDG_RUNTIME_DIR': str(self.runtime), 'TRY_OMARCHY_CMDLINE': str(self.cmdline),
++                    'TRY_OMARCHY_GHOSTTY_GL_PROBE': str(self.probe), 'TRY_OMARCHY_GHOSTTY_GL': str(HELPER),
++                    'TRY_OMARCHY_GHOSTTY_BIN': str(self.ghostty), 'TRY_OMARCHY_GHOSTTY_LINK': str(self.link),
++                    'TRY_OMARCHY_GHOSTTY_WRAPPER': str(WRAPPER)})
++        env.update(extra)
++        return env
++
++    def helper(self, *args, **extra):
++        return subprocess.run(['bash', str(HELPER), *args], env=self.env(**extra), text=True, capture_output=True)
++
++    def decision(self):
++        """The variables the env file sets, as systemd's EnvironmentFile reads it."""
++        result = self.helper('env')
++        self.assertEqual(result.returncode, 0, result.stderr)
++        path = Path(result.stdout.strip())
++        self.assertEqual(path, self.runtime / 'try-omarchy/ghostty-gl.env')
++        values = {}
++        for line in path.read_text().splitlines():
++            if line and not line.startswith('#'):
++                key, value = line.split('=', 1)
++                values[key] = value
++        return values
++
++    def test_only_a_renderer_that_stops_at_4_2_gets_the_override(self):
++        cases = [
++            ('echo 4.2', OVERRIDE, 'virgl on the Intel host in #383'),
++            ('echo 4.3', {}, 'virgl on an AMD host'),
++            ('echo 4.6', {}, 'a host that offers more'),
++            ('echo 4.1', {}, 'too far below 4.3 to claim it'),
++        ]
++        for body, expected, why in cases:
++            with self.subTest(why):
++                (self.runtime / 'try-omarchy/ghostty-gl.env').unlink(missing_ok=True)
++                self.fake_probe(body)
++                self.assertEqual(self.decision(), expected)
++
++    def test_a_failed_probe_is_not_saved(self):
++        env_file = self.runtime / 'try-omarchy/ghostty-gl.env'
++        for body in ('exit 1', 'echo nonsense', 'sleep 30'):
++            with self.subTest(body):
++                self.fake_probe(body)
++                result = self.helper('env', TRY_OMARCHY_GHOSTTY_GL_RETRY='0')
++                self.assertNotEqual(result.returncode, 0)
++                self.assertEqual(result.stdout, '')
++                self.assertFalse(env_file.exists())
++
++    def test_failure_then_success_gives_the_override_on_the_next_start(self):
++        self.fake_ghostty()
++        self.fake_probe('exit 1')
++        self.assertEqual(self.wrapper(TRY_OMARCHY_GHOSTTY_GL_RETRY='0').stdout, 'GL=unset GLSL=unset ARGS=\n')
++        self.fake_probe('echo 4.2')
++        self.assertEqual(self.wrapper(TRY_OMARCHY_GHOSTTY_GL_RETRY='0').stdout, 'GL=4.3 GLSL=430 ARGS=\n')
++        self.assertEqual(self.probe_log.read_text(), 'run\nrun\n')
++        self.assertFalse((self.runtime / 'try-omarchy/ghostty-gl.failed').exists())
++
++    def test_starts_right_after_a_failure_do_not_probe_again(self):
++        self.fake_probe('exit 1')
++        self.assertNotEqual(self.helper('env').returncode, 0)
++        self.fake_probe('echo 4.2')
++        self.assertNotEqual(self.helper('env').returncode, 0)
++        self.assertEqual(self.probe_log.read_text(), 'run\n')
++        # Once the retry delay has passed, the next start probes again.
++        failed = self.runtime / 'try-omarchy/ghostty-gl.failed'
++        os.utime(failed, (failed.stat().st_mtime - 60,) * 2)
++        self.assertEqual(self.decision(), OVERRIDE)
++
++    def concurrent(self, count):
++        env = self.env()
++        processes = [subprocess.Popen(['bash', str(HELPER), 'env'], env=env, text=True,
++                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(count)]
++        return [(process.wait(timeout=30), process.stdout.read().strip()) for process in processes]
++
++    def test_concurrent_starts_share_one_probe(self):
++        self.fake_probe('sleep 1; echo 4.2')
++        results = self.concurrent(6)
++        env_file = str(self.runtime / 'try-omarchy/ghostty-gl.env')
++        self.assertEqual(results, [(0, env_file)] * 6)
++        self.assertEqual(self.probe_log.read_text(), 'run\n')
++        self.assertEqual(self.decision(), OVERRIDE)
++
++    def test_concurrent_starts_after_a_failure_share_one_probe(self):
++        self.fake_probe('sleep 1; exit 1')
++        results = self.concurrent(6)
++        self.assertEqual([code for code, _ in results], [1] * 6)
++        self.assertEqual(self.probe_log.read_text(), 'run\n')
++
++    def test_cpu_rendering_is_left_alone_without_probing(self):
++        self.cmdline.write_text(CPU)
++        self.fake_probe('echo 4.2')
++        self.assertEqual(self.decision(), {})
++        self.assertFalse(self.probe_log.exists())
++
++    def test_the_decision_is_made_once_per_login(self):
++        self.fake_probe('echo 4.2')
++        self.assertEqual(self.decision(), OVERRIDE)
++        self.fake_probe('echo 4.6')
++        self.assertEqual(self.decision(), OVERRIDE)
++        self.assertEqual(self.probe_log.read_text(), 'run\n')
++        # A new login (or boot) starts with an empty runtime directory.
++        (self.runtime / 'try-omarchy/ghostty-gl.env').unlink()
++        self.assertEqual(self.decision(), {})
++
++    def test_no_runtime_directory_means_no_file(self):
++        self.fake_probe('echo 4.2')
++        result = self.helper('env', XDG_RUNTIME_DIR=str(self.root / 'missing'))
++        self.assertNotEqual(result.returncode, 0)
++        self.assertEqual(result.stdout, '')
++
++    def wrapper(self, *args, **extra):
++        return subprocess.run(['bash', str(WRAPPER), *args], env=self.env(**extra), text=True, capture_output=True)
++
++    def test_the_wrapper_passes_the_decision_to_ghostty(self):
++        self.fake_ghostty()
++        self.fake_probe('echo 4.2')
++        result = self.wrapper('--gtk-single-instance=true', '-e', 'echo hi')
++        self.assertEqual(result.stdout, 'GL=4.3 GLSL=430 ARGS=--gtk-single-instance=true -e echo hi\n')
++        (self.runtime / 'try-omarchy/ghostty-gl.env').unlink()
++        self.fake_probe('echo 4.3')
++        self.assertEqual(self.wrapper('+new-window').stdout, 'GL=unset GLSL=unset ARGS=+new-window\n')
++
++    def test_the_wrapper_keeps_an_override_already_set(self):
++        # The service's EnvironmentFile, or the user's own choice, already set it.
++        self.fake_ghostty()
++        self.fake_probe('echo 4.2')
++        result = self.wrapper(MESA_GL_VERSION_OVERRIDE='4.6')
++        self.assertEqual(result.stdout, 'GL=4.6 GLSL=unset ARGS=\n')
++        self.assertFalse(self.probe_log.exists())
++
++    def test_the_wrapper_reads_only_the_two_variables(self):
++        self.fake_ghostty()
++        env_file = self.runtime / 'try-omarchy/ghostty-gl.env'
++        env_file.parent.mkdir()
++        env_file.write_text('LD_PRELOAD=/tmp/x.so\nMESA_GL_VERSION_OVERRIDE=$(id)\nMESA_GLSL_VERSION_OVERRIDE=430\n')
++        self.fake_probe('exit 1')
++        self.assertEqual(self.wrapper().stdout, 'GL=unset GLSL=430 ARGS=\n')
++
++    def test_the_wrapper_still_starts_ghostty_when_the_helper_fails(self):
++        self.fake_ghostty()
++        result = self.wrapper(TRY_OMARCHY_GHOSTTY_GL=str(self.root / 'missing'), XDG_RUNTIME_DIR='')
++        self.assertEqual((result.returncode, result.stdout), (0, 'GL=unset GLSL=unset ARGS=\n'))
++
++    def test_the_wrapper_reports_a_missing_ghostty(self):
++        self.fake_probe('echo 4.2')
++        result = self.wrapper()
++        self.assertEqual(result.returncode, 127)
++        self.assertIn('not installed', result.stderr)
++
++    def test_the_link_follows_the_package(self):
++        # Not installed: nothing on PATH, so Omarchy still offers to install it.
++        self.assertEqual(self.helper('link').returncode, 0)
++        self.assertFalse(self.link.exists() or self.link.is_symlink())
++        self.fake_ghostty()
++        result = self.helper('link')
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(os.readlink(self.link), str(WRAPPER))
++        self.assertEqual(self.helper('link').stdout, '')
++        self.ghostty.unlink()
++        self.helper('link')
++        self.assertFalse(self.link.exists() or self.link.is_symlink())
++
++    def test_the_link_leaves_other_files_alone(self):
++        self.link.parent.mkdir(parents=True)
++        for make in (lambda: self.link.write_text('#!/bin/sh\nmine\n'), lambda: self.link.symlink_to('/opt/ghostty/bin/ghostty')):
++            with self.subTest(make=make):
++                if self.link.is_symlink() or self.link.exists():
++                    self.link.unlink()
++                make()
++                before = (self.link.is_symlink(), os.readlink(self.link) if self.link.is_symlink() else self.link.read_text())
++                for installed in (False, True):
++                    if installed:
++                        self.fake_ghostty()
++                    else:
++                        self.ghostty.unlink(missing_ok=True)
++                    self.helper('link')
++                    after = (self.link.is_symlink(), os.readlink(self.link) if self.link.is_symlink() else self.link.read_text())
++                    self.assertEqual(after, before)
++
++    def test_catch_up_links_at_every_boot(self):
++        version = self.root / 'compat-version'
++        version.write_text('74:7.2.15-arch1-1\n')
++        state = self.root / 'state'
++        homes = self.root / 'home'
++        homes.mkdir()
++        log = self.root / 'linked'
++        helper = self.root / 'helper'
++        helper.write_text(f'#!/bin/sh\necho "$@" >> {log}\nexit 1\n')
++        helper.chmod(0o755)
++        env = {**os.environ, 'TRY_OMARCHY_COMPAT_VERSION': str(version), 'TRY_OMARCHY_STATE_DIR': str(state),
++               'TRY_OMARCHY_HOMES': str(homes), 'TRY_OMARCHY_PACMAN_LAYER': '/nonexistent',
++               'TRY_OMARCHY_GHOSTTY_GL': str(helper), 'TRY_OMARCHY_HEADERS_HOLD': '/nonexistent',
++               'TRY_OMARCHY_SSHD_CONFIG_DIR': str(self.root / 'sshd'), 'TRY_OMARCHY_TERMINAL_SHIM': str(self.root / 'shim')}
++        for name in ('QOL', 'BATTERY', 'NIGHTLIGHT', 'NOTIFICATIONS', 'PALETTE'):
++            env[f'TRY_OMARCHY_{name}_INSTALLER'] = '/nonexistent'
++        for _ in range(2):
++            result = subprocess.run(['bash', str(CATCH_UP)], env=env, text=True, capture_output=True)
++            self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(log.read_text(), 'link\nlink\n')
++        self.assertEqual((state / 'catch-up-revision').read_text(), '74\n')
++
++
++class GhosttyWiringTests(unittest.TestCase):
++    """The pieces match the names and commands Arch's Ghostty package ships."""
++
++    def test_the_drop_in_is_for_the_service_d_bus_activation_starts(self):
++        dbus = unit((ARCH / 'dbus-com.mitchellh.ghostty.service').read_text())
++        service = dbus['D-BUS Service']['SystemdService']
++        self.assertEqual(service, 'app-com.mitchellh.ghostty.service')
++        self.assertTrue((ARCH / service).is_file())
++        self.assertEqual(DROP_IN.parent.name, service + '.d')
++        desktop = unit((ARCH / 'com.mitchellh.ghostty.desktop').read_text())
++        self.assertEqual(desktop['Desktop Entry']['DBusActivatable'], 'true')
++        self.assertEqual(dbus['D-BUS Service']['Name'], 'com.mitchellh.ghostty')
++
++    def test_the_drop_in_reads_the_file_the_helper_writes(self):
++        drop_in = unit(DROP_IN.read_text())
++        self.assertEqual(drop_in['Service']['EnvironmentFile'], '-%t/try-omarchy/ghostty-gl.env')
++        self.assertIn('$runtime/try-omarchy', HELPER.read_text())
++        self.assertIn('file=$dir/ghostty-gl.env', HELPER.read_text())
++        self.assertEqual(drop_in['Unit']['Wants'], PROBE_UNIT.name)
++        self.assertEqual(drop_in['Unit']['After'], PROBE_UNIT.name)
++        probe_unit = unit(PROBE_UNIT.read_text())
++        # It runs before every start of the service, so a failed probe is
++        # retried, and its failure never keeps Ghostty from starting.
++        self.assertEqual(probe_unit['Service']['Type'], 'oneshot')
++        self.assertNotIn('RemainAfterExit', probe_unit['Service'])
++        self.assertEqual(probe_unit['Service']['ExecStart'], '-/usr/local/lib/try-omarchy/ghostty-gl env')
++        self.assertNotIn('Requires', drop_in['Unit'])
++
++    def test_every_packaged_command_finds_the_wrapper_first(self):
++        # systemd and every PATH in the session search /usr/local/bin before
++        # /usr/bin, so the bare ghostty in these lines resolves to the link.
++        service = unit((ARCH / 'app-com.mitchellh.ghostty.service').read_text())
++        dbus = unit((ARCH / 'dbus-com.mitchellh.ghostty.service').read_text())
++        desktop = unit((ARCH / 'com.mitchellh.ghostty.desktop').read_text())
++        for line in (service['Service']['ExecStart'], dbus['D-BUS Service']['Exec'],
++                     desktop['Desktop Entry']['Exec'], desktop['Desktop Action new-window']['Exec'],
++                     desktop['Desktop Entry']['TryExec']):
++            self.assertEqual(line.split()[0], 'ghostty', line)
++        helper = HELPER.read_text()
++        self.assertIn('ghostty_link=${TRY_OMARCHY_GHOSTTY_LINK:-/usr/local/bin/ghostty}', helper)
++        self.assertIn('ghostty_bin=${TRY_OMARCHY_GHOSTTY_BIN:-/usr/bin/ghostty}', helper)
++        self.assertIn('ghostty_bin=${TRY_OMARCHY_GHOSTTY_BIN:-/usr/bin/ghostty}', WRAPPER.read_text())
++
++    def test_the_hook_follows_the_packaged_binary(self):
++        hook = HOOK.read_text()
++        self.assertIn('Type = Path\nTarget = usr/bin/ghostty\n', hook)
++        for operation in ('Install', 'Upgrade', 'Remove'):
++            self.assertIn(f'Operation = {operation}\n', hook)
++        self.assertIn('When = PostTransaction\nExec = /usr/local/lib/try-omarchy/ghostty-gl link\n', hook)
++
++    def test_existing_disks_get_every_piece(self):
++        finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
++        paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
++        for path in (HELPER, WRAPPER, PROBE, PROBE_UNIT, DROP_IN, HOOK):
++            self.assertIn(str(path.relative_to(OVERLAY)), paths)
++        self.assertIn('compat_revision=74', finalizer)
++        for path in (HELPER, WRAPPER, PROBE):
++            self.assertTrue(os.access(path, os.X_OK), path)
++
++    def test_the_probe_reports_a_version_or_fails(self):
++        result = subprocess.run([str(PROBE)], text=True, capture_output=True, timeout=30)
++        self.assertIn(result.returncode, (0, 1))
++        if result.returncode == 0:
++            self.assertRegex(result.stdout, r'^[34]\.[0-9]\n$')
++        else:
++            self.assertEqual(result.stdout, '')
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/guest/tests/test_guest_qol.py b/guest/tests/test_guest_qol.py
+index 7f21f75..39989ea 100644
+--- a/guest/tests/test_guest_qol.py
++++ b/guest/tests/test_guest_qol.py
+@@ -225,7 +225,7 @@ class GuestQolTests(unittest.TestCase):
+     def test_compatibility_delivers_guarded_payload_once_per_revision(self):
+         finalize = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalize.split("compat_paths=(", 1)[1].split(")", 1)[0]
+-        self.assertIn("compat_revision=73", finalize)
++        self.assertIn("compat_revision=74", finalize)
+         for path in ("usr/local/bin/omarchy-native-screensaver-text", "usr/local/lib/try-omarchy/install-guest-qol", "usr/share/try-omarchy/guest-qol", "usr/local/bin/omarchy-windows-audio-bridge"):
+             self.assertIn(path, paths)
+         self.assertNotIn("etc/fonts/conf.d/30-try-omarchy.conf", paths)
+diff --git a/guest/tests/test_kernel_headers_hold.py b/guest/tests/test_kernel_headers_hold.py
+index 1a1a066..bc3e97d 100644
+--- a/guest/tests/test_kernel_headers_hold.py
++++ b/guest/tests/test_kernel_headers_hold.py
+@@ -133,7 +133,7 @@ class HoldTests(unittest.TestCase):
+         finalize = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalize.split('compat_paths=(', 1)[1].split(')', 1)[0].split()
+         self.assertIn('usr/local/lib/try-omarchy/hold-kernel-headers', paths)
+-        self.assertIn('compat_revision=73', finalize)
++        self.assertIn('compat_revision=74', finalize)
+         self.assertTrue(os.access(HOLD, os.X_OK))
+ 
+ 
+diff --git a/guest/tests/test_live_update.py b/guest/tests/test_live_update.py
+index fdaeca9..1c62a49 100644
+--- a/guest/tests/test_live_update.py
++++ b/guest/tests/test_live_update.py
+@@ -176,7 +176,7 @@ class LiveUpdateTests(unittest.TestCase):
+ 
+     def test_delivery_and_best_effort_hook(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+-        self.assertIn('compat_revision=73', finalizer)
++        self.assertIn('compat_revision=74', finalizer)
+         for path in ['usr/local/lib/try-omarchy/live-update', 'etc/pacman.d/hooks/00-try-omarchy-live-update.hook', 'etc/pacman.d/hooks/zz-try-omarchy-live-update.hook']:
+             self.assertIn(path, finalizer)
+         pre = (GUEST / 'factory-overlay/etc/pacman.d/hooks/00-try-omarchy-live-update.hook').read_text()
+diff --git a/guest/tests/test_native_nightlight.py b/guest/tests/test_native_nightlight.py
+index fa23267..b74fda7 100644
+--- a/guest/tests/test_native_nightlight.py
++++ b/guest/tests/test_native_nightlight.py
+@@ -214,5 +214,5 @@ class PersistentNightlightTests(unittest.TestCase):
+         catch_up = (self.overlay / 'usr/local/lib/try-omarchy/catch-up').read_text()
+         for path in ['usr/local/bin/omarchy-native-nightlight', 'usr/local/share/try-omarchy/nightlight.frag', 'usr/local/lib/try-omarchy/install-nightlight', 'usr/share/try-omarchy/nightlight']:
+             self.assertIn(path, finalizer)
+-        self.assertIn('compat_revision=73', finalizer)
++        self.assertIn('compat_revision=74', finalizer)
+         self.assertIn('previous_revision < 55', catch_up)
+diff --git a/guest/tests/test_notification_privacy.py b/guest/tests/test_notification_privacy.py
+index 8ea6f97..71bb92e 100644
+--- a/guest/tests/test_notification_privacy.py
++++ b/guest/tests/test_notification_privacy.py
+@@ -116,7 +116,7 @@ for (const state of [null, {screensaverStateKnown:false}, {screensaverStateKnown
+     def test_compatibility_overlay_and_catch_up_revision(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         catch_up = (GUEST / 'factory-overlay/usr/local/lib/try-omarchy/catch-up').read_text()
+-        self.assertIn('compat_revision=73', finalizer)
++        self.assertIn('compat_revision=74', finalizer)
+         self.assertIn('usr/share/try-omarchy/notifications', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-notifications', finalizer)
+         self.assertIn('previous_revision < 52', catch_up)
+diff --git a/guest/tests/test_qt612_palette.py b/guest/tests/test_qt612_palette.py
+index c17b0f9..7cc9ea0 100644
+--- a/guest/tests/test_qt612_palette.py
++++ b/guest/tests/test_qt612_palette.py
+@@ -170,7 +170,7 @@ class Qt612PaletteTests(unittest.TestCase):
+     def test_compatibility_delivery_runs_after_older_repairs_and_before_login(self):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+-        self.assertIn('compat_revision=73', finalizer)
++        self.assertIn('compat_revision=74', finalizer)
+         self.assertIn('usr/local/lib/try-omarchy/install-qt612-palette', paths)
+         self.assertIn('usr/share/try-omarchy/qt612-palette', paths)
+         self.assertEqual(self.build_spec['upstream']['packageRelease'], 16)
+diff --git a/guest/tests/test_refresh_pacman.py b/guest/tests/test_refresh_pacman.py
+index ce4056a..5600629 100644
+--- a/guest/tests/test_refresh_pacman.py
++++ b/guest/tests/test_refresh_pacman.py
+@@ -157,7 +157,7 @@ class BackportTests(unittest.TestCase):
+         copies = finalize.index('install -D -m 0644 "/usr/bin/$command" "/usr/share/try-omarchy/refresh-pacman/$command"')
+         self.assertLess(copies, finalize.index('tar -C / -cf /usr/share/try-omarchy/compat-overlay.tar'))
+         self.assertIn('for command in omarchy-refresh-pacman omarchy-reinstall-pkgs; do', finalize)
+-        self.assertIn('compat_revision=73', finalize)
++        self.assertIn('compat_revision=74', finalize)
+         self.assertTrue(os.access(LAYER, os.X_OK))
+         configure = (GUEST / 'scripts/configure-rootfs.sh').read_text()
+         self.assertIn('install -D -m 0644 /etc/pacman.d/mirrorlist "$root/usr/share/try-omarchy/arch-mirrorlist"',
+@@ -386,7 +386,7 @@ class LayerTests(unittest.TestCase):
+     def test_catch_up_runs_the_pacman_layer_at_every_boot(self):
+         state = self.root / 'state'
+         version = self.root / 'compat-version'
+-        version.write_text('73:7.2.15-arch1-1\n')
++        version.write_text('74:7.2.15-arch1-1\n')
+         homes = self.root / 'home'
+         homes.mkdir()
+         log = self.root / 'repaired'
+@@ -396,13 +396,13 @@ class LayerTests(unittest.TestCase):
+         env = {**os.environ, 'TRY_OMARCHY_COMPAT_VERSION': str(version), 'TRY_OMARCHY_STATE_DIR': str(state),
+                'TRY_OMARCHY_HOMES': str(homes), 'TRY_OMARCHY_PACMAN_LAYER': str(layer),
+                'TRY_OMARCHY_HEADERS_HOLD': '/nonexistent', 'TRY_OMARCHY_SSHD_CONFIG_DIR': str(self.root / 'sshd'),
+-               'TRY_OMARCHY_TERMINAL_SHIM': str(self.root / 'shim')}
++               'TRY_OMARCHY_TERMINAL_SHIM': str(self.root / 'shim'), 'TRY_OMARCHY_GHOSTTY_GL': '/nonexistent'}
+         for name in ('QOL', 'BATTERY', 'NIGHTLIGHT', 'NOTIFICATIONS', 'PALETTE'):
+             env[f'TRY_OMARCHY_{name}_INSTALLER'] = '/nonexistent'
+         runs = []
+         # A first boot with no marker, older revisions, then the same revision
+         # again (later boots), where the other steps no longer run.
+-        for previous in ['', '68', '70', '71', '72', '73', '73']:
++        for previous in ['', '68', '70', '71', '72', '73', '74', '74']:
+             state.mkdir(exist_ok=True)
+             marker = state / 'catch-up-revision'
+             marker.unlink(missing_ok=True)
+@@ -411,15 +411,15 @@ class LayerTests(unittest.TestCase):
+             log.unlink(missing_ok=True)
+             result = subprocess.run(['bash', str(CATCH_UP)], env=env, text=True, capture_output=True)
+             self.assertEqual(result.returncode, 0, result.stderr)
+-            self.assertEqual(marker.read_text(), '73\n')
++            self.assertEqual(marker.read_text(), '74\n')
+             runs.append(log.read_text() if log.exists() else None)
+-        self.assertEqual(runs, ['commands\nrepair\n'] * 7)
++        self.assertEqual(runs, ['commands\nrepair\n'] * 8)
+         # A failing helper does not stop the boot or the other steps.
+         layer.write_text(f'#!/bin/sh\necho "$@" >> {log}\nexit 1\n')
+         marker.write_text('72\n')
+         log.unlink()
+         result = subprocess.run(['bash', str(CATCH_UP)], env=env, text=True, capture_output=True)
+-        self.assertEqual((result.returncode, log.read_text(), marker.read_text()), (0, 'commands\nrepair\n', '73\n'))
++        self.assertEqual((result.returncode, log.read_text(), marker.read_text()), (0, 'commands\nrepair\n', '74\n'))
+ 
+ 
+ class CommandsTests(unittest.TestCase):
+diff --git a/guest/tests/test_snapper_guest.py b/guest/tests/test_snapper_guest.py
+index 11b22d3..6e8a748 100644
+--- a/guest/tests/test_snapper_guest.py
++++ b/guest/tests/test_snapper_guest.py
+@@ -44,5 +44,5 @@ class GuestSnapperTests(unittest.TestCase):
+         finalizer = (GUEST / 'scripts/finalize-rootfs.sh').read_text()
+         paths = finalizer.split('compat_paths=(', 1)[1].split(')', 1)[0]
+         self.assertIn(TARGET, paths)
+-        self.assertIn('compat_revision=73', finalizer)
++        self.assertIn('compat_revision=74', finalizer)
+         self.assertEqual(json.loads((GUEST / 'spec.json').read_text())['upstream']['packageRelease'], 16)
+diff --git a/guest/tests/test_url_schemes.py b/guest/tests/test_url_schemes.py
+index 1986313..883b7ca 100644
+--- a/guest/tests/test_url_schemes.py
++++ b/guest/tests/test_url_schemes.py
+@@ -398,7 +398,7 @@ class DeliveryTests(unittest.TestCase):
+     def test_revision_62_delivers_the_link_helper(self) -> None:
+         finalizer = (GUEST / "scripts/finalize-rootfs.sh").read_text()
+         paths = finalizer.split("compat_paths=(", 1)[1].split(")", 1)[0].split()
+-        self.assertIn("compat_revision=73", finalizer)
++        self.assertIn("compat_revision=74", finalizer)
+         self.assertIn("# Revision 62 opens links from Windows for approved URL schemes.", finalizer)
+         for path in ("usr/local/lib/try-omarchy/url-schemes", "usr/local/lib/try-omarchy/agent"):
+             self.assertIn(path, paths)
+diff --git a/guest/tests/test_windows_volume_sync.py b/guest/tests/test_windows_volume_sync.py
+index aa5893a..dfa3013 100644
+--- a/guest/tests/test_windows_volume_sync.py
++++ b/guest/tests/test_windows_volume_sync.py
+@@ -285,7 +285,7 @@ class VolumeSyncTests(unittest.TestCase):
+ 
+     def test_revision_delivers_bridge_to_existing_disks(self):
+         finalize = (Path(__file__).resolve().parents[1] / "scripts/finalize-rootfs.sh").read_text()
+-        self.assertIn("compat_revision=73", finalize)
++        self.assertIn("compat_revision=74", finalize)
+         self.assertIn("usr/local/bin/omarchy-windows-audio-bridge", finalize)
+ 
+ 
+diff --git a/guest/tests/verify.py b/guest/tests/verify.py
+index a461ed7..c1b7f8a 100755
+--- a/guest/tests/verify.py
++++ b/guest/tests/verify.py
+@@ -352,13 +352,21 @@ def main() -> None:
+         in read(GUEST / "factory-overlay/usr/local/lib/try-omarchy/agent"),
+         "the agent reports a drawn desktop on new and existing disks",
+     )
++    # Ghostty needs OpenGL 4.3; where virgl offers only 4.2 it gets an override.
++    check(
++        "usr/local/lib/try-omarchy/ghostty-gl" in compat_paths
++        and "etc/systemd/user/app-com.mitchellh.ghostty.service.d/10-try-omarchy-gl.conf" in compat_paths
++        and "etc/pacman.d/hooks/try-omarchy-ghostty-gl.hook" in compat_paths
++        and '"$ghostty_gl" link || true' in catch_up,
++        "Ghostty gets the OpenGL 4.3 override where virgl offers only 4.2, on new and existing disks",
++    )
+     watchdog_dropin = read(GUEST / "factory-overlay/etc/systemd/system/service.d/10-try-omarchy-watchdog.conf")
+     check(
+         "[Service]\nWatchdogSec=0\n" in watchdog_dropin,
+         "system services run without watchdogs, which fire after Windows sleeps",
+     )
+     check(
+-        "compat_revision=73" in finalize_rootfs
++        "compat_revision=74" in finalize_rootfs
+         and "usr/local/bin/mpv" in compat_paths
+         and "usr/share/dkms/modules_to_force_install/try-omarchy" in compat_paths
+         and "usr/local/lib/try-omarchy/try-omarchy-import.pyz" in compat_paths
+-- 
+2.56.1
+

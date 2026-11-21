@@ -108,6 +108,138 @@ now stops and shows as failed when its device is missing, instead of waiting
 as active.
 Patch 0179 refreshes the package lock, which brings in kernel 7.2.15.
 
+Patch 0181 lets `omarchy refresh pacman` finish (#408). Channel switches and
+package reinstalls run it too. Omarchy copies its stable templates over
+`pacman.conf` and the mirrorlist, then runs `pacman -Syyuu`, which may
+downgrade. The templates have no `[try-omarchy]` repository and no kernel hold,
+and they point Arch at Omarchy's stable mirror snapshot. The transaction tried
+to move the system back to that snapshot and was refused, since its aquamarine
+0.15.1 breaks the runtime's dependency, and the disk was left on the snapshot
+without the local repository or the hold. A reviewed patch to
+`omarchy-refresh-pacman`, guarded by its digests, has the new `pacman-layer`
+helper put back the `linux linux-headers` hold, `[try-omarchy]` after the Arch
+repositories and the Arch mirrorlist right after Omarchy writes its templates,
+before the user's `pre-refresh-pacman` hook, then syncs the package databases
+after the hook, so a hook that changes servers still applies. The mirrorlist
+is the one Omarchy saved as `.bak` when it lists Arch mirrors, otherwise the
+image's copy in `/usr/share/try-omarchy/arch-mirrorlist`. The guest still
+follows rolling Arch. The refresh and `omarchy-reinstall-pkgs` pass
+`--ignore aquamarine` to their `-uu` transactions while Arch offers the same
+version as the installed rebuild or an older one, so the patched build stays.
+A newer Arch release still replaces it, with a Hyprland that needs it.
+Compatibility revision 71 repairs disks a refused refresh already rewrote. It
+restores `pacman.conf.bak` only while `pacman.conf` is still exactly one of
+Omarchy's templates; an edited file keeps its edits and gets the hold and
+`[try-omarchy]` added. Runtime `4.5.0-16` carries the patched commands.
+
+Patch 0182 tells the launcher when the desktop is drawn, so it shows its
+window then instead of on a timer, which with CPU rendering showed a black
+window for several seconds. Agent version 7 runs the new `desktop-drawn`
+helper for each launcher connection. It reads Hyprland's layers over the
+compositor's own sockets until, on the first monitor, the shell's wallpaper
+layer and bar are mapped and its black startup cover is gone. The shell lifts
+that cover after 10 seconds even while the wallpaper is still being decoded,
+so the helper then takes a scaled-down `grim` capture as the session user and
+looks for a wallpaper where the bar, dock and notifications leave the screen
+free; the capture stays in memory. A dark wallpaper looks like an empty
+screen, so the helper reports 8 seconds after the layers anyway, and at once
+when the capture fails. After a half second settle it sends `desktop drawn`,
+once per session, under the agent's write lock. Launchers that do not know
+the line ignore it. Compatibility revision 72 delivers the agent and the
+helper to existing disks.
+
+Patch 0183 has the lock PAM tests set the modes of their `etc` and `pam.d`
+directories. They took them from the caller's umask, and under 0002 the
+repair rightly refused the group-writable directory, so the contract suite
+failed with Ubuntu's default umask.
+
+Patch 0184 only rewords the QEMU profile's comment on
+`quirks:skip_non_kms_dmabuf_formats` (patch 0152). Hyprland 0.57.1 made
+`false` the default again, so on the image's 0.57.2 the line restates it. It
+stays: catch-up writes the same fragment to existing disks, and one still on
+Hyprland 0.57.0 would get the black transparent layers back on GPU rendering.
+
+Patch 0185 closes the gap patch 0181 left before **Update > Omarchy**. The
+compatibility overlay reaches a disk before login, but the patched refresh
+only came with runtime `4.5.0-16`, and catch-up repaired a rewritten disk
+once. Running `omarchy refresh pacman` again before the update broke the disk
+again, and nothing put it back. Catch-up now runs `pacman-layer` at every
+boot, ahead of its revision check. Its new `commands` step puts the image's
+patched `omarchy-refresh-pacman` and `omarchy-reinstall-pkgs` over Omarchy
+4.5.0's, only when they match the reviewed originals' digests, so the first
+refresh already keeps the layer. The repair runs at every boot too, for
+runtimes that step leaves alone, such as 4.0.4. A healthy disk is read and not
+written, in about 5 ms, and the leave-alone rules are unchanged. Compatibility
+revision 73 delivers it; the runtime package is unchanged.
+
+Patch 0186 opens Ghostty where virgl offers only an OpenGL 4.2 core profile,
+as on Intel UHD 770 (#383). Ghostty asks EGL for 4.3, gets BadMatch and shows
+no window; with `MESA_GL_VERSION_OVERRIDE=4.3 MESA_GLSL_VERSION_OVERRIDE=430`
+it draws correctly. `ghostty-gl` decides once per login: CPU rendering is left
+alone, otherwise a surfaceless EGL probe finds the highest core profile the
+renderer creates, and only 4.2 gets the override. The answer is kept in
+`$XDG_RUNTIME_DIR`, so a new host GPU or render mode is probed again. A probe
+that fails or times out (5 seconds) saves nothing and the next start probes
+again; starts that race share one probe, and for ten seconds after a failure
+they open Ghostty without probing. The probe needs only the render node, not
+the compositor. Launchers
+start Ghostty by D-Bus activation of `app-com.mitchellh.ghostty.service`, which
+gets a drop-in that reads the answer. Every other start (xdg-terminal-exec, the
+screensaver, a typed `ghostty`, the unit's own `ExecStart`) runs a bare
+`ghostty`, so `/usr/local/bin/ghostty` links to a wrapper that applies it. A
+pacman hook keeps that link only while Ghostty is installed, so Omarchy still
+offers to install it, and catch-up sets it at every boot. The override reaches
+Ghostty and the programs started in its windows, not the rest of the session.
+Compatibility revision 74 delivers it; the runtime package is unchanged.
+
+Patch 0188 keeps each display window's pointer on its own output (#424). With
+more than one display the launcher gives every window its own virtio tablet,
+bound to its head, with the serial `try-omarchy-head-N` for the window showing
+`Virtual-(N+1)`. QEMU reports a window's pointer as 0 to 100% of that window
+and Hyprland spreads an absolute pointer over the box around all outputs, so
+with one tablet the pointer was only on screen over half of each window.
+Hyprland binds tablets and touch screens to an output but not this kind of
+pointer, so `head-tablets` gives each tablet a libinput calibration matrix that
+maps it onto its own output, found by name, with its position, mode, scale and
+rotation, as the Hyprland of the active seat0 session lays them out; a nested
+Hyprland or another account's is ignored. The udev rule imports the matrix from `/run/try-omarchy/head-tablets`,
+and the helper announces a tablet again when its matrix changes, since libinput
+reads it only when a device is added. It looks again on Hyprland's monitor and
+reload events, after a GPU hotplug (a window resize) and every five seconds.
+udev starts it for the first such tablet, so one display never runs it.
+Compatibility revision 75 delivers it; the runtime package is unchanged.
+
+Patch 0190 gives each display its own synced mode. Display sync applied every
+display's EDID mode through Omarchy's catch-all monitor rule in turn, so with
+two displays both outputs ended at the second one's mode. QEMU recreated the
+window of each output whose mode changed, the launcher put it back at its own
+size, and the EDID change that followed started the next round, until the
+start timed out. With several displays each output now gets its own
+`hl.monitor` rule. Hyprland cannot list its monitor rules, so when Hyprland
+starts or reloads, display sync runs the config Hyprland loads under Lua with
+`hl.monitor` recording, through the modules it requires on the search path
+Hyprland reports (Omarchy's defaults are not run), and keeps the answer for the
+resizes that follow, one change at a time. Each output a rule there names, by
+connector or `desc:`,
+is left alone. Event handlers run once after the config, so an output they
+name is seen, and Omarchy's command checks, which only look for files, run for
+real. The run fails closed: reading Hyprland's state, timers, a handler that
+uses its event, fails or changes the catch-all, running a command, writing a file, a config that does not end,
+or a catch-all value that is not plain finite data all leave every output
+alone; a module the config requires that is not there is an ordinary error it
+may catch. Registration calls (binds, rules, settings, devices, start commands)
+are ignored, so the stock config with the QEMU profile runs clean. A rule for one output starts from Hyprland's
+defaults, so it carries every other field of the catch-all, except a mirror of
+that output itself. The display panel of newer Omarchy keeps its choices by
+monitor in `~/.local/state/omarchy/monitors/settings` and applies them as rules
+for the connector; a mode or scale chosen there is kept, and only what the
+panel left open follows the window. An output left with a rule of its own
+after the other displays go away keeps following its window with only the
+fields display sync set there. One display keeps the catch-all rule and the
+mode recorded for config reloads. The contract tests need a Lua interpreter on
+the build host, so the guest jobs install one. Compatibility
+revision 76 delivers it; the runtime package is unchanged.
+
 Patch 0157 refreshes the guest package lock, which brings in Hyprland 0.57.1,
 aquamarine 0.16.0 and kernel 7.2.14. Patch 0158 re-pins the managed aquamarine
 rebuild to 0.16.0 as `0.16.0-1.1` with the same cursor hotspot patch and SONAME
