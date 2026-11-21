@@ -462,7 +462,7 @@
     FREE(resource);
  }
  
-@@ -540,10 +584,681 @@
+@@ -540,10 +584,726 @@
     return &res->base.b;
  }
  
@@ -564,6 +564,54 @@
 +   if (drm_fd < 0 || ioctl(drm_fd, DRM_IOCTL_VIRTGPU_RESOURCE_INFO, &info))
 +      return 0;
 +   return info.res_handle;
++}
++
++/*
++ * A descriptor of virtio-gpu's render node private to the lookup below: a
++ * dma-buf imported on it yields a GEM handle that is closed again at once.
++ * Importing on the winsys descriptor instead would leave a handle there,
++ * which keeps a client's buffer alive after the client frees it. Lock held.
++ */
++static int d3d12_scanout_probe = -2;   /* -1: none, -2: not tried */
++
++static int
++d3d12_scanout_probe_fd(void)
++{
++   if (d3d12_scanout_probe != -2)
++      return d3d12_scanout_probe;
++   d3d12_scanout_probe = -1;
++   for (int minor = 128; minor < 192; minor++) {
++      char path[32], name[16] = {};
++      snprintf(path, sizeof(path), "/dev/dri/renderD%d", minor);
++      int fd = open(path, O_RDWR | O_CLOEXEC);
++      if (fd < 0)
++         continue;
++      struct drm_version v = {};
++      v.name = name;
++      v.name_len = sizeof(name) - 1;
++      if (ioctl(fd, DRM_IOCTL_VERSION, &v) == 0 && !strcmp(name, "virtio_gpu")) {
++         d3d12_scanout_probe = fd;
++         break;
++      }
++      close(fd);
++   }
++   return d3d12_scanout_probe;
++}
++
++/* The virtio-gpu resource of a dma-buf; 0 if it is none. Lock held. */
++static uint32_t
++d3d12_scanout_dmabuf_id(int dmabuf_fd)
++{
++   int probe = d3d12_scanout_probe_fd();
++   struct drm_prime_handle prime = {};
++   prime.fd = dmabuf_fd;
++   if (probe < 0 || ioctl(probe, DRM_IOCTL_PRIME_FD_TO_HANDLE, &prime))
++      return 0;
++   uint32_t id = d3d12_scanout_resource_id(probe, prime.handle);
++   struct drm_gem_close gem = {};
++   gem.handle = prime.handle;
++   ioctl(probe, DRM_IOCTL_GEM_CLOSE, &gem);
++   return id;
 +}
 +
 +/* Links res (a shared texture) to the virtio-gpu buffer gpu_resource. */
@@ -698,11 +746,8 @@
 +
 +   simple_mtx_lock(&d3d12_scanout_lock);
 +   if (d3d12_scanout_count && drm_fd >= 0) {
-+      /* Our own buffers already have this handle on drm_fd: not closed. */
-+      struct drm_prime_handle prime = {};
-+      prime.fd = dmabuf_fd;
-+      if (ioctl(drm_fd, DRM_IOCTL_PRIME_FD_TO_HANDLE, &prime) == 0) {
-+         uint32_t id = d3d12_scanout_resource_id(drm_fd, prime.handle);
++      uint32_t id = d3d12_scanout_dmabuf_id(dmabuf_fd);
++      if (id) {
 +         struct d3d12_resource *res = id ? (struct d3d12_resource *)
 +            _mesa_hash_table_u64_search(d3d12_scanout_links, id) : NULL;
 +         bool retained = res && d3d12_scanout_try_reference(&owner, &res->base.b);
@@ -1144,7 +1189,7 @@
     struct d3d12_resource *res = CALLOC_STRUCT(d3d12_resource);
     if (!res)
        return NULL;
-@@ -557,6 +1272,13 @@
+@@ -557,6 +1317,13 @@
                            struct winsys_handle *handle, unsigned usage)
  {
     struct d3d12_screen *screen = d3d12_screen(pscreen);
@@ -1158,7 +1203,7 @@
     if (handle->type != WINSYS_HANDLE_TYPE_D3D12_RES &&
         handle->type != WINSYS_HANDLE_TYPE_FD &&
         handle->type != WINSYS_HANDLE_TYPE_WIN32_NAME)
-@@ -846,6 +1568,36 @@
+@@ -846,6 +1613,36 @@
     struct d3d12_resource *res = d3d12_resource(pres);
     struct d3d12_screen *screen = d3d12_screen(pscreen);
  
@@ -1195,7 +1240,7 @@
     switch (handle->type) {
     case WINSYS_HANDLE_TYPE_D3D12_RES:
        handle->com_obj = d3d12_resource_resource(res);
-@@ -985,6 +1737,13 @@
+@@ -985,6 +1782,13 @@
  
  static constexpr unsigned d3d12_max_planes = 3;
  
@@ -1209,7 +1254,7 @@
  /**
   * Get stride and offset for the given pipe resource without the need to get
   * a winsys_handle.
-@@ -1003,6 +1762,41 @@
+@@ -1003,6 +1807,41 @@
     struct d3d12_resource* res = d3d12_resource(pres);
     unsigned num_planes = util_format_get_num_planes(res->overall_format);
  
@@ -1251,7 +1296,7 @@
     pipe_resource *planes[d3d12_max_planes];
     unsigned int strides[d3d12_max_planes];
     unsigned int layer_strides[d3d12_max_planes];
-@@ -1273,6 +2067,142 @@
+@@ -1273,6 +2112,142 @@
     ctx->has_commands = true;
  }
  
