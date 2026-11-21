@@ -194,13 +194,65 @@ out:
 	return 0;
 }
 
-/* Present completion per window, for FIFO pacing. */
+/*
+ * Per window: present completions, for FIFO pacing, and the pixmaps the X
+ * server still holds. FIFO frames are queued for consecutive vblanks (MSC)
+ * without waiting; an image is reused once the server reports its pixmap
+ * idle (DXGKMT_UNIX_X_IDLE), as a native swapchain does.
+ */
+#define HELD_MAX 16
 struct xwin {
 	uint32_t window;
 	xcb_special_event_t *events;
 	uint32_t last, completed;	/* serials */
+	uint64_t msc;			/* of the last completed present */
+	uint64_t target;		/* of the last queued FIFO present */
+	uint32_t held[HELD_MAX];	/* pixmaps presented and not yet idle */
 };
 static struct xwin wins[32];
+
+static struct xwin *find_xwin(uint32_t window)
+{
+	int i;
+
+	for (i = 0; i < 32; i++)
+		if (wins[i].window == window)
+			return &wins[i];
+	return NULL;
+}
+
+static int held(struct xwin *w, uint32_t pixmap)
+{
+	int i;
+
+	for (i = 0; i < HELD_MAX; i++)
+		if (w->held[i] == pixmap)
+			return 1;
+	return 0;
+}
+
+static void hold(struct xwin *w, uint32_t pixmap)
+{
+	int i, free_slot = -1;
+
+	for (i = 0; i < HELD_MAX; i++) {
+		if (w->held[i] == pixmap)
+			return;
+		if (!w->held[i] && free_slot < 0)
+			free_slot = i;
+	}
+	if (free_slot >= 0)
+		w->held[free_slot] = pixmap;
+}
+
+static void release(struct xwin *w, uint32_t pixmap)
+{
+	int i;
+
+	for (i = 0; i < HELD_MAX; i++)
+		if (w->held[i] == pixmap)
+			w->held[i] = 0;
+}
 
 static struct xwin *xwin_of(uint32_t window)
 {
@@ -222,7 +274,8 @@ static struct xwin *xwin_of(uint32_t window)
 	free_slot->window = window;
 	eid = xcb_generate_id(x);
 	xcb_present_select_input(x, eid, window,
-				 XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
+				 XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY |
+				 XCB_PRESENT_EVENT_MASK_IDLE_NOTIFY);
 	free_slot->events = xcb_register_for_special_xge(x, &xcb_present_id, eid,
 							 NULL);
 	return free_slot;
@@ -238,8 +291,15 @@ static void drain(struct xwin *w)
 		if (g->evtype == XCB_PRESENT_COMPLETE_NOTIFY) {
 			xcb_present_complete_notify_event_t *c = (void *)e;
 
-			if (c->kind == XCB_PRESENT_COMPLETE_KIND_PIXMAP)
+			if (c->kind == XCB_PRESENT_COMPLETE_KIND_PIXMAP) {
 				w->completed = c->serial;
+				if (c->msc > w->msc)
+					w->msc = c->msc;
+			}
+		} else if (g->evtype == XCB_PRESENT_IDLE_NOTIFY) {
+			xcb_present_idle_notify_event_t *i = (void *)e;
+
+			release(w, i->pixmap);
 		}
 		free(e);
 	}
@@ -282,10 +342,11 @@ static NTSTATUS unix_x_present(void *args)
 		free(t);
 	}
 	w = xwin_of(p->x_window);
-	if (p->wait)
+	drain(w);
+	/* Until a completion has told the window's MSC, FIFO waits for the
+	 * previous frame as it always did. */
+	if (p->wait && !w->msc)
 		wait_previous(w);
-	else
-		drain(w);
 	if (!p->pixmap) {
 		int fd = fcntl(p->dmabuf_fd, F_DUPFD_CLOEXEC, 3);
 
@@ -301,10 +362,23 @@ static NTSTATUS unix_x_present(void *args)
 					    fd);
 	}
 	w->last = ++present_serial;
-	xcb_present_pixmap(x, p->x_window, p->pixmap, w->last,
-			   0, 0, p->x, p->y, 0, 0, 0,
-			   p->wait ? XCB_PRESENT_OPTION_NONE : XCB_PRESENT_OPTION_ASYNC,
-			   0, 0, 0, 0, NULL);
+	if (p->wait && w->msc) {
+		/* The vblank after the last queued one, or the next one. */
+		uint64_t target = w->msc + 1;
+
+		if (w->target + 1 > target)
+			target = w->target + 1;
+		w->target = target;
+		xcb_present_pixmap(x, p->x_window, p->pixmap, w->last,
+				   0, 0, p->x, p->y, 0, 0, 0,
+				   XCB_PRESENT_OPTION_NONE, target, 0, 0, 0, NULL);
+	} else {
+		xcb_present_pixmap(x, p->x_window, p->pixmap, w->last,
+				   0, 0, p->x, p->y, 0, 0, 0,
+				   p->wait ? XCB_PRESENT_OPTION_NONE : XCB_PRESENT_OPTION_ASYNC,
+				   0, 0, 0, 0, NULL);
+	}
+	hold(w, p->pixmap);
 	xcb_flush(x);
 	if (xcb_connection_has_error(x))
 		ret = -EPIPE;
@@ -320,12 +394,46 @@ static NTSTATUS unix_x_free(void *args)
 
 	pthread_mutex_lock(&lock);
 	if (x && p->pixmap) {
+		int i;
+
 		xcb_free_pixmap(x, p->pixmap);
 		xcb_flush(x);
+		for (i = 0; i < 32; i++)
+			release(&wins[i], p->pixmap);
 	}
 	pthread_mutex_unlock(&lock);
 	p->ret = 0;
 	return 0;
+}
+
+/* Until the X server releases the pixmap, at most timeout_ms (a window
+ * that is not shown may get no vblanks). */
+static NTSTATUS unix_x_idle(void *args)
+{
+	struct dxgkmt_idle *a = args;
+	unsigned int i, polls = a->timeout_ms * 4;
+
+	for (i = 0;; i++) {
+		struct xwin *w;
+		int busy = 0;
+
+		pthread_mutex_lock(&lock);
+		w = x ? find_xwin(a->x_window) : NULL;
+		if (w) {
+			drain(w);
+			busy = held(w, a->pixmap);
+		}
+		pthread_mutex_unlock(&lock);
+		if (!busy) {
+			a->ret = 1;
+			return 0;
+		}
+		if (i >= polls) {
+			a->ret = 0;
+			return 0;
+		}
+		usleep(250);
+	}
 }
 
 static NTSTATUS unix_winbuf_destroy(void *args)
@@ -352,4 +460,5 @@ const unixlib_entry_t __wine_unix_call_funcs[] = {
 	[DXGKMT_UNIX_X_PRESENT] = unix_x_present,
 	[DXGKMT_UNIX_X_FREE] = unix_x_free,
 	[DXGKMT_UNIX_WINBUF_DESTROY] = unix_winbuf_destroy,
+	[DXGKMT_UNIX_X_IDLE] = unix_x_idle,
 };

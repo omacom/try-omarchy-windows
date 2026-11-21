@@ -785,7 +785,122 @@ struct kmt_entry {
 static int32_t WINAPI kmt_create_sync_object2(void *args);
 static int32_t WINAPI kmt_signal_sync_object2(void *args);
 
+/*
+ * Queries the driver repeats every frame cost a host round trip each, where
+ * Windows answers in the kernel: memory budgets (several per frame, for
+ * VK_EXT_memory_budget and DXGI) and the device's execution state. Their
+ * answers change slowly, so one younger than CACHE_MS is reused. A device
+ * that is not active is never cached: a fault is reported at once.
+ */
+#define CACHE_MS 8.0
+
+static double cache_now_ms(void)
+{
+	static LARGE_INTEGER freq;
+	LARGE_INTEGER t;
+
+	if (!freq.QuadPart)
+		QueryPerformanceFrequency(&freq);
+	QueryPerformanceCounter(&t);
+	return (double)t.QuadPart * 1000.0 / (double)freq.QuadPart;
+}
+
+static struct kmt_stat stat_cached_QueryVideoMemoryInfo = { "QueryVideoMemoryInfo (reused)" };
+static struct kmt_stat stat_cached_GetDeviceState = { "GetDeviceState (reused)" };
+static SRWLOCK cache_lock = SRWLOCK_INIT;
+
+static struct {
+	struct d3dkmt_queryvideomemoryinfo info;
+	double at;
+} vmi_cache[16];
+
+static int same_vmi_query(const struct d3dkmt_queryvideomemoryinfo *a,
+			  const struct d3dkmt_queryvideomemoryinfo *b)
+{
+	return a->process == b->process && a->adapter.v == b->adapter.v &&
+	       a->memory_segment_group == b->memory_segment_group &&
+	       a->physical_adapter_index == b->physical_adapter_index;
+}
+
+static int32_t WINAPI kmt_query_video_memory_info(void *args)
+{
+	struct d3dkmt_queryvideomemoryinfo *q = args;
+	double now = cache_now_ms();
+	int32_t status;
+	size_t i, oldest = 0;
+
+	AcquireSRWLockShared(&cache_lock);
+	for (i = 0; i < sizeof(vmi_cache) / sizeof(vmi_cache[0]); i++)
+		if (vmi_cache[i].at && now - vmi_cache[i].at < CACHE_MS &&
+		    same_vmi_query(&vmi_cache[i].info, q)) {
+			*q = vmi_cache[i].info;
+			ReleaseSRWLockShared(&cache_lock);
+			InterlockedIncrement(&stat_cached_QueryVideoMemoryInfo.calls);
+			return 0;
+		}
+	ReleaseSRWLockShared(&cache_lock);
+	status = kmt_QueryVideoMemoryInfo(args);
+	if (status)
+		return status;
+	AcquireSRWLockExclusive(&cache_lock);
+	for (i = 0; i < sizeof(vmi_cache) / sizeof(vmi_cache[0]); i++) {
+		if (!vmi_cache[i].at || same_vmi_query(&vmi_cache[i].info, q)) {
+			oldest = i;
+			break;
+		}
+		if (vmi_cache[i].at < vmi_cache[oldest].at)
+			oldest = i;
+	}
+	vmi_cache[oldest].info = *q;
+	vmi_cache[oldest].at = now;
+	ReleaseSRWLockExclusive(&cache_lock);
+	return 0;
+}
+
+static struct {
+	uint32_t device;
+	double at;
+} state_cache[16];
+
+static int32_t WINAPI kmt_get_device_state(void *args)
+{
+	struct d3dkmt_getdevicestate *s = args;
+	double now = cache_now_ms();
+	int32_t status;
+	size_t i, slot;
+
+	if (s->state_type != _D3DKMT_DEVICESTATE_EXECUTION)
+		return kmt_GetDeviceState(args);
+	AcquireSRWLockShared(&cache_lock);
+	for (i = 0; i < sizeof(state_cache) / sizeof(state_cache[0]); i++)
+		if (state_cache[i].at && state_cache[i].device == s->device.v &&
+		    now - state_cache[i].at < CACHE_MS) {
+			ReleaseSRWLockShared(&cache_lock);
+			s->execution_state = _D3DKMT_DEVICEEXECUTION_ACTIVE;
+			InterlockedIncrement(&stat_cached_GetDeviceState.calls);
+			return 0;
+		}
+	ReleaseSRWLockShared(&cache_lock);
+	status = kmt_GetDeviceState(args);
+	AcquireSRWLockExclusive(&cache_lock);
+	slot = s->device.v % (sizeof(state_cache) / sizeof(state_cache[0]));
+	if (!status && s->execution_state == _D3DKMT_DEVICEEXECUTION_ACTIVE) {
+		state_cache[slot].device = s->device.v;
+		state_cache[slot].at = now;
+	} else if (state_cache[slot].device == s->device.v) {
+		state_cache[slot].at = 0;
+	}
+	ReleaseSRWLockExclusive(&cache_lock);
+	return status;
+}
+
 static const struct kmt_entry entries[] = {
+	{ "QueryVideoMemoryInfo", kmt_query_video_memory_info,
+	  &stat_QueryVideoMemoryInfo },
+	{ "GetDeviceState", kmt_get_device_state, &stat_GetDeviceState },
+	{ "QueryVideoMemoryInfoReused", kmt_query_video_memory_info,
+	  &stat_cached_QueryVideoMemoryInfo },
+	{ "GetDeviceStateReused", kmt_get_device_state, &stat_cached_GetDeviceState },
 	{ "WaitForSynchronizationObjectFromCpu", kmt_wait_cpu,
 	  &stat_WaitForSynchronizationObjectFromCpu },
 	{ "QueryAdapterInfo", kmt_query_adapter_info, &stat_QueryAdapterInfo },

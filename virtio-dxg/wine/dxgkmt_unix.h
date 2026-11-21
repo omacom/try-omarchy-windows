@@ -15,6 +15,7 @@ enum dxgkmt_unix_call {
 	DXGKMT_UNIX_X_PRESENT,	/* struct dxgkmt_present */
 	DXGKMT_UNIX_X_FREE,	/* struct dxgkmt_present: pixmap only */
 	DXGKMT_UNIX_WINBUF_DESTROY,	/* struct dxgkmt_winbuf: bo only */
+	DXGKMT_UNIX_X_IDLE,	/* struct dxgkmt_idle: waits until X releases a pixmap */
 };
 
 /* ret is >= 0 on success, -errno on failure. */
@@ -57,8 +58,15 @@ struct dxgkmt_present {
 	int32_t x, y;		/* where in the window (out when locate) */
 	int32_t root_x, root_y;	/* locate: that point on the X screen */
 	uint32_t locate;	/* turns root_x/root_y into x/y */
-	uint32_t wait;		/* FIFO: one frame in flight per window */
+	uint32_t wait;		/* FIFO: queued for the next free vblank */
 	int64_t ret;
+};
+
+struct dxgkmt_idle {
+	uint32_t x_window;
+	uint32_t pixmap;
+	uint32_t timeout_ms;
+	int64_t ret;		/* 1: idle (or never presented), 0: timed out */
 };
 
 #endif

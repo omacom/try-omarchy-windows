@@ -36,7 +36,21 @@
 #define MAX_IMAGES 8
 #define LOG(...) do { if (debug) fprintf(stderr, "dxgvk: " __VA_ARGS__); } while (0)
 
+/* DXGVK_DEBUG logs presentation stalls longer than this. */
+#define SLOW_MS 12.0
+
 static int debug, hud;
+
+static double now_ms(void)
+{
+	static LARGE_INTEGER freq;
+	LARGE_INTEGER t;
+
+	if (!freq.QuadPart)
+		QueryPerformanceFrequency(&freq);
+	QueryPerformanceCounter(&t);
+	return (double)t.QuadPart * 1000.0 / (double)freq.QuadPart;
+}
 static HMODULE nv;
 static LUID nv_luid;
 static VkResult init_result = VK_ERROR_INITIALIZATION_FAILED;
@@ -56,6 +70,21 @@ static PFN_vkGetPhysicalDeviceMemoryProperties nv_GetPhysicalDeviceMemoryPropert
 static PFN_vkCreateDevice nv_CreateDevice;
 
 /* --- Loading the driver ------------------------------------------------ */
+
+/* DXGVK_KMTSTATS=N: every N seconds, the driver's kernel calls so far, by
+ * function (what a frame costs in calls to the host). */
+static DWORD WINAPI kmt_stats(void *arg)
+{
+	DWORD seconds = (DWORD)(uintptr_t)arg, total = 0;
+
+	for (;;) {
+		Sleep(seconds * 1000);
+		total += seconds;
+		fprintf(stderr, "[kmt] after %lu s:\n", (unsigned long)total);
+		kmt_bridge_report();
+	}
+	return 0;
+}
 
 static BOOL CALLBACK init(INIT_ONCE *once, void *param, void **ctx)
 {
@@ -85,6 +114,9 @@ static BOOL CALLBACK init(INIT_ONCE *once, void *param, void **ctx)
 		return TRUE;
 	}
 	LOG("NVIDIA driver loaded (ICD interface %u)\n", version);
+	if (getenv("DXGVK_KMTSTATS") && atoi(getenv("DXGVK_KMTSTATS")) > 0)
+		CloseHandle(CreateThread(NULL, 0, kmt_stats,
+			(void *)(uintptr_t)atoi(getenv("DXGVK_KMTSTATS")), 0, NULL));
 	init_result = VK_SUCCESS;
 	return TRUE;
 }
@@ -257,11 +289,14 @@ struct device {
 	VkQueue queue;			/* private: signals acquires */
 	uint32_t queue_family;
 	CRITICAL_SECTION queue_lock;
+	/* The application's queues and their families (vkGetDeviceQueue*). */
+	struct { VkQueue queue; uint32_t family; } queues[64];
+	uint32_t nqueues;
 	VkFence fence;			/* present waits for rendering */
 	CRITICAL_SECTION fence_lock;
 	VkPhysicalDeviceMemoryProperties memory;
 #define DEV_FN(name) PFN_vk##name name;
-	DEV_FN(GetDeviceQueue) DEV_FN(DestroyDevice) DEV_FN(CreateFence)
+	DEV_FN(GetDeviceQueue) DEV_FN(GetDeviceQueue2) DEV_FN(DestroyDevice) DEV_FN(CreateFence)
 	DEV_FN(DestroyFence) DEV_FN(WaitForFences) DEV_FN(ResetFences)
 	DEV_FN(QueueSubmit) DEV_FN(CreateImage) DEV_FN(DestroyImage)
 	DEV_FN(GetImageMemoryRequirements) DEV_FN(AllocateMemory)
@@ -485,7 +520,7 @@ static VkResult VKAPI_CALL dxgvk_CreateDevice(VkPhysicalDevice gpu,
 	d->handle = *out;
 	d->gpu = gpu;
 #define LOAD(name) d->name = (void *)nv_gdpa(*out, "vk" #name)
-	LOAD(GetDeviceQueue); LOAD(DestroyDevice); LOAD(CreateFence);
+	LOAD(GetDeviceQueue); LOAD(GetDeviceQueue2); LOAD(DestroyDevice); LOAD(CreateFence);
 	LOAD(DestroyFence); LOAD(WaitForFences); LOAD(ResetFences);
 	LOAD(QueueSubmit); LOAD(CreateImage); LOAD(DestroyImage);
 	LOAD(GetImageMemoryRequirements); LOAD(AllocateMemory);
@@ -513,6 +548,59 @@ static VkResult VKAPI_CALL dxgvk_CreateDevice(VkPhysicalDevice gpu,
 	ReleaseSRWLockExclusive(&devices_lock);
 	LOG("device created; acquire queue: family %d index %u\n", (int)family, index);
 	return VK_SUCCESS;
+}
+
+static void remember_queue(struct device *d, VkQueue queue, uint32_t family)
+{
+	uint32_t i;
+
+	EnterCriticalSection(&d->queue_lock);
+	for (i = 0; i < d->nqueues && d->queues[i].queue != queue; i++)
+		;
+	if (i == d->nqueues && i < sizeof(d->queues) / sizeof(d->queues[0])) {
+		d->queues[i].queue = queue;
+		d->queues[i].family = family;
+		d->nqueues++;
+	}
+	LeaveCriticalSection(&d->queue_lock);
+}
+
+/* The family of an application queue, UINT32_MAX if unknown. */
+static uint32_t queue_family(struct device *d, VkQueue queue)
+{
+	uint32_t i, family = UINT32_MAX;
+
+	EnterCriticalSection(&d->queue_lock);
+	for (i = 0; i < d->nqueues; i++)
+		if (d->queues[i].queue == queue)
+			family = d->queues[i].family;
+	LeaveCriticalSection(&d->queue_lock);
+	return family;
+}
+
+static void VKAPI_CALL dxgvk_GetDeviceQueue(VkDevice device, uint32_t family,
+					    uint32_t index, VkQueue *queue)
+{
+	struct device *d = find_device(device);
+	PFN_vkGetDeviceQueue get = d ? d->GetDeviceQueue :
+		(PFN_vkGetDeviceQueue)nv_gdpa(device, "vkGetDeviceQueue");
+
+	get(device, family, index, queue);
+	if (d && *queue)
+		remember_queue(d, *queue, family);
+}
+
+static void VKAPI_CALL dxgvk_GetDeviceQueue2(VkDevice device,
+					     const VkDeviceQueueInfo2 *info,
+					     VkQueue *queue)
+{
+	struct device *d = find_device(device);
+	PFN_vkGetDeviceQueue2 get = d ? d->GetDeviceQueue2 :
+		(PFN_vkGetDeviceQueue2)nv_gdpa(device, "vkGetDeviceQueue2");
+
+	get(device, info, queue);
+	if (d && *queue)
+		remember_queue(d, *queue, info->queueFamilyIndex);
 }
 
 static void VKAPI_CALL dxgvk_DestroyDevice(VkDevice handle, const VkAllocationCallbacks *a)
@@ -743,18 +831,20 @@ struct image {
 	uint32_t pixmap;
 };
 
-/* The frame rate overlay: text drawn on the CPU into a small buffer that
- * is copied into each image before it is presented. */
+/* The frame rate overlay: text drawn on the CPU into a small buffer, copied
+ * into each image by a command buffer that runs in the present's own
+ * submission (recorded once per image for the presenting queue's family). */
 struct hud {
 	VkBuffer buffer;
 	VkDeviceMemory memory;
 	uint32_t *pixels;
 	VkCommandPool pool;
-	VkCommandBuffer cmd;
-	VkFence fence;
+	VkCommandBuffer cmds[MAX_IMAGES];
+	uint32_t family;		/* of the pool; UINT32_MAX until recorded */
 	uint32_t width, height;
-	LARGE_INTEGER freq, since;
+	LARGE_INTEGER freq, since, last;
 	uint32_t frames;
+	double longest;			/* seconds, the worst frame this window */
 };
 
 struct swapchain {
@@ -768,6 +858,20 @@ struct swapchain {
 	int located;
 	struct image images[MAX_IMAGES];
 	struct hud *hud;
+	/* Presentation runs on the swapchain's own thread: vkQueuePresentKHR
+	 * queues the frame and returns, so the application records the next
+	 * frame while the GPU renders this one. The thread waits for the
+	 * image's fence (rendering done), then hands the image to X. */
+	HANDLE thread;
+	CRITICAL_SECTION lock;
+	CONDITION_VARIABLE cond;
+	VkFence fences[MAX_IMAGES];
+	uint32_t pending[MAX_IMAGES];	/* image indices, in present order */
+	uint32_t first, queued;
+	int busy[MAX_IMAGES];		/* queued or being presented */
+	VkResult status;		/* a failed present, reported next */
+	int stop;
+	double last_present;		/* ms, for DXGVK_DEBUG's stall log */
 };
 
 /* 5x7 glyphs, one byte per row, the leftmost pixel in bit 4. */
@@ -790,9 +894,11 @@ static const struct {
 	{ 'P', { 0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10 } },
 	{ 'S', { 0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e } },
 	{ 'M', { 0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11 } },
+	{ 'A', { 0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11 } },
+	{ 'X', { 0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11 } },
 };
 
-#define HUD_CHARS 18
+#define HUD_CHARS 28
 #define HUD_SCALE 2
 #define HUD_ADVANCE (6 * HUD_SCALE)
 #define HUD_PAD 4
@@ -830,8 +936,6 @@ static void hud_destroy(struct swapchain *sc)
 
 	if (!h)
 		return;
-	if (h->fence)
-		d->DestroyFence(d->handle, h->fence, NULL);
 	if (h->pool)
 		d->DestroyCommandPool(d->handle, h->pool, NULL);
 	if (h->buffer)
@@ -847,20 +951,18 @@ static void hud_create(struct swapchain *sc)
 	struct device *d = sc->dev;
 	VkBufferCreateInfo bci = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
 	VkMemoryAllocateInfo mai = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
-	VkCommandPoolCreateInfo pci = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
-	VkCommandBufferAllocateInfo cai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-	VkFenceCreateInfo fci = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 	const VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
 					   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 	VkMemoryRequirements req;
 	struct hud *h;
 	uint32_t i;
 
-	if (!hud || !d->queue || !d->CmdCopyBufferToImage)
+	if (!hud || !d->CmdCopyBufferToImage)
 		return;
 	h = sc->hud = calloc(1, sizeof(*h));
 	if (!h)
 		return;
+	h->family = UINT32_MAX;
 	h->width = HUD_CHARS * HUD_ADVANCE + 2 * HUD_PAD;
 	h->height = 7 * HUD_SCALE + 2 * HUD_PAD;
 	if (h->width + HUD_MARGIN > sc->extent.width ||
@@ -882,19 +984,6 @@ static void hud_create(struct swapchain *sc)
 	    d->BindBufferMemory(d->handle, h->buffer, h->memory, 0) ||
 	    d->MapMemory(d->handle, h->memory, 0, VK_WHOLE_SIZE, 0, (void **)&h->pixels))
 		goto fail;
-	pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-	pci.queueFamilyIndex = d->queue_family;
-	if (d->CreateCommandPool(d->handle, &pci, NULL, &h->pool))
-		goto fail;
-	cai.commandPool = h->pool;
-	cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-	cai.commandBufferCount = 1;
-	if (d->AllocateCommandBuffers(d->handle, &cai, &h->cmd) ||
-	    d->CreateFence(d->handle, &fci, NULL, &h->fence))
-		goto fail;
-	/* Dispatchable: the driver's command buffer starts with the loader's
-	 * dispatch pointer, which the device's provides. */
-	*(void **)h->cmd = *(void **)d->handle;
 	QueryPerformanceFrequency(&h->freq);
 	QueryPerformanceCounter(&h->since);
 	hud_text(h, "    FPS");
@@ -904,72 +993,99 @@ fail:
 	hud_destroy(sc);
 }
 
-/* Counts the frame, updates the text twice a second, copies it into the
- * image (in PRESENT_SRC layout, rendering finished). */
-static void hud_draw(struct swapchain *sc, uint32_t index)
+/* The copy into each image, for queues of one family: 0, or -1 when the
+ * application presents from another family than the first (no overlay). */
+static int hud_record(struct swapchain *sc, uint32_t family)
 {
 	struct device *d = sc->dev;
 	struct hud *h = sc->hud;
-	VkCommandBufferBeginInfo begin = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-	VkImageMemoryBarrier b = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
-	VkBufferImageCopy copy = { 0 };
-	VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+	VkCommandPoolCreateInfo pci = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+	VkCommandBufferAllocateInfo cai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+	uint32_t i;
+
+	if (h->family == family)
+		return 0;
+	if (h->family != UINT32_MAX || family == UINT32_MAX)
+		return -1;
+	h->family = UINT32_MAX - 1;	/* tried: no second attempt */
+	pci.queueFamilyIndex = family;
+	if (d->CreateCommandPool(d->handle, &pci, NULL, &h->pool))
+		return -1;
+	cai.commandPool = h->pool;
+	cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	cai.commandBufferCount = sc->count;
+	if (d->AllocateCommandBuffers(d->handle, &cai, h->cmds))
+		return -1;
+	for (i = 0; i < sc->count; i++) {
+		VkCommandBufferBeginInfo begin = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+		VkImageMemoryBarrier b = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+		VkBufferImageCopy copy = { 0 };
+		VkCommandBuffer cmd = h->cmds[i];
+
+		/* Dispatchable: the driver's command buffer starts with the
+		 * loader's dispatch pointer, which the device's provides. */
+		*(void **)cmd = *(void **)d->handle;
+		if (d->BeginCommandBuffer(cmd, &begin))
+			return -1;
+		b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		b.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+		b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		b.image = sc->images[i].image;
+		b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		b.subresourceRange.levelCount = 1;
+		b.subresourceRange.layerCount = 1;
+		d->CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+				      VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &b);
+		copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		copy.imageSubresource.layerCount = 1;
+		copy.imageOffset.x = HUD_MARGIN;
+		copy.imageOffset.y = HUD_MARGIN;
+		copy.imageExtent.width = h->width;
+		copy.imageExtent.height = h->height;
+		copy.imageExtent.depth = 1;
+		d->CmdCopyBufferToImage(cmd, h->buffer, b.image,
+					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+		b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		b.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+		b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		b.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+		d->CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+				      VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &b);
+		if (d->EndCommandBuffer(cmd))
+			return -1;
+	}
+	h->family = family;
+	return 0;
+}
+
+/* Counts a frame; twice a second the text gets the new rate, the average
+ * frame time and the longest frame (what a stutter shows as). */
+static void hud_frame(struct hud *h)
+{
 	LARGE_INTEGER now;
-	double seconds;
-	VkResult r;
+	double seconds, frame;
 
 	QueryPerformanceCounter(&now);
+	if (h->last.QuadPart) {
+		frame = (double)(now.QuadPart - h->last.QuadPart) / (double)h->freq.QuadPart;
+		if (frame > h->longest)
+			h->longest = frame;
+	}
+	h->last = now;
 	h->frames++;
 	seconds = (double)(now.QuadPart - h->since.QuadPart) / (double)h->freq.QuadPart;
 	if (seconds >= 0.5) {
-		char text[32];
+		char text[40];
 
-		snprintf(text, sizeof(text), "%4.0f FPS %5.2f MS", h->frames / seconds,
-			 seconds * 1000.0 / h->frames);
+		snprintf(text, sizeof(text), "%4.0f FPS %5.2f MS MAX %5.1f",
+			 h->frames / seconds, seconds * 1000.0 / h->frames,
+			 h->longest * 1000.0);
 		hud_text(h, text);
 		LOG("%s\n", text);
 		h->frames = 0;
+		h->longest = 0;
 		h->since = now;
-	}
-	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	if (d->BeginCommandBuffer(h->cmd, &begin))
-		return;
-	b.srcAccessMask = 0;
-	b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-	b.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-	b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-	b.image = sc->images[index].image;
-	b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	b.subresourceRange.levelCount = 1;
-	b.subresourceRange.layerCount = 1;
-	d->CmdPipelineBarrier(h->cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-			      VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &b);
-	copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	copy.imageSubresource.layerCount = 1;
-	copy.imageOffset.x = HUD_MARGIN;
-	copy.imageOffset.y = HUD_MARGIN;
-	copy.imageExtent.width = h->width;
-	copy.imageExtent.height = h->height;
-	copy.imageExtent.depth = 1;
-	d->CmdCopyBufferToImage(h->cmd, h->buffer, b.image,
-				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-	b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-	b.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-	b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	b.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-	d->CmdPipelineBarrier(h->cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-			      VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &b);
-	if (d->EndCommandBuffer(h->cmd))
-		return;
-	si.commandBufferCount = 1;
-	si.pCommandBuffers = &h->cmd;
-	EnterCriticalSection(&d->queue_lock);
-	r = d->QueueSubmit(d->queue, 1, &si, h->fence);
-	LeaveCriticalSection(&d->queue_lock);
-	if (!r) {
-		d->WaitForFences(d->handle, 1, &h->fence, VK_TRUE, UINT64_MAX);
-		d->ResetFences(d->handle, 1, &h->fence);
 	}
 }
 
@@ -1127,6 +1243,48 @@ static VkResult create_image(struct swapchain *sc, struct image *im,
 	return r;
 }
 
+static DWORD WINAPI present_thread(void *arg);
+
+/* A fence per image and the presenting thread. */
+static VkResult start_presenting(struct swapchain *sc)
+{
+	struct device *d = sc->dev;
+	VkFenceCreateInfo fci = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+	uint32_t i;
+
+	InitializeCriticalSection(&sc->lock);
+	InitializeConditionVariable(&sc->cond);
+	for (i = 0; i < sc->count; i++)
+		if (d->CreateFence(d->handle, &fci, NULL, &sc->fences[i]))
+			return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+	sc->thread = CreateThread(NULL, 0, present_thread, sc, 0, NULL);
+	if (!sc->thread)
+		return VK_ERROR_OUT_OF_HOST_MEMORY;
+	SetThreadPriority(sc->thread, THREAD_PRIORITY_ABOVE_NORMAL);
+	return VK_SUCCESS;
+}
+
+static void stop_presenting(struct swapchain *sc)
+{
+	struct device *d = sc->dev;
+	uint32_t i;
+
+	if (sc->thread) {
+		EnterCriticalSection(&sc->lock);
+		sc->stop = 1;
+		WakeAllConditionVariable(&sc->cond);
+		LeaveCriticalSection(&sc->lock);
+		WaitForSingleObject(sc->thread, INFINITE);
+		CloseHandle(sc->thread);
+		sc->thread = NULL;
+	}
+	d->DeviceWaitIdle(d->handle);
+	for (i = 0; i < sc->count; i++)
+		if (sc->fences[i])
+			d->DestroyFence(d->handle, sc->fences[i], NULL);
+	DeleteCriticalSection(&sc->lock);
+}
+
 static VkResult VKAPI_CALL dxgvk_CreateSwapchainKHR(VkDevice device,
 	const VkSwapchainCreateInfoKHR *ci, const VkAllocationCallbacks *a,
 	VkSwapchainKHR *out)
@@ -1165,6 +1323,14 @@ static VkResult VKAPI_CALL dxgvk_CreateSwapchainKHR(VkDevice device,
 	LOG("swapchain %ux%u, %u images, present mode %d, X window 0x%x\n",
 	    sc->extent.width, sc->extent.height, sc->count, sc->mode, sc->x_window);
 	hud_create(sc);
+	r = start_presenting(sc);
+	if (r) {
+		stop_presenting(sc);
+		hud_destroy(sc);
+		destroy_images(sc);
+		free(sc);
+		return r;
+	}
 	*out = (VkSwapchainKHR)(uintptr_t)sc;
 	return VK_SUCCESS;
 }
@@ -1178,7 +1344,7 @@ static void VKAPI_CALL dxgvk_DestroySwapchainKHR(VkDevice device,
 	(void)device; (void)a;
 	if (!sc)
 		return;
-	sc->dev->DeviceWaitIdle(sc->dev->handle);
+	stop_presenting(sc);
 	hud_destroy(sc);
 	destroy_images(sc);
 	free(sc);
@@ -1219,8 +1385,41 @@ static VkResult VKAPI_CALL dxgvk_AcquireNextImageKHR(VkDevice device,
 	VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 	VkResult r = VK_SUCCESS;
 
-	(void)device; (void)timeout;
+	double t0 = now_ms(), waited;
+
+	(void)device;
 	*index = sc->next;
+	/* The image may still be on its way to the screen. */
+	EnterCriticalSection(&sc->lock);
+	while (sc->busy[*index] && sc->status >= 0) {
+		DWORD ms = timeout == UINT64_MAX ? INFINITE :
+			   timeout / 1000000 >= INFINITE ? INFINITE - 1 :
+			   (DWORD)(timeout / 1000000);
+
+		if (!timeout || !SleepConditionVariableCS(&sc->cond, &sc->lock, ms)) {
+			LeaveCriticalSection(&sc->lock);
+			return timeout ? VK_TIMEOUT : VK_NOT_READY;
+		}
+	}
+	r = sc->status;
+	LeaveCriticalSection(&sc->lock);
+	/* FIFO: the X server holds a presented image until a later one is on
+	 * screen. At most 100 ms: a window that is not shown gets no vblanks. */
+	if (r >= 0 && sc->images[*index].pixmap &&
+	    (sc->mode == VK_PRESENT_MODE_FIFO_KHR ||
+	     sc->mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR)) {
+		struct dxgkmt_idle idle = { sc->x_window, sc->images[*index].pixmap,
+					    timeout ? 100 : 0, 0 };
+
+		kmt_bridge_call(DXGKMT_UNIX_X_IDLE, &idle);
+		if (!idle.ret && !timeout)
+			return VK_NOT_READY;
+	}
+	waited = now_ms() - t0;
+	if (debug && waited > SLOW_MS)
+		LOG("slow acquire: %.1f ms waiting for image %u\n", waited, *index);
+	if (r < 0)
+		return r;
 	sc->next = (sc->next + 1) % sc->count;
 	/* The image is free when acquired: signal at once, in order. */
 	if (semaphore || fence) {
@@ -1283,38 +1482,103 @@ static VkResult present_one(struct swapchain *sc, uint32_t index)
 	return resized(sc) ? VK_SUBOPTIMAL_KHR : VK_SUCCESS;
 }
 
+/* Waits for each queued image's rendering, then presents it, in order. */
+static DWORD WINAPI present_thread(void *arg)
+{
+	struct swapchain *sc = arg;
+	struct device *d = sc->dev;
+
+	for (;;) {
+		uint32_t index;
+		double t0, t1, t2;
+		VkResult r;
+
+		EnterCriticalSection(&sc->lock);
+		while (!sc->queued && !sc->stop)
+			SleepConditionVariableCS(&sc->cond, &sc->lock, INFINITE);
+		if (sc->stop) {
+			LeaveCriticalSection(&sc->lock);
+			return 0;
+		}
+		index = sc->pending[sc->first];
+		LeaveCriticalSection(&sc->lock);
+
+		/* The compositor samples the image itself: rendering is
+		 * finished before it gets it. */
+		t0 = now_ms();
+		r = d->WaitForFences(d->handle, 1, &sc->fences[index], VK_TRUE, UINT64_MAX);
+		d->ResetFences(d->handle, 1, &sc->fences[index]);
+		t1 = now_ms();
+		if (r == VK_SUCCESS)
+			r = present_one(sc, index);
+		t2 = now_ms();
+		if (debug && (t1 - t0 > SLOW_MS || t2 - t1 > SLOW_MS))
+			LOG("slow present: GPU %.1f ms, X %.1f ms\n", t1 - t0, t2 - t1);
+
+		EnterCriticalSection(&sc->lock);
+		sc->first = (sc->first + 1) % MAX_IMAGES;
+		sc->queued--;
+		sc->busy[index] = 0;
+		if (r < 0)
+			sc->status = r;
+		WakeAllConditionVariable(&sc->cond);
+		LeaveCriticalSection(&sc->lock);
+	}
+}
+
+/* Queues each image behind the application's rendering and returns: the
+ * swapchain's thread presents it once the GPU is done. */
 static VkResult VKAPI_CALL dxgvk_QueuePresentKHR(VkQueue queue,
 						 const VkPresentInfoKHR *info)
 {
-	struct swapchain *first = (struct swapchain *)(uintptr_t)info->pSwapchains[0];
-	struct device *d = first->dev;
 	VkPipelineStageFlags stages[16];
-	VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 	VkResult r, overall = VK_SUCCESS;
 	uint32_t i;
 
-	/* The compositor samples the image itself: rendering is finished
-	 * before it gets it. */
-	for (i = 0; i < info->waitSemaphoreCount && i < 16; i++)
+	for (i = 0; i < 16; i++)
 		stages[i] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-	si.waitSemaphoreCount = info->waitSemaphoreCount < 16 ? info->waitSemaphoreCount : 16;
-	si.pWaitSemaphores = info->pWaitSemaphores;
-	si.pWaitDstStageMask = stages;
-	EnterCriticalSection(&d->fence_lock);
-	r = d->QueueSubmit(queue, 1, &si, d->fence);
-	if (!r) {
-		r = d->WaitForFences(d->handle, 1, &d->fence, VK_TRUE, UINT64_MAX);
-		d->ResetFences(d->handle, 1, &d->fence);
-	}
-	LeaveCriticalSection(&d->fence_lock);
-	if (r)
-		return r;
 	for (i = 0; i < info->swapchainCount; i++) {
 		struct swapchain *sc = (struct swapchain *)(uintptr_t)info->pSwapchains[i];
+		uint32_t index = info->pImageIndices[i];
+		VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 
-		if (sc->hud)
-			hud_draw(sc, info->pImageIndices[i]);
-		r = present_one(sc, info->pImageIndices[i]);
+		if (debug) {
+			double t = now_ms();
+
+			if (sc->last_present && t - sc->last_present > SLOW_MS)
+				LOG("slow frame: %.1f ms between presents\n",
+				    t - sc->last_present);
+			sc->last_present = t;
+		}
+		EnterCriticalSection(&sc->lock);
+		r = sc->status;
+		LeaveCriticalSection(&sc->lock);
+		if (r >= 0) {
+			/* The first submission waits for the application's
+			 * semaphores; each signals its image's fence. */
+			if (i == 0) {
+				si.waitSemaphoreCount = info->waitSemaphoreCount < 16 ?
+							info->waitSemaphoreCount : 16;
+				si.pWaitSemaphores = info->pWaitSemaphores;
+				si.pWaitDstStageMask = stages;
+			}
+			if (sc->hud && !hud_record(sc, queue_family(sc->dev, queue))) {
+				hud_frame(sc->hud);
+				si.commandBufferCount = 1;
+				si.pCommandBuffers = &sc->hud->cmds[index];
+			}
+			r = sc->dev->QueueSubmit(queue, 1, &si, sc->fences[index]);
+		}
+		if (r == VK_SUCCESS) {
+			EnterCriticalSection(&sc->lock);
+			sc->pending[(sc->first + sc->queued) % MAX_IMAGES] = index;
+			sc->queued++;
+			sc->busy[index] = 1;
+			WakeAllConditionVariable(&sc->cond);
+			LeaveCriticalSection(&sc->lock);
+			if (resized(sc))
+				r = VK_SUBOPTIMAL_KHR;
+		}
 		if (info->pResults)
 			info->pResults[i] = r;
 		if (r < 0 || (r == VK_SUBOPTIMAL_KHR && overall == VK_SUCCESS))
@@ -1332,7 +1596,7 @@ static const struct {
 #define I(name) { "vk" #name, (void *)dxgvk_##name }
 	I(CreateInstance), I(EnumerateInstanceExtensionProperties),
 	I(EnumeratePhysicalDevices), I(EnumerateDeviceExtensionProperties),
-	I(CreateDevice), I(DestroyDevice),
+	I(CreateDevice), I(DestroyDevice), I(GetDeviceQueue), I(GetDeviceQueue2),
 	I(CreateWin32SurfaceKHR), I(DestroySurfaceKHR),
 	I(GetPhysicalDeviceSurfaceSupportKHR),
 	I(GetPhysicalDeviceWin32PresentationSupportKHR),
