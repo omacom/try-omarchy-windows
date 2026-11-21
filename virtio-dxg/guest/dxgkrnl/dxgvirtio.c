@@ -58,7 +58,6 @@ struct dxgvirtio {
 	/* Asynchronous messages queued without a kick yet (ctrl_lock). */
 	bool				kick_pending;
 	struct hrtimer			kick_timer;
-	ktime_t				last_kick;
 	spinlock_t			event_lock;
 	u8				*event_bufs;
 	u32				event_size;
@@ -114,7 +113,6 @@ static enum hrtimer_restart dxgvirtio_kick_timer(struct hrtimer *timer)
 	if (dv->kick_pending) {
 		dv->kick_pending = false;
 		notify = virtqueue_kick_prepare(dv->ctrl);
-		dv->last_kick = ktime_get();
 	}
 	spin_unlock_irqrestore(&dv->ctrl_lock, flags);
 	if (notify)
@@ -279,10 +277,8 @@ static int dxgvirtio_queue(struct dxgvirtio *dv, struct dxgvirtio_req *req)
 			notify = false;
 		} else {
 			/* Now, for this message and any held back before it. */
-			if (ret == 0 || ret == -ENOSPC) {
+			if (ret == 0 || ret == -ENOSPC)
 				dv->kick_pending = false;
-				dv->last_kick = ktime_get();
-			}
 			notify = (ret == 0 || ret == -ENOSPC) &&
 				 virtqueue_kick_prepare(dv->ctrl);
 		}
@@ -377,7 +373,7 @@ int dxgvirtio_send(struct dxgvirtio *dv, u32 channel, const void *command,
 	if (async)
 		goto out;
 
-	if (READ_ONCE(sync_spin_us)) {
+	if (READ_ONCE(sync_spin_us) && !completion_done(&req->done)) {
 		ktime_t end = ktime_add_us(ktime_get(), READ_ONCE(sync_spin_us));
 
 		for (;;) {

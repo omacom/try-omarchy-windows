@@ -18,7 +18,7 @@ for line in open(trace, errors='replace'):
 print(f"{'phase':10s} {'flips/s':>8s} {'est. missed':>11s} {'p99 ms':>8s} {'worst ms':>8s}")
 for i, (t0, name) in enumerate(marks[:-1]):
     t1 = marks[i + 1][0]
-    if t1 <= t0:
+    if t1 <= t0 or name == 'end':
         continue
     f = sorted(t for t in flips if t0 <= t < t1)
     # deskload animates continuously. Include both phase boundaries so a

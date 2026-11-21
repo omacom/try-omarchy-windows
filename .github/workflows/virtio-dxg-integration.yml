@@ -63,6 +63,9 @@ jobs:
       - name: Check boot payload and browser arguments with inert fixtures only
         run: |
           python3 virtio-dxg/guest/test/test_desktop_payload.py -v
+          bash -n virtio-dxg/guest/test/initcpio/app-prefetch
+          bash -n virtio-dxg/bench/desktop/deskload.sh
+          python3 virtio-dxg/bench/desktop/test_deskstat.py
           bash -n virtio-dxg/guest/mesa/build-in-guest.sh
           sh -n virtio-dxg/guest/test/initcpio/virtio_dxg
           sh -n virtio-dxg/guest/test/initcpio/chromium-wrapper

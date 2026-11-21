@@ -14,9 +14,25 @@ version=$(python3 -c 'import json; p=json.load(open("/guest/packages.lock.json")
 [[ $version =~ ^[0-9][0-9.]+\.arch[0-9]+-[0-9]+$ ]]
 release=${version/.arch/-arch}
 pkg="linux-headers-$version-x86_64.pkg.tar.zst"
-archive="https://archive.archlinux.org/packages/l/linux-headers/$pkg"
-curl --fail --location --proto '=https' --proto-redir '=https' --retry 2 --max-time 180 "$archive" -o "$pkg"
-curl --fail --location --proto '=https' --proto-redir '=https' --retry 2 --max-time 60 "$archive.sig" -o "$pkg.sig"
+fetch=(curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 12)
+# The desktop's stable mirror can retain a release after Arch's rolling
+# mirror moves on. Every source must supply the same exact name and version.
+downloaded=false
+for base in https://stable-mirror.omarchy.org/core/os/x86_64 \
+            https://geo.mirror.pkgbuild.com/core/os/x86_64 \
+            https://archive.archlinux.org/packages/l/linux-headers; do
+    if "${fetch[@]}" --max-time 30 "$base/$pkg.sig" -o "$pkg.sig" &&
+       "${fetch[@]}" --max-time 180 "$base/$pkg" -o "$pkg"; then
+        downloaded=true
+        break
+    fi
+done
+if [[ $downloaded != true ]]; then
+    echo "No configured mirror provided the locked $pkg and its signature" >&2
+    exit 1
+fi
+pacman-key --verify "$pkg.sig" "$pkg"
+test "$(pacman -Qp "./$pkg")" = "linux-headers $version"
 "${pacman[@]}" -U "./$pkg"
 test "$(pacman -Q linux-headers)" = "linux-headers $version"
 headers="/usr/lib/modules/$release/build"

@@ -104,6 +104,18 @@ jobs:
         shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Fetch historical replay inputs from before their retirement
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 1d05c1ac4919d0f96a69ddf113cd90fb91a0f61d
+          path: .replay-archive
+          persist-credentials: false
+          sparse-checkout: |
+            /docs/evidence/
+            /docs/images/
+          sparse-checkout-cone-mode: false
+      - name: Supply missing replay data to the current test suite
+        run: rsync -a --ignore-existing .replay-archive/docs/{evidence,images} docs/
       - name: Compile the independent pixel oracle
         run: c++ -std=c++17 -O2 -Wall -Wextra -Werror experimental/windows-native-gpu/rgba_oracle.cpp -o /tmp/rgba-oracle
       - name: Replay every milestone module in this partition

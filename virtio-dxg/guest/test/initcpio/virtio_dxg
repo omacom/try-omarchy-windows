@@ -149,21 +149,21 @@ UNIT
     case " $(cat /proc/cmdline) " in
     *" virtio_dxg.boost=0 "*) ;;
     *)
-        cat >/run/systemd/system/virtio-dxg-app-prefetch.service <<'UNIT'
+        mkdir -p /run/systemd/user/graphical-session.target.wants || return 1
+        cat >/run/systemd/user/virtio-dxg-app-prefetch.service <<'UNIT'
 [Unit]
 Description=virtio-dxg: launcher applications read ahead into memory
-After=graphical.target
+PartOf=graphical-session.target
 
 [Service]
-Type=oneshot
+Type=exec
 ExecStart=/bin/bash /run/virtio-dxg/app-prefetch
 Nice=19
 CPUSchedulingPolicy=idle
 IOSchedulingClass=idle
 UNIT
         ln -sf ../virtio-dxg-app-prefetch.service \
-            /run/systemd/system/graphical.target.wants/ || return 1
-        mkdir -p /run/systemd/user/graphical-session.target.wants || return 1
+            /run/systemd/user/graphical-session.target.wants/ || return 1
         cat >/run/systemd/user/virtio-dxg-browser-boost.service <<'UNIT'
 [Unit]
 Description=virtio-dxg: the browser kept ready for instant windows

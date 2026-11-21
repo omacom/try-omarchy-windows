@@ -13,14 +13,18 @@ list=0
 declare -A seen
 declare -A programs
 files=()
+add_resolved() {
+    [[ -n ${seen[$1]:-} ]] && return
+    seen[$1]=1
+    files+=("$1")
+}
 add() {
     local f
     for f in "$@"; do
         [ -f "$f" ] || continue
-        f=$(readlink -f "$f") || continue
-        [ -n "${seen[$f]:-}" ] && continue
-        seen[$f]=1
-        files+=("$f")
+        [[ -n ${seen[$f]:-} ]] && continue
+        f=$(readlink -f -- "$f") || continue
+        add_resolved "$f"
     done
 }
 # A program and the libraries it links (ldd follows them for us).
@@ -46,11 +50,20 @@ add_prog() {
         [ -n "$last" ] && [ "$last" != "$1" ] && case $last in \$*|\"*) ;; *) add_prog "$last" ;; esac ;;
     esac
 }
-add_dir() { [ -d "$1" ] && while IFS= read -r -d '' f; do add "$f"; done < <(find "$1" -type f -size -256M -print0 2>/dev/null); }
+add_dir() {
+    local f
+    [ -d "$1" ] || return
+    while IFS= read -r -d '' f; do add_resolved "$f"; done < <(
+        find "$1" -type f -size -256M -exec realpath -ez -- {} + 2>/dev/null
+    )
+}
 
 # Every application the launcher lists.
 [ "$list" = 1 ] || sleep "${PREFETCH_DELAY:-8}"
-for d in /usr/share/applications /home/*/.local/share/applications; do
+IFS=: read -ra data_dirs <<< "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+for root in "${XDG_DATA_HOME:-$HOME/.local/share}" "${data_dirs[@]}"; do
+    [[ $root == /* ]] || continue
+    d=$root/applications
     for f in "$d"/*.desktop; do
         [ -f "$f" ] || continue
         grep -qiE '^(NoDisplay|Hidden)=true' "$f" && continue

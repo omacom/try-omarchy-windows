@@ -13,6 +13,10 @@ rate. Guest page flips and browser callbacks each need a matching host
 presentation trace before claiming sustained 240 Hz on the Windows display.
 The historical table below used the older calculation.
 
+The load driver times each phase after a one-second warm-up, checks that the
+scene and its load processes stay alive, and excludes transitions between
+phases. Discard the trace if the driver exits with an error.
+
 ### Files scrolling
 
 In a disposable guest session, open Files on the same 3,000-entry directory
@@ -63,6 +67,12 @@ paint, over the DevTools protocol; `pageload.py` does the same for a page
 in a fresh profile. Both also run on Windows (Chrome, Edge) for comparison.
 
 ## Results
+
+The first PR #5 checks at `28b7f55` passed the Mesa build, host mock calls,
+guest contract and Windows and Linux launcher checks. The locked Linux
+7.3.5 module build stopped downloading headers before compilation. Four
+historical replay jobs also lacked their archived fixtures. These are build
+and regression results. Desktop timings below are from the earlier build.
 
 RTX 5090 Laptop GPU, 16 vCPUs, 240 Hz window. Before and after the boot
 hook's desktop priority, GTK's OpenGL renderer, app prefetch and browser
