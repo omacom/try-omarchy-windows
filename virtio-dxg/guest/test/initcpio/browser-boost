@@ -1,0 +1,19 @@
+#!/bin/bash
+# browser-boost: the default browser, when it is Chromium, started without a
+# window once the desktop is up and kept running when its last window
+# closes, as Edge's startup boost does on Windows. Opening the browser or a
+# web app (YouTube, WhatsApp, ...) then hands a window to a browser whose
+# GPU process, profile and caches are already up: no process start-up, no
+# GPU initialization, no shader compilation on the way to the first frame.
+# Low CPU priority while it idles; windows it opens are normal applications.
+set -u
+case $(xdg-settings get default-web-browser 2>/dev/null) in
+chromium.desktop|"") ;;
+*) exit 0 ;;
+esac
+command -v chromium >/dev/null || exit 0
+# Already running (opened by the user before this ran): nothing to do.
+pgrep -u "$(id -u)" -x chromium >/dev/null && exit 0
+sleep "${BOOST_DELAY:-6}"
+pgrep -u "$(id -u)" -x chromium >/dev/null && exit 0
+exec chromium --no-startup-window --keep-alive-for-test

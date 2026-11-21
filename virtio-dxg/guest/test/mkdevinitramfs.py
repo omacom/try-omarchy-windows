@@ -91,7 +91,8 @@ def main():
         entry(out, 'virtio-dxg', 0o040755)
         entry(out, 'virtio-dxg/dxgkrnl_virtio.ko', 0o100644,
               pathlib.Path(module).read_bytes())
-        for name in ('desktop_payload.py', 'chromium-wrapper'):
+        for name in ('desktop_payload.py', 'chromium-wrapper', 'desktop-priority',
+                     'app-prefetch', 'browser-boost'):
             entry(out, 'virtio-dxg/' + name, 0o100644,
                   (hook.parent / name).read_bytes())
         entry(out, 'virtio-dxg/mesa-recipe.json', 0o100644,

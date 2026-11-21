@@ -1,0 +1,21 @@
+#!/bin/sh
+# The desktop's own processes - the compositor, its shell (bar, menus,
+# launcher) and Xwayland - ahead of applications on the CPU, as compositors
+# on bare-metal Linux get realtime or high priority: frames stay on time with
+# every core busy. Nice -10 with reset-on-fork, so what the desktop launches
+# starts at normal priority. Threads created later are caught on the next
+# pass.
+while :; do
+    for name in Hyprland Xwayland quickshell; do
+        for p in $(pgrep -x "$name"); do
+            for t in /proc/$p/task/*; do
+                tid=${t##*/}
+                [ "$(cut -d' ' -f19 "$t/stat" 2>/dev/null)" = -10 ] && continue
+                chrt -o -R -p 0 "$tid" 2>/dev/null
+                renice -n -10 -p "$tid" >/dev/null 2>&1
+            done
+        done
+    done
+    [ "$1" = once ] && break
+    sleep 2
+done

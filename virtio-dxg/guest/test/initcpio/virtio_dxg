@@ -57,7 +57,9 @@ setup_desktop() {
     # this /run bound in. Only select a complete, hash-matched Mesa cohort.
     mkdir -p /run/virtio-dxg || return 1
     cp /virtio-dxg/desktop_payload.py /virtio-dxg/chromium-wrapper \
-        /virtio-dxg/mesa-recipe.json /run/virtio-dxg/ || return 1
+        /virtio-dxg/desktop-priority /virtio-dxg/app-prefetch \
+        /virtio-dxg/browser-boost /virtio-dxg/mesa-recipe.json \
+        /run/virtio-dxg/ || return 1
     mount -o bind /run /new_root/run || return 1
     # Window buffers (the guest module offers them unless
     # virtio_dxg.winbuf=0): applications hand the compositor GPU textures,
@@ -100,6 +102,10 @@ setup_desktop() {
     # GPU ahead of llvmpipe). VK_DRIVER_FILES would replace the search, and
     # Wine passes the session's environment to Windows programs, whose
     # Vulkan loader would then ignore its registered drivers (dxgvk).
+    # GTK 4 renders with OpenGL (GSK_RENDERER=ngl), not its default Vulkan
+    # renderer: its windows open in about 390 ms instead of 650 (Nautilus),
+    # because a GL context on d3d12 starts faster than a Vulkan device on
+    # Dozen.
     if [ -n "$winbuf" ]; then
         clients=MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
         xwayland=       # an empty line in the file
@@ -113,12 +119,65 @@ setup_desktop() {
         "LIBGL_DRIVERS_PATH=$m/lib/dri" "GBM_BACKENDS_PATH=$m/lib/gbm" \
         "LIBVA_DRIVERS_PATH=$m/lib/dri" \
         "VK_ADD_DRIVER_FILES=$m/share/vulkan/icd.d/dzn_icd.x86_64.json" \
+        GSK_RENDERER=ngl \
         >/run/environment.d/90-virtio-dxg.conf.pending || return 1
     mv /run/environment.d/90-virtio-dxg.conf.pending \
         /run/environment.d/90-virtio-dxg.conf || return 1
     # The payload helper prepares both PATH and desktop-menu launch paths.
     # Chromium retains its sandbox. Known-broken VA-API encode is disabled
     # in that wrapper; hardware decode and full browser acceptance are open.
+    # The compositor, its shell and Xwayland ahead of applications on the
+    # CPU (desktop-priority): the desktop keeps its frame rate with every
+    # core busy. A runtime unit, gone at shutdown like the rest of /run.
+    mkdir -p /run/systemd/system/graphical.target.wants || return 1
+    cat >/run/systemd/system/virtio-dxg-desktop-priority.service <<'UNIT'
+[Unit]
+Description=virtio-dxg: desktop processes ahead of applications on the CPU
+
+[Service]
+ExecStart=/bin/sh /run/virtio-dxg/desktop-priority
+Nice=10
+UNIT
+    ln -sf ../virtio-dxg-desktop-priority.service \
+        /run/systemd/system/graphical.target.wants/ || return 1
+    # Applications start faster (virtio_dxg.boost=0 turns this off). Once
+    # the desktop is up, what the launcher's applications load is read into
+    # the page cache at idle priority (app-prefetch: a first launch reads
+    # memory, not the disk), and the default browser, if Chromium, is kept
+    # running without a window (browser-boost: browser and web app windows
+    # open in a browser whose GPU process is already up).
+    case " $(cat /proc/cmdline) " in
+    *" virtio_dxg.boost=0 "*) ;;
+    *)
+        cat >/run/systemd/system/virtio-dxg-app-prefetch.service <<'UNIT'
+[Unit]
+Description=virtio-dxg: launcher applications read ahead into memory
+After=graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /run/virtio-dxg/app-prefetch
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+UNIT
+        ln -sf ../virtio-dxg-app-prefetch.service \
+            /run/systemd/system/graphical.target.wants/ || return 1
+        mkdir -p /run/systemd/user/graphical-session.target.wants || return 1
+        cat >/run/systemd/user/virtio-dxg-browser-boost.service <<'UNIT'
+[Unit]
+Description=virtio-dxg: the browser kept ready for instant windows
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/bin/bash /run/virtio-dxg/browser-boost
+Slice=app-graphical.slice
+UNIT
+        ln -sf ../virtio-dxg-browser-boost.service \
+            /run/systemd/user/graphical-session.target.wants/ || return 1
+        ;;
+    esac
     echo ":: virtio-dxg: desktop selects d3d12 (Mesa $(cat "$m/lib/virtio-dxg-mesa-version")${winbuf:+, zero-copy windows})"
 }
 
