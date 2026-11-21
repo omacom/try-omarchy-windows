@@ -221,12 +221,14 @@ starts or reloads, display sync runs the config Hyprland loads under Lua with
 Hyprland reports (Omarchy's defaults are not run), and keeps the answer for the
 resizes that follow, one change at a time. Each output a rule there names, by
 connector or `desc:`,
-is left alone. The run fails closed: reading Hyprland's state, waiting for
-events or timers, Omarchy helpers that check commands or settings, running a
-command, writing a file, a config that does not end, or a catch-all value that
-is not plain data all leave every output alone. Registration calls (binds,
-rules, settings, devices, start commands) are ignored, so the stock config with
-the QEMU profile runs clean. A rule for one output starts from Hyprland's
+is left alone. Event handlers run once after the config, so a rule they add
+is seen, and Omarchy's command checks, which only look for files, run for real.
+The run fails closed: reading Hyprland's state, timers, a handler that uses its
+event or fails, running a command, writing a file, a config that does not end,
+or a catch-all value that is not plain finite data all leave every output
+alone; a module the config requires that is not there is an ordinary error it
+may catch. Registration calls (binds, rules, settings, devices, start commands)
+are ignored, so the stock config with the QEMU profile runs clean. A rule for one output starts from Hyprland's
 defaults, so it carries every other field of the catch-all, except a mirror of
 that output itself. The display panel of newer Omarchy keeps its choices by
 monitor in `~/.local/state/omarchy/monitors/settings` and applies them as rules
