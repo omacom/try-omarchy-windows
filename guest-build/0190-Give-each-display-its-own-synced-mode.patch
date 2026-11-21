@@ -1,17 +1,17 @@
-From 52d16dfbec61282d1314e3f82eb3db9af6b371f4 Mon Sep 17 00:00:00 2001
+From 747803a3ad9c3dc10edb4b05f285947409e23b93 Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Fri, 20 Nov 2026 17:01:47 -0500
 Subject: [PATCH] Give each display its own synced mode
 
 Display sync applied every display's EDID mode through Omarchy's catch-all monitor rule, one after the other, so with two displays both outputs ended at the last display's mode. The first output no longer matched its window, and QEMU recreated the window of each output whose mode changed. The launcher put the recreated window back at its own size, which changed its EDID and started the next round, so the outputs flipped between the two sizes until the start timed out on a black wallpaper.
 
-With several displays each output now gets its own rule. Hyprland cannot list its monitor rules, so when Hyprland starts or reloads, display sync runs the config Hyprland loads under Lua with hl.monitor recording, through the modules it requires on the search path Hyprland reports, and keeps the answer for the resizes that follow, one change at a time. Every output a rule there names, by connector or desc:, is left alone. Event handlers run once after the config, so a rule they add is seen. The run fails closed: reading Hyprland's state, timers, a handler that uses its event or fails, commands, file writes, a config that does not end, or a catch-all value that is not plain finite data leave every output alone. Omarchy's command checks only look for files, so they run for real.
+With several displays each output now gets its own rule. Hyprland cannot list its monitor rules, so when Hyprland starts or reloads, display sync runs the config Hyprland loads under Lua with hl.monitor recording, through the modules it requires on the search path Hyprland reports, and keeps the answer for the resizes that follow, one change at a time. Every output a rule there names, by connector or desc:, is left alone. Event handlers run once after the config, so an output they name is seen; one that changes the catch-all is unsure. The run fails closed: reading Hyprland's state, timers, a handler that uses its event or fails, commands, file writes, a config that does not end, or a catch-all value that is not plain finite data leave every output alone. Omarchy's command checks only look for files, so they run for real.
 
 A new rule for one output starts from Hyprland's defaults, so it carries every other field of the catch-all, except a mirror of that output itself. A mode or scale saved in the display panel of newer Omarchy, in ~/.local/state/omarchy/monitors/settings, stays. An output left with its own rule after the other displays go away follows its window with only the fields display sync set there.
 
 One display keeps the catch-all rule and the recorded mode for reloads. Revision 76 delivers the script to existing disks.
 ---
- .../usr/local/bin/omarchy-native-display-sync | 726 +++++++++++++++++-
+ .../usr/local/bin/omarchy-native-display-sync | 734 +++++++++++++++++-
  guest/scripts/finalize-rootfs.sh              |   4 +-
  .../omarchy-4.5.0/config/hypr/autostart.lua   |   2 +
  .../omarchy-4.5.0/config/hypr/bindings.lua    |  27 +
@@ -35,8 +35,8 @@ One display keeps the catch-all rule and the recorded mode for reloads. Revision
  guest/tests/test_snapper_guest.py             |   2 +-
  guest/tests/test_url_schemes.py               |   2 +-
  guest/tests/test_windows_volume_sync.py       |   2 +-
- guest/tests/verify.py                         | 465 ++++++++++-
- 25 files changed, 1361 insertions(+), 59 deletions(-)
+ guest/tests/verify.py                         | 467 ++++++++++-
+ 25 files changed, 1371 insertions(+), 59 deletions(-)
  create mode 100644 guest/tests/fixtures/omarchy-4.5.0/config/hypr/autostart.lua
  create mode 100644 guest/tests/fixtures/omarchy-4.5.0/config/hypr/bindings.lua
  create mode 100644 guest/tests/fixtures/omarchy-4.5.0/config/hypr/hyprland.lua
@@ -45,7 +45,7 @@ One display keeps the catch-all rule and the recorded mode for reloads. Revision
  create mode 100644 guest/tests/fixtures/omarchy-4.5.0/config/hypr/monitors.lua
 
 diff --git a/guest/native-overlay/usr/local/bin/omarchy-native-display-sync b/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
-index dfcfe19..4a8f9a9 100755
+index dfcfe19..2c00f1c 100755
 --- a/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
 +++ b/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
 @@ -6,6 +6,8 @@ drm_root=${OMARCHY_DISPLAY_SYNC_DRM_ROOT:-/sys/class/drm}
@@ -57,7 +57,7 @@ index dfcfe19..4a8f9a9 100755
  
  # Omarchy's monitors.lua keeps the user's catch-all scale in a Lua variable.
  # A number there is explicit intent and outranks the scale guessed from the
-@@ -256,21 +258,564 @@ raise SystemExit(1)
+@@ -256,21 +258,572 @@ raise SystemExit(1)
  PY
  }
  
@@ -158,6 +158,7 @@ index dfcfe19..4a8f9a9 100755
 +
 +local env = {}
 +local handlers = {}
++local in_handler = false
 +
 +local function record(rule)
 +  if type(rule) ~= "table" or getmetatable(rule) ~= nil or type(rule.output) ~= "string" then
@@ -166,6 +167,11 @@ index dfcfe19..4a8f9a9 100755
 +  if rule.output ~= "" then
 +    named[rule.output] = true
 +    return
++  end
++  -- A handler's event may not have happened yet, so whether Hyprland runs
++  -- the catch-all it sets cannot be known.
++  if in_handler then
++    fail("an event handler changes the catch-all")
 +  end
 +  -- Everything but what display sync sets itself: Hyprland merges a later
 +  -- catch-all into the earlier one the same way.
@@ -190,7 +196,8 @@ index dfcfe19..4a8f9a9 100755
 +  animation = ignore, bind = ignore, unbind = ignore, config = ignore, curve = ignore,
 +  device = ignore, env = ignore, gesture = ignore, layer_rule = ignore, window_rule = ignore,
 +  workspace_rule = ignore, permission = ignore, exec_cmd = ignore,
-+  -- A handler runs once after the config, so a rule it would add is seen.
++  -- A handler runs once after the config, so an output it would name is seen;
++-- one that changes the catch-all is unsure, since its event may not come.
 +  on = function(event, handler)
 +    if type(handler) ~= "function" then
 +      fail("hl.on without a function")
@@ -399,6 +406,7 @@ index dfcfe19..4a8f9a9 100755
 +  run(entry)
 +  -- With what the event would pass unknown, a handler that looks at it is
 +  -- unsure; any error in a handler is too.
++  in_handler = true
 +  for _, entry_handler in ipairs(handlers) do
 +    local handled, reason = pcall(entry_handler.handler, poison("the " .. entry_handler.event .. " event"))
 +    if not handled then
@@ -627,7 +635,7 @@ index dfcfe19..4a8f9a9 100755
    user_scale=$(configured_scale)
    shopt -s nullglob
    for connector in "$drm_root"/card*-Virtual-*; do
-@@ -284,37 +829,129 @@ apply_preferred_modes() {
+@@ -284,37 +837,129 @@ apply_preferred_modes() {
      fi
      IFS=$'\t' read -r mode scale <<<"$preferred"
      [[ -n $mode && -n $scale ]] || continue
@@ -783,7 +791,7 @@ index dfcfe19..4a8f9a9 100755
  }
  
  record_mode() {
-@@ -331,12 +968,31 @@ record_mode() {
+@@ -331,12 +976,31 @@ record_mode() {
  # current QEMU profile keeps the recorded mode; an older copy of it in a
  # customized monitors.lua cannot, so apply the EDID mode again afterwards.
  # When the mode already matches, Hyprland leaves the output alone.
@@ -816,7 +824,7 @@ index dfcfe19..4a8f9a9 100755
      fi
    done
  }
-@@ -369,7 +1025,7 @@ reload_on_display_change() {
+@@ -369,7 +1033,7 @@ reload_on_display_change() {
    while IFS= read -r line; do
      if [[ -z $line ]]; then
        if [[ $action == change && $hotplug == 1 ]]; then
@@ -825,7 +833,7 @@ index dfcfe19..4a8f9a9 100755
        fi
        action=""
        hotplug=""
-@@ -385,7 +1041,7 @@ reload_on_display_change() {
+@@ -385,7 +1049,7 @@ reload_on_display_change() {
    # udev normally separates events with a blank line, but also handle a final
    # complete event when a test stream or a terminating monitor ends at EOF.
    if [[ $action == change && $hotplug == 1 ]]; then
@@ -834,7 +842,7 @@ index dfcfe19..4a8f9a9 100755
    fi
  }
  
-@@ -401,7 +1057,7 @@ fi
+@@ -401,7 +1065,7 @@ fi
  
  # QEMU changes the virtio-gpu EDID whenever its SDL window changes size.
  # Linux exposes that as a DRM hotplug change.
@@ -1289,7 +1297,7 @@ index 2dff410..d1a9057 100644
  
  
 diff --git a/guest/tests/verify.py b/guest/tests/verify.py
-index 2a2cc9c..73b856f 100755
+index 2a2cc9c..1207753 100755
 --- a/guest/tests/verify.py
 +++ b/guest/tests/verify.py
 @@ -4,13 +4,17 @@
@@ -1406,7 +1414,7 @@ index 2a2cc9c..73b856f 100755
          subprocess.run(
              [str(display_sync), "--from-stdin"],
              input=events,
-@@ -665,12 +738,379 @@ HOTPLUG=1
+@@ -665,12 +738,381 @@ HOTPLUG=1
          check(
              reload_log.read_text(encoding="utf-8").splitlines()
              == [
@@ -1627,6 +1635,8 @@ index 2a2cc9c..73b856f 100755
 +            "event-query": 'hl.on("hyprland.start", function() if #hl.get_monitors() > 1 then end end)\n',
 +            "event-error": 'hl.on("hyprland.start", function() error("boom") end)\n',
 +            "event-loop": 'hl.on("hyprland.start", function() while true do end end)\n',
++            "event-catch-all": 'hl.monitor({ output = "", transform = 0 })\n'
++            'hl.on("monitor.added", function() hl.monitor({ output = "", transform = 1 }) end)\n',
 +            "shell-check": 'if o.shell_succeeds("true") then hl.monitor({ output = "Virtual-2", scale = 2 }) end\n',
 +            "unknown": "while hl.ready() do end\n",
 +            "caught": "pcall(function() return hl.get_monitors() end)\n",
@@ -1791,7 +1801,7 @@ index 2a2cc9c..73b856f 100755
          )
          (legacy_connector / "status").write_text("disconnected\n", encoding="utf-8")
          subprocess.run(
-@@ -685,6 +1125,17 @@ HOTPLUG=1
+@@ -685,6 +1127,17 @@ HOTPLUG=1
              == "modeline 1236 5120 6400 6553 6912 2880 2894 2908 2980 -hsync -vsync\n2\n",
              "native display sync records the single display's mode for config reloads",
          )

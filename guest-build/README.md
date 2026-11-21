@@ -221,10 +221,10 @@ starts or reloads, display sync runs the config Hyprland loads under Lua with
 Hyprland reports (Omarchy's defaults are not run), and keeps the answer for the
 resizes that follow, one change at a time. Each output a rule there names, by
 connector or `desc:`,
-is left alone. Event handlers run once after the config, so a rule they add
-is seen, and Omarchy's command checks, which only look for files, run for real.
-The run fails closed: reading Hyprland's state, timers, a handler that uses its
-event or fails, running a command, writing a file, a config that does not end,
+is left alone. Event handlers run once after the config, so an output they
+name is seen, and Omarchy's command checks, which only look for files, run for
+real. The run fails closed: reading Hyprland's state, timers, a handler that
+uses its event, fails or changes the catch-all, running a command, writing a file, a config that does not end,
 or a catch-all value that is not plain finite data all leave every output
 alone; a module the config requires that is not there is an ordinary error it
 may catch. Registration calls (binds, rules, settings, devices, start commands)
