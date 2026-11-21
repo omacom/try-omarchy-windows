@@ -219,7 +219,8 @@ start timed out. With several displays each output now gets its own
 starts or reloads, display sync runs the config Hyprland loads under Lua with
 `hl.monitor` recording, through the modules it requires on the search path
 Hyprland reports (Omarchy's defaults are not run), and keeps the answer for the
-resizes that follow. Each output a rule there names, by connector or `desc:`,
+resizes that follow, one change at a time. Each output a rule there names, by
+connector or `desc:`,
 is left alone. The run fails closed: reading Hyprland's state, waiting for
 events or timers, Omarchy helpers that check commands or settings, running a
 command, writing a file, a config that does not end, or a catch-all value that

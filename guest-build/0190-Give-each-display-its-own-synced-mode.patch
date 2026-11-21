@@ -1,17 +1,17 @@
-From 2afd8d363f1a939977b25e4f458989a265650680 Mon Sep 17 00:00:00 2001
+From 78b69f062953a3faaf649c131cd58dbd8344c476 Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Fri, 20 Nov 2026 17:01:47 -0500
 Subject: [PATCH] Give each display its own synced mode
 
 Display sync applied every display's EDID mode through Omarchy's catch-all monitor rule, one after the other, so with two displays both outputs ended at the last display's mode. The first output no longer matched its window, and QEMU recreated the window of each output whose mode changed. The launcher put the recreated window back at its own size, which changed its EDID and started the next round, so the outputs flipped between the two sizes until the start timed out on a black wallpaper.
 
-With several displays each output now gets its own rule. Hyprland cannot list its monitor rules, so when Hyprland starts or reloads, display sync runs the config Hyprland loads under Lua with hl.monitor recording, through the modules it requires on the search path Hyprland reports, and keeps the answer for the resizes that follow. Every output a rule there names, by connector or desc:, is left alone. The run fails closed: reading Hyprland's state, waiting for events, Omarchy helpers that check things, commands, file writes, a config that does not end, or a catch-all value that is not plain data leave every output alone.
+With several displays each output now gets its own rule. Hyprland cannot list its monitor rules, so when Hyprland starts or reloads, display sync runs the config Hyprland loads under Lua with hl.monitor recording, through the modules it requires on the search path Hyprland reports, and keeps the answer for the resizes that follow, one change at a time. Every output a rule there names, by connector or desc:, is left alone. The run fails closed: reading Hyprland's state, waiting for events, Omarchy helpers that check things, commands, file writes, a config that does not end, or a catch-all value that is not plain data leave every output alone.
 
 A new rule for one output starts from Hyprland's defaults, so it carries every other field of the catch-all, except a mirror of that output itself. A mode or scale saved in the display panel of newer Omarchy, in ~/.local/state/omarchy/monitors/settings, stays. An output left with its own rule after the other displays go away follows its window with only the fields display sync set there.
 
 One display keeps the catch-all rule and the recorded mode for reloads. Revision 76 delivers the script to existing disks.
 ---
- .../usr/local/bin/omarchy-native-display-sync | 640 +++++++++++++++++-
+ .../usr/local/bin/omarchy-native-display-sync | 660 +++++++++++++++++-
  guest/scripts/finalize-rootfs.sh              |   4 +-
  .../omarchy-4.5.0/config/hypr/autostart.lua   |   2 +
  .../omarchy-4.5.0/config/hypr/bindings.lua    |  27 +
@@ -35,8 +35,8 @@ One display keeps the catch-all rule and the recorded mode for reloads. Revision
  guest/tests/test_snapper_guest.py             |   2 +-
  guest/tests/test_url_schemes.py               |   2 +-
  guest/tests/test_windows_volume_sync.py       |   2 +-
- guest/tests/verify.py                         | 380 ++++++++++-
- 25 files changed, 1192 insertions(+), 57 deletions(-)
+ guest/tests/verify.py                         | 414 ++++++++++-
+ 25 files changed, 1243 insertions(+), 60 deletions(-)
  create mode 100644 guest/tests/fixtures/omarchy-4.5.0/config/hypr/autostart.lua
  create mode 100644 guest/tests/fixtures/omarchy-4.5.0/config/hypr/bindings.lua
  create mode 100644 guest/tests/fixtures/omarchy-4.5.0/config/hypr/hyprland.lua
@@ -45,7 +45,7 @@ One display keeps the catch-all rule and the recorded mode for reloads. Revision
  create mode 100644 guest/tests/fixtures/omarchy-4.5.0/config/hypr/monitors.lua
 
 diff --git a/guest/native-overlay/usr/local/bin/omarchy-native-display-sync b/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
-index dfcfe19..d42178c 100755
+index dfcfe19..669a421 100755
 --- a/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
 +++ b/guest/native-overlay/usr/local/bin/omarchy-native-display-sync
 @@ -6,6 +6,8 @@ drm_root=${OMARCHY_DISPLAY_SYNC_DRM_ROOT:-/sys/class/drm}
@@ -716,27 +716,66 @@ index dfcfe19..d42178c 100755
  }
  
  record_mode() {
-@@ -336,6 +905,8 @@ apply_after_config_reload() {
+@@ -331,12 +900,31 @@ record_mode() {
+ # current QEMU profile keeps the recorded mode; an older copy of it in a
+ # customized monitors.lua cannot, so apply the EDID mode again afterwards.
+ # When the mode already matches, Hyprland leaves the output alone.
++# The resize and reload watchers run apart. One at a time reads or replaces
++# the answer about the config and applies rules, so a resize that comes
++# while a reload is being read waits for the new answer.
++locked() {
++  mkdir -p "${state_file%/*}" 2>/dev/null || true
++  (
++    flock 9 || true
++    "$@"
++  ) 9>>"${state_file%/*}/display-sync.lock"
++}
++
++# Hyprland has just loaded its config, dropping every rule display sync gave
++# an output of its own.
++config_loaded() {
++  rm -f "$own_rules_file"
++  refresh_config_rules
++  apply_preferred_modes
++}
++
+ apply_after_config_reload() {
+   local line
  
    while IFS= read -r line; do
      if [[ $line == configreloaded* ]]; then
-+      rm -f "$own_rules_file"
-+      refresh_config_rules
-       apply_preferred_modes
+-      apply_preferred_modes
++      locked config_loaded
      fi
    done
-@@ -400,7 +971,10 @@ if [[ ${1:-} == --config-reloads-from-stdin ]]; then
- fi
+ }
+@@ -369,7 +957,7 @@ reload_on_display_change() {
+   while IFS= read -r line; do
+     if [[ -z $line ]]; then
+       if [[ $action == change && $hotplug == 1 ]]; then
+-        apply_preferred_modes
++        locked apply_preferred_modes
+       fi
+       action=""
+       hotplug=""
+@@ -385,7 +973,7 @@ reload_on_display_change() {
+   # udev normally separates events with a blank line, but also handle a final
+   # complete event when a test stream or a terminating monitor ends at EOF.
+   if [[ $action == change && $hotplug == 1 ]]; then
+-    apply_preferred_modes
++    locked apply_preferred_modes
+   fi
+ }
+ 
+@@ -401,7 +989,7 @@ fi
  
  # QEMU changes the virtio-gpu EDID whenever its SDL window changes size.
--# Linux exposes that as a DRM hotplug change.
-+# Linux exposes that as a DRM hotplug change. Hyprland has just loaded its
-+# config, so no output has a rule from an earlier run.
-+rm -f "$own_rules_file"
-+refresh_config_rules
- apply_preferred_modes
+ # Linux exposes that as a DRM hotplug change.
+-apply_preferred_modes
++locked config_loaded
  watch_config_reloads &
  while true; do
+   udevadm monitor --udev --subsystem-match=drm --property |
 diff --git a/guest/scripts/finalize-rootfs.sh b/guest/scripts/finalize-rootfs.sh
 index c70936d..1679648 100755
 --- a/guest/scripts/finalize-rootfs.sh
@@ -1183,10 +1222,15 @@ index 2dff410..d1a9057 100644
  
  
 diff --git a/guest/tests/verify.py b/guest/tests/verify.py
-index 2a2cc9c..6f9a532 100755
+index 2a2cc9c..a6c07bc 100755
 --- a/guest/tests/verify.py
 +++ b/guest/tests/verify.py
-@@ -8,9 +8,12 @@ import hashlib
+@@ -4,13 +4,17 @@
+ from __future__ import annotations
+ 
+ import argparse
++import fcntl
+ import hashlib
  import json
  import os
  import py_compile
@@ -1199,7 +1243,7 @@ index 2a2cc9c..6f9a532 100755
  from pathlib import Path
  
  
-@@ -376,7 +379,7 @@ def main() -> None:
+@@ -376,7 +380,7 @@ def main() -> None:
          "system services run without watchdogs, which fire after Windows sleeps",
      )
      check(
@@ -1208,7 +1252,7 @@ index 2a2cc9c..6f9a532 100755
          and "usr/local/bin/mpv" in compat_paths
          and "usr/share/dkms/modules_to_force_install/try-omarchy" in compat_paths
          and "usr/local/lib/try-omarchy/try-omarchy-import.pyz" in compat_paths
-@@ -620,9 +623,43 @@ def main() -> None:
+@@ -620,9 +624,43 @@ def main() -> None:
          )
          legacy_edid[127] = (-sum(legacy_edid[:127])) & 0xFF
          (legacy_connector / "edid").write_bytes(legacy_edid)
@@ -1253,7 +1297,7 @@ index 2a2cc9c..6f9a532 100755
              encoding="utf-8",
          )
          fake_hyprctl.chmod(0o755)
-@@ -651,6 +688,36 @@ HOTPLUG=1
+@@ -651,6 +689,36 @@ HOTPLUG=1
          environment["OMARCHY_DISPLAY_SYNC_STATE"] = str(state_file)
          # Keep the checks below off the monitors.lua of whoever runs them.
          environment["OMARCHY_DISPLAY_SYNC_CONFIG"] = str(temporary_path / "no-monitors.lua")
@@ -1290,7 +1334,7 @@ index 2a2cc9c..6f9a532 100755
          subprocess.run(
              [str(display_sync), "--from-stdin"],
              input=events,
-@@ -665,12 +732,300 @@ HOTPLUG=1
+@@ -665,12 +733,333 @@ HOTPLUG=1
          check(
              reload_log.read_text(encoding="utf-8").splitlines()
              == [
@@ -1431,7 +1475,8 @@ index 2a2cc9c..6f9a532 100755
 +            == [
 +                f'eval hl.monitor({{ output = "Virtual-1", mode = "{mode_1}", scale = "2", bitdepth = 10, cm = "srgb", transform = 1, vrr = 1 }})',
 +                f'eval hl.monitor({{ output = "Virtual-2", mode = "{mode_2}", scale = "1", bitdepth = 10, cm = "srgb", transform = 1, vrr = 1 }})',
-+            ],
+             ],
+-            "native display sync handles QEMU DisplayID and legacy EDID hotplug modes",
 +            "native display sync carries the catch-all's transform, vrr, bitdepth and color into each output's rule",
 +        )
 +        # Newer Omarchy's display panel saves each monitor's choices by its
@@ -1542,6 +1587,39 @@ index 2a2cc9c..6f9a532 100755
 +            and time.monotonic() - started < 9,
 +            "native display sync stops a config that never ends and keeps the answer for the next resize",
 +        )
++        # A resize waits while the reload watcher reads the config again, so
++        # it applies the new answer rather than the old one.
++        def resize_waits_for_reload(home):
++            state = home / "runtime/try-omarchy"
++            state.mkdir(parents=True, exist_ok=True)
++            with open(state / "display-sync.lock", "a") as lock:
++                fcntl.flock(lock, fcntl.LOCK_EX)
++                waiting = subprocess.Popen(
++                    [str(display_sync), "--from-stdin"],
++                    stdin=subprocess.PIPE,
++                    stderr=subprocess.DEVNULL,
++                    text=True,
++                    env={**environment, "HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config"),
++                         "XDG_STATE_HOME": str(home / ".local/state"),
++                         "HYPRCTL_LOG": str(temporary_path / "waited-rules"),
++                         "OMARCHY_DISPLAY_SYNC_STATE": str(state / "display-mode"),
++                         "OMARCHY_DISPLAY_SYNC_CONFIG": str(home / ".config/hypr/monitors.lua")},
++                )
++                waiting.stdin.write("ACTION=change\nSUBSYSTEM=drm\nHOTPLUG=1\n")
++                waiting.stdin.close()
++                try:
++                    waiting.wait(timeout=0.5)
++                    held = False
++                except subprocess.TimeoutExpired:
++                    held = True
++            check(held and waiting.wait(timeout=30) == 0, "native display sync applies one change at a time")
++
++        (temporary_path / "waited-rules").touch()
++        sync_with("locked", {}, then=[resize_waits_for_reload])
++        check(
++            (temporary_path / "waited-rules").read_text(encoding="utf-8").splitlines() == [own_1, own_2],
++            "native display sync applies the waiting change once the other is done",
++        )
 +        # A catch-all value that is not plain data cannot be copied faithfully.
 +        for case, value in {"helper-value": "o.rotation", "metatable": "setmetatable({}, {})"}.items():
 +            check(
@@ -1576,8 +1654,7 @@ index 2a2cc9c..6f9a532 100755
 +            == [
 +                f'eval hl.monitor({{ output = "", mode = "{mode_1}", scale = "2" }})',
 +                own_1,
-             ],
--            "native display sync handles QEMU DisplayID and legacy EDID hotplug modes",
++            ],
 +            "native display sync remembers a rule Hyprland reported an error in",
 +        )
 +
@@ -1596,7 +1673,7 @@ index 2a2cc9c..6f9a532 100755
          )
          (legacy_connector / "status").write_text("disconnected\n", encoding="utf-8")
          subprocess.run(
-@@ -685,6 +1040,17 @@ HOTPLUG=1
+@@ -685,6 +1074,17 @@ HOTPLUG=1
              == "modeline 1236 5120 6400 6553 6912 2880 2894 2908 2980 -hsync -vsync\n2\n",
              "native display sync records the single display's mode for config reloads",
          )
