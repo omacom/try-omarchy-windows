@@ -186,6 +186,12 @@ pointer device, and the guest maps each one onto its own output wherever the
 outputs are placed and whatever their size, scale or rotation. One display is
 unchanged.
 
+Compatibility revision 76 gives each display its own mode when Omarchy uses
+more than one display, so each output keeps its own window's size instead of
+all of them taking the last display's mode. An output the user configured in
+Hyprland's config or in the display panel is left alone. One display is
+unchanged.
+
 If repository publication fails, inspect:
 
 ```sh
