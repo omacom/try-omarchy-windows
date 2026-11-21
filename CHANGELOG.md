@@ -20,6 +20,11 @@
   half of the second. Each window now has its own pointer device mapped to
   its own screen, wherever the screens are arranged and whatever their size,
   scale or rotation (#425, #424).
+- With two displays of different sizes, each display keeps its own window's
+  size. Both displays used to take the second one's size, so Omarchy kept
+  redrawing the second window while it started and could stop on a black
+  wallpaper. Settings you gave a display yourself or in the display panel
+  are left alone (#432).
 - Ghostty opens on Intel graphics. There the graphics layer offers OpenGL 4.2,
   one version short of what Ghostty asks for, so no window appeared. Ghostty
   now starts with 4.3 on those PCs, however it is opened, and nothing changes
@@ -74,8 +79,8 @@
   keys instead and the window stayed as it was until the next press (#427).
 - Runtime r28 carries the graphics runtime and QEMU fixes above (#404, #405,
   #415, #416, #423, #427, #428, #430).
-- The guest package lock is refreshed twice, bringing in kernel 7.3.4,
-  Mesa 26.2.7, glibc 2.44 and PipeWire 1.6.11-2 (#418, #426).
+- The guest package lock is refreshed, bringing in kernel 7.3.5, Mesa 26.3.1,
+  glibc 2.44 and PipeWire 1.6.11-2 (#418, #426, #433).
 - A daily check follows stable Omarchy releases and opens an upgrade PR,
   marked ready only once the full guest build and boot pass (#387).
 
