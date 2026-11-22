@@ -49,7 +49,7 @@ kernel 7.3.5, Mesa 26.3.1):
 | --- | --- | --- |
 | Texture recycling, no threaded context | 41–42 fps | |
 | Constant-buffer views staged in a CPU heap | 54–65 fps | 0 of 879 |
-| Plus texture-cache buckets, budget read every 50 ms, `GTK_A11Y=none` | 65–73 fps | 0 of 614 |
+| Plus texture-cache buckets, budget read every 50 ms | 61–69 fps | 0 of 614 |
 
 17% of Files' main thread was NVIDIA's `CreateConstantBufferView` reading
 back each descriptor it had just written into the shader-visible heap,
