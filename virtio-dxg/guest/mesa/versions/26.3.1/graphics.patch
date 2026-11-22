@@ -42,7 +42,41 @@
  
 --- a/src/gallium/drivers/d3d12/d3d12_batch.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_batch.cpp
-@@ -489,6 +489,9 @@
+@@ -322,13 +322,16 @@
+ 
+    bool has_state_fixup = d3d12_context_state_resolve_submission(ctx, batch);
+ 
+-   ID3D12CommandList *cmdlists[] = { ctx->state_fixup_cmdlist, ctx->cmdlist };
+-   ID3D12CommandList **to_execute = cmdlists;
+-   UINT count_to_execute = ARRAY_SIZE(cmdlists);
+-   if (!has_state_fixup) {
+-      to_execute++;
+-      count_to_execute--;
+-   }
++   /* Pooled textures created since the last submission are initialized
++    * first (d3d12_texture_pool). */
++   ID3D12CommandList *pool_init = residency_ok ? d3d12_texture_pool_take_init(screen) : NULL;
++   ID3D12CommandList *to_execute[3];
++   UINT count_to_execute = 0;
++   if (pool_init)
++      to_execute[count_to_execute++] = pool_init;
++   if (has_state_fixup)
++      to_execute[count_to_execute++] = ctx->state_fixup_cmdlist;
++   to_execute[count_to_execute++] = ctx->cmdlist;
+    /* Submitting work against resources we failed to make resident would just fault */
+    if (residency_ok)
+       screen->cmdqueue->ExecuteCommandLists(count_to_execute, to_execute);
+@@ -336,6 +339,9 @@
+       batch->has_errors = true;
+ 
+    batch->fence = d3d12_create_fence(screen, true);
++   if (pool_init)
++      d3d12_texture_pool_submitted(screen, batch->fence ? batch->fence->value
++                                                        : screen->fence_value + 1);
+ 
+    if (batch->fence) {
+       uint64_t fv = batch->fence->value;
+@@ -489,6 +495,9 @@
     uint8_t new_data = write ? batch_bo_reference_written : batch_bo_reference_read;
     uint8_t old_data = (uint8_t)*state;
     *state = (old_data | new_data);
@@ -64,16 +98,19 @@
  bool
 --- a/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp
-@@ -33,6 +33,8 @@
+@@ -33,6 +33,11 @@
  #include "util/format/u_format.h"
  #include "util/set.h"
  #include "util/u_memory.h"
++#include "util/u_debug.h"
++#include "util/u_math.h"
++#include "util/vma.h"
 +#include "util/os_time.h"
 +#include "util/u_debug.h"
  
  #include <dxguids/dxguids.h>
  
-@@ -103,7 +105,7 @@
+@@ -103,7 +108,7 @@
     bo->residency_status = residency;
     bo->last_used_timestamp = 0;
     desc.Flags &= ~D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
@@ -82,7 +119,7 @@
     if (residency == d3d12_resident) {
        mtx_lock(&screen->submit_mutex);
        list_add(&bo->residency_list_entry, &screen->residency_list);
-@@ -176,6 +178,171 @@
+@@ -176,6 +181,385 @@
     return bo;
  }
  
@@ -96,6 +133,7 @@
 +struct d3d12_texture_cache_entry {
 +   struct list_head link;          /* screen->texture_cache */
 +   struct list_head bucket_link;   /* screen->texture_cache_buckets[] */
++   struct d3d12_texture_pool_slot pool;
 +   ID3D12Resource *res;
 +   D3D12_RESOURCE_DESC desc;
 +   D3D12_HEAP_FLAGS heap_flags;
@@ -142,6 +180,7 @@
 +   screen->texture_cache_bytes -= e->size;
 +   d3d12_resource_state_cleanup(&e->state);
 +   e->res->Release();
++   d3d12_texture_pool_free(screen, &e->pool);
 +   FREE(e);
 +}
 +
@@ -154,6 +193,214 @@
 +         break;
 +      texture_cache_drop(screen, e);
 +   }
++}
++
++/*
++ * d3d12_texture_pool: small textures placed in shared heaps. Creating a
++ * committed resource costs kernel calls (allocation, GPU virtual address,
++ * residency, and destruction later), host round trips under
++ * virtualization that sometimes take milliseconds; a placed resource is
++ * the user-mode driver's business only.
++ */
++#define D3D12_TEXTURE_POOL_HEAP_SIZE (16ull << 20)
++#define D3D12_TEXTURE_POOL_MAX_ALLOC (4ull << 20)
++#define D3D12_TEXTURE_POOL_ALIGN (64ull << 10)
++
++struct d3d12_texture_pool_heap {
++   ID3D12Heap *heap;
++   struct util_vma_heap vma;   /* offsets + D3D12_TEXTURE_POOL_ALIGN (0 is failure) */
++};
++
++void
++d3d12_texture_pool_init(struct d3d12_screen *screen)
++{
++   mtx_init(&screen->texture_pool_lock, mtx_plain);
++   screen->texture_pool_num_heaps = 0;
++   screen->texture_pool_max = debug_get_num_option("D3D12_TEXTURE_POOL_MB", 256) << 20;
++   screen->pool_init_list = NULL;
++   for (unsigned i = 0; i < ARRAY_SIZE(screen->pool_init_alloc); i++) {
++      screen->pool_init_alloc[i] = NULL;
++      screen->pool_init_fence[i] = 0;
++   }
++   screen->pool_init_cur = 0;
++   screen->pool_init_open = false;
++}
++
++void
++d3d12_texture_pool_destroy(struct d3d12_screen *screen)
++{
++   if (screen->pool_init_list)
++      screen->pool_init_list->Release();
++   screen->pool_init_list = NULL;
++   for (unsigned i = 0; i < ARRAY_SIZE(screen->pool_init_alloc); i++) {
++      if (screen->pool_init_alloc[i])
++         screen->pool_init_alloc[i]->Release();
++      screen->pool_init_alloc[i] = NULL;
++   }
++   for (unsigned i = 0; i < screen->texture_pool_num_heaps; i++) {
++      struct d3d12_texture_pool_heap *ph = screen->texture_pool_heaps[i];
++      util_vma_heap_finish(&ph->vma);
++      ph->heap->Release();
++      FREE(ph);
++   }
++   screen->texture_pool_num_heaps = 0;
++}
++
++/* texture_pool_lock held. */
++static bool
++texture_pool_alloc(struct d3d12_texture_pool_heap *ph, uint64_t size,
++                   struct d3d12_texture_pool_slot *slot)
++{
++   uint64_t addr = util_vma_heap_alloc(&ph->vma, size, D3D12_TEXTURE_POOL_ALIGN);
++   if (!addr)
++      return false;
++   slot->heap = ph;
++   slot->offset = addr - D3D12_TEXTURE_POOL_ALIGN;
++   slot->size = size;
++   return true;
++}
++
++bool
++d3d12_texture_pool_place(struct d3d12_screen *screen, const D3D12_RESOURCE_DESC *desc,
++                         struct d3d12_texture_pool_slot *slot, ID3D12Heap **heap)
++{
++   /* Tier 2: textures of any kind share a heap. */
++   if (!screen->texture_pool_max ||
++       screen->opts.ResourceHeapTier < D3D12_RESOURCE_HEAP_TIER_2)
++      return false;
++   if (desc->Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
++       desc->SampleDesc.Count != 1 || desc->Layout != D3D12_TEXTURE_LAYOUT_UNKNOWN ||
++       (desc->Flags & (D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS |
++                       D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)))
++      return false;
++   /* Single-sample textures place at 64 KB alignment. */
++   uint64_t size = d3d12_resource_allocation_size(screen, desc);
++   if (!size || size == UINT64_MAX || size > D3D12_TEXTURE_POOL_MAX_ALLOC)
++      return false;
++   size = align64(size, D3D12_TEXTURE_POOL_ALIGN);
++
++   bool placed = false;
++   mtx_lock(&screen->texture_pool_lock);
++   for (unsigned i = 0; i < screen->texture_pool_num_heaps && !placed; i++)
++      placed = texture_pool_alloc(screen->texture_pool_heaps[i], size, slot);
++   if (!placed && screen->texture_pool_num_heaps < ARRAY_SIZE(screen->texture_pool_heaps) &&
++       (screen->texture_pool_num_heaps + 1) * D3D12_TEXTURE_POOL_HEAP_SIZE <=
++          screen->texture_pool_max) {
++      D3D12_HEAP_DESC hd = {};
++      hd.SizeInBytes = D3D12_TEXTURE_POOL_HEAP_SIZE;
++      hd.Properties = GetCustomHeapProperties(screen->dev, D3D12_HEAP_TYPE_DEFAULT);
++      hd.Alignment = D3D12_TEXTURE_POOL_ALIGN;
++      hd.Flags = D3D12_HEAP_FLAG_ALLOW_ALL_BUFFERS_AND_TEXTURES;
++      ID3D12Heap *h;
++      struct d3d12_texture_pool_heap *ph = CALLOC_STRUCT(d3d12_texture_pool_heap);
++      if (ph && SUCCEEDED(screen->dev->CreateHeap(&hd, IID_PPV_ARGS(&h)))) {
++         ph->heap = h;
++         util_vma_heap_init(&ph->vma, D3D12_TEXTURE_POOL_ALIGN, D3D12_TEXTURE_POOL_HEAP_SIZE);
++         ph->vma.alloc_high = false;
++         screen->texture_pool_heaps[screen->texture_pool_num_heaps++] = ph;
++         placed = texture_pool_alloc(ph, size, slot);
++      } else {
++         FREE(ph);
++      }
++   }
++   if (placed)
++      *heap = slot->heap->heap;
++   mtx_unlock(&screen->texture_pool_lock);
++   return placed;
++}
++
++void
++d3d12_texture_pool_free(struct d3d12_screen *screen, struct d3d12_texture_pool_slot *slot)
++{
++   if (!slot->heap)
++      return;
++   mtx_lock(&screen->texture_pool_lock);
++   util_vma_heap_free(&slot->heap->vma, slot->offset + D3D12_TEXTURE_POOL_ALIGN, slot->size);
++   mtx_unlock(&screen->texture_pool_lock);
++   slot->heap = NULL;
++}
++
++/* submit_mutex held: an open initialization list, its allocator idle. */
++static bool
++texture_pool_init_begin(struct d3d12_screen *screen)
++{
++   if (screen->pool_init_open)
++      return true;
++   unsigned i = (screen->pool_init_cur + 1) % ARRAY_SIZE(screen->pool_init_alloc);
++   if (!screen->pool_init_alloc[i] &&
++       FAILED(screen->dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
++                                                  IID_PPV_ARGS(&screen->pool_init_alloc[i]))))
++      return false;
++   uint64_t fence = screen->pool_init_fence[i];
++   if (fence && screen->fence->GetCompletedValue() < fence &&
++       FAILED(screen->fence->SetEventOnCompletion(fence, NULL)))
++      return false;
++   if (FAILED(screen->pool_init_alloc[i]->Reset()))
++      return false;
++   if (!screen->pool_init_list) {
++      if (FAILED(screen->dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
++                                                screen->pool_init_alloc[i], NULL,
++                                                IID_PPV_ARGS(&screen->pool_init_list))))
++         return false;
++   } else if (FAILED(screen->pool_init_list->Reset(screen->pool_init_alloc[i], NULL))) {
++      return false;
++   }
++   screen->pool_init_cur = i;
++   screen->pool_init_fence[i] = 0;
++   screen->pool_init_open = true;
++   return true;
++}
++
++void
++d3d12_texture_pool_initialize(struct d3d12_screen *screen, ID3D12Resource *res,
++                              D3D12_RESOURCE_FLAGS flags)
++{
++   mtx_lock(&screen->submit_mutex);
++   if (!texture_pool_init_begin(screen)) {
++      mtx_unlock(&screen->submit_mutex);
++      debug_printf("D3D12: cannot initialize a pooled texture\n");
++      return;
++   }
++   D3D12_RESOURCE_BARRIER b[2] = {};
++   b[0].Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
++   b[0].Aliasing.pResourceBefore = NULL;
++   b[0].Aliasing.pResourceAfter = res;
++   unsigned n = 1;
++   if (flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) {
++      b[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++      b[1].Transition.pResource = res;
++      b[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++      b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
++      b[1].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
++      n = 2;
++   }
++   screen->pool_init_list->ResourceBarrier(n, b);
++   if (n == 2) {
++      screen->pool_init_list->DiscardResource(res, NULL);
++      b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
++      b[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
++      screen->pool_init_list->ResourceBarrier(1, &b[1]);
++   }
++   mtx_unlock(&screen->submit_mutex);
++}
++
++ID3D12CommandList *
++d3d12_texture_pool_take_init(struct d3d12_screen *screen)
++{
++   if (!screen->pool_init_open)
++      return NULL;
++   screen->pool_init_open = false;
++   if (FAILED(screen->pool_init_list->Close())) {
++      debug_printf("D3D12: closing the texture pool initialization list failed\n");
++      return NULL;
++   }
++   return screen->pool_init_list;
++}
++
++void
++d3d12_texture_pool_submitted(struct d3d12_screen *screen, uint64_t fence_value)
++{
++   screen->pool_init_fence[screen->pool_init_cur] = fence_value;
 +}
 +
 +void
@@ -203,6 +450,8 @@
 +   e->num_casts = bo->recycle_num_casts;
 +   e->state = bo->global_state;
 +   e->residency = bo->residency_status;
++   e->pool = bo->pool;
++   bo->pool.heap = NULL;   /* the entry owns the slot now */
 +   e->size = size;
 +   e->freed = os_time_get_nano();
 +
@@ -224,7 +473,8 @@
 +d3d12_texture_cache_take(struct d3d12_screen *screen, const D3D12_RESOURCE_DESC *desc,
 +                         D3D12_HEAP_FLAGS heap_flags, const DXGI_FORMAT *casts,
 +                         uint32_t num_casts, struct d3d12_resource_state *state,
-+                         enum d3d12_residency_status *residency)
++                         enum d3d12_residency_status *residency,
++                         struct d3d12_texture_pool_slot *pool)
 +{
 +   ID3D12Resource *res = NULL;
 +   if (!screen->texture_cache_max)
@@ -243,6 +493,7 @@
 +         res = e->res;
 +         *state = e->state;
 +         *residency = e->residency;
++         *pool = e->pool;
 +         FREE(e);
 +         break;
 +      }
@@ -254,7 +505,7 @@
  void
  d3d12_bo_unreference(struct d3d12_bo *bo)
  {
-@@ -207,9 +374,11 @@
+@@ -207,9 +591,12 @@
  
        mtx_unlock(&bo->screen->submit_mutex);
  
@@ -265,11 +516,12 @@
 +         d3d12_resource_state_cleanup(&bo->global_state);
 +         if (bo->res)
 +            bo->res->Release();
++         d3d12_texture_pool_free(bo->screen, &bo->pool);
 +      }
  
        uint64_t mask = bo->local_context_state_mask;
        while (mask) {
-@@ -225,6 +394,8 @@
+@@ -225,6 +612,8 @@
  d3d12_screen_reclaim_completed(struct d3d12_screen *screen)
  {
     uint64_t completed = screen->fence->GetCompletedValue();
@@ -278,7 +530,7 @@
     struct list_head retired;
     list_inithead(&retired);
  
-@@ -265,14 +436,21 @@
+@@ -265,14 +654,21 @@
     if (!have_target)
        return false;
  
@@ -307,7 +559,22 @@
  void *
 --- a/src/gallium/drivers/d3d12/d3d12_bufmgr.h
 +++ b/src/gallium/drivers/d3d12/d3d12_bufmgr.h
-@@ -72,6 +72,13 @@
+@@ -47,6 +47,14 @@
+    batch_bo_reference_written = (1 << 1),
+ };
+ 
++/* d3d12_texture_pool: where a placed texture lives (heap NULL: nowhere). */
++struct d3d12_texture_pool_heap;
++struct d3d12_texture_pool_slot {
++   struct d3d12_texture_pool_heap *heap;
++   uint64_t offset;
++   uint64_t size;
++};
++
+ struct d3d12_bo {
+    struct pipe_reference reference;
+    struct d3d12_screen *screen;
+@@ -72,6 +80,15 @@
     enum d3d12_residency_status residency_status;
     uint16_t local_needs_resolve_state;
  
@@ -317,28 +584,59 @@
 +   D3D12_HEAP_FLAGS recycle_heap_flags;
 +   const DXGI_FORMAT *recycle_casts;
 +   uint32_t recycle_num_casts;
++   /* d3d12_texture_pool: the heap range of a placed texture. */
++   struct d3d12_texture_pool_slot pool;
 +
     unsigned local_context_state_mask;
     uint8_t local_reference_mask[16];
  
-@@ -152,6 +159,21 @@
+@@ -152,6 +169,50 @@
  void
  d3d12_bo_unreference(struct d3d12_bo *bo);
  
 +/* d3d12_texture_cache: a recycled texture matching what init_texture would
-+ * create (its state and residency moved to *state and *residency), or
-+ * NULL. */
++ * create (its state, residency and pool slot moved to *state, *residency
++ * and *pool), or NULL. */
 +ID3D12Resource *
 +d3d12_texture_cache_take(struct d3d12_screen *screen, const D3D12_RESOURCE_DESC *desc,
 +                         D3D12_HEAP_FLAGS heap_flags, const DXGI_FORMAT *casts,
 +                         uint32_t num_casts, struct d3d12_resource_state *state,
-+                         enum d3d12_residency_status *residency);
++                         enum d3d12_residency_status *residency,
++                         struct d3d12_texture_pool_slot *pool);
 +
 +void
 +d3d12_texture_cache_init(struct d3d12_screen *screen);
 +
 +void
 +d3d12_texture_cache_destroy(struct d3d12_screen *screen);
++
++/* d3d12_texture_pool: a heap range for a texture of this description
++ * (*slot, *heap), or false: create it committed. */
++bool
++d3d12_texture_pool_place(struct d3d12_screen *screen, const D3D12_RESOURCE_DESC *desc,
++                         struct d3d12_texture_pool_slot *slot, ID3D12Heap **heap);
++
++/* Gives a slot back (its texture released and the GPU done with it). */
++void
++d3d12_texture_pool_free(struct d3d12_screen *screen, struct d3d12_texture_pool_slot *slot);
++
++/* Records what a texture just placed in the pool needs before its first
++ * use (aliasing barrier; DiscardResource for render targets). */
++void
++d3d12_texture_pool_initialize(struct d3d12_screen *screen, ID3D12Resource *res,
++                              D3D12_RESOURCE_FLAGS flags);
++
++/* submit_mutex held: the pending initialization list (closed), or NULL;
++ * then, once submitted, the fence value it completes with. */
++ID3D12CommandList *
++d3d12_texture_pool_take_init(struct d3d12_screen *screen);
++void
++d3d12_texture_pool_submitted(struct d3d12_screen *screen, uint64_t fence_value);
++
++void
++d3d12_texture_pool_init(struct d3d12_screen *screen);
++void
++d3d12_texture_pool_destroy(struct d3d12_screen *screen);
 +
  void *
  d3d12_bo_map(struct d3d12_bo *bo, D3D12_RANGE *range);
@@ -884,7 +1182,7 @@
     FREE(resource);
  }
  
-@@ -324,7 +368,25 @@
+@@ -324,7 +368,36 @@
  
     HRESULT hres = E_FAIL;
     enum d3d12_residency_status init_residency;
@@ -901,9 +1199,20 @@
 +   const uint32_t recycle_num_casts = screen->opts12.RelaxedFormatCastingSupported ?
 +      num_castable_formats : 0;
 +   struct d3d12_resource_state recycled_state = {};
++   struct d3d12_texture_pool_slot pool_slot = {};
 +   ID3D12Resource *recycled = recyclable ?
 +      d3d12_texture_cache_take(screen, &desc, recycle_heap_flags, recycle_casts,
-+                               recycle_num_casts, &recycled_state, &init_residency) : NULL;
++                               recycle_num_casts, &recycled_state, &init_residency,
++                               &pool_slot) : NULL;
++   /* d3d12_texture_pool: placed in a shared heap, no kernel allocation. */
++   if (!recycled && recyclable) {
++      ID3D12Heap *pool_heap = NULL;
++      if (d3d12_texture_pool_place(screen, &desc, &pool_slot, &pool_heap)) {
++         heap = pool_heap;
++         placed_offset = pool_slot.offset;
++      }
++   }
++create_texture:
 +   if (recycled) {
 +      d3d12_res = recycled;
 +      hres = S_OK;
@@ -911,7 +1220,21 @@
  #ifndef _GAMING_XBOX
  
     if (heap && screen->max_feature_level == D3D_FEATURE_LEVEL_1_0_GENERIC) {
-@@ -440,6 +502,21 @@
+@@ -414,6 +487,13 @@
+    }
+    } while (hres == E_OUTOFMEMORY && d3d12_screen_reclaim_one(screen));
+ 
++   if (FAILED(hres) && !recycled && pool_slot.heap) {
++      /* Not placeable after all: committed, as before. */
++      d3d12_texture_pool_free(screen, &pool_slot);
++      heap = NULL;
++      placed_offset = 0;
++      goto create_texture;
++   }
+    if (FAILED(hres))
+       return false;
+ 
+@@ -440,6 +520,25 @@
     }
  
     res->bo = d3d12_bo_wrap_res(screen, d3d12_res, init_residency);
@@ -919,8 +1242,12 @@
 +      if (recycled)
 +         d3d12_resource_state_cleanup(&recycled_state);
 +      d3d12_res->Release();
++      d3d12_texture_pool_free(screen, &pool_slot);
 +      return false;
 +   }
++   res->bo->pool = pool_slot;
++   if (pool_slot.heap && !recycled)
++      d3d12_texture_pool_initialize(screen, d3d12_res, desc.Flags);
 +   if (recycled) {
 +      /* The texture's actual state, as tracked when it was freed. */
 +      d3d12_resource_state_cleanup(&res->bo->global_state);
@@ -933,7 +1260,7 @@
  
     return true;
  }
-@@ -540,10 +617,726 @@
+@@ -540,10 +639,726 @@
     return &res->base.b;
  }
  
@@ -1660,7 +1987,7 @@
     struct d3d12_resource *res = CALLOC_STRUCT(d3d12_resource);
     if (!res)
        return NULL;
-@@ -581,6 +1374,13 @@
+@@ -581,6 +1396,13 @@
                            struct winsys_handle *handle, unsigned usage)
  {
     struct d3d12_screen *screen = d3d12_screen(pscreen);
@@ -1674,7 +2001,7 @@
     if (handle->type != WINSYS_HANDLE_TYPE_D3D12_RES &&
         handle->type != WINSYS_HANDLE_TYPE_FD &&
         handle->type != WINSYS_HANDLE_TYPE_WIN32_NAME)
-@@ -871,6 +1671,36 @@
+@@ -871,6 +1693,36 @@
     struct d3d12_resource *res = d3d12_resource(pres);
     struct d3d12_screen *screen = d3d12_screen(pscreen);
  
@@ -1711,7 +2038,7 @@
     switch (handle->type) {
     case WINSYS_HANDLE_TYPE_D3D12_RES:
        handle->com_obj = d3d12_resource_resource(res);
-@@ -1010,6 +1840,13 @@
+@@ -1010,6 +1862,13 @@
  
  static constexpr unsigned d3d12_max_planes = 3;
  
@@ -1725,7 +2052,7 @@
  /**
   * Get stride and offset for the given pipe resource without the need to get
   * a winsys_handle.
-@@ -1028,6 +1865,41 @@
+@@ -1028,6 +1887,41 @@
     struct d3d12_resource* res = d3d12_resource(pres);
     unsigned num_planes = util_format_get_num_planes(res->overall_format);
  
@@ -1767,7 +2094,7 @@
     pipe_resource *planes[d3d12_max_planes];
     unsigned int strides[d3d12_max_planes];
     unsigned int layer_strides[d3d12_max_planes];
-@@ -1298,6 +2170,142 @@
+@@ -1298,6 +2192,142 @@
     ctx->has_commands = true;
  }
  
@@ -2016,7 +2343,7 @@
  {
     struct d3d12_screen *screen = d3d12_screen(pscreen);
  
-@@ -598,9 +607,81 @@
+@@ -598,9 +607,82 @@
     return true;
  }
  
@@ -2095,10 +2422,11 @@
  d3d12_deinit_screen(struct d3d12_screen *screen)
  {
 +   d3d12_texture_cache_destroy(screen);
++   d3d12_texture_pool_destroy(screen);
     while (d3d12_screen_reclaim_one(screen))
        ;
  
-@@ -670,6 +751,10 @@
+@@ -670,6 +752,10 @@
  void
  d3d12_destroy_screen(struct d3d12_screen *screen)
  {
@@ -2109,7 +2437,7 @@
     slab_destroy_parent(&screen->transfer_pool);
     mtx_destroy(&screen->submit_mutex);
     mtx_destroy(&screen->pending_free_lock);
-@@ -1377,10 +1462,17 @@
+@@ -1377,10 +1463,18 @@
     d3d12_debug = static_cast<uint32_t>(debug_get_option_d3d12_debug());
  
     screen->winsys = winsys;
@@ -2121,6 +2449,7 @@
     mtx_init(&screen->descriptor_pool_mutex, mtx_plain);
     mtx_init(&screen->submit_mutex, mtx_plain);
 +   d3d12_texture_cache_init(screen);
++   d3d12_texture_pool_init(screen);
 +   mtx_init(&screen->query_cache_lock, mtx_plain);
 +   memset(screen->alloc_size_cache, 0, sizeof(screen->alloc_size_cache));
 +   memset(screen->format_cache, 0, sizeof(screen->format_cache));
@@ -2139,7 +2468,7 @@
     LUID adapter_luid;
     char driver_uuid[PIPE_UUID_SIZE];
     char device_uuid[PIPE_UUID_SIZE];
-@@ -91,6 +94,34 @@
+@@ -91,6 +94,48 @@
     struct list_head pending_free_list;
  
     struct list_head residency_list;
@@ -2155,6 +2484,20 @@
 +   mtx_t texture_cache_lock;
 +   uint64_t texture_cache_bytes;
 +   uint64_t texture_cache_max;
++
++   /* d3d12_texture_pool (d3d12_bufmgr.cpp): small textures placed in
++    * shared heaps, under texture_pool_lock. New placed render targets are
++    * initialized by pool_init_list, submitted ahead of the next batch
++    * (pool_init_* under submit_mutex). */
++   mtx_t texture_pool_lock;
++   struct d3d12_texture_pool_heap *texture_pool_heaps[16];
++   unsigned texture_pool_num_heaps;
++   uint64_t texture_pool_max;
++   ID3D12GraphicsCommandList *pool_init_list;
++   ID3D12CommandAllocator *pool_init_alloc[4];
++   uint64_t pool_init_fence[4];
++   unsigned pool_init_cur;
++   bool pool_init_open;
 +
 +   /* Remembered device queries (d3d12_screen.cpp), under query_cache_lock:
 +    * resource allocation sizes by description, format support by
@@ -2174,7 +2517,7 @@
     ID3D12Fence *residency_fence;
     uint64_t residency_fence_value;
     unsigned num_evictions;
-@@ -213,6 +244,10 @@
+@@ -213,6 +258,10 @@
  void
  d3d12_deinit_screen(struct d3d12_screen *screen);
  
