@@ -73,6 +73,15 @@
  
  #include <dxguids/dxguids.h>
  
+@@ -103,7 +105,7 @@
+    bo->residency_status = residency;
+    bo->last_used_timestamp = 0;
+    desc.Flags &= ~D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+-   bo->estimated_size = GetResourceAllocationInfo(screen->dev, 0, 1, &desc).SizeInBytes;
++   bo->estimated_size = d3d12_resource_allocation_size(screen, &desc);
+    if (residency == d3d12_resident) {
+       mtx_lock(&screen->submit_mutex);
+       list_add(&bo->residency_list_entry, &screen->residency_list);
 @@ -176,6 +178,171 @@
     return bo;
  }
@@ -1988,7 +1997,100 @@
     caps->min_line_width =
     caps->min_line_width_aa =
     caps->min_point_size =
-@@ -601,6 +610,7 @@
+@@ -443,12 +452,12 @@
+ }
+ 
+ static bool
+-d3d12_is_format_supported(struct pipe_screen *pscreen,
+-                          enum pipe_format format,
+-                          enum pipe_texture_target target,
+-                          unsigned sample_count,
+-                          unsigned storage_sample_count,
+-                          unsigned bind)
++d3d12_is_format_supported_uncached(struct pipe_screen *pscreen,
++                                   enum pipe_format format,
++                                   enum pipe_texture_target target,
++                                   unsigned sample_count,
++                                   unsigned storage_sample_count,
++                                   unsigned bind)
+ {
+    struct d3d12_screen *screen = d3d12_screen(pscreen);
+ 
+@@ -598,9 +607,81 @@
+    return true;
+ }
+ 
++/* The answer depends only on the arguments and the device. */
++static bool
++d3d12_is_format_supported(struct pipe_screen *pscreen,
++                          enum pipe_format format,
++                          enum pipe_texture_target target,
++                          unsigned sample_count,
++                          unsigned storage_sample_count,
++                          unsigned bind)
++{
++   struct d3d12_screen *screen = d3d12_screen(pscreen);
++   uint64_t key = (uint64_t)format | (uint64_t)target << 16 |
++                  (uint64_t)MIN2(sample_count, 255) << 24 |
++                  (uint64_t)MIN2(storage_sample_count, 255) << 32;
++   uint64_t h = (key ^ (uint64_t)bind << 21) * 0x9E3779B97F4A7C15ull;
++   unsigned slot = (unsigned)(h >> 55) % ARRAY_SIZE(screen->format_cache);
++   mtx_lock(&screen->query_cache_lock);
++   if (screen->format_cache[slot].valid && screen->format_cache[slot].key == key &&
++       screen->format_cache[slot].bind == bind) {
++      bool supported = screen->format_cache[slot].supported;
++      mtx_unlock(&screen->query_cache_lock);
++      return supported;
++   }
++   mtx_unlock(&screen->query_cache_lock);
++   bool supported = d3d12_is_format_supported_uncached(pscreen, format, target, sample_count,
++                                                       storage_sample_count, bind);
++   mtx_lock(&screen->query_cache_lock);
++   screen->format_cache[slot].key = key;
++   screen->format_cache[slot].bind = bind;
++   screen->format_cache[slot].supported = supported;
++   screen->format_cache[slot].valid = true;
++   mtx_unlock(&screen->query_cache_lock);
++   return supported;
++}
++
++static bool
++alloc_desc_equal(const D3D12_RESOURCE_DESC *a, const D3D12_RESOURCE_DESC *b)
++{
++   return a->Dimension == b->Dimension && a->Alignment == b->Alignment &&
++          a->Width == b->Width && a->Height == b->Height &&
++          a->DepthOrArraySize == b->DepthOrArraySize && a->MipLevels == b->MipLevels &&
++          a->Format == b->Format && a->SampleDesc.Count == b->SampleDesc.Count &&
++          a->SampleDesc.Quality == b->SampleDesc.Quality && a->Layout == b->Layout &&
++          a->Flags == b->Flags;
++}
++
++uint64_t
++d3d12_resource_allocation_size(struct d3d12_screen *screen, const D3D12_RESOURCE_DESC *desc)
++{
++   uint64_t h = desc->Width * 0x9E3779B97F4A7C15ull;
++   h ^= ((uint64_t)desc->Height << 32 | desc->Format) * 0xC2B2AE3D27D4EB4Full;
++   h ^= ((uint64_t)desc->Flags << 40 | (uint64_t)desc->MipLevels << 24 |
++         (uint64_t)desc->DepthOrArraySize << 8 | desc->Dimension) * 0x165667B19E3779F9ull;
++   h ^= desc->Alignment ^ (uint64_t)desc->SampleDesc.Count << 4 ^ (uint64_t)desc->Layout << 12;
++   unsigned slot = (unsigned)((h ^ h >> 29) * 0xBF58476D1CE4E5B9ull >> 56);   /* 0..255 */
++   mtx_lock(&screen->query_cache_lock);
++   if (screen->alloc_size_cache[slot].valid &&
++       alloc_desc_equal(&screen->alloc_size_cache[slot].desc, desc)) {
++      uint64_t size = screen->alloc_size_cache[slot].size;
++      mtx_unlock(&screen->query_cache_lock);
++      return size;
++   }
++   mtx_unlock(&screen->query_cache_lock);
++   uint64_t size = GetResourceAllocationInfo(screen->dev, 0, 1, desc).SizeInBytes;
++   mtx_lock(&screen->query_cache_lock);
++   screen->alloc_size_cache[slot].desc = *desc;
++   screen->alloc_size_cache[slot].size = size;
++   screen->alloc_size_cache[slot].valid = true;
++   mtx_unlock(&screen->query_cache_lock);
++   return size;
++}
++
  void
  d3d12_deinit_screen(struct d3d12_screen *screen)
  {
@@ -1996,7 +2098,7 @@
     while (d3d12_screen_reclaim_one(screen))
        ;
  
-@@ -670,6 +680,10 @@
+@@ -670,6 +751,10 @@
  void
  d3d12_destroy_screen(struct d3d12_screen *screen)
  {
@@ -2007,7 +2109,7 @@
     slab_destroy_parent(&screen->transfer_pool);
     mtx_destroy(&screen->submit_mutex);
     mtx_destroy(&screen->pending_free_lock);
-@@ -1377,10 +1391,14 @@
+@@ -1377,10 +1462,17 @@
     d3d12_debug = static_cast<uint32_t>(debug_get_option_d3d12_debug());
  
     screen->winsys = winsys;
@@ -2019,6 +2121,9 @@
     mtx_init(&screen->descriptor_pool_mutex, mtx_plain);
     mtx_init(&screen->submit_mutex, mtx_plain);
 +   d3d12_texture_cache_init(screen);
++   mtx_init(&screen->query_cache_lock, mtx_plain);
++   memset(screen->alloc_size_cache, 0, sizeof(screen->alloc_size_cache));
++   memset(screen->format_cache, 0, sizeof(screen->format_cache));
     mtx_init(&screen->pending_free_lock, mtx_plain);
     list_inithead(&screen->pending_free_list);
  
@@ -2034,7 +2139,7 @@
     LUID adapter_luid;
     char driver_uuid[PIPE_UUID_SIZE];
     char device_uuid[PIPE_UUID_SIZE];
-@@ -91,6 +94,18 @@
+@@ -91,6 +94,34 @@
     struct list_head pending_free_list;
  
     struct list_head residency_list;
@@ -2050,9 +2155,36 @@
 +   mtx_t texture_cache_lock;
 +   uint64_t texture_cache_bytes;
 +   uint64_t texture_cache_max;
++
++   /* Remembered device queries (d3d12_screen.cpp), under query_cache_lock:
++    * resource allocation sizes by description, format support by
++    * (format, target, samples, bind). Direct-mapped; a collision only
++    * asks the device again. */
++   mtx_t query_cache_lock;
++   struct {
++      D3D12_RESOURCE_DESC desc;
++      uint64_t size;
++      bool valid;
++   } alloc_size_cache[256];
++   struct {
++      uint64_t key;
++      unsigned bind;
++      bool valid, supported;
++   } format_cache[512];
     ID3D12Fence *residency_fence;
     uint64_t residency_fence_value;
     unsigned num_evictions;
+@@ -213,6 +244,10 @@
+ void
+ d3d12_deinit_screen(struct d3d12_screen *screen);
+ 
++/* GetResourceAllocationInfo(desc).SizeInBytes, remembered per description. */
++uint64_t
++d3d12_resource_allocation_size(struct d3d12_screen *screen, const D3D12_RESOURCE_DESC *desc);
++
+ void
+ d3d12_destroy_screen(struct d3d12_screen *screen);
+ 
 --- a/src/glx/dri_common.c
 +++ b/src/glx/dri_common.c
 @@ -1036,7 +1036,9 @@
