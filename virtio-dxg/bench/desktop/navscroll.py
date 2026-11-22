@@ -70,7 +70,7 @@ for direction in ('wheel-down', 'wheel-up'):
     # NAVSCROLL_INTERVAL_MS: time between wheel notches (25: a mouse wheel
     # turned briskly; 4: a high-rate wheel or touchpad stream).
     iv = float(os.environ.get('NAVSCROLL_INTERVAL_MS', '25')) / 1000
-    n = int(2.0 / iv)
+    n = int(float(os.environ.get('NAVSCROLL_SECS', '2')) / iv)   # per direction
     for i in range(n):
         k.cmd('input-send-event', events=[{'type': 'btn', 'data': {'down': True, 'button': direction}},
                                           {'type': 'btn', 'data': {'down': False, 'button': direction}}])

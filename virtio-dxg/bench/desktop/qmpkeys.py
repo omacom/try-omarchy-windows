@@ -1,9 +1,11 @@
 """qmpkeys: key presses into the VM through QEMU's QMP (reachable from the
-guest at the slirp host address), as a user would type them."""
+guest at the slirp host address), as a user would type them. QMP_PORT
+picks another VM's QMP port (default 4444)."""
 import json
+import os
 import socket
 
-QMP = ('10.0.2.2', 4444)
+QMP = ('10.0.2.2', int(os.environ.get('QMP_PORT', '4444')))
 NAMES = {' ': 'spc', '-': 'minus', '.': 'dot', '/': 'slash', '\n': 'ret'}
 
 
