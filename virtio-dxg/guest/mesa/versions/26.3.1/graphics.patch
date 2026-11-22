@@ -73,7 +73,7 @@
  
  #include <dxguids/dxguids.h>
  
-@@ -176,6 +178,150 @@
+@@ -176,6 +178,171 @@
     return bo;
  }
  
@@ -85,7 +85,8 @@
 + * Under virtualization each is a host round trip.
 + */
 +struct d3d12_texture_cache_entry {
-+   struct list_head link;
++   struct list_head link;          /* screen->texture_cache */
++   struct list_head bucket_link;   /* screen->texture_cache_buckets[] */
 +   ID3D12Resource *res;
 +   D3D12_RESOURCE_DESC desc;
 +   D3D12_HEAP_FLAGS heap_flags;
@@ -110,11 +111,25 @@
 +          a->Flags == b->Flags;
 +}
 +
++static unsigned
++texture_cache_bucket(const D3D12_RESOURCE_DESC *desc, D3D12_HEAP_FLAGS heap_flags,
++                     const DXGI_FORMAT *casts)
++{
++   uint64_t h = desc->Width * 0x9E3779B97F4A7C15ull;
++   h ^= ((uint64_t)desc->Height << 32 | desc->Format) * 0xC2B2AE3D27D4EB4Full;
++   h ^= ((uint64_t)desc->Flags << 32 | (uint64_t)desc->MipLevels << 16 |
++         desc->DepthOrArraySize) * 0x165667B19E3779F9ull;
++   h ^= ((uint64_t)heap_flags << 8 | desc->Dimension) ^ (uintptr_t)casts;
++   h ^= h >> 29;
++   return (unsigned)(h * 0xBF58476D1CE4E5B9ull >> 58);   /* 0..63 */
++}
++
 +/* Lock held. */
 +static void
 +texture_cache_drop(struct d3d12_screen *screen, struct d3d12_texture_cache_entry *e)
 +{
 +   list_del(&e->link);
++   list_del(&e->bucket_link);
 +   screen->texture_cache_bytes -= e->size;
 +   d3d12_resource_state_cleanup(&e->state);
 +   e->res->Release();
@@ -136,6 +151,8 @@
 +d3d12_texture_cache_init(struct d3d12_screen *screen)
 +{
 +   list_inithead(&screen->texture_cache);
++   for (unsigned i = 0; i < ARRAY_SIZE(screen->texture_cache_buckets); i++)
++      list_inithead(&screen->texture_cache_buckets[i]);
 +   mtx_init(&screen->texture_cache_lock, mtx_plain);
 +   screen->texture_cache_bytes = 0;
 +   screen->texture_cache_max = debug_get_num_option("D3D12_TEXTURE_CACHE_MB", 128) << 20;
@@ -187,6 +204,8 @@
 +      texture_cache_drop(screen, list_first_entry(&screen->texture_cache,
 +                                                  struct d3d12_texture_cache_entry, link));
 +   list_addtail(&e->link, &screen->texture_cache);
++   list_addtail(&e->bucket_link, &screen->texture_cache_buckets[
++      texture_cache_bucket(&e->desc, e->heap_flags, e->casts)]);
 +   screen->texture_cache_bytes += size;
 +   mtx_unlock(&screen->texture_cache_lock);
 +   return true;
@@ -204,11 +223,13 @@
 +   mtx_lock(&screen->texture_cache_lock);
 +   texture_cache_expire(screen, os_time_get_nano());
 +   /* Most recently freed first: the likeliest to be resident. */
-+   list_for_each_entry_from_rev(struct d3d12_texture_cache_entry, e,
-+                                screen->texture_cache.prev, &screen->texture_cache, link) {
++   struct list_head *bucket =
++      &screen->texture_cache_buckets[texture_cache_bucket(desc, heap_flags, casts)];
++   list_for_each_entry_rev(struct d3d12_texture_cache_entry, e, bucket, bucket_link) {
 +      if (e->heap_flags == heap_flags && e->casts == casts && e->num_casts == num_casts &&
 +          texture_desc_equal(&e->desc, desc)) {
 +         list_del(&e->link);
++         list_del(&e->bucket_link);
 +         screen->texture_cache_bytes -= e->size;
 +         res = e->res;
 +         *state = e->state;
@@ -224,7 +245,7 @@
  void
  d3d12_bo_unreference(struct d3d12_bo *bo)
  {
-@@ -207,9 +353,11 @@
+@@ -207,9 +374,11 @@
  
        mtx_unlock(&bo->screen->submit_mutex);
  
@@ -239,7 +260,7 @@
  
        uint64_t mask = bo->local_context_state_mask;
        while (mask) {
-@@ -225,6 +373,8 @@
+@@ -225,6 +394,8 @@
  d3d12_screen_reclaim_completed(struct d3d12_screen *screen)
  {
     uint64_t completed = screen->fence->GetCompletedValue();
@@ -248,7 +269,7 @@
     struct list_head retired;
     list_inithead(&retired);
  
-@@ -265,14 +415,21 @@
+@@ -265,14 +436,21 @@
     if (!have_target)
        return false;
  
@@ -1996,13 +2017,14 @@
     LUID adapter_luid;
     char driver_uuid[PIPE_UUID_SIZE];
     char device_uuid[PIPE_UUID_SIZE];
-@@ -91,6 +94,12 @@
+@@ -91,6 +94,13 @@
     struct list_head pending_free_list;
  
     struct list_head residency_list;
 +
 +   /* d3d12_texture_cache (d3d12_bufmgr.cpp) */
-+   struct list_head texture_cache;
++   struct list_head texture_cache;            /* oldest first */
++   struct list_head texture_cache_buckets[64]; /* by description hash */
 +   mtx_t texture_cache_lock;
 +   uint64_t texture_cache_bytes;
 +   uint64_t texture_cache_max;
