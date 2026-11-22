@@ -433,6 +433,17 @@ static void dxg_high_qos_thread(void)
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 }
 
+/*
+ * A lane that has just run a request polls for the next one for a while
+ * before it sleeps (DXG_LANE_SPIN_US microseconds, default 1000; 0 never
+ * polls). A guest frame sends its calls one after another - GTK 4 creates,
+ * maps and frees dozens of textures per frame - and each would otherwise
+ * wake a sleeping thread, which costs Windows milliseconds on hybrid CPUs
+ * (6.5 ms per CreateAllocation in Files' frames) for calls the driver
+ * answers in tens of microseconds.
+ */
+static int64_t dxg_lane_spin_ns = 1000 * 1000;
+
 static void *dxg_lane_main(void *opaque)
 {
     DxgLane *lane = opaque;
@@ -449,6 +460,19 @@ static void *dxg_lane_main(void *opaque)
         while (!lane->quit && QSIMPLEQ_EMPTY(&lane->queue)) {
             lane->busy = false;
             qemu_cond_signal(&lane->cond);
+            if (dxg_lane_spin_ns > 0) {
+                int64_t end = get_clock() + dxg_lane_spin_ns;
+
+                qemu_mutex_unlock(&lane->lock);
+                while (!qatomic_read(&lane->queue.sqh_first) &&
+                       !qatomic_read(&lane->quit) && get_clock() < end) {
+                    YieldProcessor();
+                }
+                qemu_mutex_lock(&lane->lock);
+                if (lane->quit || !QSIMPLEQ_EMPTY(&lane->queue)) {
+                    break;
+                }
+            }
             qemu_cond_wait(&lane->cond, &lane->lock);
         }
         if (lane->quit) {
@@ -1175,6 +1199,9 @@ static void dxg_realize(DeviceState *dev, Error **errp)
     d->stats = getenv("DXGHOST_STATS") != NULL;
     if (!getenv("VIRTIO_DXG_DEFAULT_QOS")) {
         dxg_high_qos_process();
+    }
+    if (getenv("DXG_LANE_SPIN_US")) {
+        dxg_lane_spin_ns = (int64_t)atoi(getenv("DXG_LANE_SPIN_US")) * 1000;
     }
     config.adapter_luid_low = d->luid_low;
     config.adapter_luid_high = d->luid_high;
