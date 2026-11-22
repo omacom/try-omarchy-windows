@@ -2,12 +2,14 @@
 the way a user does it: SUPER+SPACE (Omarchy menu), type the app's name,
 Enter. Times, from the key presses (sent through QEMU's input, so they go
 through the guest's input stack): menu shown (openlayer), and Enter to the
-app's window mapped (openwindow). Then closes the window and stops what the
-launch started (its systemd scopes). Round 1 is the first launch since boot
+app's window mapped (openwindow). Closes verified windows on workspace 7.
+Unidentified windows are reported separately. Round 1 is the first launch since boot
 (unless something was opened before), later rounds are warm launches.
 Runs on workspace 7. As the desktop user with sessenv.sh."""
 import configparser
+from collections import defaultdict
 import glob
+import json
 import os
 import re
 import socket
@@ -20,7 +22,6 @@ from qmpkeys import Keys  # noqa: E402
 
 ROUNDS = int(sys.argv[1]) if len(sys.argv) > 1 else 2
 FILTER = [f for f in (sys.argv[2].lower().split(',') if len(sys.argv) > 2 else []) if f]
-SKIP = {'foot-server', 'try-omarchy-follow-timezone', 'disk usage', 'docker', 'uuctl'}
 
 
 def apps():
@@ -47,12 +48,7 @@ def apps():
             if e.get('Type', 'Application') != 'Application':
                 continue
             name = e.get('Name', did)
-            if did.lower() in SKIP or name.lower() in SKIP:
-                print(f'skipped by benchmark policy: {did} ({name})', flush=True)
-                continue
-            if FILTER and not any(f in name.lower() or f in did.lower() for f in FILTER):
-                continue
-            out.append((did, name))
+            out.append((did, name, e.get('StartupWMClass', '')))
     return out
 
 
@@ -76,7 +72,7 @@ def drain():
         buf = buf.rsplit(b'\n', 1)[-1]
 
 
-def wait_event(prefix, timeout, t0):
+def wait_event(prefix, timeout, t0, *, exact=False):
     """First compositor event starting with prefix after now; (ms since t0, payload)."""
     global buf
     end = time.monotonic() + timeout
@@ -90,19 +86,27 @@ def wait_event(prefix, timeout, t0):
             time.sleep(0.001)
         while b'\n' in buf:
             line, buf = buf.split(b'\n', 1)
-            if line.startswith(prefix):
+            if line.startswith(prefix) and (not exact or line == prefix):
                 return (time.monotonic() - t0) * 1000, line[len(prefix):].decode(errors='replace')
     return None, None
 
 
-def scopes():
-    r = subprocess.run(['systemctl', '--user', 'list-units', '--type=scope', '--plain',
-                        '--no-legend', '--all'], capture_output=True, text=True).stdout
-    return {l.split()[0] for l in r.splitlines() if l.strip()}
+def clients():
+    rows = json.loads(subprocess.check_output(['hyprctl', '-j', 'clients'], timeout=5))
+    return {row['address']: row for row in rows}
+
+
+def window_owners(items):
+    owners = defaultdict(set)
+    for did, _, wm_class in items:
+        for label in (did, did.rsplit('.', 1)[-1], wm_class):
+            if label:
+                owners[label.casefold()].add(did)
+    return owners
 
 
 def hypr(lua):
-    subprocess.run(['hyprctl', 'eval', lua], capture_output=True)
+    subprocess.run(['hyprctl', 'eval', lua], capture_output=True, check=True, timeout=5)
 
 
 def menu_open():
@@ -126,19 +130,21 @@ def term(name):
 k = Keys()
 hypr('hl.dispatch(hl.dsp.focus({ workspace = 7 }))')
 time.sleep(0.5)
-results = {}
 items = apps()
+owners = window_owners(items)
+if FILTER:
+    items = [item for item in items if any(f in item[0].lower() or f in item[1].lower() for f in FILTER)]
 print(f'{len(items)} apps', flush=True)
 for rnd in range(ROUNDS):
-    for did, name in items:
+    for did, name, wm_class in items:
         close_menu()
-        before = scopes()
+        before = clients()
         drain()
         t0 = time.monotonic()
         k.combo('meta_l', 'spc')
-        menu_ms, _ = wait_event(b'openlayer>>omarchy-menu', 3, t0)
+        menu_ms, _ = wait_event(b'openlayer>>omarchy-menu', 3, t0, exact=True)
         if menu_ms is None:
-            print(f'round {rnd + 1}  {name}: menu did not appear; no keys sent to app', flush=True)
+            print(f'round {rnd + 1}  {did} ({name}): menu did not appear', flush=True)
             continue
         time.sleep(0.15)
         k.type(term(name))
@@ -146,25 +152,33 @@ for rnd in range(ROUNDS):
         drain()
         t1 = time.monotonic()
         k.combo('ret')
-        win_ms, payload = wait_event(b'openwindow>>', 25, t1)
-        cls = ''
-        if payload:
-            f = payload.split(',', 3)
-            cls = f[2] if len(f) > 2 else ''
+        win_ms = None
+        observed = set()
+        deadline = t1 + 25
+        while time.monotonic() < deadline:
+            elapsed, payload = wait_event(b'openwindow>>', deadline - time.monotonic(), t1)
+            if payload is None:
+                break
+            fields = payload.split(',', 3)
+            if len(fields) != 4 or not re.fullmatch(r'[a-fA-F0-9]+', fields[0]):
+                continue
+            address = '0x' + fields[0]
+            if address in before or fields[1] != '7':
+                continue
+            observed.add(fields[2])
+            if owners.get(fields[2].casefold()) != {did}:
+                continue
             time.sleep(1.0)
-            hypr(f'hl.dispatch(hl.dsp.window.close({{ window = "address:0x{f[0]}" }}))')
-            subprocess.run(['hyprctl', 'dispatch', 'closewindow', 'address:0x' + f[0]],
-                           capture_output=True)
-        else:
-            close_menu()
+            row = clients().get(address, {})
+            if row.get('workspace', {}).get('id') != 7 or row.get('class') != fields[2]:
+                continue
+            win_ms = elapsed
+            hypr(f'hl.dispatch(hl.dsp.window.close({{ window = "address:{address}" }}))')
+            break
+        close_menu()
         time.sleep(1.0)
-        for s in scopes() - before:
-            if s.startswith('app-'):
-                subprocess.run(['systemctl', '--user', 'stop', s], capture_output=True)
-        time.sleep(0.5)
-        results.setdefault((did, name), []).append((menu_ms, win_ms, cls))
         m = '-' if menu_ms is None else f'{menu_ms:.0f}'
-        w = 'no window' if win_ms is None else f'{win_ms:.0f}'
-        print(f'round {rnd + 1}  {name[:34]:34}  menu {m:>4} ms  enter->window {w:>9} ms  [{cls[:30]}]',
+        w = f'{win_ms:.0f} ms' if win_ms is not None else ('unverified window' if observed else 'no window')
+        print(f'round {rnd + 1}  {did} ({name})  menu {m:>4} ms  enter->window {w}  {sorted(observed)}',
               flush=True)
 hypr('hl.dispatch(hl.dsp.focus({ workspace = 1 }))')

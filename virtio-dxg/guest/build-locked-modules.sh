@@ -38,11 +38,23 @@ test "$(pacman -Q linux-headers)" = "linux-headers $version"
 headers="/usr/lib/modules/$release/build"
 test "$(cat "$headers/include/config/kernel.release")" = "$release"
 
-mkdir dxg-src
-cp -r /repo/virtio-dxg/{guest,protocol} dxg-src/
 export MAKEFLAGS=-j2
-make -C "$headers" M="$PWD/dxg-src/guest" W=1 modules
-module="$PWD/dxg-src/guest/dxgkrnl_virtio.ko"
+build_transport() {
+    local src=$1 build=$2 dest=$3
+    mkdir "$build"
+    cp -r "$src/guest" "$src/protocol" "$build/"
+    make -C "$headers" M="$build/guest" W=1 modules
+    local ko="$build/guest/dxgkrnl_virtio.ko" magic
+    magic=$(modinfo -F vermagic "$ko")
+    test "${magic%% *}" = "$release"
+    cp "$ko" "$dest/dxgkrnl_virtio.ko"
+    printf 'dxgkrnl_virtio.ko %s\n' "$magic" > "$dest/vermagic.txt"
+}
+build_transport /repo/virtio-dxg "$PWD/dxg-src" /out
+if [[ -d /reference ]]; then
+    build_transport /reference "$PWD/reference-src" /reference-out
+    (cd /reference-out && sha256sum dxgkrnl_virtio.ko > SHA256SUMS)
+fi
 lab=/repo/experimental/windows-native-gpu
 sh "$lab/build_guest_aperture.sh" "$headers" "$PWD/aperture"
 sh "$lab/build_guest_render.sh" "$headers" "$PWD/render"
@@ -50,11 +62,10 @@ sh "$lab/build_guest_render.sh" "$headers" "$PWD/render"
 # and ship it separately; the normal DXG session loads dxgkrnl_virtio.
 mkdir /out/legacy
 cp aperture/wddm_aperture.ko render/wddm_render.ko /out/legacy/
-for ko in "$module" /out/legacy/*.ko; do
+for ko in /out/legacy/*.ko; do
     magic=$(modinfo -F vermagic "$ko")
     test "${magic%% *}" = "$release"
     printf '%s %s\n' "$(basename "$ko")" "$magic" >> /out/vermagic.txt
 done
-cp "$module" /out/dxgkrnl_virtio.ko
 cd /out
 sha256sum dxgkrnl_virtio.ko legacy/*.ko > SHA256SUMS

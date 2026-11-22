@@ -16,6 +16,16 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Fetch the reference transport for the desktop pacing comparison
+        if: github.head_ref == 'performance/gtk-frame-pacing' || github.ref_name == 'performance/gtk-frame-pacing'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: fa134286f7cd0a562ba0471f8871e63d0f3b3898
+          path: .pacing-reference
+          sparse-checkout: |
+            virtio-dxg/guest
+            virtio-dxg/protocol
+          persist-credentials: false
       - name: Export the pinned guest builder and compile matching modules
         shell: bash
         run: |
@@ -24,7 +34,15 @@ jobs:
           image=$(awk '$1 == "FROM" {print $2; exit}' "$guest/Containerfile")
           [[ $image =~ @sha256:[0-9a-f]{64}$ ]]
           mkdir "$RUNNER_TEMP/guest-modules"
+          reference=()
+          if [[ -d .pacing-reference ]]; then
+            test "$(git -C .pacing-reference rev-parse HEAD)" = fa134286f7cd0a562ba0471f8871e63d0f3b3898
+            mkdir "$RUNNER_TEMP/reference-module"
+            reference=(-v "$GITHUB_WORKSPACE/.pacing-reference/virtio-dxg:/reference:ro"
+                       -v "$RUNNER_TEMP/reference-module:/reference-out")
+          fi
           docker run --rm --cpus=2 --memory=4g --pids-limit=512 \
+            "${reference[@]}" \
             -v "$GITHUB_WORKSPACE:/repo:ro" -v "$guest:/guest:ro" \
             -v "$RUNNER_TEMP/guest-modules:/out" "$image" \
             bash /repo/virtio-dxg/guest/build-locked-modules.sh
@@ -32,6 +50,12 @@ jobs:
         with:
           name: virtio-dxg-guest-modules
           path: ${{ runner.temp }}/guest-modules/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: github.head_ref == 'performance/gtk-frame-pacing' || github.ref_name == 'performance/gtk-frame-pacing'
+        with:
+          name: virtio-dxg-reference-module-fa134286
+          path: ${{ runner.temp }}/reference-module/
           if-no-files-found: error
   host-mocks:
     runs-on: windows-2025
@@ -63,6 +87,8 @@ jobs:
       - name: Check boot payload and browser arguments with inert fixtures only
         run: |
           python3 virtio-dxg/guest/test/test_desktop_payload.py -v
+          python3 virtio-dxg/guest/test/test_mkdevinitramfs.py -v
+          python3 -m py_compile virtio-dxg/bench/desktop/{files-scroll,launchertest,qmpkeys}.py
           bash -n virtio-dxg/guest/test/initcpio/app-prefetch
           bash -n virtio-dxg/bench/desktop/deskload.sh
           python3 virtio-dxg/bench/desktop/test_deskstat.py

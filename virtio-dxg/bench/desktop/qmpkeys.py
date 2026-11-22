@@ -23,7 +23,10 @@ class Keys:
     def cmd(self, name, **args):
         self.f.write(json.dumps({'execute': name, 'arguments': args}).encode() + b'\n')
         self.f.flush()
-        return self._read()
+        reply = self._read()
+        if 'return' not in reply:
+            raise RuntimeError(f'QMP {name} failed: {reply}')
+        return reply
 
     def combo(self, *keys, hold=30):
         return self.cmd('send-key', keys=[{'type': 'qcode', 'data': k} for k in keys],

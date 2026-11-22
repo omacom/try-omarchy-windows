@@ -47,6 +47,15 @@ launcher option `-render dxg` are described in
 [VIRTIO-DXG.md](docs/VIRTIO-DXG.md#starting-it-from-the-launcher); upstream
 releases below do not include them.
 
+**Linux 7.3.5 desktop performance candidate, November 22.** The DXG module
+and both legacy guest modules compiled against signed headers for
+`7.3.5-arch1-1`. The Mesa 26.2.6 build and the launcher and replay checks
+passed at `8381c1d`. The earlier Files result of 22–26 fps while scrolling
+3,000 files remains the baseline. Measuring Files, menu launches and frame
+pacing under load on the new kernel is still pending.
+[Performance PR](https://github.com/7Wdev/try-omarchy-windows/pull/5) ·
+[Desktop measurements](virtio-dxg/bench/desktop/README.md).
+
 <p align="center">The full Omarchy desktop, running in a window on your Windows PC.</p>
 
 <p align="center">

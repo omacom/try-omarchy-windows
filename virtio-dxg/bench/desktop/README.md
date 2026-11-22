@@ -30,6 +30,28 @@ Overlapping waits can sum to more than wall time. Compare a second untraced
 run for pacing. Also check icon pixels, thumbnail updates, selection and
 menu animations. No new measurements are available for this candidate.
 
+`files-scroll.py DIRECTORY OUTPUT` opens Files through the menu on an empty
+guest workspace, navigates to DIRECTORY, places the guest pointer over the
+file grid and sends wheel events for 15 seconds. Use a lowercase path and a
+fresh output directory. It records the guest mode, window size, input times
+and two window captures. Check that scrolling revealed different files and
+that icons and thumbnails rendered correctly. A change in PNG bytes alone
+cannot establish either. Analyze the marked interval with `deskstat.py`.
+That rate counts compositor flips. To compare against the reported 22–26
+Files fps, also record Nautilus frame timings with the same client-side
+instrumentation on both runs. An output can flip between two Files updates.
+GTK can export its frame-clock phases through Sysprof. Use a separate
+profiled run to identify where Files spends time and keep the unprofiled
+run for the launcher and output timings.
+[GTK profiling](https://docs.gtk.org/gtk4/running.html#profiling).
+
+For a transport-only comparison, use the same guest image, boot hook, Mesa
+archive and QEMU runtime for both runs. Change only the DXG module. The
+performance branch workflow builds the reference from `fa134286` alongside
+the candidate using the same signed headers and compiler. For first-launch
+timings, boot fresh disposable overlays at the same point after login and
+report whether idle prefetch and the browser service have finished.
+
 A window that animates every frame stays on screen while the guest is idle,
 while every core is busy (stress-ng), while the GPU is busy (a heavy
 off-screen glmark2 scene) and both. The kernel's page-flip events show
@@ -52,8 +74,12 @@ does: SUPER+SPACE (Omarchy's menu), the app's name, Enter. The key presses go
 in through QEMU's input devices (QMP, reached from the guest at the user-mode
 network's host address, `10.0.2.2:4444`), so they take the guest's whole
 input path. It reports the menu's appearance (Hyprland's `openlayer`) and
-Enter to the app's window (`openwindow`), closes the window and stops what
-the launch started. Round 1 is the first launch after boot.
+Enter to the app's window (`openwindow`). It times and closes a new window
+on workspace 7 only when its class uniquely matches the requested desktop
+entry. Apps sharing a window class can produce an “unverified window”
+result. A missing window, including an app that focuses an existing
+instance, has no launch-time sample. Use a disposable guest. Round 1 counts
+as a first launch only for apps that have not run since boot.
 
 ```sh
 python3 launchertest.py 2               # all apps, two rounds
@@ -68,11 +94,15 @@ in a fresh profile. Both also run on Windows (Chrome, Edge) for comparison.
 
 ## Results
 
-The first PR #5 checks at `28b7f55` passed the Mesa build, host mock calls,
-guest contract and Windows and Linux launcher checks. The locked Linux
-7.3.5 module build stopped downloading headers before compilation. Four
-historical replay jobs also lacked their archived fixtures. These are build
-and regression results. Desktop timings below are from the earlier build.
+At `8381c1d`, the signed-header build produced DXG and both legacy modules
+for Linux `7.3.5-arch1-1`. Mesa 26.2.6, the host mocks, guest contract,
+launcher and replay checks passed. The separate full-image build stopped
+before boot when the package mirror diverged from the lock. The upstream
+image built with the same guest sources had already passed its boot check.
+The table below records the earlier desktop build.
+[Module and Mesa checks](https://github.com/7Wdev/try-omarchy-windows/actions/runs/44955823350) ·
+[Full-image run](https://github.com/7Wdev/try-omarchy-windows/actions/runs/44956203097) ·
+[Upstream image](https://github.com/omacom/try-omarchy-windows/actions/runs/44854721042).
 
 RTX 5090 Laptop GPU, 16 vCPUs, 240 Hz window. Before and after the boot
 hook's desktop priority, GTK's OpenGL renderer, app prefetch and browser
