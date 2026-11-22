@@ -1839,6 +1839,7 @@ dxgkio_destroy_allocation(struct dxgprocess *process, void *__user inargs)
 	struct d3dkmthandle *alloc_handles = NULL;
 	struct dxgallocation **allocs = NULL;
 	struct dxgresource *resource = NULL;
+	bool no_guest_pages;
 	int i;
 
 	ret = copy_from_user(&args, inargs, sizeof(args));
@@ -1971,24 +1972,37 @@ dxgkio_destroy_allocation(struct dxgprocess *process, void *__user inargs)
 		mutex_lock(&resource->resource_mutex);
 	}
 
+	/*
+	 * Allocations backed by guest pages must be gone from the host before
+	 * they are freed below; the others need not be waited for.
+	 */
+	no_guest_pages = true;
 #ifdef DXG_VIRTIO
 	/* The host frees migrated memory: move it back first. */
 	if (args.alloc_count) {
 		for (i = 0; i < args.alloc_count; i++)
-			if (allocs[i])
+			if (allocs[i]) {
 				dxg_unmigrate_sysmem(allocs[i]);
+				if (allocs[i]->pages)
+					no_guest_pages = false;
+			}
 	} else if (resource) {
 		struct dxgallocation *alloc;
 
 		dxgdevice_acquire_alloc_list_lock_shared(device);
 		list_for_each_entry(alloc, &resource->alloc_list_head,
-				    alloc_list_entry)
+				    alloc_list_entry) {
 			dxg_unmigrate_sysmem(alloc);
+			if (alloc->pages)
+				no_guest_pages = false;
+		}
 		dxgdevice_release_alloc_list_lock_shared(device);
 	}
+#else
+	no_guest_pages = false;
 #endif
 	ret = dxgvmb_send_destroy_allocation(process, device, &args,
-					     alloc_handles);
+					     alloc_handles, no_guest_pages);
 
 	/*
 	 * Destroy the allocations after the host destroyed it.
@@ -5417,7 +5431,7 @@ cleanup:
 			tmp.device = args->device;
 			tmp.resource = resource_handle;
 			ret = dxgvmb_send_destroy_allocation(process, device,
-							     &tmp, NULL);
+							     &tmp, NULL, false);
 		}
 		if (resource)
 			dxgresource_destroy(resource);

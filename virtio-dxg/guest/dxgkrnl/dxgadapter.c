@@ -655,7 +655,7 @@ void dxgresource_destroy(struct dxgresource *resource)
 			args.device = device->handle;
 			args.resource = resource->handle;
 			dxgvmb_send_destroy_allocation(device->process,
-						       device, &args, NULL);
+						       device, &args, NULL, false);
 			resource->handle.v = 0;
 		}
 		list_for_each_entry_safe(alloc, tmp, &resource->alloc_list_head,
@@ -933,7 +933,7 @@ void dxgallocation_destroy(struct dxgallocation *alloc)
 		args.alloc_count = 1;
 		dxgvmb_send_destroy_allocation(process,
 					       alloc->owner.device,
-					       &args, &alloc->alloc_handle);
+					       &args, &alloc->alloc_handle, false);
 	}
 #ifndef DXG_VIRTIO
 	if (alloc->gpadl.gpadl_handle) {

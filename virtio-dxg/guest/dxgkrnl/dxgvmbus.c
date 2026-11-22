@@ -2210,11 +2210,20 @@ cleanup:
 	return ret;
 }
 
+/*
+ * async: the caller does not wait for the host. The host runs a process's
+ * messages in order, so its later calls see the allocations gone; only
+ * allocations backed by guest pages must be destroyed before the caller
+ * frees them. Applications that create and free textures every frame (GTK
+ * 4's renderer: dozens) otherwise wait for a host round trip each.
+ */
 int dxgvmb_send_destroy_allocation(struct dxgprocess *process,
 				   struct dxgdevice *device,
 				   struct d3dkmt_destroyallocation2 *args,
-				   struct d3dkmthandle *alloc_handles)
+				   struct d3dkmthandle *alloc_handles,
+				   bool async)
 {
+	struct dxgglobal *dxgglobal = dxggbl();
 	struct dxgkvmb_command_destroyallocation *destroy_buffer;
 	u32 destroy_buffer_size;
 	int ret;
@@ -2241,7 +2250,13 @@ int dxgvmb_send_destroy_allocation(struct dxgprocess *process,
 		memcpy(destroy_buffer->allocations, alloc_handles,
 		       allocations_size);
 
-	ret = dxgvmb_send_sync_msg_ntstatus(msg.channel, msg.hdr, msg.size);
+	if (async && dxgglobal->async_msg_enabled) {
+		destroy_buffer->hdr.async_msg = 1;
+		ret = dxgvmb_send_async_msg(msg.channel, msg.hdr, msg.size);
+	} else {
+		ret = dxgvmb_send_sync_msg_ntstatus(msg.channel, msg.hdr,
+						    msg.size);
+	}
 
 cleanup:
 

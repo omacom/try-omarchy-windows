@@ -883,7 +883,7 @@ int dxgvmb_send_create_allocation(struct dxgprocess *pr, struct dxgdevice *dev,
 				  struct d3dkmt_createstandardallocation *stda);
 int dxgvmb_send_destroy_allocation(struct dxgprocess *pr, struct dxgdevice *dev,
 				   struct d3dkmt_destroyallocation2 *args,
-				   struct d3dkmthandle *alloc_handles);
+				   struct d3dkmthandle *alloc_handles, bool async);
 int dxgvmb_send_make_resident(struct dxgprocess *pr, struct dxgadapter *adapter,
 			      struct d3dddi_makeresident *args);
 int dxgvmb_send_evict(struct dxgprocess *pr, struct dxgadapter *adapter,
