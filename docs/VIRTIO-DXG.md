@@ -189,7 +189,7 @@ but it does not establish native Linux Vulkan, DLSS or ray-traced games.
 | Piece | State |
 | --- | --- |
 | Wire contract `protocol/virtio_dxg.h` | Done |
-| Guest: `dxgkrnl` over virtio (`guest/`) | **Running in the Omarchy VM** (kernels `7.2.9-arch1-1` and `7.2.15-arch1-1`, Omarchy 4.0.4 and 4.5.0 with Hyprland 0.56.2 and 0.57.2), loaded by the development boot hook. |
+| Guest: `dxgkrnl` over virtio (`guest/`) | **Running in the Omarchy VM** (kernels `7.2.9-arch1-1`, `7.2.15-arch1-1` and `7.3.5-arch1-1`, Omarchy 4.0.4 and 4.5.0 with Hyprland 0.56.2 and 0.57.2), loaded by the development boot hook. |
 | Host: `dxghost` executor (`host/`) | **Running against NVIDIA's driver** inside QEMU: CUDA, D3D12, OpenGL, Vulkan (Wine) and the whole desktop. |
 | QEMU device `virtio-dxg-pci` (`qemu/`) | **Built** (development build and the full winq-emu runtime via `qemu/build-runtime.sh`). |
 | NVIDIA Windows Vulkan driver in Linux (`wine/`) | **Working in the Omarchy VM over virtio-dxg** as dxgvk, a Vulkan driver for Wine 10–11 and Proton 10: compute 96–97% GPU-bound like native, zero-copy presentation, DXVK and vkd3d-proton games run. Set up per prefix by `wine/proton-dxgvk.sh`; to become a launcher option. |
