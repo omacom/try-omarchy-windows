@@ -49,6 +49,7 @@ kernel 7.3.5, Mesa 26.3.1):
 | --- | --- | --- |
 | Texture recycling, no threaded context | 41–42 fps | |
 | Constant-buffer views staged in a CPU heap | 54–65 fps | 0 of 879 |
+| Plus texture-cache buckets, budget read every 50 ms, `GTK_A11Y=none` | 65–73 fps | 0 of 614 |
 
 17% of Files' main thread was NVIDIA's `CreateConstantBufferView` reading
 back each descriptor it had just written into the shader-visible heap,
@@ -63,7 +64,20 @@ What is left per frame (off-CPU profile of Files' main thread): GTK's own
 work (layout, text shaping of items scrolling in, about 60% of its CPU),
 waits for the GPU at each window-buffer flush, CreateAllocation replies
 that sometimes arrive milliseconds late, and short GObject lock waits
-against Files' worker threads.
+against Files' worker threads. From the Wayland trace, a frame is about
+8.8 ms in Files (frame callback to commit) and 3.1 ms in the compositor
+(commit to the next callback), medians.
+
+Tried and dropped, each measured with alternating runs: batching
+asynchronous kicks (`kick_delay_us`, slower), keeping vCPUs from halting
+(idle spinners: much slower, they take host cores from QEMU's threads),
+holding the GPU at higher clocks (it idles at ~700 MHz during the scroll,
+but a background load that raised it changed nothing), GTK's Vulkan
+renderer on Dozen (slower than `GSK_RENDERER=gl`).
+
+`NAVSCROLL_HIRES=V` scrolls with high-resolution wheel steps of V/120
+notch (QMP `rel` events on the `wheel` axis, as a touchpad or free-spinning
+wheel sends them through QEMU's window) instead of whole notches.
 
 In a disposable guest session, open Files on the same 3,000-entry directory
 for each build. Keep the viewport, icon theme, scale, sort mode, thumbnail

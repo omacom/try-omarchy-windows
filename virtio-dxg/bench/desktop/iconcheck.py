@@ -29,7 +29,8 @@ def runs(mask):
 
 def find_centers(images):
     """Icon columns: x ranges 50..100 px wide where many rows are bright."""
-    a = np.stack(images)
+    # Below the header band, where a notification can cover the grid's top.
+    a = np.stack(images)[:, 120:, :]
     prof = (a > 120).sum(axis=(0, 1)) / len(images)
     cols = prof > 0.25 * prof.max()
     return tuple(x + n // 2 for x, n in runs(cols) if 50 <= n <= 100)

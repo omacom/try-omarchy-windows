@@ -71,9 +71,16 @@ for direction in ('wheel-down', 'wheel-up'):
     # turned briskly; 4: a high-rate wheel or touchpad stream).
     iv = float(os.environ.get('NAVSCROLL_INTERVAL_MS', '25')) / 1000
     n = int(float(os.environ.get('NAVSCROLL_SECS', '2')) / iv)   # per direction
+    # NAVSCROLL_HIRES=V: high-resolution wheel steps of V/120 notch (a
+    # touchpad or free-spinning wheel) instead of whole notches.
+    hires = int(os.environ.get('NAVSCROLL_HIRES', '0'))
     for i in range(n):
-        k.cmd('input-send-event', events=[{'type': 'btn', 'data': {'down': True, 'button': direction}},
-                                          {'type': 'btn', 'data': {'down': False, 'button': direction}}])
+        if hires:
+            k.cmd('input-send-event', events=[{'type': 'rel', 'data': {
+                'axis': 'wheel', 'value': -hires if direction == 'wheel-down' else hires}}])
+        else:
+            k.cmd('input-send-event', events=[{'type': 'btn', 'data': {'down': True, 'button': direction}},
+                                              {'type': 'btn', 'data': {'down': False, 'button': direction}}])
         time.sleep(iv)
         if shots and i % max(1, n // 4) == n // 8:
             subprocess.run(['grim', '-g', f'{c["at"][0]},{c["at"][1]} {c["size"][0]}x{c["size"][1]}',
