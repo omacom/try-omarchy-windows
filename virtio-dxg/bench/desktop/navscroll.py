@@ -21,13 +21,6 @@ if not os.path.isdir(d):
         open(f'{d}/file-{i:04d}-{"abcdefgh"[i % 8] * (i % 13 + 3)}.txt', 'w').close()
 cmd = sys.argv[1:] or ['nautilus', '--new-window', d]
 env = dict(os.environ, WAYLAND_DEBUG='client')
-# Frame rate also from Mesa's HUD (hidden), dumped per 0.25 s: works for any
-# GL client, whichever Wayland queue it commits on.
-HUD = '/tmp/navscroll-hud'
-subprocess.run(['rm', '-rf', HUD])
-os.makedirs(HUD)
-env.update(GALLIUM_HUD='fps', GALLIUM_HUD_VISIBLE='false', GALLIUM_HUD_DUMP_DIR=HUD,
-           GALLIUM_HUD_PERIOD='0.25')
 subprocess.run(['pkill', '-x', 'nautilus'])
 for _ in range(20):
     if subprocess.run(['pgrep', '-x', 'nautilus'], capture_output=True).returncode:
@@ -89,14 +82,6 @@ time.sleep(0.5)
 t_end = time.time()
 os.killpg(p.pid, 15)
 time.sleep(0.5)
-try:
-    vals = [float(v.split()[-1]) for f in os.listdir(HUD) for v in open(os.path.join(HUD, f))
-            if v.strip()]
-    busy = sorted(vals)[len(vals) // 3:]      # the scrolling part of the run
-    print(f'HUD: {max(vals):.0f} fps peak, {sum(busy) / len(busy):.0f} fps while scrolling '
-          f'({len(vals)} samples)')
-except (OSError, ValueError, ZeroDivisionError) as e:
-    print('HUD: no samples', e)
 text = open('/tmp/navscroll.log', errors='replace').read()[mark:]
 # Commits of the toplevel's surface: the surface committed most often.
 commits = {}
