@@ -791,6 +791,23 @@
  \
     MAP_FORMAT(B8G8R8A8, UNORM) \
  \
+--- a/src/gallium/drivers/d3d12/d3d12_residency.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_residency.cpp
+@@ -176,7 +176,13 @@
+ d3d12_process_batch_residency(struct d3d12_screen *screen, struct d3d12_batch *batch)
+ {
+    d3d12_memory_info mem_info;
+-   screen->get_memory_info(screen, &mem_info);
++   /* The grace period does not need a reading per flush. */
++   int64_t now_ns = os_time_get_nano();
++   if (!screen->memory_info_time || now_ns - screen->memory_info_time > 50000000ll) {
++      screen->get_memory_info(screen, &screen->memory_info_cache);
++      screen->memory_info_time = now_ns;
++   }
++   mem_info = screen->memory_info_cache;
+ 
+    uint64_t completed_fence_value = screen->fence->GetCompletedValue();
+    uint64_t pending_fence_value = screen->fence_value + 1;
 --- a/src/gallium/drivers/d3d12/d3d12_resource.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_resource.cpp
 @@ -37,6 +37,29 @@
@@ -2017,10 +2034,15 @@
     LUID adapter_luid;
     char driver_uuid[PIPE_UUID_SIZE];
     char device_uuid[PIPE_UUID_SIZE];
-@@ -91,6 +94,13 @@
+@@ -91,6 +94,18 @@
     struct list_head pending_free_list;
  
     struct list_head residency_list;
++
++   /* Last memory budget reading and when (d3d12_residency.cpp), under
++    * submit_mutex. */
++   struct d3d12_memory_info memory_info_cache;
++   int64_t memory_info_time;
 +
 +   /* d3d12_texture_cache (d3d12_bufmgr.cpp) */
 +   struct list_head texture_cache;            /* oldest first */
