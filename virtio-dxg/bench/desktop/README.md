@@ -19,6 +19,29 @@ phases. Discard the trace if the driver exits with an error.
 
 ### Files scrolling
 
+`navscroll.py` opens Files on a folder of 3,000 files, moves the pointer
+over the grid (from elsewhere first: a window that opens under a resting
+pointer gets no pointer focus) and scrolls with wheel notches through
+QEMU's input, every `NAVSCROLL_INTERVAL_MS` (25 by default). It counts the
+window's commits from `WAYLAND_DEBUG`: frames per second and the frame
+gaps. With `NAVSCROLL_SHOTS=DIR` it saves window captures during the
+scroll; `iconcheck.py DIR/*.png` (on the host, with PIL) finds icons that
+differ from the folder's common icon. Blurred icons (sub-pixel positions
+mid-scroll) and a notification over the grid show up too; look at the
+flagged cells before calling them corrupted. `iconruns.sh` repeats runs.
+Omarchy's notification layer takes pointer input over the right part of
+the screen while a notification shows, so the pointer goes left of it.
+
+| Files, 3,000 entries | Notches every 25 ms | every 8 ms | Corrupted icons |
+| --- | --- | --- | --- |
+| Before (d3d12 with threaded context, sync destroys) | 24–26 fps | 21–29 fps | rare (wrong scale or offset) |
+| Texture recycling, no threaded context, async destroys, polling lanes | 54–56 fps | 70–97 fps | none in thousands |
+
+Where a frame went before: 78 offscreen textures per frame (GTK offscreens
+clipped grid items), each a CreateAllocation, MapGpuVirtualAddress and
+DestroyAllocation on the host (~20 ms per frame), lane threads woken from
+sleep for each (a CreateAllocation blocked 6.5 ms), and destroys waited for.
+
 In a disposable guest session, open Files on the same 3,000-entry directory
 for each build. Keep the viewport, icon theme, scale, sort mode, thumbnail
 cache and scroll sequence identical. Record the Nautilus process ID. During
