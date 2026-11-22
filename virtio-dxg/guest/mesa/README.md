@@ -23,6 +23,10 @@ and Dozen (Vulkan 1.3). Changes from upstream Mesa:
   dozens of offscreen textures per frame; each new one costs host round
   trips), and d3d12 runs without the threaded context, which raced and drew
   with another draw's data (`D3D12_THREADED=1` turns it back on).
+  Constant-buffer and storage views are built in a CPU-only descriptor
+  heap and copied to the shader-visible one: NVIDIA's driver reads back
+  each view it writes, and the shader-visible heap is write-combined GPU
+  memory in the guest.
 
 `CURRENT` names the release the build uses; its recipe in `versions/` (now
 `versions/26.3.1/`) pins the official source archive, the DirectX-Headers

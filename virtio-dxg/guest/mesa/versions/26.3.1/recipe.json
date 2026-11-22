@@ -7,7 +7,7 @@
   "profiles": {
     "graphics": {
       "patchFile": "graphics.patch",
-      "patchSha256": "2f46f2b7e132654295fe8e919b673b1126ea4803edae3a739cc211f342a0ab48",
+      "patchSha256": "a3e8c004faa3f0d1b7402b4072ee74f27fec762a3ba8ba1c3898490ad18cb48a",
       "files": {
         "VERSION": {
           "originalSha256": "e35f85db6458a3e4736f050ff42d720b39bbff9debe6b50c11e753b3ac2ecc3d",
@@ -39,11 +39,23 @@
         },
         "src/gallium/drivers/d3d12/d3d12_context.h": {
           "originalSha256": "ee9f0a3883fd5980815c1abbad57b08983ef726999a61d0042e031d6def30a33",
-          "patchedSha256": "89546b70d18082d8ad3fc445598702bdb670862a6f5aab708974077983141e32"
+          "patchedSha256": "1e4b566876275c0e5534ac45448a242ba708ab6ade58fd55c3547b130973f9d2"
         },
         "src/gallium/drivers/d3d12/d3d12_context_common.cpp": {
           "originalSha256": "11ece54805ce508a84f8437c2374db35cad66bc5a2f56c3e7c0de906c3cace36",
-          "patchedSha256": "a10819e5a6c396c5e22ddeced3a91a267dd96e1c380bd93b1603665cbbd07220"
+          "patchedSha256": "db9ac716b63067aa5a76bf1e38f8c454dd484ba89288a7f25ea05501acc2d37f"
+        },
+        "src/gallium/drivers/d3d12/d3d12_descriptor_pool.cpp": {
+          "originalSha256": "96b773e338235989e8f29019a3b02a1a2f9279dfd9ef477ef0b8dd734379bf41",
+          "patchedSha256": "bf9853daf308e96042768bd8b082c4d71c9f9babd7e97d38a8530e14bffdbe49"
+        },
+        "src/gallium/drivers/d3d12/d3d12_descriptor_pool.h": {
+          "originalSha256": "78da0890643062ea47b4e64e18feb23c8e35ee1b41c8715ca869a6cec33d851a",
+          "patchedSha256": "98353f0858a7656a9bb4c0f6084552002d7aef0610ae84f92e00572ccacdf493"
+        },
+        "src/gallium/drivers/d3d12/d3d12_draw.cpp": {
+          "originalSha256": "cd7b721fad2e321e31aaca06359cd44716f1fe4ba69dd7b630c0f26f40c8b932",
+          "patchedSha256": "efe8e2c35e4c5e2f674422ffd7298b91fd4041da5fd9c8f2bd6e0052f2d76d74"
         },
         "src/gallium/drivers/d3d12/d3d12_fence.cpp": {
           "originalSha256": "6e7f13fdab60012c5bdf262bbd1f60d36440dd155e95254eaa252703d30b6759",

@@ -323,6 +323,17 @@
     struct slab_child_pool transfer_pool;
     struct slab_child_pool transfer_pool_unsync;
     struct list_head context_list_entry;
+@@ -272,6 +273,10 @@
+ 
+    struct d3d12_descriptor_pool *sampler_pool;
+    struct d3d12_descriptor_handle null_sampler;
++   /* CPU-only staging for views made per draw (CBVs, UAVs): drivers may
++    * read a new descriptor back, which is slow in a shader-visible heap.
++    * Filled and copied to the batch heap within one fill_*_descriptors. */
++   struct d3d12_descriptor_heap *view_staging;
+ 
+    PFN_D3D12_SERIALIZE_VERSIONED_ROOT_SIGNATURE D3D12SerializeVersionedRootSignature;
+ #ifndef _GAMING_XBOX
 --- a/src/gallium/drivers/d3d12/d3d12_context_common.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_context_common.cpp
 @@ -55,6 +55,7 @@
@@ -333,7 +344,16 @@
  #include "util/u_upload_mgr.h"
  #include "util/u_sample_positions.h"
  #include "util/u_dl.h"
-@@ -153,6 +154,10 @@
+@@ -138,6 +139,8 @@
+       d3d12_cmd_signature_cache_destroy(ctx);
+       d3d12_compute_transform_cache_destroy(ctx);
+       d3d12_descriptor_pool_free(ctx->sampler_pool);
++      if (ctx->view_staging)
++         d3d12_descriptor_heap_free(ctx->view_staging);
+       d3d12_gs_variant_cache_destroy(ctx);
+       d3d12_tcs_variant_cache_destroy(ctx);
+       d3d12_gfx_pipeline_state_cache_destroy(ctx);
+@@ -153,6 +156,10 @@
     }
  #endif // HAVE_GALLIUM_D3D12_GRAPHICS
  
@@ -344,7 +364,7 @@
     slab_destroy_child(&ctx->transfer_pool);
     slab_destroy_child(&ctx->transfer_pool_unsync);
     d3d12_context_state_table_destroy(ctx);
-@@ -196,6 +201,8 @@
+@@ -196,6 +203,8 @@
     struct d3d12_context *ctx = d3d12_context(pipe);
     struct d3d12_batch *batch = d3d12_current_batch(ctx);
  
@@ -353,7 +373,7 @@
     bool flushed = d3d12_flush_cmdlist(ctx);
  
     if (fence) {
-@@ -602,6 +609,9 @@
+@@ -602,6 +611,9 @@
     ctx->base.flush_resource = d3d12_flush_resource;
     ctx->base.fence_server_signal = d3d12_signal;
     ctx->base.fence_server_sync = d3d12_wait;
@@ -363,7 +383,23 @@
     ctx->base.memory_barrier = d3d12_memory_barrier;
     ctx->base.texture_barrier = d3d12_texture_barrier;
  
-@@ -717,12 +727,19 @@
+@@ -687,6 +699,15 @@
+       }
+       d3d12_init_null_sampler(ctx);
+ 
++      ctx->view_staging = d3d12_descriptor_heap_new(screen->dev,
++                                                    D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
++                                                    D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
++                                                    PIPE_MAX_SHADER_IMAGES);
++      if (!ctx->view_staging) {
++         FREE(ctx);
++         return NULL;
++      }
++
+       ctx->blitter = util_blitter_create(&ctx->base);
+       if (!ctx->blitter)
+          return NULL;
+@@ -717,12 +738,19 @@
        ctx->id = D3D12_CONTEXT_NO_ID;
     mtx_unlock(&screen->submit_mutex);
  
@@ -384,6 +420,118 @@
        struct pipe_context *ret = threaded_context_create(&ctx->base,
           &screen->transfer_pool,
           d3d12_replace_buffer_storage,
+--- a/src/gallium/drivers/d3d12/d3d12_descriptor_pool.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_descriptor_pool.cpp
+@@ -184,6 +184,16 @@
+    heap->next += num_handles * heap->desc_size;
+ }
+ 
++D3D12_CPU_DESCRIPTOR_HANDLE
++d3d12_descriptor_heap_cpu_handle(struct d3d12_descriptor_heap *heap,
++                                 unsigned index)
++{
++   D3D12_CPU_DESCRIPTOR_HANDLE handle;
++   assert(index < heap->desc.NumDescriptors);
++   handle.ptr = heap->cpu_base + (size_t)index * heap->desc_size;
++   return handle;
++}
++
+ void
+ d3d12_descriptor_heap_clear(struct d3d12_descriptor_heap *heap)
+ {
+--- a/src/gallium/drivers/d3d12/d3d12_descriptor_pool.h
++++ b/src/gallium/drivers/d3d12/d3d12_descriptor_pool.h
+@@ -92,4 +92,9 @@
+ void
+ d3d12_descriptor_heap_clear(struct d3d12_descriptor_heap *heap);
+ 
++/* The CPU handle of descriptor INDEX of HEAP (no allocation). */
++D3D12_CPU_DESCRIPTOR_HANDLE
++d3d12_descriptor_heap_cpu_handle(struct d3d12_descriptor_heap *heap,
++                                 unsigned index);
++
+ #endif
+--- a/src/gallium/drivers/d3d12/d3d12_draw.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_draw.cpp
+@@ -58,6 +58,8 @@
+ {
+    struct d3d12_batch *batch = d3d12_current_batch(ctx);
+    struct d3d12_descriptor_handle table_start;
++   D3D12_CPU_DESCRIPTOR_HANDLE staged[PIPE_MAX_CONSTANT_BUFFERS];
++   unsigned num_staged = 0;
+    d2d12_descriptor_heap_get_next_handle(batch->view_heap, &table_start);
+ 
+    for (unsigned i = shader->begin_ubo_binding; i < shader->end_ubo_binding; i++) {
+@@ -73,10 +75,12 @@
+          d3d12_batch_reference_resource(batch, res, false);
+       }
+ 
+-      struct d3d12_descriptor_handle handle;
+-      d3d12_descriptor_heap_alloc_handle(batch->view_heap, &handle);
+-      d3d12_screen(ctx->base.screen)->dev->CreateConstantBufferView(&cbv_desc, handle.cpu_handle);
++      staged[num_staged] = d3d12_descriptor_heap_cpu_handle(ctx->view_staging, num_staged);
++      d3d12_screen(ctx->base.screen)->dev->CreateConstantBufferView(&cbv_desc, staged[num_staged]);
++      num_staged++;
+    }
++   if (num_staged)
++      d3d12_descriptor_heap_append_handles(batch->view_heap, staged, num_staged);
+ 
+    return table_start.gpu_handle;
+ }
+@@ -143,6 +147,8 @@
+    struct d3d12_batch *batch = d3d12_current_batch(ctx);
+    struct d3d12_descriptor_handle table_start;
+ 
++   D3D12_CPU_DESCRIPTOR_HANDLE staged[PIPE_MAX_SHADER_BUFFERS];
++   unsigned num_staged = 0;
+    d2d12_descriptor_heap_get_next_handle(batch->view_heap, &table_start);
+ 
+    for (unsigned i = 0; i < shader->nir->info.num_ssbos; i++)
+@@ -168,10 +174,12 @@
+          d3d12_batch_reference_resource(batch, res, true);
+       }
+ 
+-      struct d3d12_descriptor_handle handle;
+-      d3d12_descriptor_heap_alloc_handle(batch->view_heap, &handle);
+-      d3d12_screen(ctx->base.screen)->dev->CreateUnorderedAccessView(d3d12_res, nullptr, &uav_desc, handle.cpu_handle);
++      staged[num_staged] = d3d12_descriptor_heap_cpu_handle(ctx->view_staging, num_staged);
++      d3d12_screen(ctx->base.screen)->dev->CreateUnorderedAccessView(d3d12_res, nullptr, &uav_desc, staged[num_staged]);
++      num_staged++;
+    }
++   if (num_staged)
++      d3d12_descriptor_heap_append_handles(batch->view_heap, staged, num_staged);
+ 
+    return table_start.gpu_handle;
+ }
+@@ -249,6 +257,8 @@
+    struct d3d12_batch *batch = d3d12_current_batch(ctx);
+    struct d3d12_descriptor_handle table_start;
+ 
++   D3D12_CPU_DESCRIPTOR_HANDLE staged[PIPE_MAX_SHADER_IMAGES];
++   unsigned num_staged = 0;
+    d2d12_descriptor_heap_get_next_handle(batch->view_heap, &table_start);
+ 
+    for (unsigned i = 0; i < shader->nir->info.num_images; i++)
+@@ -333,13 +343,15 @@
+          }
+          d3d12_batch_reference_resource(batch, res, true);
+ 
+-         struct d3d12_descriptor_handle handle;
+-         d3d12_descriptor_heap_alloc_handle(batch->view_heap, &handle);
+-         d3d12_screen(ctx->base.screen)->dev->CreateUnorderedAccessView(d3d12_res, nullptr, &uav_desc, handle.cpu_handle);
++         staged[num_staged] = d3d12_descriptor_heap_cpu_handle(ctx->view_staging, num_staged);
++         d3d12_screen(ctx->base.screen)->dev->CreateUnorderedAccessView(d3d12_res, nullptr, &uav_desc, staged[num_staged]);
+       } else {
+-         d3d12_descriptor_heap_append_handles(batch->view_heap, &screen->null_uavs[shader->uav_bindings[i].dimension].cpu_handle, 1);
++         staged[num_staged] = screen->null_uavs[shader->uav_bindings[i].dimension].cpu_handle;
+       }
++      num_staged++;
+    }
++   if (num_staged)
++      d3d12_descriptor_heap_append_handles(batch->view_heap, staged, num_staged);
+ 
+    return table_start.gpu_handle;
+ }
 --- a/src/gallium/drivers/d3d12/d3d12_fence.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_fence.cpp
 @@ -27,12 +27,29 @@
