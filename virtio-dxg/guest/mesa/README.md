@@ -1,7 +1,7 @@
 # Mesa for the virtio-dxg guest
 
 The guest's OpenGL, GBM, VA-API and Vulkan run on NVIDIA's D3D12 driver
-through Mesa 26.2.6: the d3d12 Gallium driver (OpenGL 4.6, GLES 3.1, video)
+through Mesa 26.3.1: the d3d12 Gallium driver (OpenGL 4.6, GLES 3.1, video)
 and Dozen (Vulkan 1.3). Changes from upstream Mesa:
 
 - **Scanout mirrors:** the compositor renders into KMS buffers whose D3D12
@@ -19,11 +19,17 @@ and Dozen (Vulkan 1.3). Changes from upstream Mesa:
   imported window buffers that export their dma-buf again (Xwayland).
 - **Dozen:** Vulkan 1.3 and what Blender needs beyond it (below), zero-copy
   Vulkan windows.
+- **Desktop speed:** committed textures are recycled (GTK 4 makes and frees
+  dozens of offscreen textures per frame; each new one costs host round
+  trips), and d3d12 runs without the threaded context, which raced and drew
+  with another draw's data (`D3D12_THREADED=1` turns it back on).
 
-The versioned recipe in `versions/26.2.6/` pins the official source archive,
-the DirectX-Headers commit, the complete diff and the before/after hash of
-every changed file. The older numbered patches are source history; the build
-uses only the recipe.
+`CURRENT` names the release the build uses; its recipe in `versions/` (now
+`versions/26.3.1/`) pins the official source archive, the DirectX-Headers
+commit, the complete diff and the before/after hash of every changed file.
+The older numbered patches are source history; the build uses only the
+recipe. To move to another release, apply the diff to its source, record
+the new hashes in `versions/RELEASE/` and change `CURRENT`.
 
 ## Window buffers
 
@@ -113,10 +119,12 @@ fresh private directory, hash-pinned Python tools, pinned DirectX-Headers and tw
 compiler workers by default (`JOBS=1..8`).
 
 ```sh
-bash virtio-dxg/guest/mesa/build-in-guest.sh mesa-26.2.6.tar.xz mesa-virtio-dxg.tar
+bash virtio-dxg/guest/mesa/build-in-guest.sh mesa-26.3.1.tar.xz mesa-virtio-dxg.tar
 ```
 
-GLX/EGL/GBM/GLVND, d3d12/softpipe, VA-API and Dozen are built together. The tar
+GLX/EGL/GBM/GLVND (with OpenGL ES 1: since 26.3 a build without it offers
+no ES 1 configs, the EGL default, and clients such as imv get no config),
+d3d12/softpipe, VA-API and Dozen are built together. The tar
 contains `lib/`, `share/`, licenses, the actual version and a data-only receipt
 with source/recipe/SDK and staged-file hashes. The build directory is retained
 for diagnosis; a failed build never replaces the requested output archive.

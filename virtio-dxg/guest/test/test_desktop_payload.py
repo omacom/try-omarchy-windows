@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 HERE = Path(__file__).resolve().parent
+VERSION = (HERE.parent / 'mesa/CURRENT').read_text().strip()
 
 
 def module(name, path):
@@ -29,10 +30,10 @@ class DesktopData(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.source = self.root / 'source'
         self.source.mkdir()
-        (self.source / 'VERSION').write_text('26.2.6\n')
+        (self.source / 'VERSION').write_text(VERSION + '\n')
         self.recipe = self.root / 'recipe'
         self.recipe.mkdir()
-        manifest = json.loads((HERE.parent / 'mesa/versions/26.2.6/recipe.json').read_text())
+        manifest = json.loads((HERE.parent / 'mesa/versions' / VERSION / 'recipe.json').read_text())
         (self.recipe / 'recipe.json').write_text(json.dumps(manifest))
         self.stage = self.root / 'stage'
         for name in manifest['runtimeRequiredPaths']:
@@ -60,7 +61,7 @@ class DesktopData(unittest.TestCase):
         return payload.extract(self.archive(), self.root / 'installed', self.recipe / 'recipe.json')
 
     def test_valid_cohort(self):
-        self.assertEqual(self.extract(), '26.2.6')
+        self.assertEqual(self.extract(), VERSION)
         # The session user loads these libraries: the staged directory must
         # not keep mkdtemp's owner-only mode.
         self.assertEqual((self.root / 'installed').stat().st_mode & 0o055, 0o055)
@@ -102,7 +103,7 @@ class DesktopData(unittest.TestCase):
     def test_wrong_loader_alias_rejected_at_build(self):
         path = self.stage / 'lib/dri/d3d12_dri.so'
         path.unlink()
-        path.symlink_to('../libgallium-26.2.6.so')
+        path.symlink_to(f'../libgallium-{VERSION}.so')
         with self.assertRaisesRegex(ValueError, 'Incorrect runtime alias'):
             build.record(self.source, self.stage, self.recipe)
 

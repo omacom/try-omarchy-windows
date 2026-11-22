@@ -46,12 +46,13 @@ def run_fixture(out, name, template, actual, expected, diagnostic):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, required=True, help='Pristine Mesa 26.2.6')
+    parser.add_argument('--source', type=Path, required=True,
+                        help='Pristine Mesa of the pinned release (CURRENT)')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
-    recipe = HERE / 'versions/26.2.6'
+    recipe = HERE / 'versions' / (HERE / 'CURRENT').read_text().strip()
     manifest, profile, _ = load_recipe(recipe, 'graphics')
 
     def copy_source(label):

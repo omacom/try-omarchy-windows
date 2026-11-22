@@ -41,7 +41,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('archive', type=Path)
     parser.add_argument('destination', type=Path)
-    parser.add_argument('--recipe', type=Path, default=HERE / 'versions/26.2.6')
+    parser.add_argument('--recipe', type=Path,
+                        default=HERE / 'versions' / (HERE / 'CURRENT').read_text().strip())
     args = parser.parse_args()
     print(stage(args.archive.resolve(strict=True), args.destination.resolve(),
                 args.recipe.resolve(strict=True)))

@@ -1,6 +1,6 @@
 --- a/src/gallium/auxiliary/util/u_upload_mgr.c
 +++ b/src/gallium/auxiliary/util/u_upload_mgr.c
-@@ -207,6 +207,7 @@
+@@ -236,6 +236,7 @@
     if (upload->map == NULL) {
        u_upload_release_buffer(upload);
        pipe_resource_release(upload->pipe, upload->buffer);
@@ -8,7 +8,7 @@
        return 0;
     }
  
-@@ -255,7 +256,6 @@
+@@ -284,7 +285,6 @@
        if (unlikely(!buffer_size)) {
           *out_offset = ~0;
           *ptr = NULL;
@@ -42,7 +42,7 @@
  
 --- a/src/gallium/drivers/d3d12/d3d12_batch.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_batch.cpp
-@@ -484,6 +484,9 @@
+@@ -489,6 +489,9 @@
     uint8_t new_data = write ? batch_bo_reference_written : batch_bo_reference_read;
     uint8_t old_data = (uint8_t)*state;
     *state = (old_data | new_data);
@@ -331,9 +331,9 @@
  #include "util/u_memory.h"
 +#include "util/u_debug.h"
  #include "util/u_upload_mgr.h"
- #include "util/u_pstipple.h"
  #include "util/u_sample_positions.h"
-@@ -157,6 +158,10 @@
+ #include "util/u_dl.h"
+@@ -153,6 +154,10 @@
     }
  #endif // HAVE_GALLIUM_D3D12_GRAPHICS
  
@@ -344,7 +344,7 @@
     slab_destroy_child(&ctx->transfer_pool);
     slab_destroy_child(&ctx->transfer_pool_unsync);
     d3d12_context_state_table_destroy(ctx);
-@@ -200,6 +205,8 @@
+@@ -196,6 +201,8 @@
     struct d3d12_context *ctx = d3d12_context(pipe);
     struct d3d12_batch *batch = d3d12_current_batch(ctx);
  
@@ -353,7 +353,7 @@
     bool flushed = d3d12_flush_cmdlist(ctx);
  
     if (fence) {
-@@ -606,6 +613,9 @@
+@@ -602,6 +609,9 @@
     ctx->base.flush_resource = d3d12_flush_resource;
     ctx->base.fence_server_signal = d3d12_signal;
     ctx->base.fence_server_sync = d3d12_wait;
@@ -363,7 +363,7 @@
     ctx->base.memory_barrier = d3d12_memory_barrier;
     ctx->base.texture_barrier = d3d12_texture_barrier;
  
-@@ -726,12 +736,19 @@
+@@ -717,12 +727,19 @@
        ctx->id = D3D12_CONTEXT_NO_ID;
     mtx_unlock(&screen->submit_mutex);
  
@@ -579,11 +579,10 @@
  {
     pscreen->fence_reference = fence_reference;
     pscreen->fence_finish = fence_finish;
--}
 +#ifndef _WIN32
 +   pscreen->fence_get_fd = fence_get_fd;
 +#endif
-+}
+ }
 --- a/src/gallium/drivers/d3d12/d3d12_fence.h
 +++ b/src/gallium/drivers/d3d12/d3d12_fence.h
 @@ -93,6 +93,9 @@
@@ -1466,7 +1465,7 @@
     struct d3d12_resource *res = CALLOC_STRUCT(d3d12_resource);
     if (!res)
        return NULL;
-@@ -557,6 +1350,13 @@
+@@ -581,6 +1374,13 @@
                            struct winsys_handle *handle, unsigned usage)
  {
     struct d3d12_screen *screen = d3d12_screen(pscreen);
@@ -1480,7 +1479,7 @@
     if (handle->type != WINSYS_HANDLE_TYPE_D3D12_RES &&
         handle->type != WINSYS_HANDLE_TYPE_FD &&
         handle->type != WINSYS_HANDLE_TYPE_WIN32_NAME)
-@@ -846,6 +1646,36 @@
+@@ -871,6 +1671,36 @@
     struct d3d12_resource *res = d3d12_resource(pres);
     struct d3d12_screen *screen = d3d12_screen(pscreen);
  
@@ -1517,7 +1516,7 @@
     switch (handle->type) {
     case WINSYS_HANDLE_TYPE_D3D12_RES:
        handle->com_obj = d3d12_resource_resource(res);
-@@ -985,6 +1815,13 @@
+@@ -1010,6 +1840,13 @@
  
  static constexpr unsigned d3d12_max_planes = 3;
  
@@ -1531,7 +1530,7 @@
  /**
   * Get stride and offset for the given pipe resource without the need to get
   * a winsys_handle.
-@@ -1003,6 +1840,41 @@
+@@ -1028,6 +1865,41 @@
     struct d3d12_resource* res = d3d12_resource(pres);
     unsigned num_planes = util_format_get_num_planes(res->overall_format);
  
@@ -1573,7 +1572,7 @@
     pipe_resource *planes[d3d12_max_planes];
     unsigned int strides[d3d12_max_planes];
     unsigned int layer_strides[d3d12_max_planes];
-@@ -1273,6 +2145,142 @@
+@@ -1298,6 +2170,142 @@
     ctx->has_commands = true;
  }
  
@@ -1864,7 +1863,7 @@
     unsigned num_evictions;
 --- a/src/glx/dri_common.c
 +++ b/src/glx/dri_common.c
-@@ -952,7 +952,9 @@
+@@ -1036,7 +1036,9 @@
     enum dri_screen_type type;
     switch (psc->display->driver) {
     case GLX_DRIVER_DRI3:
@@ -1900,7 +1899,7 @@
           if (uniform_bytes)
 --- a/src/microsoft/compiler/nir_to_dxil.c
 +++ b/src/microsoft/compiler/nir_to_dxil.c
-@@ -3662,7 +3662,10 @@
+@@ -3663,7 +3663,10 @@
     if (ctx->mod.shader_kind == DXIL_PIXEL_SHADER &&
        ctx->opts->interpolate_at_vertex &&
        ctx->opts->provoking_vertex != 0 &&
@@ -2106,7 +2105,7 @@
           dzn_graphics_pipeline_get_state(gfx, &cmdbuf->state.pipeline_variant);
           if (gfx->multiview.native_view_instancing)
              view_instance_mask = gfx->multiview.view_mask;
-@@ -3460,11 +3461,15 @@
+@@ -3465,11 +3466,15 @@
     const struct dzn_graphics_pipeline *pipeline =
        (const struct dzn_graphics_pipeline *)cmdbuf->state.pipeline;
  
@@ -2125,7 +2124,7 @@
  }
  
  static void
-@@ -3476,7 +3481,12 @@
+@@ -3481,7 +3486,12 @@
     if (!(cmdbuf->state.dirty & DZN_CMD_DIRTY_SCISSORS))
        return;
  
@@ -2139,7 +2138,7 @@
        /* Apply a scissor delimiting the render area. */
        ID3D12GraphicsCommandList1_RSSetScissorRects(cmdbuf->cmdlist, 1, &cmdbuf->state.render.area);
        return;
-@@ -3484,15 +3494,15 @@
+@@ -3489,15 +3499,15 @@
  
     D3D12_RECT scissors[MAX_SCISSOR];
  
@@ -2158,7 +2157,7 @@
  }
  
  static void
-@@ -3587,10 +3597,17 @@
+@@ -3592,10 +3602,17 @@
  {
     if (cmdbuf->state.dirty & DZN_CMD_DIRTY_DEPTH_BIAS) {
        assert(cmdbuf->cmdlist9);
@@ -2179,7 +2178,7 @@
     }
  }
  
-@@ -3728,9 +3745,103 @@
+@@ -3733,9 +3750,103 @@
     return VK_SUCCESS;
  }
  
@@ -2275,7 +2274,7 @@
 +                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
 +}
 +
- static void
+ static VkResult
  dzn_cmd_buffer_prepare_draw(struct dzn_cmd_buffer *cmdbuf, bool indexed)
  {
 +   dzn_cmd_buffer_update_eds(cmdbuf);
@@ -2283,7 +2282,7 @@
     if (indexed)
        dzn_cmd_buffer_update_ibview(cmdbuf);
  
-@@ -4025,6 +4136,7 @@
+@@ -4035,6 +4146,7 @@
                               uint32_t draw_buf_stride,
                               bool indexed)
  {
@@ -2291,7 +2290,7 @@
     struct dzn_device *device = container_of(cmdbuf->vk.base.device, struct dzn_device, vk);
     struct dzn_physical_device *pdev = container_of(device->vk.physical, struct dzn_physical_device, vk);
     struct dzn_graphics_pipeline *pipeline = (struct dzn_graphics_pipeline *)
-@@ -5145,8 +5257,10 @@
+@@ -5163,8 +5275,10 @@
           cmdbuf->state.dirty |= DZN_CMD_DIRTY_BLEND_CONSTANTS;
        }
  
@@ -2304,7 +2303,7 @@
  
        if (gfx->vb.count > 0)
           BITSET_SET_COUNT(cmdbuf->state.vb.dirty, 0, gfx->vb.count);
-@@ -5231,6 +5345,31 @@
+@@ -5249,6 +5363,31 @@
     }
  }
  
@@ -2336,7 +2335,7 @@
  VKAPI_ATTR void VKAPI_CALL
  dzn_CmdSetScissor(VkCommandBuffer commandBuffer,
                    uint32_t firstScissor,
-@@ -5278,6 +5417,7 @@
+@@ -5296,6 +5435,7 @@
  {
     VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
  
@@ -2344,7 +2343,7 @@
     const struct dzn_graphics_pipeline *pipeline = (const struct dzn_graphics_pipeline *)
        cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
  
-@@ -5333,6 +5473,7 @@
+@@ -5353,6 +5493,7 @@
  {
     VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
  
@@ -2352,7 +2351,7 @@
     const struct dzn_graphics_pipeline *pipeline = (const struct dzn_graphics_pipeline *)
        cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
  
-@@ -5490,6 +5631,42 @@
+@@ -5511,6 +5652,42 @@
     }
  
     BITSET_SET_COUNT(cmdbuf->state.vb.dirty, firstBinding, bindingCount);
@@ -2875,7 +2874,7 @@
     };
  }
  
-@@ -676,8 +715,9 @@
+@@ -688,8 +727,9 @@
        .geometryShader = true,
        .tessellationShader = false,
        .sampleRateShading = true,
@@ -2887,7 +2886,7 @@
        .multiDrawIndirect = true,
        .drawIndirectFirstInstance = true,
        .depthClamp = true,
-@@ -687,7 +727,7 @@
+@@ -699,7 +739,7 @@
        .wideLines = instance->drirc.debug.claim_wide_lines,
        .largePoints = false,
        .alphaToOne = false,
@@ -2896,7 +2895,7 @@
        .samplerAnisotropy = true,
        .textureCompressionETC2 = false,
        .textureCompressionASTC_LDR = false,
-@@ -781,33 +821,46 @@
+@@ -793,33 +833,46 @@
        .bufferDeviceAddress                = pdev->shader_model >= D3D_SHADER_MODEL_6_6,
        .bufferDeviceAddressCaptureReplay   = false,
        .bufferDeviceAddressMultiDevice     = false,
@@ -2955,7 +2954,7 @@
     };
  }
  
-@@ -898,7 +951,7 @@
+@@ -910,7 +963,7 @@
        .maxGeometryTotalOutputComponents = D3D12_REQ_GS_INVOCATION_32BIT_OUTPUT_COMPONENT_LIMIT,
        .maxFragmentInputComponents = D3D12_PS_INPUT_REGISTER_COUNT * D3D12_PS_INPUT_REGISTER_COMPONENTS,
        .maxFragmentOutputAttachments = D3D12_PS_OUTPUT_REGISTER_COUNT,
@@ -2964,7 +2963,7 @@
        .maxFragmentCombinedOutputResources = D3D12_PS_OUTPUT_REGISTER_COUNT,
        .maxComputeSharedMemorySize = D3D12_CS_TGSM_REGISTER_COUNT * sizeof(float),
        .maxComputeWorkGroupCount = { D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION,
-@@ -1064,6 +1117,22 @@
+@@ -1076,6 +1129,22 @@
        .integerDotProduct4x8BitPackedUnsignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
        .integerDotProductAccumulatingSaturating4x8BitPackedSignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
        .integerDotProductAccumulatingSaturating4x8BitPackedUnsignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
@@ -2987,7 +2986,7 @@
  
        /* VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT */
        .maxVertexAttribDivisor = UINT32_MAX,
-@@ -1073,6 +1142,11 @@
+@@ -1085,6 +1154,11 @@
  
        /* VkPhysicalDeviceLayeredDriverPropertiesMSFT */
        .underlyingAPI = VK_LAYERED_DRIVER_UNDERLYING_API_D3D12_MSFT,
@@ -2999,7 +2998,7 @@
     };
  
     if (strlen(instance->drirc.debug.force_vk_devicename) > 0) {
-@@ -1629,6 +1703,26 @@
+@@ -1645,6 +1719,26 @@
     VK_FROM_HANDLE(dzn_physical_device, pdev, physicalDevice);
  
     dzn_physical_device_get_format_properties(pdev, format, pFormatProperties);
@@ -3026,7 +3025,7 @@
  }
  
  VKAPI_ATTR VkResult VKAPI_CALL
-@@ -2567,6 +2661,8 @@
+@@ -2603,6 +2697,8 @@
  #else
     if ((intptr_t)mem->export_handle >= 0)
        close((int)(intptr_t)mem->export_handle);
@@ -3035,7 +3034,7 @@
  #endif
  
     vk_object_base_finish(&mem->base);
-@@ -2593,6 +2689,128 @@
+@@ -2629,6 +2725,128 @@
     return properties;
  }
  
@@ -3164,7 +3163,7 @@
  static VkResult
  dzn_device_memory_create(struct dzn_device *device,
                           const VkMemoryAllocateInfo *pAllocateInfo,
-@@ -2607,6 +2825,10 @@
+@@ -2643,6 +2861,10 @@
  
     VkExternalMemoryHandleTypeFlags export_flags = 0;
     HANDLE import_handle = NULL;
@@ -3175,7 +3174,7 @@
     bool imported_from_d3d11 = false;
     void *host_pointer = NULL;
  #ifdef _WIN32
-@@ -2662,7 +2884,9 @@
+@@ -2698,7 +2920,9 @@
           default:
              return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
           }
@@ -3186,7 +3185,7 @@
           break;
        }
  #endif
-@@ -2711,6 +2935,10 @@
+@@ -2747,6 +2971,10 @@
         VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP_BIT);
     if (image && imported_from_d3d11)
        valid_flags |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
@@ -3197,7 +3196,7 @@
  
     if (export_flags & ~valid_flags)
        return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
-@@ -2778,7 +3006,17 @@
+@@ -2814,7 +3042,17 @@
  #else
        goto cleanup;
  #endif
@@ -3215,7 +3214,7 @@
        error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
        if (image || buffer) {
           if (FAILED(ID3D12Device_OpenSharedHandle(device->dev, import_handle, &IID_ID3D12Resource, (void **)&mem->dedicated_res)))
-@@ -2921,10 +3159,27 @@
+@@ -2957,10 +3195,27 @@
           goto cleanup;
     }
  
@@ -3243,7 +3242,7 @@
  #ifdef _WIN32
     if (handle_from_name)
        CloseHandle(handle_from_name);
-@@ -3691,6 +3946,56 @@
+@@ -3730,6 +3985,56 @@
     *pPeerMemoryFeatures = 0;
  }
  
@@ -3300,7 +3299,7 @@
  VKAPI_ATTR void VKAPI_CALL
  dzn_GetImageSparseMemoryRequirements2(VkDevice device,
                                        const VkImageSparseMemoryRequirementsInfo2* pInfo,
-@@ -3772,16 +4077,33 @@
+@@ -3811,16 +4116,33 @@
                     int *pFd)
  {
     VK_FROM_HANDLE(dzn_device_memory, mem, pGetFdInfo->memory);
@@ -3338,6 +3337,35 @@
     default:
        return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
     }
+--- a/src/microsoft/vulkan/dzn_image.c
++++ b/src/microsoft/vulkan/dzn_image.c
+@@ -224,6 +224,15 @@
+        !pdev->options12.RelaxedFormatCastingSupported)
+       image->desc.Format = dzn_get_typeless_dxgi_format(image->desc.Format);
+ 
++#ifndef _WIN32
++   /* virtio-dxg: typeless window buffers. A dma-buf image is opened by
++    * another process in the dma-buf's format (UNORM for an sRGB swapchain). */
++   const VkExternalMemoryImageCreateInfo *dxg_ext =
++      vk_find_struct_const(pCreateInfo->pNext, EXTERNAL_MEMORY_IMAGE_CREATE_INFO);
++   if (dxg_ext && (dxg_ext->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT))
++      image->desc.Format = dzn_get_typeless_dxgi_format(image->desc.Format);
++#endif
++
+    if (image->desc.SampleDesc.Count > 1)
+       image->desc.Alignment = D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT;
+    else
+@@ -1441,7 +1450,9 @@
+                                                    false, false,
+                                                    iview);
+       }
+-      if (iview->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT) {
++      /* virtio-dxg: no sRGB UAVs */
++      if ((iview->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT) &&
++          !vk_format_is_srgb(iview->vk.view_format)) {
+          iview->uav_bindless_slot = dzn_device_descriptor_heap_alloc_slot(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+          if (iview->uav_bindless_slot < 0) {
+             dzn_image_view_destroy(iview, pAllocator);
 --- /dev/null
 +++ b/src/microsoft/vulkan/dzn_imported_memory_fd.h
 @@ -0,0 +1,44 @@
@@ -3385,35 +3413,6 @@
 +      close(source);
 +}
 +#endif
---- a/src/microsoft/vulkan/dzn_image.c
-+++ b/src/microsoft/vulkan/dzn_image.c
-@@ -207,6 +207,15 @@
-        !pdev->options12.RelaxedFormatCastingSupported)
-       image->desc.Format = dzn_get_typeless_dxgi_format(image->desc.Format);
- 
-+#ifndef _WIN32
-+   /* virtio-dxg: typeless window buffers. A dma-buf image is opened by
-+    * another process in the dma-buf's format (UNORM for an sRGB swapchain). */
-+   const VkExternalMemoryImageCreateInfo *dxg_ext =
-+      vk_find_struct_const(pCreateInfo->pNext, EXTERNAL_MEMORY_IMAGE_CREATE_INFO);
-+   if (dxg_ext && (dxg_ext->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT))
-+      image->desc.Format = dzn_get_typeless_dxgi_format(image->desc.Format);
-+#endif
-+
-    if (image->desc.SampleDesc.Count > 1)
-       image->desc.Alignment = D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT;
-    else
-@@ -1427,7 +1436,9 @@
-                                                    false, false,
-                                                    iview);
-       }
--      if (iview->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT) {
-+      /* virtio-dxg: no sRGB UAVs */
-+      if ((iview->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT) &&
-+          !vk_format_is_srgb(iview->vk.view_format)) {
-          iview->uav_bindless_slot = dzn_device_descriptor_heap_alloc_slot(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-          if (iview->uav_bindless_slot < 0) {
-             dzn_image_view_destroy(iview, pAllocator);
 --- a/src/microsoft/vulkan/dzn_pipeline.c
 +++ b/src/microsoft/vulkan/dzn_pipeline.c
 @@ -412,6 +412,7 @@
@@ -4022,7 +4021,7 @@
  struct dzn_compute_pipeline {
     struct dzn_pipeline base;
     struct {
-@@ -1232,6 +1301,11 @@
+@@ -1233,6 +1302,11 @@
             if (mask & aspect)
  
  VkResult dzn_wsi_init(struct dzn_physical_device *physical_device);
@@ -4053,7 +4052,7 @@
     return VK_SUCCESS;
 --- a/src/vulkan/wsi/wsi_common.h
 +++ b/src/vulkan/wsi/wsi_common.h
-@@ -157,6 +157,11 @@
+@@ -165,6 +165,11 @@
  
     bool sw;
  
@@ -4098,7 +4097,7 @@
     struct u_vector modifiers;
     if (!u_vector_init_pow2(&modifiers, 4, sizeof(uint64_t)))
        return NULL;
-@@ -1255,12 +1262,11 @@
+@@ -1270,12 +1277,11 @@
  static bool
  needs_color_surface(struct wsi_wl_display *display, VkColorSpaceKHR colorspace)
  {
@@ -4116,7 +4115,7 @@
     return colorspace != VK_COLOR_SPACE_PASS_THROUGH_EXT;
  }
  
-@@ -1792,7 +1798,7 @@
+@@ -1838,7 +1844,7 @@
  
     struct wsi_wl_display display;
     VkResult ret = wsi_wl_display_init(wsi, &display, wl_display, false,
@@ -4125,7 +4124,7 @@
     if (ret == VK_SUCCESS)
        wsi_wl_display_finish(&display);
  
-@@ -1868,7 +1874,7 @@
+@@ -1914,7 +1920,7 @@
  
     if (!wsi_wl_surface->display) {
        if (wsi_wl_display_init(wsi, &temp_display, surface->display, true,
@@ -4134,7 +4133,7 @@
           return VK_ERROR_SURFACE_LOST_KHR;
        display = &temp_display;
     }
-@@ -1929,7 +1935,7 @@
+@@ -1971,7 +1977,7 @@
     struct wsi_wl_display display;
  
     if (wsi_wl_display_init(wsi, &display, surface->display, true,
@@ -4143,7 +4142,7 @@
        return VK_ERROR_SURFACE_LOST_KHR;
  
     if (has_wp_presentation)
-@@ -1963,7 +1969,7 @@
+@@ -2005,7 +2011,7 @@
  
     struct wsi_wl_display display;
     if (wsi_wl_display_init(wsi, &display, surface->display, true,
@@ -4152,7 +4151,7 @@
        return VK_ERROR_SURFACE_LOST_KHR;
  
     VkPresentModeKHR present_modes[WSI_WL_MAX_PRESENT_MODES];
-@@ -2171,7 +2177,7 @@
+@@ -2237,7 +2243,7 @@
  
     struct wsi_wl_display display;
     if (wsi_wl_display_init(wsi, &display, surface->display, true,
@@ -4161,7 +4160,7 @@
        return VK_ERROR_SURFACE_LOST_KHR;
  
     VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormatKHR, out,
-@@ -2179,6 +2185,11 @@
+@@ -2245,6 +2251,11 @@
  
     VkColorSpaceKHR *cs;
     u_vector_foreach(cs, &display.colorspaces) {
@@ -4173,7 +4172,7 @@
        struct wsi_wl_format *disp_fmt;
        u_vector_foreach(disp_fmt, &display.formats) {
           /* Skip formats for which we can't support both alpha & opaque
-@@ -2216,7 +2227,7 @@
+@@ -2282,7 +2293,7 @@
  
     struct wsi_wl_display display;
     if (wsi_wl_display_init(wsi, &display, surface->display, true,
@@ -4182,7 +4181,7 @@
        return VK_ERROR_SURFACE_LOST_KHR;
  
     VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormat2KHR, out,
-@@ -2224,6 +2235,11 @@
+@@ -2290,6 +2301,11 @@
  
     VkColorSpaceKHR *cs;
     u_vector_foreach(cs, &display.colorspaces) {
@@ -4194,7 +4193,7 @@
        struct wsi_wl_format *disp_fmt;
        u_vector_foreach(disp_fmt, &display.formats) {
           /* Skip formats for which we can't support both alpha & opaque
-@@ -2509,7 +2525,7 @@
+@@ -2575,7 +2591,7 @@
        return VK_SUCCESS;
  
     result = wsi_wl_display_create(wsi, wsi_wl_surface->base.display,
@@ -4203,7 +4202,7 @@
     if (result != VK_SUCCESS)
        goto fail;
  
-@@ -3309,6 +3325,15 @@
+@@ -3375,6 +3391,15 @@
     if (chain->retired)
        return VK_ERROR_OUT_OF_DATE_KHR;
  
@@ -4219,7 +4218,7 @@
     struct wsi_wl_surface *wsi_wl_surface = chain->wsi_wl_surface;
     bool mode_fifo = chain->base.present_mode == VK_PRESENT_MODE_FIFO_KHR;
  
-@@ -3866,7 +3891,7 @@
+@@ -3943,7 +3968,7 @@
     struct wsi_drm_image_params drm_image_params;
     uint32_t num_drm_modifiers = 0;
     const uint64_t *drm_modifiers = NULL;
