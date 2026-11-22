@@ -46,6 +46,15 @@ and root constants, 85% with a new root signature (GTK changes shader and
 vertex layout from one draw to the next), 3.6 descriptor-table bindings,
 and per frame about 120 new textures (two per icon shadow).
 
+Texture creation. A texture the recycling cache cannot supply (a new size,
+as for items partly visible while scrolling) was a committed resource:
+kernel allocation, GPU virtual address, residency, destruction, each a host
+round trip, sometimes for milliseconds. `passbench 50 600 0 2` (two new
+sizes per frame, as Files): frame p50 2.5-2.65 ms, p90 5-14 ms, p99 19-36
+ms committed; p50 1.9 ms, p90 2.3 ms, p99 3.1-3.3 ms with textures placed
+in pooled heaps. Files (touchpad-style scrolling, windowed VM): 118-131 fps
+before, 130-148 fps after, no corrupted icons in 444.
+
 Measure in a VM with a window (`DISPLAY_OPT="sdl,gl=on"`). Headless, the
 compositor's round trip took 2-4 ms instead of 0.7-1 ms, and the GPU stayed
 at P4 (~1.4 GHz) even when fully busy, where a windowed VM reaches P0.

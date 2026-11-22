@@ -5,6 +5,8 @@
  * 1024x1024 target; textures and framebuffers deleted at the end of the
  * frame; glFinish. Prints CPU time per frame and per shadow.
  * REUSE=1 keeps textures/framebuffers across frames (isolates creation).
+ * VARY=1 (4th argument) gives the offscreens sizes that change from frame
+ * to frame (80..108 px, as partly visible items while scrolling).
  * Surfaceless EGL. Build: gcc -O2 passbench.c -lEGL -lGL */
 #define GL_GLEXT_PROTOTYPES
 #include <EGL/egl.h>
@@ -73,6 +75,7 @@ int main(int argc, char **argv)
 	int shadows = argc > 1 ? atoi(argv[1]) : 50;
 	int frames = argc > 2 ? atoi(argv[2]) : 300;
 	int reuse = argc > 3 ? atoi(argv[3]) : 0;
+	int vary = argc > 4 ? atoi(argv[4]) : 0;
 	PFNEGLGETPLATFORMDISPLAYEXTPROC gpd = (void *)eglGetProcAddress("eglGetPlatformDisplayEXT");
 	EGLDisplay d = gpd(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL);
 	eglInitialize(d, NULL, NULL);
@@ -109,8 +112,15 @@ int main(int argc, char **argv)
 			GLuint *a = &t[s * 2], *fa = &f[s * 2];
 			if (!reuse || fr == 0) {
 				glGenTextures(2, a);
-				tex(a[0], 96, 96, NULL);
-				tex(a[1], 96, 96, NULL);
+				int sz = vary ? 80 + (fr * 7 + s * 3) % 29 : 96, sh = sz;
+				if (vary == 2) {
+					/* Files: two offscreens a frame of sizes not seen
+					 * recently (partly visible items), the rest fixed. */
+					sz = s < 2 ? 64 + (fr * 13 + s * 7) % 401 : 96;
+					sh = s < 2 ? 64 + (fr * 5 + s * 11) % 397 : 96;
+				}
+				tex(a[0], sz, sh, NULL);
+				tex(a[1], sz, sh, NULL);
 				glGenFramebuffers(2, fa);
 				for (int k = 0; k < 2; k++) {
 					glBindFramebuffer(GL_FRAMEBUFFER, fa[k]);
@@ -163,8 +173,8 @@ int main(int argc, char **argv)
 	qsort(gt, frames, sizeof(*gt), cmp);
 	printf("GPU time per frame p50 %.3f ms (%.1f us per shadow)\n", gt[frames / 2] / 1e6,
 	       gt[frames / 2] / 1e3 / (shadows ? shadows : 1));
-	printf("shadows %d reuse %d: frame p50 %.2f ms p90 %.2f ms; per shadow %.1f us (p50)\n",
-	       shadows, reuse, ft[frames / 2] / 1e6, ft[frames * 9 / 10] / 1e6,
-	       ft[frames / 2] / 1e3 / shadows);
+	printf("shadows %d reuse %d vary %d: frame p50 %.2f p90 %.2f p99 %.2f max %.2f ms; per shadow %.1f us (p50)\n",
+	       shadows, reuse, vary, ft[frames / 2] / 1e6, ft[frames * 9 / 10] / 1e6,
+	       ft[frames * 99 / 100] / 1e6, ft[frames - 1] / 1e6, ft[frames / 2] / 1e3 / shadows);
 	return 0;
 }
