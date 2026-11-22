@@ -106,6 +106,14 @@ setup_desktop() {
     # renderer: its windows open in about 390 ms instead of 650 (Nautilus),
     # because a GL context on d3d12 starts faster than a Vulkan device on
     # Dozen.
+    # GTK 4's accessibility layer (AT-SPI) follows every widget a list
+    # recycles, D-Bus messages included, whether or not anything listens:
+    # Files scrolls about 10% faster without it (63.5 -> 69.8 fps). It
+    # stays on when a screen reader (Orca) is installed, or with
+    # virtio_dxg.a11y=1.
+    a11y=GTK_A11Y=none
+    [ -e /new_root/usr/bin/orca ] && a11y=
+    case " $(cat /proc/cmdline) " in *" virtio_dxg.a11y=1 "*) a11y= ;; esac
     if [ -n "$winbuf" ]; then
         clients=MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
         xwayland=       # an empty line in the file
@@ -119,7 +127,7 @@ setup_desktop() {
         "LIBGL_DRIVERS_PATH=$m/lib/dri" "GBM_BACKENDS_PATH=$m/lib/gbm" \
         "LIBVA_DRIVERS_PATH=$m/lib/dri" \
         "VK_ADD_DRIVER_FILES=$m/share/vulkan/icd.d/dzn_icd.x86_64.json" \
-        GSK_RENDERER=gl \
+        GSK_RENDERER=gl "$a11y" \
         >/run/environment.d/90-virtio-dxg.conf.pending || return 1
     mv /run/environment.d/90-virtio-dxg.conf.pending \
         /run/environment.d/90-virtio-dxg.conf || return 1
