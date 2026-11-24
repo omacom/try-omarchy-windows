@@ -66,7 +66,16 @@ log.flush()
 t_start = time.time()
 mark = os.path.getsize('/tmp/navscroll.log')
 shots = os.environ.get('NAVSCROLL_SHOTS')   # directory: screenshots during the scroll
-for direction in ('wheel-down', 'wheel-up'):
+# NAVSCROLL_WHEELGEN=HZ: steady high-resolution wheel input from a uinput
+# device in the guest (wheelgen.c built as /tmp/wheelgen, NAVSCROLL_HIRES
+# units per event, default 30) instead of QMP events, whose path through
+# TCP and QEMU's main loop delivers them in bursts: gaps of 18-73 ms in the
+# input read as frame stalls. Pair with GDK_DEBUG=frames and gdkframes.py.
+wheelgen = os.environ.get('NAVSCROLL_WHEELGEN')
+if wheelgen:
+    subprocess.run(['/tmp/wheelgen', wheelgen, os.environ.get('NAVSCROLL_SECS', '2'),
+                    os.environ.get('NAVSCROLL_HIRES', '30')])
+for direction in (() if wheelgen else ('wheel-down', 'wheel-up')):
     # NAVSCROLL_INTERVAL_MS: time between wheel notches (25: a mouse wheel
     # turned briskly; 4: a high-rate wheel or touchpad stream).
     iv = float(os.environ.get('NAVSCROLL_INTERVAL_MS', '25')) / 1000

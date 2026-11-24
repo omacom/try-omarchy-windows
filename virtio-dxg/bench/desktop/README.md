@@ -79,6 +79,63 @@ renderer on Dozen (slower than `GSK_RENDERER=gl`).
 notch (QMP `rel` events on the `wheel` axis, as a touchpad or free-spinning
 wheel sends them through QEMU's window) instead of whole notches.
 
+#### Steady input and GTK's own frame timings
+
+QMP events reach the guest in bursts (Python, TCP and QEMU's main loop sit
+in their path): Files received scroll input in clumps 18 ms apart, and
+went 73 ms without any while QMP sent one every 4 ms. Those gaps read as
+frame stalls in commit timings, and a frame callback's "client part"
+includes the client idling for input. For pacing, generate the input in
+the guest and let GTK time its own frames:
+
+```sh
+gcc -O2 wheelgen.c -o /tmp/wheelgen     # uinput: sudo chmod 666 /dev/uinput
+GDK_DEBUG=frames NAVSCROLL_WHEELGEN=240 NAVSCROLL_HIRES=30 python3 navscroll.py
+python3 gdkframes.py                    # interval and work per painted frame
+```
+
+`wheelgen.c` is a virtual mouse turning its high-resolution wheel at a
+steady rate (`clock_nanosleep` to absolute times). `gdkframes.py` reads
+`GDK_DEBUG=frames`: per painted frame the interval, GTK's work (frame
+start to `frame_end`: event handling, layout, snapshot, render, swap) and
+its phases. Files, 3,000 entries, 1215x1340, 240 Hz wheel:
+
+| Frames (by GTK work) | Share | Before layout | Layout | Paint + render | Total |
+| --- | --- | --- | --- | --- | --- |
+| Rows unchanged | 69% | 0.8 ms | 0.2 ms | 2.6 ms | 3.6 ms |
+| A row of items bound | 25% | 1.3 ms | 2.5 ms | 3.3 ms | 7.2 ms |
+| Several rows | 6% | 3.4 ms | 4.3 ms | 3.7 ms | 13.4 ms |
+
+At 240 Hz a frame has 4.17 ms, including the compositor's ~0.8 ms. Paint
+and render (the GTK renderer, the driver, the wait for the GPU) is 2.6 ms;
+the frames that miss are those that bind new items, which is GTK and
+Files' CPU work.
+
+Where the VM's threads run matters as much: with QEMU on the efficiency
+cores of the host's hybrid CPU, GTK's work took 6.2-6.7 ms per frame
+against 3.8 ms on the performance cores, and with Windows placing threads
+itself runs varied by 15% (130-153 fps). `threadsets.c` (host tool) lists
+a process's threads and moves QEMU's vCPU threads to the performance cores
+and its other threads to the efficiency cores (CPU sets). The virtio-dxg
+device now does this itself: each vCPU gets a performance core as its
+ideal processor (a preference, so a vCPU can still use an idle efficiency
+core while other programs load the host) and the other threads are kept to
+the efficiency cores. Files at 138-144 fps against 106-125 without it
+(separate boots; `VIRTIO_DXG_CPU_PLACEMENT=0` leaves placement to Windows,
+`=2` confines the vCPUs to the performance cores).
+
+`menutest.py OUTDIR` opens Files' main menu and a file's context menu
+through QEMU's tablet, captures each open menu and reports GTK's frames
+while they open and close: the animations run at a 4.2 ms median interval
+(240 Hz) with ~0.5-1 ms of GTK work per frame. The first time a menu opens
+in a process its first frame takes ~55 ms (GTK building the menu; 13 ms on
+later opens).
+
+`launchtime.py RUNS LABEL=ENV=VALUE... -- CMD...` times an application's
+start to its first frame (first commit with a buffer, from
+`WAYLAND_DEBUG`), alternating environments: Files 488 ms without and 372
+ms with d3d12's pipeline prewarming (medians of 6).
+
 In a disposable guest session, open Files on the same 3,000-entry directory
 for each build. Keep the viewport, icon theme, scale, sort mode, thumbnail
 cache and scroll sequence identical. Record the Nautilus process ID. During
