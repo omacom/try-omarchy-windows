@@ -124,7 +124,9 @@ func saveGPURecoveryChoice(dir string, decision gpuRecoveryDecision) error {
 }
 
 func shouldRecordRenderResult(runtimeID, mode string, gpu, temporaryCPU bool) bool {
-	return runtimeID != "" && !temporaryCPU && !(mode == renderCPU && !gpu)
+	// virtio-dxg runs its own runtime and display path: its launches say
+	// nothing about the GPU (virgl) or CPU modes' history.
+	return runtimeID != "" && !temporaryCPU && !(mode == renderCPU && !gpu) && mode != renderDXG
 }
 
 // Saved boot settings are read first; recovery then overrides exactly one boot.

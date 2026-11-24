@@ -1,0 +1,44 @@
+diff --git a/qapi/qom.json b/qapi/qom.json
+index c653248..843f152 100644
+--- a/qapi/qom.json
++++ b/qapi/qom.json
+@@ -787,6 +787,21 @@
+   'data': { },
+   'if': 'CONFIG_POSIX' }
+ 
++##
++# @MemoryBackendWin32SectionProperties:
++#
++# Properties for the experimental Windows section memory backend.
++#
++# @section-name: Unique Local section name shared with the WDDM lab
++#     worker.
++#
++# Since: 11.0
++##
++{ 'struct': 'MemoryBackendWin32SectionProperties',
++  'base': 'MemoryBackendProperties',
++  'data': { 'section-name': 'str' },
++  'if': 'CONFIG_WIN32' }
++
+ ##
+ # @MemoryBackendEpcProperties:
+ #
+@@ -1229,6 +1244,8 @@
+     'memory-backend-ram',
+     { 'name': 'memory-backend-shm',
+       'if': 'CONFIG_POSIX' },
++    { 'name': 'memory-backend-win32-section',
++      'if': 'CONFIG_WIN32' },
+     'pef-guest',
+     { 'name': 'pr-manager-helper',
+       'if': 'CONFIG_LINUX' },
+@@ -1307,6 +1324,8 @@
+       'memory-backend-ram':         'MemoryBackendProperties',
+       'memory-backend-shm':         { 'type': 'MemoryBackendShmProperties',
+                                       'if': 'CONFIG_POSIX' },
++      'memory-backend-win32-section': { 'type': 'MemoryBackendWin32SectionProperties',
++                                        'if': 'CONFIG_WIN32' },
+       'pr-manager-helper':          { 'type': 'PrManagerHelperProperties',
+                                       'if': 'CONFIG_LINUX' },
+       'qtest':                      'QtestProperties',

@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "hardwareTrial": 249,
+  "guestBuild": 208,
+  "baseSourceSha256": {
+    "active_probe.c": "5398f159570efc8647a3672a84948cd38389f2749089e56c92178c8f61a10293",
+    "active_queue_probe.h": "03cde4f28a74d890694fc548866967f0d8bdf57b185b03f8d17df745b7989ebf",
+    "multiwindow_control.h": "b2ff5ce41d326e7512320325a1cb8d1826fb9b8f2adb798ae54983cdaff4e004"
+  },
+  "publishedSourceSha256": {
+    "active_probe.c": "5398f159570efc8647a3672a84948cd38389f2749089e56c92178c8f61a10293",
+    "active_queue_probe.h": "2e3b500f80ef14ad601af00dc565ecd5a3c0c2aa8fb2d8daf03f8274d27bd68c",
+    "multiwindow_control.h": "b2ff5ce41d326e7512320325a1cb8d1826fb9b8f2adb798ae54983cdaff4e004"
+  },
+  "postTrialChanges": [
+    "Require acknowledged end-of-stream configuration",
+    "Capture finish authorization before cap submission",
+    "Publish cap failure before stream completion"
+  ],
+  "postTrialHardwareVerified": false,
+  "backgroundMockControlsPassed": true,
+  "strictControllerCompilationPassed": true,
+  "officialInputChanged": false
+}

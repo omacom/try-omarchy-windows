@@ -1,0 +1,264 @@
+--- /dev/null
++++ b/src/gallium/drivers/d3d12/d3d12_native_render.h
+@@ -0,0 +1,27 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef D3D12_NATIVE_RENDER_H
++#define D3D12_NATIVE_RENDER_H
++#ifndef _WIN32
++#include "drm-uapi/drm.h"
++#include <stdint.h>
++#include <sys/ioctl.h>
++#include <sys/stat.h>
++struct d3d12_native_render_info {
++   uint32_t version, flags;
++   uint64_t signature;
++   uint32_t max_width, max_height, reserved[2];
++};
++static_assert(sizeof(d3d12_native_render_info) == 32, "native render identity ABI");
++static inline bool
++d3d12_native_render_fd_supported(int fd)
++{
++   struct stat info;
++   d3d12_native_render_info identity = {};
++   identity.version = 1;
++   return fstat(fd, &info) == 0 && S_ISCHR(info.st_mode) &&
++      ioctl(fd, DRM_IOWR(DRM_COMMAND_BASE, struct d3d12_native_render_info), &identity) == 0 &&
++      identity.version == 1 && identity.flags == 1 && identity.signature == UINT64_C(0x3152444d444457) &&
++      identity.max_width == 4096 && identity.max_height == 4096 && !identity.reserved[0] && !identity.reserved[1];
++}
++#endif
++#endif
+--- a/src/gallium/drivers/d3d12/d3d12_public.h
++++ b/src/gallium/drivers/d3d12/d3d12_public.h
+@@ -48,6 +48,14 @@
+ struct pipe_screen *
+ d3d12_create_dxcore_screen(struct sw_winsys *winsys, LUID *adapter_luid);
+ 
++#ifndef _WIN32
++struct pipe_screen *
++d3d12_create_native_render_screen(int fd);
++/* Takes ownership of fd, including on initialization failure. */
++struct pipe_screen *
++d3d12_create_dxcore_screen_for_native_fd(int fd);
++#endif
++
+ #ifdef __cplusplus
+ }
+ #endif
+--- a/src/gallium/drivers/d3d12/d3d12_screen.h
++++ b/src/gallium/drivers/d3d12/d3d12_screen.h
+@@ -89,6 +89,8 @@
+    int native_sync_fd;
+    bool native_sync_fd_valid;
+    bool native_buffer_enabled;
++   int native_render_fd;
++   bool native_render_fd_valid;
+ #endif
+ 
+    struct list_head residency_list;
+--- a/src/gallium/drivers/d3d12/d3d12_screen.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_screen.cpp
+@@ -34,6 +34,8 @@
+ #include "d3d12_debug.h"
+ #include "d3d12_fence.h"
+ #include "d3d12_native_buffer.h"
++#include "d3d12_native_render.h"
++#include "d3d12_public.h"
+ #ifndef _WIN32
+ #include "drm-uapi/drm.h"
+ #endif
+@@ -475,6 +477,10 @@
+ 
+    if (MAX2(1, sample_count) != MAX2(1, storage_sample_count))
+       return false;
++#ifndef _WIN32
++   if (screen->native_render_fd_valid && (bind & PIPE_BIND_SCANOUT))
++      return false;
++#endif
+ 
+    if (target == PIPE_BUFFER) {
+       /* Replace emulated vertex element formats for the tests */
+@@ -541,9 +547,18 @@
+    }
+ 
+    if (bind & PIPE_BIND_DISPLAY_TARGET) {
++#ifndef _WIN32
++      if (screen->native_render_fd_valid) {
++         if (!screen->native_buffer_enabled || target != PIPE_TEXTURE_2D || MAX2(sample_count, 1) != 1 ||
++             (bind & PIPE_BIND_SCANOUT) || !d3d12_native_buffer_format_supported(pscreen, format))
++            return false;
++      } else
++#endif
++      {
+       enum pipe_format dt_format = format == PIPE_FORMAT_R16G16B16A16_FLOAT ? PIPE_FORMAT_R8G8B8A8_UNORM : format;
+-      if (!screen->winsys->is_displaytarget_format_supported(screen->winsys, bind, dt_format))
++      if (!screen->winsys || !screen->winsys->is_displaytarget_format_supported(screen->winsys, bind, dt_format))
+          return false;
++      }
+    }
+ 
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT fmt_info;
+@@ -685,7 +700,26 @@
+       screen->dev->Release();
+       screen->dev = nullptr;
+    }
+-}
++#ifndef _WIN32
++   if (screen->native_render_fd_valid) {
++      close(screen->native_render_fd);
++      screen->native_render_fd_valid = false;
++   }
++#endif
++}
++
++#ifndef _WIN32
++struct pipe_screen *
++d3d12_create_native_render_screen(int fd)
++{
++   if (!d3d12_native_render_fd_supported(fd) || !d3d12_native_buffer_available())
++      return nullptr;
++   const int owned = fcntl(fd, F_DUPFD_CLOEXEC, 0);
++   if (owned < 0)
++      return nullptr;
++   return d3d12_create_dxcore_screen_for_native_fd(owned);
++}
++#endif
+ 
+ void
+ d3d12_destroy_screen(struct d3d12_screen *screen)
+@@ -1224,7 +1258,11 @@
+    struct d3d12_screen *screen = d3d12_screen(pscreen);
+    struct sw_winsys *winsys = screen->winsys;
+ 
+-   if (winsys->get_fd)
++#ifndef _WIN32
++   if (screen->native_render_fd_valid)
++      return screen->native_render_fd;
++#endif
++   if (winsys && winsys->get_fd)
+       return winsys->get_fd(winsys);
+    else
+       return -1;
+--- a/src/gallium/drivers/d3d12/d3d12_dxcore_screen.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_dxcore_screen.cpp
+@@ -27,6 +27,9 @@
+ #include "util/u_debug.h"
+ #include "util/u_memory.h"
+ #include "util/u_dl.h"
++#ifndef _WIN32
++#include <unistd.h>
++#endif
+ 
+ #include <directx/dxcore.h>
+ #include <dxguids/dxguids.h>
+@@ -231,17 +234,34 @@
+    return true;
+ }
+ 
+-struct pipe_screen *
+-d3d12_create_dxcore_screen(struct sw_winsys *winsys, LUID *adapter_luid)
++static struct pipe_screen *
++d3d12_create_dxcore_screen_impl(struct sw_winsys *winsys, LUID *adapter_luid, int native_fd)
+ {
+    struct d3d12_dxcore_screen *screen = CALLOC_STRUCT(d3d12_dxcore_screen);
+-   if (!screen)
+-      return nullptr;
++   if (!screen) {
++#ifndef _WIN32
++      if (native_fd >= 0)
++         close(native_fd);
++#endif
++      return nullptr;
++   }
+ 
+    if (!d3d12_init_screen_base(&screen->base, winsys, adapter_luid)) {
+       d3d12_destroy_screen(&screen->base);
+-      return nullptr;
+-   }
++#ifndef _WIN32
++      if (native_fd >= 0)
++         close(native_fd);
++#endif
++      return nullptr;
++   }
++#ifndef _WIN32
++   if (native_fd >= 0) {
++      screen->base.native_render_fd = native_fd;
++      screen->base.native_render_fd_valid = true;
++   }
++#else
++   (void)native_fd;
++#endif
+    screen->base.base.destroy = d3d12_destroy_dxcore_screen;
+    screen->base.init = d3d12_init_dxcore_screen;
+    screen->base.deinit = d3d12_deinit_dxcore_screen;
+@@ -255,6 +275,20 @@
+ }
+ 
+ struct pipe_screen *
++d3d12_create_dxcore_screen(struct sw_winsys *winsys, LUID *adapter_luid)
++{
++   return d3d12_create_dxcore_screen_impl(winsys, adapter_luid, -1);
++}
++
++#ifndef _WIN32
++struct pipe_screen *
++d3d12_create_dxcore_screen_for_native_fd(int fd)
++{
++   return d3d12_create_dxcore_screen_impl(nullptr, nullptr, fd);
++}
++#endif
++
++struct pipe_screen *
+ d3d12_create_dxcore_screen_from_d3d12_device(struct sw_winsys *winsys, IUnknown* pDevUnk, LUID **out_adapter_luid)
+ {
+    struct d3d12_dxcore_screen *screen = CALLOC_STRUCT(d3d12_dxcore_screen);
+@@ -282,4 +316,4 @@
+ 
+    *out_adapter_luid = &screen->base.adapter_luid;
+    return &screen->base.base;
+-}
+\ No newline at end of file
++}
+--- a/src/gallium/auxiliary/target-helpers/drm_helper.h
++++ b/src/gallium/auxiliary/target-helpers/drm_helper.h
+@@ -480,6 +480,20 @@
+ DRM_DRIVER_DESCRIPTOR_STUB(ethosu)
+ #endif
+ 
++#if defined(GALLIUM_D3D12) && !defined(_WIN32)
++#include "d3d12/d3d12_public.h"
++static struct pipe_screen *
++pipe_d3d12_create_screen(int fd, const struct pipe_screen_config *config)
++{
++   (void)config;
++   struct pipe_screen *screen = d3d12_create_native_render_screen(fd);
++   return screen ? debug_screen_wrap(screen) : NULL;
++}
++DRM_DRIVER_DESCRIPTOR(d3d12, NULL, 0)
++#else
++DRM_DRIVER_DESCRIPTOR_STUB(d3d12)
++#endif
++
+ #ifdef GALLIUM_KMSRO
+ #include "kmsro/drm/kmsro_drm_public.h"
+ 
+--- a/src/gallium/auxiliary/target-helpers/drm_helper_public.h
++++ b/src/gallium/auxiliary/target-helpers/drm_helper_public.h
+@@ -28,5 +28,6 @@
+ extern const struct drm_driver_descriptor lima_driver_descriptor;
+ extern const struct drm_driver_descriptor zink_driver_descriptor;
+ extern const struct drm_driver_descriptor kmsro_driver_descriptor;
++extern const struct drm_driver_descriptor d3d12_driver_descriptor;
+ 
+ #endif /* _DRM_HELPER_PUBLIC_H */
+--- a/src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c
++++ b/src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c
+@@ -89,6 +89,7 @@
+    &tegra_driver_descriptor,
+    &lima_driver_descriptor,
+    &zink_driver_descriptor,
++   &d3d12_driver_descriptor,
+ };
+ 
+ static const struct drm_driver_descriptor *

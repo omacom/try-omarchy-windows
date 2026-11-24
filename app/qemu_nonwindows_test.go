@@ -61,6 +61,9 @@ type config struct {
 	recoveryChoice *gpuRecoveryDecision
 	// venus offers guest Vulkan on the host GPU in GPU mode (venus.go).
 	venus bool
+	// Match the opt-in Windows launcher's graphics and snapshot inputs.
+	dxg          dxgLaunch
+	diskSnapshot bool
 }
 
 type progressUI struct{}

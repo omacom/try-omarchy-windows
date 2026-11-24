@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "mesaVersion": "26.0.8",
+  "archiveSha256": "caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc",
+  "patchSha256": "376faba04b821f67bfd12d88a001593a172409308c39193d43b380326e3b55b0",
+  "files": {
+    "src/gallium/auxiliary/util/u_upload_mgr.c": {
+      "originalSha256": "31e9544a8ba017d58449f12dc0a8e829ca03c672503874c3c52276c78423b582",
+      "patchedSha256": "3622c693947740363a6812d59fa2c00adea0dfb58ca4bc6a998610de95963f25"
+    }
+  },
+  "scope": "uploader failure ownership; no hardware validation",
+  "quickshellCrashFixed": false,
+  "gpuTested": false
+}

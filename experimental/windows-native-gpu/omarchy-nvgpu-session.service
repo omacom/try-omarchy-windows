@@ -1,0 +1,25 @@
+[Unit]
+Description=Windows-native NVIDIA backend for the configured Omarchy session
+After=local-fs.target systemd-user-sessions.service omarchy-provision-owner.service
+Before=display-manager.service
+ConditionKernelCommandLine=tryomarchy.nvgpu=1
+OnFailure=poweroff.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=yes
+ExecStartPre=/opt/omarchy-nvgpu/bin/normal-session-devices
+ExecStart=/opt/omarchy-nvgpu/bin/normal-session-service
+Restart=no
+TimeoutStartSec=30
+TimeoutStopSec=25
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target

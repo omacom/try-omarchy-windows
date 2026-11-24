@@ -1,0 +1,35 @@
+From 1761974ab2158b88bae21abd4cb3204c92d01bf5 Mon Sep 17 00:00:00 2001
+From: Jesse Natalie <jenatali@microsoft.com>
+Date: Sat, 17 Oct 2026 10:20:00 -0700
+Subject: [PATCH] d3d12: Stop reclaim retries when the fence wait fails
+
+A failed wait can leave the pending-free list unchanged. Report the failure and stop retrying instead of spinning without progress.
+
+Assisted-by: LLM
+Fixes: 381b56389c95 ("d3d12: add screen pending-free list plumbing")
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/45331>
+---
+ src/gallium/drivers/d3d12/d3d12_bufmgr.cpp | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp b/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp
+index 859d65b40f26..7fae92f4624a 100644
+--- a/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp
+@@ -269,8 +269,11 @@ d3d12_screen_reclaim_one(struct d3d12_screen *screen)
+    if (!have_target)
+       return false;
+ 
+-   if (screen->fence->GetCompletedValue() < target)
+-      screen->fence->SetEventOnCompletion(target, nullptr);
++   if (screen->fence->GetCompletedValue() < target &&
++       FAILED(screen->fence->SetEventOnCompletion(target, nullptr))) {
++      debug_printf("D3D12: failed to wait for pending resource reclamation\n");
++      return false;
++   }
+ 
+    d3d12_screen_reclaim_completed(screen);
+    return true;
+-- 
+GitLab
+

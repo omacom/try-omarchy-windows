@@ -1,0 +1,78 @@
+--- a/src/backend/Backend.cpp
++++ b/src/backend/Backend.cpp
+@@ -1,4 +1,8 @@
+ #include <aquamarine/backend/Backend.hpp>
++#include <aquamarine/backend/Session.hpp>
++#include <chrono>
++#include <cstdint>
++#include <dlfcn.h>
+ #include <aquamarine/backend/Wayland.hpp>
+ #include <aquamarine/backend/Headless.hpp>
+ #include <aquamarine/backend/DRM.hpp>
+@@ -166,6 +170,34 @@
+             log(AQ_LOG_CRITICAL, "Private native-render startup requires the isolated headless implementation");
+             return false;
+         }
++        const auto input = std::getenv("WDDM_BRIDGE_NATIVE_INPUT");
++        if (input && std::strcmp(input, "1")) {
++            log(AQ_LOG_CRITICAL, "Private native-render input opt-in must equal 1");
++            return false;
++        }
++        if (input) {
++            // A failed DRM implementation can still leave the live input seat.
++            // Replacing it would try to take its devices before releasing them.
++            const bool reused = bool(session);
++            if (!session)
++                session = CSession::attempt(self.lock());
++            if (!session) {
++                log(AQ_LOG_CRITICAL, "Private native-render seat input session failed");
++                return false;
++            }
++            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
++            while (!session->active && std::chrono::steady_clock::now() < deadline) {
++                session->dispatchLibseatEvents();
++                if (!session->active)
++                    usleep(1000);
++            }
++            if (!session->active) {
++                log(AQ_LOG_CRITICAL, "Private native-render input seat activation timed out");
++                return false;
++            }
++            log(AQ_LOG_DEBUG, reused ? "Private native-render existing seat input reused; libseat=true libinput=true KMS=false" :
++                                      "Private native-render seat input connected; libseat=true libinput=true KMS=false");
++        }
+         const auto path = std::getenv("WDDM_BRIDGE_RENDER_NODE");
+         CFileDescriptor fd(path ? open(path, O_RDWR | O_CLOEXEC) : -1);
+         if (!fd.isValid() || !NativeRender::supported(fd.get())) {
+@@ -208,10 +240,31 @@
+ 
+     sessionFDs = session ? session->pollFDs() : std::vector<Hyprutils::Memory::CSharedPointer<SPollFD>>{};
+ 
++    // Backend startup precedes the compositor's input-manager initialization.
++    // Deliver initial devices when its event loop starts, never inside start().
++    if (NativeRender::requested() && std::getenv("WDDM_BRIDGE_NATIVE_INPUT") && session) {
++        addIdleEvent(makeShared<std::function<void(void)>>([weak = self]() {
++            const auto backend = weak.lock();
++            if (!backend || !backend->session || !backend->ready)
++                return;
++            backend->session->dispatchLibinputEvents();
++            backend->log(AQ_LOG_DEBUG, std::format("Private native-render input device count {}", backend->session->libinputDevices.size()));
++        }));
++    }
++
+     return true;
+ }
+ 
+ void Aquamarine::CBackend::log(eBackendLogLevel level, const std::string& msg) {
++    const auto input = std::getenv("WDDM_BRIDGE_NATIVE_INPUT");
++    if (input && !std::strcmp(input, "1") && msg.size() <= 4096 &&
++        (msg.find("libinput") != std::string::npos || msg.find("libseat") != std::string::npos ||
++         msg.find("native-render") != std::string::npos || msg.find("backend") != std::string::npos)) {
++        using Observer = void (*)(const char*, uint32_t);
++        const auto observer = reinterpret_cast<Observer>(dlsym(RTLD_DEFAULT, "wddm_bridge_native_input_log"));
++        if (observer)
++            observer(msg.data(), static_cast<uint32_t>(msg.size()));
++    }
+     if (logger)
+         logger->log(level, msg);
+ }

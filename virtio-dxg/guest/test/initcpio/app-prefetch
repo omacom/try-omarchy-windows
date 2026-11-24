@@ -1,0 +1,95 @@
+#!/bin/bash
+# app-prefetch: what the launcher's applications load at start - their
+# programs, the shared libraries those need, and the data directories of the
+# big ones (browsers, Electron apps) - read into the page cache once the
+# desktop is up, at idle CPU and I/O priority, as Windows' SysMain prefetches
+# applications: a first launch then reads memory instead of the disk. Only
+# reads; the page cache gives the memory back whenever anything needs it.
+# Usage: app-prefetch [--list]  (--list: print the files, read nothing)
+set -u
+list=0
+[ "${1:-}" = --list ] && list=1
+
+declare -A seen
+declare -A programs
+files=()
+add_resolved() {
+    [[ -n ${seen[$1]:-} ]] && return
+    seen[$1]=1
+    files+=("$1")
+}
+add() {
+    local f
+    for f in "$@"; do
+        [ -f "$f" ] || continue
+        [[ -n ${seen[$f]:-} ]] && continue
+        f=$(readlink -f -- "$f") || continue
+        add_resolved "$f"
+    done
+}
+# A program and the libraries it links (ldd follows them for us).
+add_prog() {
+    local p
+    p=$(command -v "$1" 2>/dev/null) || return
+    p=$(readlink -f "$p")
+    [ -n "$p" ] || return
+    [ -z "${programs[$p]:-}" ] || return
+    programs[$p]=1
+    add "$p"
+    case $(head -c 4 "$p" 2>/dev/null) in
+    $'\x7fELF')
+        while read -r lib; do add "$lib"; done < <(ldd "$p" 2>/dev/null | awk '$3 ~ /^\// {print $3} $1 ~ /^\// {print $1}') ;;
+    '#!'*)
+        # A script: its interpreter, and a program it execs at the end.
+        local interp
+        interp=$(head -1 "$p" | sed 's/^#! *//; s/ .*//')
+        [ "${interp##*/}" = env ] && interp=$(head -1 "$p" | awk '{print $2}')
+        [ -n "$interp" ] && add_prog "$interp"
+        local last
+        last=$(grep -oE '^\s*exec\s+[A-Za-z0-9_./-]+' "$p" 2>/dev/null | tail -1 | awk '{print $2}')
+        [ -n "$last" ] && [ "$last" != "$1" ] && case $last in \$*|\"*) ;; *) add_prog "$last" ;; esac ;;
+    esac
+}
+add_dir() {
+    local f
+    [ -d "$1" ] || return
+    while IFS= read -r -d '' f; do add_resolved "$f"; done < <(
+        find "$1" -type f -size -256M -exec realpath -ez -- {} + 2>/dev/null
+    )
+}
+
+# Every application the launcher lists.
+[ "$list" = 1 ] || sleep "${PREFETCH_DELAY:-8}"
+IFS=: read -ra data_dirs <<< "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+for root in "${XDG_DATA_HOME:-$HOME/.local/share}" "${data_dirs[@]}"; do
+    [[ $root == /* ]] || continue
+    d=$root/applications
+    for f in "$d"/*.desktop; do
+        [ -f "$f" ] || continue
+        grep -qiE '^(NoDisplay|Hidden)=true' "$f" && continue
+        exe=$(sed -n 's/^Exec=//p' "$f" | head -1 | awk '{print $1}')
+        [ "$exe" = env ] && exe=$(sed -n 's/^Exec=//p' "$f" | head -1 | awk '{for (i = 2; i <= NF; i++) if ($i !~ /=/) {print $i; exit}}')
+        [ -n "$exe" ] && add_prog "$exe"
+    done
+done
+# How the launcher starts them, and the terminal its TUI entries open in.
+for p in uwsm-app gtk-launch systemd-run xdg-terminal-exec alacritty ghostty foot kitty; do add_prog "$p"; done
+# The large ones load much more than their program: Chromium's and Electron's
+# resources, GTK/GI data, image loaders, Qt plugins and QML.
+for d in /usr/lib/chromium /opt/google/chrome /usr/lib/electron* /opt/visual-studio-code \
+         /usr/lib/code /usr/share/code /usr/lib/girepository-1.0 /usr/lib/gdk-pixbuf-2.0 \
+         /usr/lib/qt6/plugins/platforms /usr/lib/qt6/plugins/wayland-shell-integration \
+         /usr/lib/qt6/plugins/wayland-graphics-integration-client /usr/lib/gtk-4.0 /usr/lib/gio/modules; do
+    add_dir "$d"
+done
+# Icon theme indexes and caches the launcher and every application read.
+for f in /usr/share/icons/*/index.theme /usr/share/icons/*/icon-theme.cache /var/cache/fontconfig/*; do add "$f"; done
+
+if [ $list = 1 ]; then
+    printf '%s\n' "${files[@]}"
+    exit 0
+fi
+start=$(date +%s%N)
+printf '%s\0' "${files[@]}" | xargs -0 -n 64 -P 4 cat >/dev/null 2>&1
+bytes=$(printf '%s\0' "${files[@]}" | du -cb --files0-from=- 2>/dev/null | tail -1 | cut -f1)
+echo "app-prefetch: ${#files[@]} files, $((bytes / 1048576)) MiB in $(( ($(date +%s%N) - start) / 1000000 )) ms"

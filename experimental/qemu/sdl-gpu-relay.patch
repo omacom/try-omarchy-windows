@@ -1,0 +1,124 @@
+--- a/include/ui/console.h
++++ b/include/ui/console.h
+@@ -366,6 +366,13 @@
+     GRAPHIC_FLAGS_DMABUF   = 1 << 1,
+ };
+ 
++/* A diagnostic snapshot; visibility flags do not prove pixel ownership. */
++typedef struct GraphicScanoutWindowInfo {
++    int logical_width, logical_height, drawable_width, drawable_height;
++    uint32_t flags;
++    bool shown, hidden, minimized, maximized, input_focus, mouse_focus;
++} GraphicScanoutWindowInfo;
++
+ typedef struct GraphicHwOps {
+     int (*get_flags)(void *opaque); /* optional, default 0 */
+     void (*invalidate)(void *opaque);
+@@ -374,6 +381,10 @@
+     void (*text_update)(void *opaque, console_ch_t *text);
+     void (*ui_info)(void *opaque, uint32_t head, QemuUIInfo *info);
+     void (*gl_block)(void *opaque, bool block);
++    /* Optional diagnostic hooks after a GL blit, before window swap. */
++    bool (*gl_scanout_audit_requested)(void *opaque);
++    void (*gl_scanout_audit)(void *opaque, uint32_t width, uint32_t height,
++                             const GraphicScanoutWindowInfo *window);
+ } GraphicHwOps;
+ 
+ QemuConsole *graphic_console_init(DeviceState *dev, uint32_t head,
+@@ -382,6 +393,8 @@
+ void graphic_console_set_hwops(QemuConsole *con,
+                                const GraphicHwOps *hw_ops,
+                                void *opaque);
++/* Main-loop-only snapshot for a reversible boot-console proxy. */
++const GraphicHwOps *graphic_console_get_hwops(QemuConsole *con, void **opaque);
+ void graphic_console_close(QemuConsole *con);
+ 
+ void graphic_hw_update(QemuConsole *con);
+@@ -389,6 +402,9 @@
+ void graphic_hw_invalidate(QemuConsole *con);
+ void graphic_hw_text_update(QemuConsole *con, console_ch_t *chardata);
+ void graphic_hw_gl_block(QemuConsole *con, bool block);
++bool graphic_hw_gl_scanout_audit_requested(QemuConsole *con);
++void graphic_hw_gl_scanout_audit(QemuConsole *con, uint32_t width, uint32_t height,
++                                const GraphicScanoutWindowInfo *window);
+ 
+ void qemu_console_early_init(void);
+ 
+--- a/ui/console.c
++++ b/ui/console.c
+@@ -1116,6 +1116,20 @@
+     }
+ }
+ 
++bool graphic_hw_gl_scanout_audit_requested(QemuConsole *con)
++{
++    return con->hw_ops->gl_scanout_audit_requested &&
++           con->hw_ops->gl_scanout_audit_requested(con->hw);
++}
++
++void graphic_hw_gl_scanout_audit(QemuConsole *con, uint32_t width, uint32_t height,
++                                const GraphicScanoutWindowInfo *window)
++{
++    if (con->hw_ops->gl_scanout_audit) {
++        con->hw_ops->gl_scanout_audit(con->hw, width, height, window);
++    }
++}
++
+ void dpy_gl_update(QemuConsole *con,
+                    uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+ {
+@@ -1168,6 +1182,12 @@
+     }
+ 
+     return display_state;
++}
++
++const GraphicHwOps *graphic_console_get_hwops(QemuConsole *con, void **opaque)
++{
++    *opaque = con->hw;
++    return con->hw_ops;
+ }
+ 
+ void graphic_console_set_hwops(QemuConsole *con,
+--- a/ui/sdl2-gl.c
++++ b/ui/sdl2-gl.c
+@@ -39,6 +39,8 @@
+     }
+ 
+     scon->scanout_mode = scanout;
++    /* A queued boot-surface redraw must not replace the first native frame. */
++    scon->updates = 0;
+     if (!scon->scanout_mode) {
+         egl_fb_destroy(&scon->guest_fb);
+         if (scon->surface) {
+@@ -256,6 +258,20 @@
+     SDL_GetWindowSize(scon->real_window, &ww, &wh);
+     egl_fb_setup_default(&scon->win_fb, ww, wh, 0, 0);
+     egl_fb_blit(&scon->win_fb, &scon->guest_fb, !scon->y0_top);
++    if (graphic_hw_gl_scanout_audit_requested(dcl->con)) {
++        GraphicScanoutWindowInfo window = { .logical_width = ww,
++                                            .logical_height = wh };
++        SDL_GL_GetDrawableSize(scon->real_window, &window.drawable_width,
++                               &window.drawable_height);
++        window.flags = SDL_GetWindowFlags(scon->real_window);
++        window.shown = !!(window.flags & SDL_WINDOW_SHOWN);
++        window.hidden = !!(window.flags & SDL_WINDOW_HIDDEN);
++        window.minimized = !!(window.flags & SDL_WINDOW_MINIMIZED);
++        window.maximized = !!(window.flags & SDL_WINDOW_MAXIMIZED);
++        window.input_focus = !!(window.flags & SDL_WINDOW_INPUT_FOCUS);
++        window.mouse_focus = !!(window.flags & SDL_WINDOW_MOUSE_FOCUS);
++        graphic_hw_gl_scanout_audit(dcl->con, ww, wh, &window);
++    }
+ 
+     SDL_GL_SwapWindow(scon->real_window);
+ 
+--- a/hw/display/meson.build
++++ b/hw/display/meson.build
+@@ -142,3 +142,7 @@
+ system_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_lcdc.c'))
+ 
+ modules += { 'hw-display': hw_display_modules }
++
++if host_os == 'windows' and opengl.found()
++  system_ss.add(files('wddm-sdl-relay.c'), opengl, pixman)
++endif

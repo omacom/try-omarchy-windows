@@ -1,0 +1,18 @@
+{
+  "mesaVersion": "26.0.8",
+  "archiveSha256": "caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc",
+  "predecessorPatchSha256": "d6ea41397861f77e7cc0871a05375d9ce9788e216b994a09fdaa00199cdb2462",
+  "patchSha256": "567f44ebe814e8fdd4fba862959c5d4ef3486f245c477075ef4a20c08d39e141",
+  "files": {
+    "src/microsoft/vulkan/dzn_device.c": {
+      "originalSha256": "802f9b9e6cdbe34bee53423fdf85f33948cf23023dcd5e5b6fba1170bfcab5b7",
+      "patchedSha256": "54bf2123b6df22d71157b355158ad28b25cafd7711478c0513f937e54ce9de20"
+    },
+    "src/microsoft/vulkan/dzn_wddm_native_gpu_buffer.h": {
+      "originalSha256": null,
+      "patchedSha256": "eaccd5e42e6dec7394852c81d98e3eb3cb86a6928001107c4ccc977156fd8b4d"
+    }
+  },
+  "publicDescriptionSpecification": "https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_resource_desc",
+  "defaultEnabled": false
+}

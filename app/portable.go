@@ -17,7 +17,7 @@ const (
 )
 
 func automaticUpdatesEnabled(cfg *config, noUpdate bool, release, sumsSHA256 string) bool {
-	return !noUpdate &&
+	return forkIdentity == "" && !noUpdate &&
 		normalizedRelease(release) == defaultReleaseURL &&
 		normalizedSHA256(sumsSHA256) == defaultSumsSHA256
 }

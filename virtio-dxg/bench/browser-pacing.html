@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Omarchy browser frame pacing</title>
+<style>
+  body { font: 16px system-ui; max-width: 70rem; margin: 1rem auto; padding: 0 1rem; }
+  canvas { width: 100%; height: 48vh; display: block; }
+  pre { white-space: pre-wrap; }
+</style>
+<h1>Browser frame pacing</h1>
+<p>Choose the actual monitor rate. Keep this window visible for the 15-second run.
+The four colored corners should stay visible as the shader moves. Use browser
+zoom and restore the window between runs to check scaling and decorations.</p>
+<label>Monitor <select id="hz"><option>60</option><option>120</option><option>144</option><option>165</option><option selected>240</option></select> Hz</label>
+<button id="start">Run for 15 seconds</button>
+<canvas id="surface"></canvas>
+<pre id="report" aria-live="polite"></pre>
+<script type="module">
+const surface = document.querySelector('#surface');
+const button = document.querySelector('#start');
+const hz = document.querySelector('#hz');
+const report = document.querySelector('#report');
+const gl = surface.getContext('webgl2', {antialias: false});
+let running = false;
+let frame = 0;
+let watchdog;
+
+function finish(message) {
+  running = false;
+  cancelAnimationFrame(frame);
+  clearTimeout(watchdog);
+  button.disabled = !gl || gl.isContextLost();
+  hz.disabled = false;
+  report.textContent = message;
+}
+function shader(type, source) {
+  const obj = gl.createShader(type);
+  gl.shaderSource(obj, source);
+  gl.compileShader(obj);
+  if (!gl.getShaderParameter(obj, gl.COMPILE_STATUS)) throw Error(gl.getShaderInfoLog(obj));
+  return obj;
+}
+function prepare() {
+  const program = gl.createProgram();
+  const vertex = shader(gl.VERTEX_SHADER, `#version 300 es
+    void main() {
+      vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+      gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+    }`);
+  const fragment = shader(gl.FRAGMENT_SHADER, `#version 300 es
+    precision highp float;
+    uniform vec2 resolution;
+    uniform float phase;
+    out vec4 color;
+    void main() {
+      vec2 uv = gl_FragCoord.xy / resolution;
+      vec3 waves = 0.5 + 0.5 * cos(phase + uv.xyx * 10.0 + vec3(0.0, 2.0, 4.0));
+      if (min(uv.x, 1.0 - uv.x) < 0.08 && min(uv.y, 1.0 - uv.y) < 0.08)
+        waves = vec3(step(0.5, uv.x), step(0.5, uv.y), 1.0);
+      color = vec4(waves, 1.0);
+    }`);
+  gl.attachShader(program, vertex);
+  gl.attachShader(program, fragment);
+  gl.linkProgram(program);
+  gl.deleteShader(vertex);
+  gl.deleteShader(fragment);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw Error(gl.getProgramInfoLog(program));
+  gl.useProgram(program);
+  return program;
+}
+function setup() {
+  if (!gl) throw Error('WebGL 2 unavailable');
+  const program = prepare();
+  const phase = gl.getUniformLocation(program, 'phase');
+  const resolution = gl.getUniformLocation(program, 'resolution');
+  const debug = gl.getExtension('WEBGL_debug_renderer_info');
+  const renderer = gl.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : gl.RENDERER);
+  button.onclick = () => {
+    const targetHz = Number(hz.value);
+    const width = Math.max(1, Math.round(surface.clientWidth * devicePixelRatio));
+    const height = Math.max(1, Math.round(surface.clientHeight * devicePixelRatio));
+    surface.width = width;
+    surface.height = height;
+    const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+    gl.viewport(0, 0, w, h);
+    gl.uniform2f(resolution, w, h);
+    hz.disabled = button.disabled = running = true;
+    report.textContent = 'Warming up for one second…';
+    let first, previous, begin;
+    const gaps = [];
+    function draw(now) {
+      if (!running) return;
+      if (first === undefined) first = now;
+      gl.uniform1f(phase, (now - first) * 0.004);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      if (now - first >= 1000) {
+        if (previous === undefined) {
+          begin = now;
+          report.textContent = 'Measuring browser animation callbacks…';
+        } else {
+          gaps.push(now - previous);
+        }
+        previous = now;
+        if (now - begin >= 15000) {
+          gaps.sort((a, b) => a - b);
+          const percentile = p => gaps[Math.ceil(p * gaps.length) - 1];
+          finish(JSON.stringify({renderer, targetHz, drawingBuffer: [w, h],
+            devicePixelRatio, callbacksPerSecond: gaps.length * 1000 / (now - begin),
+            intervals: gaps.length, p95ms: percentile(.95), p99ms: percentile(.99),
+            worstMs: percentile(1), gapsOverOneAndHalfPeriods: gaps.filter(t => t > 1500 / targetHz).length,
+            scope: 'Browser animation callbacks. Host presentation and visible correctness require separate observation.'}, null, 2));
+          return;
+        }
+      }
+      frame = requestAnimationFrame(draw);
+    }
+    watchdog = setTimeout(() => finish('Run incomplete: animation callbacks stalled.'), 25000);
+    frame = requestAnimationFrame(draw);
+  };
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && running) finish('Run discarded: window became hidden.');
+});
+window.addEventListener('resize', () => {
+  if (running) finish('Run discarded: window size or zoom changed. Start again at the new size.');
+});
+surface.addEventListener('webglcontextlost', () => finish('WebGL context lost. Reload to start another run.'));
+try { setup(); } catch (e) { finish(String(e)); button.disabled = true; }
+</script>
+</html>

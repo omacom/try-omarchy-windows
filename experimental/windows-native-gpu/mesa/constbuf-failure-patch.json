@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "mesaVersion": "26.0.8",
+  "mesaArchiveSha256": "caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc",
+  "patchSha256": "e549c5b6e56fcccef39db71e617e2d609943e9093ce4cfea2dd9856312776a90",
+  "requiredUploaderSha256": "3622c693947740363a6812d59fa2c00adea0dfb58ca4bc6a998610de95963f25",
+  "files": {
+    "src/mesa/state_tracker/st_atom_constbuf.c": {
+      "originalSha256": "c2a723eec0894931c2553ff6ca7dcca24e3e8650239df7d77ede48b1fdd2df8d",
+      "patchedSha256": "ac27eaac67c3e4ae1fa9b235c5154a1eae371bf6dcb1f8e571c33385f4d34073"
+    }
+  },
+  "hardwareTested": false,
+  "quickshellCrashFixed": false
+}

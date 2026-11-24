@@ -1,0 +1,108 @@
+// CPU callbacks around the actual Mesa reclaim functions; no device is used.
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <stdexcept>
+#include <vector>
+struct list_head { list_head *next, *prev; };
+void list_inithead(list_head *h) { h->next = h->prev = h; }
+bool list_is_empty(list_head *h) { return h->next == h; }
+void list_addtail(list_head *p, list_head *h) {
+   p->prev = h->prev; p->next = h; h->prev->next = p; h->prev = p;
+}
+void list_del(list_head *p) { p->prev->next = p->next; p->next->prev = p->prev; }
+#define list_first_entry(h, type, member) reinterpret_cast<type *>( \
+   reinterpret_cast<char *>((h)->next) - offsetof(type, member))
+#define entry_of(p, type, member) reinterpret_cast<type *>( \
+   reinterpret_cast<char *>(p) - offsetof(type, member))
+#define list_for_each_entry_safe(type, name, head, member) \
+   for (type *name = entry_of((head)->next, type, member), \
+        *name##_next = entry_of(name->member.next, type, member); \
+        &name->member != (head); \
+        name = name##_next, name##_next = entry_of(name->member.next, type, member))
+bool locked = false;
+unsigned dropped = 0;
+void mtx_lock(int *) { assert(!locked); locked = true; }
+void mtx_unlock(int *) { assert(locked); locked = false; }
+void d3d12_bo_unreference(void *) { assert(!locked); ++dropped; }
+#define FREE(p) std::free(p)
+#define FAILED(value) ((value) < 0)
+void debug_printf(const char *) {}
+struct d3d12_pending_free_entry { list_head link; uint64_t fence_value; void *bo; };
+struct Fence {
+   std::vector<uint64_t> values;
+   size_t reads = 0;
+   unsigned waits = 0;
+   int result = 0;
+   uint64_t GetCompletedValue() {
+      assert(!values.empty()); size_t i = reads++;
+      return values[i < values.size() ? i : values.size() - 1];
+   }
+   int SetEventOnCompletion(uint64_t target, void *event) {
+      assert(target == 42 && !event); ++waits; return result;
+   }
+};
+struct d3d12_screen {
+   Fence *fence;
+   list_head pending_free_list;
+   int pending_free_lock = 0;
+   explicit d3d12_screen(Fence *f) : fence(f) { list_inithead(&pending_free_list); }
+   ~d3d12_screen() {
+      while (!list_is_empty(&pending_free_list)) {
+         auto *entry = list_first_entry(&pending_free_list, d3d12_pending_free_entry, link);
+         list_del(&entry->link); std::free(entry);
+      }
+   }
+};
+void add(d3d12_screen *s, uint64_t value) {
+   auto *e = static_cast<d3d12_pending_free_entry *>(std::calloc(1, sizeof(d3d12_pending_free_entry)));
+   if (!e) throw std::bad_alloc();
+   e->fence_value = value; list_addtail(&e->link, &s->pending_free_list);
+}
+// ACTUAL_FUNCTIONS
+void require(bool yes, const char *label) { if (!yes) throw std::runtime_error(label); }
+int main() {
+   try {
+      unsigned cases = 0;
+      {
+         Fence f; f.values = {UINT64_MAX}; d3d12_screen s(&f); add(&s, 42);
+         require(!d3d12_screen_reclaim_completed(&s) && dropped == 0,
+                 "Device removal retired pending resources"); ++cases;
+      }
+      {
+         Fence f; f.values = {42}; d3d12_screen s(&f); add(&s, 42); add(&s, 84);
+         unsigned before = dropped;
+         require(d3d12_screen_reclaim_completed(&s) && dropped == before + 1,
+                 "Completed reclaim did not preserve later resources"); ++cases;
+      }
+      for (int mode = 0; mode < 7; ++mode) {
+         Fence f;
+         bool success = mode == 6;
+         f.values = mode == 0 ? std::vector<uint64_t>{UINT64_MAX} :
+                    mode == 1 ? std::vector<uint64_t>{1} :
+                    mode == 2 ? std::vector<uint64_t>{1, 2} :
+                    mode == 3 ? std::vector<uint64_t>{1, UINT64_MAX} :
+                    mode == 4 ? std::vector<uint64_t>{1, 42, UINT64_MAX} :
+                    mode == 5 ? std::vector<uint64_t>{42, 41} :
+                                std::vector<uint64_t>{1, 42, 42};
+         if (mode == 1) f.result = -1;
+         d3d12_screen s(&f); add(&s, 42);
+         unsigned before = dropped;
+         require(d3d12_screen_reclaim_one(&s) == success, "False reclaim progress after a wait/error");
+         require(dropped == before + (success ? 1 : 0), "Unsafe resource retirement");
+         if (mode == 0 || mode == 5) require(!f.waits, "Nonwaiting path registered an event");
+         ++cases;
+      }
+      {
+         Fence f; f.values = {UINT64_MAX}; d3d12_screen s(&f);
+         require(!d3d12_screen_reclaim_one(&s) && !f.reads && !f.waits,
+                 "Empty reclaim queried the driver"); ++cases;
+      }
+      std::printf("RECLAIM_CPU_PASS cases=%u graphicsLibraryLoaded=false\n", cases);
+      return 0;
+   } catch (const std::exception &e) {
+      std::fprintf(stderr, "RECLAIM_CPU_FAIL %s\n", e.what()); return 1;
+   }
+}
