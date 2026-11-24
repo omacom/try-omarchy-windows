@@ -27,6 +27,23 @@ and Dozen (Vulkan 1.3). Changes from upstream Mesa:
   heap and copied to the shader-visible one: NVIDIA's driver reads back
   each view it writes, and the shader-visible heap is write-combined GPU
   memory in the guest.
+- **Fewer driver calls:** descriptor tables and vertex buffers that are
+  already bound are not bound again; simultaneous-access textures (window
+  buffers) are tracked as returning to COMMON after every submission, as
+  D3D12 defines, so a frame GTK already flushed is not submitted a second
+  time at the swap.
+- **Contexts in a millisecond:** a context's batches take their
+  shader-visible descriptor heaps when they first run, from a per-screen
+  pool a worker thread keeps stocked, instead of creating all 16 with the
+  context (each is a GPU allocation the driver maps for the CPU, ~0.8 ms
+  here). GTK 4 renders every menu, popover and tooltip with a context of
+  its own: creating one took 13-30 ms, now 0.1-1 ms.
+- **Pipeline prewarming:** the pipelines a program created are recorded
+  per executable in the shader cache directory (their full description,
+  not compiled code: NVIDIA's Linux driver cannot export that) and rebuilt
+  on worker threads when it starts again, so neither its start nor its
+  first frames wait for the driver's compiler (15-35 ms per pipeline).
+  `D3D12_PSO_PREWARM=false` turns it off.
 
 `CURRENT` names the release the build uses; its recipe in `versions/` (now
 `versions/26.3.1/`) pins the official source archive, the DirectX-Headers

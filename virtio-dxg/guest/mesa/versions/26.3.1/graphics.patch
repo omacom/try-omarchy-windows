@@ -42,7 +42,271 @@
  
 --- a/src/gallium/drivers/d3d12/d3d12_batch.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_batch.cpp
-@@ -322,13 +322,16 @@
+@@ -34,6 +34,9 @@
+ #include "util/hash_table.h"
+ #include "util/set.h"
+ #include "util/u_inlines.h"
++#include "util/u_dynarray.h"
++#include "util/u_memory.h"
++#include "util/u_queue.h"
+ 
+ #include <dxguids/dxguids.h>
+ 
+@@ -51,6 +54,170 @@
+    return table_a->count == table_b->count && memcmp(table_a->descs, table_b->descs, sizeof(table_a->descs[0]) * table_a->count) == 0;
+ }
+ 
++#ifdef HAVE_GALLIUM_D3D12_GRAPHICS
++/* d3d12_heap_pool: shader-visible descriptor heaps for batches. A batch
++ * takes its view and sampler heaps when it first starts and gives them back
++ * when it is destroyed (after waiting for its fence); a worker keeps
++ * HEAP_POOL_READY of each kind made in advance. Creating one is a GPU
++ * allocation the driver maps for the CPU: ~0.8 ms under virtualization. */
++#define BATCH_VIEW_DESCRIPTORS 8096
++#define BATCH_SAMPLER_DESCRIPTORS 1024
++#define HEAP_POOL_READY 2
++#define HEAP_POOL_MAX 16
++
++struct d3d12_heap_pool {
++   struct d3d12_screen *screen;
++   mtx_t lock;
++   struct util_dynarray views, samplers;   /* struct d3d12_descriptor_heap * */
++   struct util_queue queue;
++   struct util_queue_fence fence;
++   bool queue_ok;
++   bool refill_queued;
++};
++
++static struct d3d12_descriptor_heap *
++heap_pool_new(struct d3d12_screen *screen, bool sampler)
++{
++   return d3d12_descriptor_heap_new(screen->dev,
++                                    sampler ? D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER :
++                                              D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
++                                    D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
++                                    sampler ? BATCH_SAMPLER_DESCRIPTORS : BATCH_VIEW_DESCRIPTORS);
++}
++
++static void
++heap_pool_refill_job(void *job, void *gdata, int thread_index)
++{
++   struct d3d12_heap_pool *pool = (struct d3d12_heap_pool *)job;
++   for (;;) {
++      mtx_lock(&pool->lock);
++      bool view = util_dynarray_num_elements(&pool->views, struct d3d12_descriptor_heap *) < HEAP_POOL_READY;
++      bool sampler = util_dynarray_num_elements(&pool->samplers, struct d3d12_descriptor_heap *) < HEAP_POOL_READY;
++      mtx_unlock(&pool->lock);
++      if (!view && !sampler)
++         return;
++      struct d3d12_descriptor_heap *v = view ? heap_pool_new(pool->screen, false) : NULL;
++      struct d3d12_descriptor_heap *s = sampler ? heap_pool_new(pool->screen, true) : NULL;
++      if ((view && !v) || (sampler && !s)) {
++         if (v)
++            d3d12_descriptor_heap_free(v);
++         if (s)
++            d3d12_descriptor_heap_free(s);
++         return;
++      }
++      mtx_lock(&pool->lock);
++      if (v)
++         util_dynarray_append(&pool->views, v);
++      if (s)
++         util_dynarray_append(&pool->samplers, s);
++      mtx_unlock(&pool->lock);
++   }
++}
++
++static void
++heap_pool_refill_done(void *job, void *gdata, int thread_index)
++{
++   struct d3d12_heap_pool *pool = (struct d3d12_heap_pool *)job;
++   mtx_lock(&pool->lock);
++   pool->refill_queued = false;
++   mtx_unlock(&pool->lock);
++}
++
++static void
++heap_pool_refill(struct d3d12_heap_pool *pool)
++{
++   if (!pool->queue_ok)
++      return;
++   mtx_lock(&pool->lock);
++   bool need = !pool->refill_queued &&
++      (util_dynarray_num_elements(&pool->views, struct d3d12_descriptor_heap *) < HEAP_POOL_READY ||
++       util_dynarray_num_elements(&pool->samplers, struct d3d12_descriptor_heap *) < HEAP_POOL_READY);
++   if (need)
++      pool->refill_queued = true;
++   mtx_unlock(&pool->lock);
++   if (need)
++      util_queue_add_job(&pool->queue, pool, &pool->fence, heap_pool_refill_job,
++                         heap_pool_refill_done, 0);
++}
++
++static struct d3d12_descriptor_heap *
++heap_pool_take(struct d3d12_screen *screen, bool sampler)
++{
++   struct d3d12_heap_pool *pool = screen->heap_pool;
++   struct d3d12_descriptor_heap *heap = NULL;
++   if (pool) {
++      mtx_lock(&pool->lock);
++      struct util_dynarray *a = sampler ? &pool->samplers : &pool->views;
++      if (util_dynarray_num_elements(a, struct d3d12_descriptor_heap *))
++         heap = util_dynarray_pop(a, struct d3d12_descriptor_heap *);
++      mtx_unlock(&pool->lock);
++      heap_pool_refill(pool);
++   }
++   if (heap) {
++      d3d12_descriptor_heap_clear(heap);
++      return heap;
++   }
++   return heap_pool_new(screen, sampler);
++}
++
++static void
++heap_pool_give(struct d3d12_screen *screen, struct d3d12_descriptor_heap *heap, bool sampler)
++{
++   struct d3d12_heap_pool *pool = screen->heap_pool;
++   if (!heap)
++      return;
++   if (pool) {
++      mtx_lock(&pool->lock);
++      struct util_dynarray *a = sampler ? &pool->samplers : &pool->views;
++      bool kept = util_dynarray_num_elements(a, struct d3d12_descriptor_heap *) < HEAP_POOL_MAX;
++      if (kept)
++         util_dynarray_append(a, heap);
++      mtx_unlock(&pool->lock);
++      if (kept)
++         return;
++   }
++   d3d12_descriptor_heap_free(heap);
++}
++
++void
++d3d12_heap_pool_init(struct d3d12_screen *screen)
++{
++   struct d3d12_heap_pool *pool = CALLOC_STRUCT(d3d12_heap_pool);
++   if (!pool)
++      return;
++   pool->screen = screen;
++   mtx_init(&pool->lock, mtx_plain);
++   util_dynarray_init(&pool->views, NULL);
++   util_dynarray_init(&pool->samplers, NULL);
++   util_queue_fence_init(&pool->fence);
++   pool->queue_ok = util_queue_init(&pool->queue, "d3d12heap", 4, 1,
++                                    UTIL_QUEUE_INIT_RESIZE_IF_FULL, NULL);
++   screen->heap_pool = pool;
++   heap_pool_refill(pool);
++}
++
++void
++d3d12_heap_pool_fini(struct d3d12_screen *screen)
++{
++   struct d3d12_heap_pool *pool = screen->heap_pool;
++   if (!pool)
++      return;
++   if (pool->queue_ok) {
++      util_queue_finish(&pool->queue);
++      util_queue_destroy(&pool->queue);
++   }
++   util_dynarray_foreach(&pool->views, struct d3d12_descriptor_heap *, h)
++      d3d12_descriptor_heap_free(*h);
++   util_dynarray_foreach(&pool->samplers, struct d3d12_descriptor_heap *, h)
++      d3d12_descriptor_heap_free(*h);
++   util_dynarray_fini(&pool->views);
++   util_dynarray_fini(&pool->samplers);
++   mtx_destroy(&pool->lock);
++   FREE(pool);
++   screen->heap_pool = NULL;
++}
++#endif // HAVE_GALLIUM_D3D12_GRAPHICS
++
+ bool
+ d3d12_init_batch(struct d3d12_context *ctx, struct d3d12_batch *batch)
+ {
+@@ -85,30 +252,20 @@
+       batch->queries = _mesa_set_create(NULL, _mesa_hash_pointer,
+                                         _mesa_key_pointer_equal);
+ 
+-      batch->view_heap =
+-         d3d12_descriptor_heap_new(screen->dev,
+-                                    D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+-                                    D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
+-                                    8096);
++      /* The descriptor heaps come when the batch first starts. */
++      batch->view_heap = NULL;
+ 
+       batch->sampler_tables = _mesa_hash_table_create(NULL, d3d12_sampler_desc_table_key_hash,
+                                                       d3d12_sampler_desc_table_key_equals);
+       batch->sampler_views = _mesa_set_create(NULL, _mesa_hash_pointer,
+                                              _mesa_key_pointer_equal);
+ 
+-      if (!batch->sampler_tables || !batch->sampler_views || !batch->view_heap || !batch->queries)
++      if (!batch->sampler_tables || !batch->sampler_views || !batch->queries)
+          return false;
+ 
+       batch->zombie_samplers = UTIL_DYNARRAY_INIT;
+ 
+-      batch->sampler_heap =
+-         d3d12_descriptor_heap_new(screen->dev,
+-                                 D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER,
+-                                 D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
+-                                 1024);
+-
+-      if (!batch->sampler_heap)
+-         return false;
++      batch->sampler_heap = NULL;
+    }
+ #endif // HAVE_GALLIUM_D3D12_GRAPHICS
+ 
+@@ -209,8 +366,10 @@
+       util_dynarray_foreach(&batch->zombie_samplers, d3d12_descriptor_handle, handle)
+          d3d12_descriptor_handle_free(handle);
+       util_dynarray_clear(&batch->zombie_samplers);
+-      d3d12_descriptor_heap_clear(batch->view_heap);
+-      d3d12_descriptor_heap_clear(batch->sampler_heap);
++      if (batch->view_heap)
++         d3d12_descriptor_heap_clear(batch->view_heap);
++      if (batch->sampler_heap)
++         d3d12_descriptor_heap_clear(batch->sampler_heap);
+    }
+ #endif // HAVE_GALLIUM_D3D12_GRAPHICS
+ 
+@@ -232,8 +391,9 @@
+ 
+ #ifdef HAVE_GALLIUM_D3D12_GRAPHICS
+    if (d3d12_screen(ctx->base.screen)->max_feature_level >= D3D_FEATURE_LEVEL_11_0) {
+-      d3d12_descriptor_heap_free(batch->sampler_heap);
+-      d3d12_descriptor_heap_free(batch->view_heap);
++      heap_pool_give(d3d12_screen(ctx->base.screen), batch->sampler_heap, true);
++      heap_pool_give(d3d12_screen(ctx->base.screen), batch->view_heap, false);
++      batch->sampler_heap = batch->view_heap = NULL;
+       _mesa_hash_table_destroy(batch->sampler_tables, NULL);
+       _mesa_set_destroy(batch->sampler_views, NULL);
+       _mesa_set_destroy(batch->queries, NULL);
+@@ -279,6 +439,14 @@
+ 
+ #ifdef HAVE_GALLIUM_D3D12_GRAPHICS
+    if (screen->max_feature_level >= D3D_FEATURE_LEVEL_11_0) {
++      if (!batch->view_heap)
++         batch->view_heap = heap_pool_take(screen, false);
++      if (!batch->sampler_heap)
++         batch->sampler_heap = heap_pool_take(screen, true);
++      if (!batch->view_heap || !batch->sampler_heap) {
++         batch->has_errors = true;
++         return;
++      }
+       ID3D12DescriptorHeap* heaps[2] = { d3d12_descriptor_heap_get(batch->view_heap),
+                                        d3d12_descriptor_heap_get(batch->sampler_heap) };
+       ctx->cmdlist->SetDescriptorHeaps(2, heaps);
+@@ -286,6 +454,7 @@
+       ctx->cmdlist_dirty = ~0;
+       for (int i = 0; i < MESA_SHADER_STAGES; ++i)
+          ctx->shader_dirty[i] = ~0;
++      d3d12_forget_gfx_bindings(ctx);
+    
+       if (!ctx->queries_disabled)
+          d3d12_resume_queries(ctx);
+@@ -322,13 +491,16 @@
  
     bool has_state_fixup = d3d12_context_state_resolve_submission(ctx, batch);
  
@@ -66,7 +330,7 @@
     /* Submitting work against resources we failed to make resident would just fault */
     if (residency_ok)
        screen->cmdqueue->ExecuteCommandLists(count_to_execute, to_execute);
-@@ -336,6 +339,9 @@
+@@ -336,6 +508,9 @@
        batch->has_errors = true;
  
     batch->fence = d3d12_create_fence(screen, true);
@@ -76,7 +340,7 @@
  
     if (batch->fence) {
        uint64_t fv = batch->fence->value;
-@@ -489,6 +495,9 @@
+@@ -489,6 +664,9 @@
     uint8_t new_data = write ? batch_bo_reference_written : batch_bo_reference_read;
     uint8_t old_data = (uint8_t)*state;
     *state = (old_data | new_data);
@@ -88,7 +352,7 @@
  void
 --- a/src/gallium/drivers/d3d12/d3d12_batch.h
 +++ b/src/gallium/drivers/d3d12/d3d12_batch.h
-@@ -67,6 +67,7 @@
+@@ -67,12 +67,19 @@
  
     uint64_t submit_id;
     uint32_t ctx_id, ctx_index;
@@ -96,6 +360,18 @@
  };
  
  bool
+ d3d12_init_batch(struct d3d12_context *ctx, struct d3d12_batch *batch);
+ 
+ void
++d3d12_heap_pool_init(struct d3d12_screen *screen);
++
++void
++d3d12_heap_pool_fini(struct d3d12_screen *screen);
++
++void
+ d3d12_destroy_batch(struct d3d12_context *ctx, struct d3d12_batch *batch);
+ 
+ void
 --- a/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_bufmgr.cpp
 @@ -33,6 +33,11 @@
@@ -643,7 +919,13 @@
  
 --- a/src/gallium/drivers/d3d12/d3d12_context.h
 +++ b/src/gallium/drivers/d3d12/d3d12_context.h
-@@ -168,6 +168,7 @@
+@@ -164,10 +164,13 @@
+ 
+ #define D3D12_CONTEXT_NO_ID 0xffffffff
+ 
++#define D3D12_GFX_BOUND_TABLES 64
++
+ struct d3d12_context {
     struct pipe_context base;
  
     unsigned id;
@@ -651,7 +933,20 @@
     struct slab_child_pool transfer_pool;
     struct slab_child_pool transfer_pool_unsync;
     struct list_head context_list_entry;
-@@ -272,6 +273,10 @@
+@@ -215,6 +218,12 @@
+    struct pipe_vertex_buffer vbs[PIPE_MAX_ATTRIBS];
+    D3D12_VERTEX_BUFFER_VIEW vbvs[PIPE_MAX_ATTRIBS];
+    unsigned num_vbs;
++   /* What the command list has bound (d3d12_draw.cpp): descriptor table
++    * per graphics root parameter (0 = unknown) and vertex buffer views
++    * (bound_num_vbs ~0u = unknown). */
++   D3D12_GPU_DESCRIPTOR_HANDLE bound_gfx_tables[D3D12_GFX_BOUND_TABLES];
++   D3D12_VERTEX_BUFFER_VIEW bound_vbvs[PIPE_MAX_ATTRIBS];
++   unsigned bound_num_vbs;
+    float flip_y;
+    bool need_zero_one_depth_range;
+    enum mesa_prim initial_api_prim;
+@@ -272,6 +281,10 @@
  
     struct d3d12_descriptor_pool *sampler_pool;
     struct d3d12_descriptor_handle null_sampler;
@@ -662,6 +957,29 @@
  
     PFN_D3D12_SERIALIZE_VERSIONED_ROOT_SIGNATURE D3D12SerializeVersionedRootSignature;
  #ifndef _GAMING_XBOX
+@@ -304,6 +317,22 @@
+    return (struct d3d12_context *)context;
+ }
+ 
++#ifdef HAVE_GALLIUM_D3D12_GRAPHICS
++/* The command list's root arguments and vertex buffers are unknown. */
++static inline void
++d3d12_forget_gfx_tables(struct d3d12_context *ctx)
++{
++   memset(ctx->bound_gfx_tables, 0, sizeof(ctx->bound_gfx_tables));
++}
++
++static inline void
++d3d12_forget_gfx_bindings(struct d3d12_context *ctx)
++{
++   d3d12_forget_gfx_tables(ctx);
++   ctx->bound_num_vbs = ~0u;
++}
++#endif // HAVE_GALLIUM_D3D12_GRAPHICS
++
+ static inline struct d3d12_batch *
+ d3d12_current_batch(struct d3d12_context *ctx)
+ {
 --- a/src/gallium/drivers/d3d12/d3d12_context_common.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_context_common.cpp
 @@ -55,6 +55,7 @@
@@ -701,7 +1019,19 @@
     bool flushed = d3d12_flush_cmdlist(ctx);
  
     if (fence) {
-@@ -602,6 +611,9 @@
+@@ -216,9 +225,10 @@
+    d3d12_transition_resource_state(ctx, res,
+                                    D3D12_RESOURCE_STATE_COMMON,
+                                    D3D12_TRANSITION_FLAG_INVALIDATE_BINDINGS);
++   /* A recorded barrier marks the batch; with none (a simultaneous-access
++    * texture decays to COMMON by itself) there is nothing to submit. */
+    d3d12_apply_resource_states(ctx, false);
+    d3d12_batch_reference_resource(d3d12_current_batch(ctx), res, true);
+-   ctx->has_commands = true;
+ }
+ 
+ static void
+@@ -602,6 +612,9 @@
     ctx->base.flush_resource = d3d12_flush_resource;
     ctx->base.fence_server_signal = d3d12_signal;
     ctx->base.fence_server_sync = d3d12_wait;
@@ -711,7 +1041,7 @@
     ctx->base.memory_barrier = d3d12_memory_barrier;
     ctx->base.texture_barrier = d3d12_texture_barrier;
  
-@@ -687,6 +699,15 @@
+@@ -687,6 +700,15 @@
        }
        d3d12_init_null_sampler(ctx);
  
@@ -727,7 +1057,7 @@
        ctx->blitter = util_blitter_create(&ctx->base);
        if (!ctx->blitter)
           return NULL;
-@@ -717,12 +738,19 @@
+@@ -717,12 +739,19 @@
        ctx->id = D3D12_CONTEXT_NO_ID;
     mtx_unlock(&screen->submit_mutex);
  
@@ -860,6 +1190,47 @@
  
     return table_start.gpu_handle;
  }
+@@ -1037,6 +1049,8 @@
+    if (ctx->cmdlist_dirty & D3D12_DIRTY_ROOT_SIGNATURE) {
+       d3d12_batch_reference_object(batch, ctx->gfx_pipeline_state.root_signature);
+       ctx->cmdlist->SetGraphicsRootSignature(ctx->gfx_pipeline_state.root_signature);
++      /* Setting a root signature leaves every root argument undefined. */
++      d3d12_forget_gfx_tables(ctx);
+    }
+ 
+    if (ctx->cmdlist_dirty & D3D12_DIRTY_GFX_PSO) {
+@@ -1121,7 +1135,12 @@
+          for (unsigned i = 0; i < ctx->num_vbs; i++)
+             ctx->vbvs[i].StrideInBytes = 0;
+       }
+-      ctx->cmdlist->IASetVertexBuffers(0, ctx->num_vbs, ctx->vbvs);
++      if (ctx->bound_num_vbs != ctx->num_vbs ||
++          memcmp(ctx->bound_vbvs, ctx->vbvs, ctx->num_vbs * sizeof(ctx->vbvs[0]))) {
++         ctx->cmdlist->IASetVertexBuffers(0, ctx->num_vbs, ctx->vbvs);
++         memcpy(ctx->bound_vbvs, ctx->vbvs, ctx->num_vbs * sizeof(ctx->vbvs[0]));
++         ctx->bound_num_vbs = ctx->num_vbs;
++      }
+    }
+ 
+    if (index_buffer) {
+@@ -1230,8 +1249,15 @@
+ 
+    d3d12_apply_resource_states(ctx, false);
+ 
+-   for (unsigned i = 0; i < num_root_descriptors; ++i)
+-      ctx->cmdlist->SetGraphicsRootDescriptorTable(root_desc_indices[i], root_desc_tables[i]);
++   for (unsigned i = 0; i < num_root_descriptors; ++i) {
++      unsigned index = root_desc_indices[i];
++      if (index < D3D12_GFX_BOUND_TABLES) {
++         if (ctx->bound_gfx_tables[index].ptr == root_desc_tables[i].ptr)
++            continue;
++         ctx->bound_gfx_tables[index] = root_desc_tables[i];
++      }
++      ctx->cmdlist->SetGraphicsRootDescriptorTable(index, root_desc_tables[i]);
++   }
+ 
+    if (indirect) {
+       unsigned draw_count = draw_auto ? 1 : indirect->draw_count;
 --- a/src/gallium/drivers/d3d12/d3d12_fence.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_fence.cpp
 @@ -27,12 +27,29 @@
@@ -1098,6 +1469,757 @@
  \
     MAP_FORMAT(B8G8R8A8, UNORM) \
  \
+--- a/src/gallium/drivers/d3d12/d3d12_pipeline_state.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_pipeline_state.cpp
+@@ -33,6 +33,7 @@
+ #include "d3d12_compiler.h"
+ #include "d3d12_context.h"
+ #include "d3d12_screen.h"
++#include "d3d12_pso_prewarm.h"
+ #ifndef _GAMING_XBOX
+ #include <directx/d3dx12_pipeline_state_stream.h>
+ #endif
+@@ -407,29 +408,12 @@
+ 
+    pso_desc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+ 
+-   ID3D12PipelineState *ret;
+-
+-   HRESULT hr;
+-   if (screen->opts14.IndependentFrontAndBackStencilRefMaskSupported) {
+-      D3D12_PIPELINE_STATE_STREAM_DESC pso_stream_desc{
+-          sizeof(pso_desc),
+-          &pso_desc
+-      };
+-
+-      if (FAILED(hr = screen->dev->CreatePipelineState(&pso_stream_desc,
+-                                                       IID_PPV_ARGS(&ret)))) {
+-         std::_Exit(hr);
+-         return NULL;
+-      }
+-   } 
+-   else {
+-      D3D12_GRAPHICS_PIPELINE_STATE_DESC v0desc = pso_desc.GraphicsDescV0();
+-      if (FAILED(hr = screen->dev->CreateGraphicsPipelineState(&v0desc,
+-                                                               IID_PPV_ARGS(&ret)))) {
+-         std::_Exit(hr);
+-         return NULL;
+-      }
+-   }
++   /* Prewarmed when the program created it before (d3d12_pso_prewarm). */
++   ID3D12PipelineState *ret =
++      d3d12_pso_prewarm_create_gfx(screen, pso_desc,
++                                   screen->opts14.IndependentFrontAndBackStencilRefMaskSupported);
++   if (!ret)
++      std::_Exit(E_FAIL);
+ 
+    return ret;
+ }
+--- /dev/null
++++ b/src/gallium/drivers/d3d12/d3d12_pso_prewarm.cpp
+@@ -0,0 +1,667 @@
++/*
++ * Copyright © Microsoft Corporation
++ * SPDX-License-Identifier: MIT
++ */
++
++/* d3d12_pso_prewarm: see d3d12_pso_prewarm.h and the commit that added it.
++ * Records are versioned and hashed; a record that does not parse, or whose
++ * hash does not match, ends the reading of its file. */
++
++#include "d3d12_pso_prewarm.h"
++#include "d3d12_pipeline_state.h"
++#include "d3d12_screen.h"
++
++#include <directx/d3dx12_pipeline_state_stream.h>
++
++#include "git_sha1.h"
++#include "util/disk_cache.h"
++#include "util/mesa-blake3.h"
++#include "util/os_time.h"
++#include "util/u_debug.h"
++#include "util/u_process.h"
++#include "util/u_queue.h"
++
++#include <atomic>
++#include <condition_variable>
++#include <mutex>
++#include <string>
++#include <unordered_map>
++#include <vector>
++
++#include <ctype.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++#include <dxguids/dxguids.h>
++
++namespace {
++
++constexpr uint32_t RECORD_MAGIC = 0x31505344;   /* "DSP1" */
++constexpr uint32_t RECORD_VERSION = 1;
++constexpr size_t MAX_FILE_SIZE = 64u << 20;
++constexpr uint32_t MAX_RECORD_SIZE = 16u << 20;
++constexpr unsigned MAX_RECORDS = 2048;
++
++enum { PSO_PENDING, PSO_BUSY, PSO_READY };
++
++struct pso_entry {
++   std::vector<uint8_t> rec;
++   std::atomic<int> state{PSO_PENDING};
++   ID3D12PipelineState *pso = nullptr;
++   struct util_queue_fence fence;
++};
++
++struct writer {
++   std::vector<uint8_t> b;
++   void bytes(const void *p, size_t n)
++   {
++      const uint8_t *c = (const uint8_t *)p;
++      if (n)
++         b.insert(b.end(), c, c + n);
++   }
++   void u32(uint32_t v) { bytes(&v, sizeof(v)); }
++   void f32(float v) { bytes(&v, sizeof(v)); }
++   void blob(const void *p, size_t n)
++   {
++      u32((uint32_t)n);
++      bytes(p, n);
++   }
++};
++
++struct reader {
++   const uint8_t *p, *end;
++   bool ok = true;
++   reader(const uint8_t *data, size_t n) : p(data), end(data + n) {}
++   void take(void *d, size_t n)
++   {
++      if (!ok || (size_t)(end - p) < n) {
++         ok = false;
++         memset(d, 0, n);
++         return;
++      }
++      memcpy(d, p, n);
++      p += n;
++   }
++   uint32_t u32() { uint32_t v; take(&v, sizeof(v)); return v; }
++   float f32() { float v; take(&v, sizeof(v)); return v; }
++   const uint8_t *blob(uint32_t &n)
++   {
++      n = u32();
++      if (!ok || (size_t)(end - p) < n) {
++         ok = false;
++         n = 0;
++         return nullptr;
++      }
++      const uint8_t *r = p;
++      p += n;
++      return r;
++   }
++};
++
++void
++put_code(writer &w, const D3D12_SHADER_BYTECODE &c)
++{
++   w.blob(c.pShaderBytecode, c.pShaderBytecode ? c.BytecodeLength : 0);
++}
++
++void
++put_stencil_face(writer &w, const D3D12_DEPTH_STENCILOP_DESC1 &f)
++{
++   w.u32(f.StencilFailOp); w.u32(f.StencilDepthFailOp);
++   w.u32(f.StencilPassOp); w.u32(f.StencilFunc);
++   w.u32(f.StencilReadMask); w.u32(f.StencilWriteMask);
++}
++
++void
++get_stencil_face(reader &r, D3D12_DEPTH_STENCILOP_DESC1 &f)
++{
++   f.StencilFailOp = (D3D12_STENCIL_OP)r.u32();
++   f.StencilDepthFailOp = (D3D12_STENCIL_OP)r.u32();
++   f.StencilPassOp = (D3D12_STENCIL_OP)r.u32();
++   f.StencilFunc = (D3D12_COMPARISON_FUNC)r.u32();
++   f.StencilReadMask = (UINT8)r.u32();
++   f.StencilWriteMask = (UINT8)r.u32();
++}
++
++/* Every field of the stream Mesa fills (d3d12_pipeline_state.cpp), in a
++ * fixed order; false for what is not recorded (stream output, cached
++ * pipelines, view instancing, mesh or compute stages, a root signature
++ * without its serialized form). */
++bool
++serialize_gfx(const CD3DX12_PIPELINE_STATE_STREAM3 &d, bool stream, writer &w)
++{
++   ID3D12RootSignature *rs = d.pRootSignature;
++   const D3D12_STREAM_OUTPUT_DESC &so = d.StreamOutput;
++   const D3D12_CACHED_PIPELINE_STATE &cached = d.CachedPSO;
++   const D3D12_VIEW_INSTANCING_DESC &vi = d.ViewInstancingDesc;
++   const D3D12_SHADER_BYTECODE &as = d.AS, &ms = d.MS, &cs = d.CS;
++   if (!rs || so.NumEntries || so.NumStrides || cached.CachedBlobSizeInBytes ||
++       vi.ViewInstanceCount || vi.Flags || as.BytecodeLength || ms.BytecodeLength ||
++       cs.BytecodeLength)
++      return false;
++
++   UINT rs_size = 0;
++   if (FAILED(rs->GetPrivateData(d3d12_root_signature_blob_guid, &rs_size, nullptr)) || !rs_size)
++      return false;
++   std::vector<uint8_t> rs_blob(rs_size);
++   if (FAILED(rs->GetPrivateData(d3d12_root_signature_blob_guid, &rs_size, rs_blob.data())))
++      return false;
++
++   w.u32(RECORD_VERSION);
++   w.u32(stream);
++   w.blob(rs_blob.data(), rs_blob.size());
++   put_code(w, d.VS);
++   put_code(w, d.HS);
++   put_code(w, d.DS);
++   put_code(w, d.GS);
++   put_code(w, d.PS);
++   w.u32(so.RasterizedStream);
++
++   const D3D12_INPUT_LAYOUT_DESC &il = d.InputLayout;
++   w.u32(il.NumElements);
++   for (unsigned i = 0; i < il.NumElements; i++) {
++      const D3D12_INPUT_ELEMENT_DESC &e = il.pInputElementDescs[i];
++      w.blob(e.SemanticName, e.SemanticName ? strlen(e.SemanticName) : 0);
++      w.u32(e.SemanticIndex); w.u32(e.Format); w.u32(e.InputSlot);
++      w.u32(e.AlignedByteOffset); w.u32(e.InputSlotClass); w.u32(e.InstanceDataStepRate);
++   }
++   w.u32((D3D12_INDEX_BUFFER_STRIP_CUT_VALUE)d.IBStripCutValue);
++   w.u32((D3D12_PRIMITIVE_TOPOLOGY_TYPE)d.PrimitiveTopologyType);
++
++   const D3D12_BLEND_DESC &b = (const D3D12_BLEND_DESC &)d.BlendState;
++   w.u32(b.AlphaToCoverageEnable);
++   w.u32(b.IndependentBlendEnable);
++   for (unsigned i = 0; i < 8; i++) {
++      const D3D12_RENDER_TARGET_BLEND_DESC &t = b.RenderTarget[i];
++      w.u32(t.BlendEnable); w.u32(t.LogicOpEnable); w.u32(t.SrcBlend); w.u32(t.DestBlend);
++      w.u32(t.BlendOp); w.u32(t.SrcBlendAlpha); w.u32(t.DestBlendAlpha); w.u32(t.BlendOpAlpha);
++      w.u32(t.LogicOp); w.u32(t.RenderTargetWriteMask);
++   }
++
++   const d3d12_depth_stencil_desc_type &ds = (const d3d12_depth_stencil_desc_type &)d.DepthStencilState;
++   w.u32(ds.DepthEnable); w.u32(ds.DepthWriteMask); w.u32(ds.DepthFunc); w.u32(ds.StencilEnable);
++   put_stencil_face(w, ds.FrontFace);
++   put_stencil_face(w, ds.BackFace);
++   w.u32(ds.DepthBoundsTestEnable);
++   w.u32((DXGI_FORMAT)d.DSVFormat);
++
++   const D3D12_RASTERIZER_DESC &r = (const D3D12_RASTERIZER_DESC &)d.RasterizerState;
++   w.u32(r.FillMode); w.u32(r.CullMode); w.u32(r.FrontCounterClockwise);
++   w.u32((uint32_t)r.DepthBias); w.f32(r.DepthBiasClamp); w.f32(r.SlopeScaledDepthBias);
++   w.u32(r.DepthClipEnable); w.u32(r.MultisampleEnable); w.u32(r.AntialiasedLineEnable);
++   w.u32(r.ForcedSampleCount); w.u32(r.ConservativeRaster);
++
++   const D3D12_RT_FORMAT_ARRAY &rt = d.RTVFormats;
++   w.u32(rt.NumRenderTargets);
++   for (unsigned i = 0; i < 8; i++)
++      w.u32(rt.RTFormats[i]);
++   const DXGI_SAMPLE_DESC &sd = d.SampleDesc;
++   w.u32(sd.Count); w.u32(sd.Quality);
++   w.u32((UINT)d.SampleMask);
++   w.u32((UINT)d.NodeMask);
++   w.u32((D3D12_PIPELINE_STATE_FLAGS)d.Flags);
++   return true;
++}
++
++/* A record made into a pipeline (on a worker): its root signature, created
++ * from the serialized form (the runtime gives back the root signature Mesa
++ * created from the same bytes), and the stream. */
++ID3D12PipelineState *
++create_from_record(struct d3d12_screen *screen, const std::vector<uint8_t> &rec, bool debug)
++{
++   reader r(rec.data(), rec.size());
++   if (r.u32() != RECORD_VERSION)
++      return nullptr;
++   bool stream = r.u32() != 0;
++   uint32_t n;
++   const uint8_t *rs_blob = r.blob(n);
++   if (!r.ok || !n)
++      return nullptr;
++   ID3D12RootSignature *rs = nullptr;
++   if (FAILED(screen->dev->CreateRootSignature(0, rs_blob, n, IID_PPV_ARGS(&rs))))
++      return nullptr;
++
++   CD3DX12_PIPELINE_STATE_STREAM3 d;
++   d.pRootSignature = rs;
++   D3D12_SHADER_BYTECODE *stages[] = {
++      &(D3D12_SHADER_BYTECODE &)d.VS, &(D3D12_SHADER_BYTECODE &)d.HS,
++      &(D3D12_SHADER_BYTECODE &)d.DS, &(D3D12_SHADER_BYTECODE &)d.GS,
++      &(D3D12_SHADER_BYTECODE &)d.PS,
++   };
++   for (D3D12_SHADER_BYTECODE *c : stages) {
++      const uint8_t *code = r.blob(n);
++      *c = D3D12_SHADER_BYTECODE{ n ? code : nullptr, n };
++   }
++   D3D12_STREAM_OUTPUT_DESC &so = d.StreamOutput;
++   so = D3D12_STREAM_OUTPUT_DESC{};
++   so.RasterizedStream = r.u32();
++
++   uint32_t num_elements = r.u32();
++   if (!r.ok || num_elements > D3D12_IA_VERTEX_INPUT_STRUCTURE_ELEMENT_COUNT) {
++      rs->Release();
++      return nullptr;
++   }
++   std::vector<std::string> names(num_elements);
++   std::vector<D3D12_INPUT_ELEMENT_DESC> elements(num_elements);
++   for (unsigned i = 0; i < num_elements; i++) {
++      const uint8_t *name = r.blob(n);
++      names[i].assign((const char *)name, n);
++      D3D12_INPUT_ELEMENT_DESC &e = elements[i];
++      e.SemanticIndex = r.u32();
++      e.Format = (DXGI_FORMAT)r.u32();
++      e.InputSlot = r.u32();
++      e.AlignedByteOffset = r.u32();
++      e.InputSlotClass = (D3D12_INPUT_CLASSIFICATION)r.u32();
++      e.InstanceDataStepRate = r.u32();
++   }
++   for (unsigned i = 0; i < num_elements; i++)
++      elements[i].SemanticName = names[i].c_str();
++   D3D12_INPUT_LAYOUT_DESC &il = d.InputLayout;
++   il.pInputElementDescs = num_elements ? elements.data() : nullptr;
++   il.NumElements = num_elements;
++   d.IBStripCutValue = (D3D12_INDEX_BUFFER_STRIP_CUT_VALUE)r.u32();
++   d.PrimitiveTopologyType = (D3D12_PRIMITIVE_TOPOLOGY_TYPE)r.u32();
++
++   D3D12_BLEND_DESC &b = (D3D12_BLEND_DESC &)d.BlendState;
++   b.AlphaToCoverageEnable = r.u32();
++   b.IndependentBlendEnable = r.u32();
++   for (unsigned i = 0; i < 8; i++) {
++      D3D12_RENDER_TARGET_BLEND_DESC &t = b.RenderTarget[i];
++      t.BlendEnable = r.u32();
++      t.LogicOpEnable = r.u32();
++      t.SrcBlend = (D3D12_BLEND)r.u32();
++      t.DestBlend = (D3D12_BLEND)r.u32();
++      t.BlendOp = (D3D12_BLEND_OP)r.u32();
++      t.SrcBlendAlpha = (D3D12_BLEND)r.u32();
++      t.DestBlendAlpha = (D3D12_BLEND)r.u32();
++      t.BlendOpAlpha = (D3D12_BLEND_OP)r.u32();
++      t.LogicOp = (D3D12_LOGIC_OP)r.u32();
++      t.RenderTargetWriteMask = (UINT8)r.u32();
++   }
++
++   d3d12_depth_stencil_desc_type &ds = (d3d12_depth_stencil_desc_type &)d.DepthStencilState;
++   ds.DepthEnable = r.u32();
++   ds.DepthWriteMask = (D3D12_DEPTH_WRITE_MASK)r.u32();
++   ds.DepthFunc = (D3D12_COMPARISON_FUNC)r.u32();
++   ds.StencilEnable = r.u32();
++   get_stencil_face(r, ds.FrontFace);
++   get_stencil_face(r, ds.BackFace);
++   ds.DepthBoundsTestEnable = r.u32();
++   d.DSVFormat = (DXGI_FORMAT)r.u32();
++
++   D3D12_RASTERIZER_DESC &ra = (D3D12_RASTERIZER_DESC &)d.RasterizerState;
++   ra.FillMode = (D3D12_FILL_MODE)r.u32();
++   ra.CullMode = (D3D12_CULL_MODE)r.u32();
++   ra.FrontCounterClockwise = r.u32();
++   ra.DepthBias = (INT)r.u32();
++   ra.DepthBiasClamp = r.f32();
++   ra.SlopeScaledDepthBias = r.f32();
++   ra.DepthClipEnable = r.u32();
++   ra.MultisampleEnable = r.u32();
++   ra.AntialiasedLineEnable = r.u32();
++   ra.ForcedSampleCount = r.u32();
++   ra.ConservativeRaster = (D3D12_CONSERVATIVE_RASTERIZATION_MODE)r.u32();
++
++   D3D12_RT_FORMAT_ARRAY &rt = d.RTVFormats;
++   rt.NumRenderTargets = r.u32();
++   for (unsigned i = 0; i < 8; i++)
++      rt.RTFormats[i] = (DXGI_FORMAT)r.u32();
++   DXGI_SAMPLE_DESC &sd = d.SampleDesc;
++   sd.Count = r.u32();
++   sd.Quality = r.u32();
++   d.SampleMask = r.u32();
++   d.NodeMask = r.u32();
++   d.Flags = (D3D12_PIPELINE_STATE_FLAGS)r.u32();
++   D3D12_CACHED_PIPELINE_STATE &cached = d.CachedPSO;
++   cached = D3D12_CACHED_PIPELINE_STATE{};
++
++   ID3D12PipelineState *pso = nullptr;
++   if (r.ok && r.p == r.end && rt.NumRenderTargets <= 8) {
++      HRESULT hr;
++      if (stream) {
++         D3D12_PIPELINE_STATE_STREAM_DESC sdesc{ sizeof(d), &d };
++         hr = screen->dev->CreatePipelineState(&sdesc, IID_PPV_ARGS(&pso));
++      } else {
++         D3D12_GRAPHICS_PIPELINE_STATE_DESC v0 = d.GraphicsDescV0();
++         hr = screen->dev->CreateGraphicsPipelineState(&v0, IID_PPV_ARGS(&pso));
++      }
++      if (FAILED(hr)) {
++         if (debug)
++            fprintf(stderr, "d3d12_pso_prewarm: a recorded pipeline failed (0x%08x)\n", (unsigned)hr);
++         pso = nullptr;
++      }
++   }
++   rs->Release();
++   return pso;
++}
++
++void
++hash_record(const std::vector<uint8_t> &rec, uint8_t out[BLAKE3_OUT_LEN])
++{
++   _mesa_blake3_compute(rec.data(), rec.size(), out);
++}
++
++} /* namespace */
++
++struct d3d12_pso_prewarm {
++   struct d3d12_screen *screen;
++   std::mutex lock;
++   std::condition_variable done;
++   std::unordered_map<std::string, pso_entry *> entries;
++   std::vector<pso_entry *> loaded;
++   struct util_queue queue;
++   bool queue_ok = false;
++   int fd = -1;
++   size_t file_size = 0;
++   bool debug = false;
++   int64_t start_ns = 0;
++   std::atomic<unsigned> hits{0}, waits{0}, claimed{0}, recorded{0};
++};
++
++static void
++prewarm_job(void *job, void *gdata, int thread_index)
++{
++   pso_entry *e = (pso_entry *)job;
++   d3d12_pso_prewarm *pw = (d3d12_pso_prewarm *)gdata;
++   int expected = PSO_PENDING;
++   if (!e->state.compare_exchange_strong(expected, PSO_BUSY))
++      return;
++   int64_t t0 = os_time_get_nano();
++   ID3D12PipelineState *pso = create_from_record(pw->screen, e->rec, pw->debug);
++   if (pw->debug)
++      fprintf(stderr, "d3d12_pso_prewarm: +%.1f ms: worker %d built one (%.2f ms)\n",
++              (t0 - pw->start_ns) / 1e6, thread_index, (os_time_get_nano() - t0) / 1e6);
++   {
++      std::lock_guard<std::mutex> g(pw->lock);
++      e->pso = pso;
++      e->state.store(PSO_READY);
++   }
++   pw->done.notify_all();
++}
++
++/* $MESA_SHADER_CACHE_DIR, $XDG_CACHE_HOME/mesa_shader_cache or
++ * ~/.cache/mesa_shader_cache, then d3d12_pso/<executable>-<id>.bin, where
++ * the id covers this Mesa build and the adapter and driver version. */
++static std::string
++record_path(struct d3d12_screen *screen)
++{
++   std::string dir;
++   const char *env = getenv("MESA_SHADER_CACHE_DIR");
++   if (env && *env) {
++      dir = env;
++   } else if ((env = getenv("XDG_CACHE_HOME")) && *env) {
++      dir = std::string(env) + "/mesa_shader_cache";
++   } else if ((env = getenv("HOME")) && *env) {
++      dir = std::string(env) + "/.cache/mesa_shader_cache";
++   } else {
++      return std::string();
++   }
++   std::string parent = dir.substr(0, dir.rfind('/'));
++   if (!parent.empty())
++      mkdir(parent.c_str(), 0755);
++   mkdir(dir.c_str(), 0755);
++   dir += "/d3d12_pso";
++   if (mkdir(dir.c_str(), 0755) && errno != EEXIST)
++      return std::string();
++
++   blake3_hasher h;
++   _mesa_blake3_init(&h);
++   const char *version = "Mesa " PACKAGE_VERSION MESA_GIT_SHA1;
++   _mesa_blake3_update(&h, version, strlen(version));
++   disk_cache_get_function_identifier((void *)d3d12_pso_prewarm_init, &h);
++   _mesa_blake3_update(&h, &screen->vendor_id, sizeof(screen->vendor_id));
++   _mesa_blake3_update(&h, &screen->device_id, sizeof(screen->device_id));
++   _mesa_blake3_update(&h, &screen->subsys_id, sizeof(screen->subsys_id));
++   _mesa_blake3_update(&h, &screen->revision, sizeof(screen->revision));
++   _mesa_blake3_update(&h, &screen->driver_version, sizeof(screen->driver_version));
++   uint8_t id[BLAKE3_OUT_LEN];
++   _mesa_blake3_final(&h, id);
++
++   std::string name;
++   const char *proc = util_get_process_name();
++   for (const char *c = proc ? proc : "unknown"; *c && name.size() < 64; c++)
++      name += (isalnum((unsigned char)*c) || *c == '.' || *c == '_' || *c == '-') ? *c : '_';
++   char hex[17];
++   for (unsigned i = 0; i < 8; i++)
++      snprintf(hex + i * 2, 3, "%02x", id[i]);
++   return dir + "/" + name + "-" + hex + ".bin";
++}
++
++/* Records: magic, size, BLAKE3 of the record, the record. */
++static void
++load_records(d3d12_pso_prewarm *pw)
++{
++   struct stat st;
++   if (fstat(pw->fd, &st) || st.st_size <= 0)
++      return;
++   size_t size = (size_t)st.st_size < MAX_FILE_SIZE ? (size_t)st.st_size : MAX_FILE_SIZE;
++   std::vector<uint8_t> data(size);
++   size_t got = 0;
++   while (got < size) {
++      ssize_t n = pread(pw->fd, data.data() + got, size - got, got);
++      if (n <= 0)
++         break;
++      got += n;
++   }
++   pw->file_size = (size_t)st.st_size;
++   size_t pos = 0;
++   while (pos + 8 + BLAKE3_OUT_LEN <= got && pw->loaded.size() < MAX_RECORDS) {
++      uint32_t magic, len;
++      memcpy(&magic, &data[pos], 4);
++      memcpy(&len, &data[pos + 4], 4);
++      if (magic != RECORD_MAGIC || len > MAX_RECORD_SIZE ||
++          pos + 8 + BLAKE3_OUT_LEN + len > got)
++         break;
++      const uint8_t *hash = &data[pos + 8];
++      pso_entry *e = new pso_entry;
++      e->rec.assign(data.begin() + pos + 8 + BLAKE3_OUT_LEN,
++                    data.begin() + pos + 8 + BLAKE3_OUT_LEN + len);
++      uint8_t check[BLAKE3_OUT_LEN];
++      hash_record(e->rec, check);
++      pos += 8 + BLAKE3_OUT_LEN + len;
++      std::string key((const char *)hash, BLAKE3_OUT_LEN);
++      if (memcmp(check, hash, BLAKE3_OUT_LEN) || pw->entries.count(key)) {
++         bool bad = memcmp(check, hash, BLAKE3_OUT_LEN) != 0;
++         delete e;
++         if (bad)
++            break;
++         continue;
++      }
++      util_queue_fence_init(&e->fence);
++      pw->entries.emplace(key, e);
++      pw->loaded.push_back(e);
++   }
++}
++
++static void
++append_record(d3d12_pso_prewarm *pw, const std::vector<uint8_t> &rec, const uint8_t *hash)
++{
++   if (pw->fd < 0 || pw->file_size + rec.size() + 8 + BLAKE3_OUT_LEN > MAX_FILE_SIZE)
++      return;
++   std::vector<uint8_t> out(8 + BLAKE3_OUT_LEN);
++   uint32_t magic = RECORD_MAGIC, len = (uint32_t)rec.size();
++   memcpy(&out[0], &magic, 4);
++   memcpy(&out[4], &len, 4);
++   memcpy(&out[8], hash, BLAKE3_OUT_LEN);
++   out.insert(out.end(), rec.begin(), rec.end());
++   /* One write: appends from processes of the same program do not mix. */
++   if (write(pw->fd, out.data(), out.size()) == (ssize_t)out.size())
++      pw->file_size += out.size();
++}
++
++void
++d3d12_pso_prewarm_init(struct d3d12_screen *screen)
++{
++   screen->pso_prewarm = nullptr;
++   if (!debug_get_bool_option("D3D12_PSO_PREWARM", true) ||
++       debug_get_bool_option("MESA_SHADER_CACHE_DISABLE", false))
++      return;
++   std::string path = record_path(screen);
++   if (path.empty())
++      return;
++   d3d12_pso_prewarm *pw = new d3d12_pso_prewarm;
++   pw->screen = screen;
++   pw->start_ns = os_time_get_nano();
++   pw->debug = debug_get_bool_option("D3D12_PSO_PREWARM_DEBUG", false);
++   pw->fd = open(path.c_str(), O_RDWR | O_APPEND | O_CREAT | O_CLOEXEC, 0644);
++   if (pw->fd < 0) {
++      delete pw;
++      return;
++   }
++   load_records(pw);
++   if (!pw->loaded.empty()) {
++      long cpus = sysconf(_SC_NPROCESSORS_ONLN);
++      unsigned threads = cpus > 2 ? (unsigned)(cpus / 2) : 1;
++      if (threads > 4)
++         threads = 4;
++      if (threads > pw->loaded.size())
++         threads = (unsigned)pw->loaded.size();
++      pw->queue_ok = util_queue_init(&pw->queue, "d3d12pso", (unsigned)pw->loaded.size() + 1,
++                                     threads, UTIL_QUEUE_INIT_RESIZE_IF_FULL |
++                                     UTIL_QUEUE_INIT_SET_FULL_THREAD_AFFINITY, pw);
++      /* In the order the program first needed them. */
++      if (pw->queue_ok) {
++         for (pso_entry *e : pw->loaded)
++            util_queue_add_job(&pw->queue, e, &e->fence, prewarm_job, nullptr, 0);
++      }
++   }
++   if (pw->debug)
++      fprintf(stderr, "d3d12_pso_prewarm: %s: %zu recorded pipelines\n", path.c_str(), pw->loaded.size());
++   screen->pso_prewarm = pw;
++}
++
++void
++d3d12_pso_prewarm_fini(struct d3d12_screen *screen)
++{
++   d3d12_pso_prewarm *pw = screen->pso_prewarm;
++   if (!pw)
++      return;
++   if (pw->queue_ok) {
++      /* Jobs not started yet find their entries taken and return. */
++      for (pso_entry *e : pw->loaded) {
++         int expected = PSO_PENDING;
++         e->state.compare_exchange_strong(expected, PSO_READY);
++      }
++      util_queue_finish(&pw->queue);
++      util_queue_destroy(&pw->queue);
++   }
++   if (pw->debug)
++      fprintf(stderr, "d3d12_pso_prewarm: %u prewarmed used, %u waited for, %u compiled on demand, "
++              "%u recorded\n", pw->hits.load(), pw->waits.load(), pw->claimed.load(),
++              pw->recorded.load());
++   for (auto &kv : pw->entries) {
++      if (kv.second->pso)
++         kv.second->pso->Release();
++      delete kv.second;
++   }
++   if (pw->fd >= 0)
++      close(pw->fd);
++   delete pw;
++   screen->pso_prewarm = nullptr;
++}
++
++static ID3D12PipelineState *
++create_direct(struct d3d12_screen *screen, const CD3DX12_PIPELINE_STATE_STREAM3 &desc, bool stream)
++{
++   ID3D12PipelineState *pso = nullptr;
++   if (stream) {
++      D3D12_PIPELINE_STATE_STREAM_DESC sdesc{ sizeof(desc), (void *)&desc };
++      if (FAILED(screen->dev->CreatePipelineState(&sdesc, IID_PPV_ARGS(&pso))))
++         return nullptr;
++   } else {
++      D3D12_GRAPHICS_PIPELINE_STATE_DESC v0 = desc.GraphicsDescV0();
++      if (FAILED(screen->dev->CreateGraphicsPipelineState(&v0, IID_PPV_ARGS(&pso))))
++         return nullptr;
++   }
++   return pso;
++}
++
++ID3D12PipelineState *
++d3d12_pso_prewarm_create_gfx(struct d3d12_screen *screen,
++                             const CD3DX12_PIPELINE_STATE_STREAM3 &desc, bool stream)
++{
++   d3d12_pso_prewarm *pw = screen->pso_prewarm;
++   writer w;
++   if (!pw || !serialize_gfx(desc, stream, w))
++      return create_direct(screen, desc, stream);
++
++   uint8_t hash[BLAKE3_OUT_LEN];
++   hash_record(w.b, hash);
++   std::string key((const char *)hash, BLAKE3_OUT_LEN);
++
++   pso_entry *e = nullptr;
++   {
++      std::lock_guard<std::mutex> g(pw->lock);
++      auto it = pw->entries.find(key);
++      if (it != pw->entries.end())
++         e = it->second;
++   }
++   int64_t t0 = pw->debug ? os_time_get_nano() : 0;
++   if (e) {
++      int expected = PSO_PENDING;
++      const char *how;
++      if (e->state.compare_exchange_strong(expected, PSO_BUSY)) {
++         how = "compiled on demand";
++         /* Not started: compiled here, from Mesa's own description. */
++         ID3D12PipelineState *pso = create_direct(screen, desc, stream);
++         {
++            std::lock_guard<std::mutex> g(pw->lock);
++            e->pso = pso;
++            e->state.store(PSO_READY);
++         }
++         pw->done.notify_all();
++         pw->claimed++;
++      } else if (expected == PSO_BUSY) {
++         how = "waited for";
++         std::unique_lock<std::mutex> g(pw->lock);
++         pw->done.wait(g, [e] { return e->state.load() == PSO_READY; });
++         pw->waits++;
++      } else {
++         how = "ready";
++         pw->hits++;
++      }
++      if (pw->debug)
++         fprintf(stderr, "d3d12_pso_prewarm: +%.1f ms: %s (%.2f ms)\n",
++                 (t0 - pw->start_ns) / 1e6, how, (os_time_get_nano() - t0) / 1e6);
++      ID3D12PipelineState *pso;
++      {
++         std::lock_guard<std::mutex> g(pw->lock);
++         pso = e->pso;
++         if (pso)
++            pso->AddRef();
++      }
++      /* The recorded one failed: as before. */
++      return pso ? pso : create_direct(screen, desc, stream);
++   }
++
++   ID3D12PipelineState *pso = create_direct(screen, desc, stream);
++   if (!pso)
++      return nullptr;
++   if (pw->debug)
++      fprintf(stderr, "d3d12_pso_prewarm: +%.1f ms: new pipeline (%.2f ms)\n",
++              (t0 - pw->start_ns) / 1e6, (os_time_get_nano() - t0) / 1e6);
++   e = new pso_entry;
++   e->rec = std::move(w.b);
++   e->pso = pso;
++   pso->AddRef();
++   e->state.store(PSO_READY);
++   util_queue_fence_init(&e->fence);
++   {
++      std::lock_guard<std::mutex> g(pw->lock);
++      auto res = pw->entries.emplace(key, e);
++      if (!res.second) {
++         /* Another context recorded it meanwhile. */
++         e->pso->Release();
++         delete e;
++         return pso;
++      }
++      append_record(pw, e->rec, hash);
++   }
++   pw->recorded++;
++   return pso;
++}
+--- /dev/null
++++ b/src/gallium/drivers/d3d12/d3d12_pso_prewarm.h
+@@ -0,0 +1,32 @@
++/*
++ * Copyright © Microsoft Corporation
++ * SPDX-License-Identifier: MIT
++ */
++
++#ifndef D3D12_PSO_PREWARM_H
++#define D3D12_PSO_PREWARM_H
++
++#include "d3d12_common.h"
++
++struct d3d12_screen;
++struct CD3DX12_PIPELINE_STATE_STREAM3;
++
++/* Private data on root signatures: their serialized form, which the
++ * pipeline records of d3d12_pso_prewarm carry. */
++static const GUID d3d12_root_signature_blob_guid =
++   { 0x3f1c2a7e, 0x9b64, 0x4d0a, { 0x8e, 0x21, 0x5c, 0x7b, 0x90, 0x14, 0xd6, 0x3a } };
++
++void
++d3d12_pso_prewarm_init(struct d3d12_screen *screen);
++
++void
++d3d12_pso_prewarm_fini(struct d3d12_screen *screen);
++
++/* The graphics pipeline desc describes (created through a pipeline stream
++ * when stream is set, else as a D3D12_GRAPHICS_PIPELINE_STATE_DESC): a
++ * prewarmed one, or a new one that is recorded. NULL on failure. */
++ID3D12PipelineState *
++d3d12_pso_prewarm_create_gfx(struct d3d12_screen *screen,
++                             const CD3DX12_PIPELINE_STATE_STREAM3 &desc, bool stream);
++
++#endif
 --- a/src/gallium/drivers/d3d12/d3d12_residency.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_residency.cpp
 @@ -176,7 +176,13 @@
@@ -2094,7 +3216,7 @@
     pipe_resource *planes[d3d12_max_planes];
     unsigned int strides[d3d12_max_planes];
     unsigned int layer_strides[d3d12_max_planes];
-@@ -1298,6 +2192,142 @@
+@@ -1298,6 +2192,152 @@
     ctx->has_commands = true;
  }
  
@@ -2222,8 +3344,18 @@
 +      struct d3d12_batch *batch = d3d12_current_batch(ctx);
 +      /* Close/Signal/allocation can fail before a fence exists. A reset
 +       * without a submitted fence is not evidence of GPU completion. */
-+      if (d3d12_flush_cmdlist(ctx) && !batch->has_errors && batch->fence)
-+         completed = d3d12_reset_batch(ctx, batch, OS_TIMEOUT_INFINITE);
++      if (d3d12_flush_cmdlist(ctx)) {
++         if (!batch->has_errors && batch->fence)
++            completed = d3d12_reset_batch(ctx, batch, OS_TIMEOUT_INFINITE);
++      } else {
++         /* Nothing recorded since the last submission: the drawing is in
++          * submitted batches (a fence flush before the swap). */
++         completed = true;
++         d3d12_foreach_submitted_batch(ctx, old) {
++            if (old->has_errors || !d3d12_reset_batch(ctx, old, OS_TIMEOUT_INFINITE))
++               completed = false;
++         }
++      }
 +   }
 +   for (unsigned i = 0; i < count; i++) {
 +      if (completed && list[i].copy)
@@ -2299,9 +3431,56 @@
  struct d3d12_memory_object {
     struct pipe_memory_object base;
     ID3D12Resource *res;
+--- a/src/gallium/drivers/d3d12/d3d12_resource_state.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_resource_state.cpp
+@@ -475,12 +475,14 @@
+          assert(transition_desc.Transition.StateBefore != transition_desc.Transition.StateAfter);
+          util_dynarray_append(&ctx->barrier_scratch, transition_desc);
+ 
+-         may_decay = current_state->supports_simultaneous_access && !d3d12_is_write_state(after);
++         /* Simultaneous-access textures decay to COMMON at the end of an
++          * ExecuteCommandLists from any state, writes included. */
++         may_decay = current_state->supports_simultaneous_access;
+          is_promotion = false;
+       }
+    } else {
+       after = state_if_promoted;
+-      may_decay = !d3d12_is_write_state(after);
++      may_decay = current_state->supports_simultaneous_access || !d3d12_is_write_state(after);
+       is_promotion = true;
+    }
+ 
+--- a/src/gallium/drivers/d3d12/d3d12_root_signature.cpp
++++ b/src/gallium/drivers/d3d12/d3d12_root_signature.cpp
+@@ -29,6 +29,7 @@
+ #include "d3d12_screen.h"
+ 
+ #include "util/u_memory.h"
++#include "d3d12_pso_prewarm.h"
+ 
+ #include <dxguids/dxguids.h>
+ 
+@@ -237,6 +238,9 @@
+       debug_printf("CreateRootSignature failed\n");
+       return NULL;
+    }
++   /* Kept for the pipeline records of d3d12_pso_prewarm. */
++   ret->SetPrivateData(d3d12_root_signature_blob_guid, (UINT)sig->GetBufferSize(),
++                       sig->GetBufferPointer());
+    return ret;
+ }
+ 
 --- a/src/gallium/drivers/d3d12/d3d12_screen.cpp
 +++ b/src/gallium/drivers/d3d12/d3d12_screen.cpp
-@@ -384,6 +384,9 @@
+@@ -47,6 +47,7 @@
+ #include "util/u_screen.h"
+ #include "util/u_dl.h"
+ #include "util/mesa-blake3.h"
++#include "d3d12_pso_prewarm.h"
+ 
+ #include "frontend/sw_winsys.h"
+ 
+@@ -384,6 +385,9 @@
     caps->robust_buffer_access_behavior = true;
     caps->memobj = true;
     caps->fence_signal = true;
@@ -2311,7 +3490,7 @@
     caps->timeline_semaphore_import = true;
     caps->clip_halfz = true;
     caps->vs_layer_viewport = true;
-@@ -420,6 +423,12 @@
+@@ -420,6 +424,12 @@
     caps->query_memory_info = true;
  #endif
  
@@ -2324,7 +3503,7 @@
     caps->min_line_width =
     caps->min_line_width_aa =
     caps->min_point_size =
-@@ -443,12 +452,12 @@
+@@ -443,12 +453,12 @@
  }
  
  static bool
@@ -2343,7 +3522,7 @@
  {
     struct d3d12_screen *screen = d3d12_screen(pscreen);
  
-@@ -598,9 +607,82 @@
+@@ -598,9 +608,86 @@
     return true;
  }
  
@@ -2421,12 +3600,16 @@
  void
  d3d12_deinit_screen(struct d3d12_screen *screen)
  {
++#ifdef HAVE_GALLIUM_D3D12_GRAPHICS
++   d3d12_pso_prewarm_fini(screen);
++   d3d12_heap_pool_fini(screen);
++#endif
 +   d3d12_texture_cache_destroy(screen);
 +   d3d12_texture_pool_destroy(screen);
     while (d3d12_screen_reclaim_one(screen))
        ;
  
-@@ -670,6 +752,10 @@
+@@ -670,6 +757,10 @@
  void
  d3d12_destroy_screen(struct d3d12_screen *screen)
  {
@@ -2437,7 +3620,7 @@
     slab_destroy_parent(&screen->transfer_pool);
     mtx_destroy(&screen->submit_mutex);
     mtx_destroy(&screen->pending_free_lock);
-@@ -1377,10 +1463,18 @@
+@@ -1377,10 +1468,18 @@
     d3d12_debug = static_cast<uint32_t>(debug_get_option_d3d12_debug());
  
     screen->winsys = winsys;
@@ -2456,9 +3639,29 @@
     mtx_init(&screen->pending_free_lock, mtx_plain);
     list_inithead(&screen->pending_free_list);
  
+@@ -1871,5 +1970,12 @@
+    d3d12_init_compute_caps(screen);
+    d3d12_init_screen_caps(screen);
+ 
++#ifdef HAVE_GALLIUM_D3D12_GRAPHICS
++   if (screen->max_feature_level >= D3D_FEATURE_LEVEL_11_0) {
++      d3d12_heap_pool_init(screen);
++      d3d12_pso_prewarm_init(screen);
++   }
++#endif
++
+    return true;
+ }
 --- a/src/gallium/drivers/d3d12/d3d12_screen.h
 +++ b/src/gallium/drivers/d3d12/d3d12_screen.h
-@@ -70,6 +70,9 @@
+@@ -67,9 +67,16 @@
+    uint64_t budget;   // local + nonlocal
+ };
+ 
++struct d3d12_pso_prewarm;
++
++struct d3d12_heap_pool;
++
  struct d3d12_screen {
     struct pipe_screen base;
     struct sw_winsys *winsys;
@@ -2468,7 +3671,7 @@
     LUID adapter_luid;
     char driver_uuid[PIPE_UUID_SIZE];
     char device_uuid[PIPE_UUID_SIZE];
-@@ -91,6 +94,48 @@
+@@ -91,6 +98,48 @@
     struct list_head pending_free_list;
  
     struct list_head residency_list;
@@ -2517,7 +3720,19 @@
     ID3D12Fence *residency_fence;
     uint64_t residency_fence_value;
     unsigned num_evictions;
-@@ -213,6 +258,10 @@
+@@ -153,6 +202,11 @@
+    uint32_t subsys_id;
+    uint32_t revision;
+    uint64_t driver_version;
++   /* Shader-visible descriptor heaps for batches (d3d12_batch.cpp). */
++   struct d3d12_heap_pool *heap_pool;
++   /* Pipelines the program created before, made again on worker
++    * threads (d3d12_pso_prewarm.cpp); NULL when off. */
++   struct d3d12_pso_prewarm *pso_prewarm;
+    uint64_t memory_device_size_megabytes;
+    uint64_t memory_system_size_megabytes;
+    float timestamp_multiplier;
+@@ -213,6 +267,10 @@
  void
  d3d12_deinit_screen(struct d3d12_screen *screen);
  
@@ -2528,6 +3743,16 @@
  void
  d3d12_destroy_screen(struct d3d12_screen *screen);
  
+--- a/src/gallium/drivers/d3d12/meson.build
++++ b/src/gallium/drivers/d3d12/meson.build
+@@ -62,6 +62,7 @@
+     'd3d12_descriptor_pool.cpp',
+     'd3d12_nir_passes.c',
+     'd3d12_pipeline_state.cpp',
++    'd3d12_pso_prewarm.cpp',
+     'd3d12_query.cpp',
+     'd3d12_root_signature.cpp',
+     'd3d12_gs_variant.cpp',
 --- a/src/glx/dri_common.c
 +++ b/src/glx/dri_common.c
 @@ -1036,7 +1036,9 @@

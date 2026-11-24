@@ -7,7 +7,7 @@
   "profiles": {
     "graphics": {
       "patchFile": "graphics.patch",
-      "patchSha256": "7daa66082e57c02c616263192bcaa9cb11831398143194c2ba648228ad92c2a8",
+      "patchSha256": "016ebb2181ef663f8e6c8acdcb23f369db47dafaa6ba03e44ecde4dc8fb563e8",
       "files": {
         "VERSION": {
           "originalSha256": "e35f85db6458a3e4736f050ff42d720b39bbff9debe6b50c11e753b3ac2ecc3d",
@@ -23,11 +23,11 @@
         },
         "src/gallium/drivers/d3d12/d3d12_batch.cpp": {
           "originalSha256": "d9567ca0beb8d82b03c1e673368d6ebc4dc6f679e920eb9ae575ab7e659f700c",
-          "patchedSha256": "b400492042bbf0dc9281d4df4bcd2c33d796cd1e1765ae11c96f9a4704d04e85"
+          "patchedSha256": "f58c4a0231baf3c43059be8790aefd97d8823d25643fd8f61a379cbd42db9552"
         },
         "src/gallium/drivers/d3d12/d3d12_batch.h": {
           "originalSha256": "1f503d3f3b7fe2499c3e502767e0ada5bf9062d8cfeec42724a1f57cbad3f89a",
-          "patchedSha256": "c388d145246472628bb6a204ee84143362f3b1d86ca481e3069b40e1e9c128b2"
+          "patchedSha256": "975bdeef22ec09c563fd270dd9eab73e41053277466bf20231224232d3589b07"
         },
         "src/gallium/drivers/d3d12/d3d12_bufmgr.cpp": {
           "originalSha256": "96ac1817e23440e8cfbb2aed6679347460d3c63db028b1ed61249ff4bfdbafcf",
@@ -39,11 +39,11 @@
         },
         "src/gallium/drivers/d3d12/d3d12_context.h": {
           "originalSha256": "ee9f0a3883fd5980815c1abbad57b08983ef726999a61d0042e031d6def30a33",
-          "patchedSha256": "1e4b566876275c0e5534ac45448a242ba708ab6ade58fd55c3547b130973f9d2"
+          "patchedSha256": "15330c95bfba81b797c20389b20dbef3e180eac77bd4d8bf123f32bd62c75877"
         },
         "src/gallium/drivers/d3d12/d3d12_context_common.cpp": {
           "originalSha256": "11ece54805ce508a84f8437c2374db35cad66bc5a2f56c3e7c0de906c3cace36",
-          "patchedSha256": "db9ac716b63067aa5a76bf1e38f8c454dd484ba89288a7f25ea05501acc2d37f"
+          "patchedSha256": "f65d1cbd4d056865ab84c4b73bc5849bf9003bc8725a536ebf4b5fdcd1b3dc0f"
         },
         "src/gallium/drivers/d3d12/d3d12_descriptor_pool.cpp": {
           "originalSha256": "96b773e338235989e8f29019a3b02a1a2f9279dfd9ef477ef0b8dd734379bf41",
@@ -55,7 +55,7 @@
         },
         "src/gallium/drivers/d3d12/d3d12_draw.cpp": {
           "originalSha256": "cd7b721fad2e321e31aaca06359cd44716f1fe4ba69dd7b630c0f26f40c8b932",
-          "patchedSha256": "efe8e2c35e4c5e2f674422ffd7298b91fd4041da5fd9c8f2bd6e0052f2d76d74"
+          "patchedSha256": "3163551a5ea4c4400024d4828a1c060aa7795ab15829cb144038126b0f275d73"
         },
         "src/gallium/drivers/d3d12/d3d12_fence.cpp": {
           "originalSha256": "6e7f13fdab60012c5bdf262bbd1f60d36440dd155e95254eaa252703d30b6759",
@@ -69,25 +69,49 @@
           "originalSha256": "c985b81fa2de5ae093ec13dd25d6c619fa7f848264cc8c06184f34d3926c0736",
           "patchedSha256": "799421c21d99c83f543a8ff0d891e9b75f074eebeb0e0b92372d12cb82cb5e32"
         },
+        "src/gallium/drivers/d3d12/d3d12_pipeline_state.cpp": {
+          "originalSha256": "9ae95ad956e5c2601b48323da427ca0d06b94b2b1a9594b0998fd367945b237c",
+          "patchedSha256": "b1b526950252e938565dd5eb33b7498cf4eab5ac9a07c6b923d0d98448fb4535"
+        },
+        "src/gallium/drivers/d3d12/d3d12_pso_prewarm.cpp": {
+          "originalSha256": null,
+          "patchedSha256": "2ed0412262a70f95f5a16d68d9301576a433c9421a3be9bc5579a09277debc7d"
+        },
+        "src/gallium/drivers/d3d12/d3d12_pso_prewarm.h": {
+          "originalSha256": null,
+          "patchedSha256": "0072e1b6e78e92c71dc57e8b1882028693a26cfc9f1740b96fc923c5f06d058b"
+        },
         "src/gallium/drivers/d3d12/d3d12_residency.cpp": {
           "originalSha256": "a516ecda29527ec44d2d765912cea9d805d0a6776679d4f02d002d04d539aaa4",
           "patchedSha256": "d2b80d11c505f9298d6e868f0262b4c4f392a16415064b86c1ac52044b915a60"
         },
         "src/gallium/drivers/d3d12/d3d12_resource.cpp": {
           "originalSha256": "910ab8432089d92ffac083c0f41277c206381d3d57578a1c925f621420ea91b9",
-          "patchedSha256": "6e381690efe6884717c4c0aa538886ed09ea27573bfffa4facb80339c29bb744"
+          "patchedSha256": "0456c168b02908d5f9ba208bb5fe7c173571f7a86aa6ea57c27da344e9f9b55c"
         },
         "src/gallium/drivers/d3d12/d3d12_resource.h": {
           "originalSha256": "ed9984a73896dfc781c534aa091b998c338bc3030e47e15f77bccce485cf0a56",
           "patchedSha256": "ccbebfebb413fa78d3c861db6490c66f545873153a92b03a9933092125fd73a4"
         },
+        "src/gallium/drivers/d3d12/d3d12_resource_state.cpp": {
+          "originalSha256": "87b60be284508892236b81370e9082aa269ec522dc6bb09beac0df21c145a016",
+          "patchedSha256": "83a44a238f9a49877e2acc3856a2d1277e8c796b3fc50352763bf5e1d3b5f7da"
+        },
+        "src/gallium/drivers/d3d12/d3d12_root_signature.cpp": {
+          "originalSha256": "45be0ce5b5ce3a797194647be8776831ca703ee751a957b209fa44cc30f4e1ee",
+          "patchedSha256": "7e2d1e0b697409351946a15be00226de50a3f7b0c8aa7c0c782901742eed9e17"
+        },
         "src/gallium/drivers/d3d12/d3d12_screen.cpp": {
           "originalSha256": "b442477e3751012eba05e4b41c269501f0f682679c908850dac059e13dea9185",
-          "patchedSha256": "313744a34d7e8d18c47a0e2dbe7bc21af5479e6c05b79f1aeed7b6ec63b9fa14"
+          "patchedSha256": "f2cd76d3c26ea2bd041048204ec803da4d65787e9bafa0576f4e122aea0ba17f"
         },
         "src/gallium/drivers/d3d12/d3d12_screen.h": {
           "originalSha256": "e4ee1a6673d8b17cb27fe6fb12670d386dcec737c579f1427bfebe0bc238aa62",
-          "patchedSha256": "ebba34d1c13eec3e4954df68bb87118697b7f49da11b85f9346ed6344df225f8"
+          "patchedSha256": "6cc0864f8d97b1463d137ff212296be35f35c75a745265522a8d24afddbea8b6"
+        },
+        "src/gallium/drivers/d3d12/meson.build": {
+          "originalSha256": "62156038e9d2b15c5ea7d32b1343a18c7afd622d4f7b65133fd0dfa12ec8486b",
+          "patchedSha256": "a7ca00219c5429138d5348a99cc067d08363d140dc6be864c597f71a28b51c1f"
         },
         "src/glx/dri_common.c": {
           "originalSha256": "c02bc29e3325b240d899665f90df8634e1ee47f4ee7925d40848a4a8e76ad49c",
