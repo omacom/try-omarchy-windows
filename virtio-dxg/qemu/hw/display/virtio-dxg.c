@@ -29,6 +29,8 @@
 #include "hw/display/virtio-dxg.h"
 #include "hw/display/virtio-gpu-scanout.h"
 #include "qemu/timer.h"
+#include "hw/core/cpu.h"
+#include <tlhelp32.h>
 #include "ui/console.h"
 #ifdef CONFIG_OPENGL
 #include <epoxy/gl.h>
@@ -431,6 +433,151 @@ static void dxg_high_qos_thread(void)
         set(GetCurrentThread(), 3, &s, sizeof(s));
     }
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+}
+
+/*
+ * vCPUs on performance cores. On a hybrid CPU Windows picks a core each
+ * time a thread wakes, and a vCPU that idles between the guest's frames
+ * comes back on an efficiency core about as often as not: GTK 4's work per
+ * frame in Files took 6.2-6.7 ms with the VM on efficiency cores against
+ * 3.8 ms on performance cores (steady 240 Hz scroll), and runs varied by
+ * 15% with the default placement. Each vCPU thread gets a performance core
+ * as its ideal processor (a preference: under load from other programs it
+ * may still run on an idle efficiency core rather than wait), and QEMU's
+ * other threads (main loop, request lanes, workers) the efficiency cores as
+ * their CPU sets, so a helper does not take a performance core from a vCPU:
+ * Files scrolled at 138-144 fps against 106-125 without (separate boots,
+ * GTK's work per frame 4.0-4.1 ms against 4.2-4.9). Applied from the
+ * refresh timer, as threads keep appearing after start.
+ * VIRTIO_DXG_CPU_PLACEMENT=0 leaves placement to Windows; =2 also confines
+ * the vCPUs to the performance cores.
+ */
+
+/* SYSTEM_CPU_SET_INFORMATION's leading fields (QEMU builds for the Windows 8
+ * API, whose headers do not have it); entries are walked by Size. */
+typedef struct DxgCpuSet {
+    DWORD size;
+    DWORD type;
+    DWORD id;
+    WORD group;
+    BYTE logical_processor_index;
+    BYTE core_index;
+    BYTE last_level_cache_index;
+    BYTE numa_node_index;
+    BYTE efficiency_class;
+} DxgCpuSet;
+
+typedef BOOL (WINAPI *DxgGetCpuSets)(void *, ULONG, PULONG, HANDLE, ULONG);
+typedef BOOL (WINAPI *DxgSetThreadCpuSets)(HANDLE, const ULONG *, ULONG);
+
+static void dxg_place_threads(bool confine_vcpus)
+{
+    static DxgGetCpuSets get_sets;
+    static DxgSetThreadCpuSets set_sets;
+    static ULONG pset[64], eset[64];
+    static PROCESSOR_NUMBER pcore[64];
+    static ULONG np, ne;
+    static bool probed;
+    DWORD self = GetCurrentProcessId();
+    DWORD vcpus[256];
+    unsigned nv = 0;
+    THREADENTRY32 te = { .dwSize = sizeof(te) };
+    HANDLE snap;
+    CPUState *cpu;
+
+    if (!probed) {
+        HMODULE k32 = GetModuleHandleA("kernel32.dll");
+        ULONG len = 0, off;
+        uint8_t *buf;
+        int maxclass = 0;
+
+        probed = true;
+        get_sets = (DxgGetCpuSets)(void (*)(void))
+            GetProcAddress(k32, "GetSystemCpuSetInformation");
+        set_sets = (DxgSetThreadCpuSets)(void (*)(void))
+            GetProcAddress(k32, "SetThreadSelectedCpuSets");
+        if (!get_sets || !set_sets) {
+            return;
+        }
+        get_sets(NULL, 0, &len, GetCurrentProcess(), 0);
+        buf = g_malloc0(len ? len : 1);
+        if (!get_sets(buf, len, &len, GetCurrentProcess(), 0)) {
+            g_free(buf);
+            return;
+        }
+        for (off = 0; off + sizeof(DxgCpuSet) <= len;
+             off += ((DxgCpuSet *)(buf + off))->size) {
+            DxgCpuSet *s = (DxgCpuSet *)(buf + off);
+
+            if (!s->size) {
+                break;
+            }
+            maxclass = MAX(maxclass, s->efficiency_class);
+        }
+        for (off = 0; off + sizeof(DxgCpuSet) <= len;
+             off += ((DxgCpuSet *)(buf + off))->size) {
+            DxgCpuSet *s = (DxgCpuSet *)(buf + off);
+
+            if (!s->size) {
+                break;
+            }
+            if (s->efficiency_class == maxclass && np < 64) {
+                pcore[np].Group = s->group;
+                pcore[np].Number = s->logical_processor_index;
+                pcore[np].Reserved = 0;
+                pset[np++] = s->id;
+            } else if (s->efficiency_class != maxclass && ne < 64) {
+                eset[ne++] = s->id;
+            }
+        }
+        g_free(buf);
+        if (ne) {
+            info_report("virtio-dxg: vCPUs prefer %lu performance cores, other "
+                        "threads on %lu efficiency cores", np, ne);
+        }
+    }
+    /* One kind of core: nothing to choose. */
+    if (!set_sets || !np || !ne) {
+        return;
+    }
+    CPU_FOREACH(cpu) {
+        if (cpu->thread && nv < ARRAY_SIZE(vcpus)) {
+            vcpus[nv++] = cpu->thread->tid;
+        }
+    }
+    snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+        HANDLE h;
+        int vcpu = -1;
+
+        if (te.th32OwnerProcessID != self) {
+            continue;
+        }
+        for (unsigned i = 0; i < nv; i++) {
+            if (vcpus[i] == te.th32ThreadID) {
+                vcpu = i;
+            }
+        }
+        h = OpenThread(THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION |
+                       THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
+        if (!h) {
+            continue;
+        }
+        if (vcpu < 0) {
+            set_sets(h, eset, ne);
+        } else if (confine_vcpus) {
+            set_sets(h, pset, np);
+        } else {
+            /* A performance core of its own as the first choice. */
+            set_sets(h, NULL, 0);
+            SetThreadIdealProcessorEx(h, &pcore[vcpu % np], NULL);
+        }
+        CloseHandle(h);
+    }
+    CloseHandle(snap);
 }
 
 /*
@@ -928,8 +1075,20 @@ static void dxg_follow_refresh(void *opaque)
     const QemuUIInfo *cur;
     HWND hwnd = NULL;
     uint32_t mhz;
+    static unsigned ticks;
+    static int placement = -1;
 
     timer_mod(dxg_refresh_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 1000);
+    /* Every second while threads appear after start, then every 10 s. */
+    if (placement < 0) {
+        const char *env = getenv("VIRTIO_DXG_CPU_PLACEMENT");
+
+        placement = env ? atoi(env) : 1;
+    }
+    if (placement && (ticks < 10 || ticks % 10 == 0)) {
+        dxg_place_threads(placement == 2);
+    }
+    ticks++;
     if (!con) {
         return;
     }
